@@ -162,7 +162,7 @@ DockStrip, DockItem, indicators via `NSWorkspace.notificationCenter`, drag-reord
 **C: Widget system + 3+ widgets.** DONE.
 WidgetProtocol, WidgetHost, Clock/Battery/Calendar (+Weather/SystemStats). *Test: live data in strip.*
 
-**B.5: Hover labels with a reusable overlay panel.** DONE (hand test pending; label placement follow-up open).
+**B.5: Hover labels with a reusable overlay panel.** DONE (hand test pending; label placement fix awaiting hand test).
 Shared overlay that can show an app name (and later window previews) above the hovered tile without stealing focus. Build it as a reusable panel so later features plug into the same host. *Test: hover an icon, label appears quickly, leave and it dismisses; dock hide delay still respects the overlay.* Follow-up: label must sit 6 to 10pt above the hovered icon's top edge (not flush with the panel), match native Dock label size, stay horizontally centered on the icon, and clamp inside the screen's visible frame.
 
 **B.6: Dock position and separator resize.**

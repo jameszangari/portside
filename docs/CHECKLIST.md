@@ -1,13 +1,13 @@
 # Portside: Checklist
 
-Roadmap mirrors `docs/PLAN.md`. Milestones A to C are done. B.5 is built (hand test pending; label placement follow-up open). Next up is B.6, then D.
+Roadmap mirrors `docs/PLAN.md`. Milestones A to C are done. B.5 is built (hand test pending; label placement fix awaiting hand test). Next up is B.6, then D.
 
 ## Roadmap
 
 - [x] **A:** Edge tracker + non-activating panel + slide
 - [x] **B:** Pinned apps + running indicators + drag reorder + persistence
 - [x] **C:** Widget protocol and widgets (clock, calendar, weather, system stats, battery)
-- [x] **B.5:** Hover labels with a reusable overlay panel (built, hand test pending; label placement follow-up open)
+- [x] **B.5:** Hover labels with a reusable overlay panel (built, hand test pending; label placement fix awaiting hand test)
 - [ ] **B.6:** Dock position (bottom/left/right) and separator resize
 - [ ] **D:** App groups (expand/collapse)
 - [ ] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live
@@ -23,18 +23,22 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to C are done. B.5 is built (hand t
 
 # Milestone B.5: hover labels and overlay panel
 
-Status: built, launched with `swift run`, verified with synthetic mouse events and logs. Waiting on the human hand test. Label placement follow-up is open before treating B.5 as done. Next after B.5 sign-off is B.6.
+Status: built, launched with `swift run`, verified with synthetic mouse events and logs. Waiting on the human hand test. Label placement fix is built and needs hand-test confirmation before B.5 is done. Next after B.5 sign-off is B.6.
 
 ## Deliverables
 
 - [x] `OverlayPanel.swift`: reusable floating panel for content outside the strip. Borderless, non-activating, never key or main, click-through by default (`ignoresMouseEvents`, settable for D's interactive popover). Level 103, above the edge tracker. `present(content, anchor:, edge:, gap:)` places content beside a screen rect on the side away from the dock edge (`DockEdge` bottom/left/right) and clamps it to the screen. `dismiss()`, `containsScreenPoint`.
-- [x] `DockHover.swift`: `.dockHoverTarget(id:title:)` modifier reports item frames through a preference key in the strip's root coordinate space; `DockHover` hit-tests the cursor against them and shows a `DockLabel` (dark rounded pill, 13pt medium, 6pt above the icon) in the overlay
+- [x] `DockHover.swift`: `.dockHoverTarget(id:title:)` modifier reports item frames through a preference key in the strip's root coordinate space; `DockHover` hit-tests the cursor against them and shows a `DockLabel` (dark rounded pill, 13pt regular, 10pt above the icon) in the overlay
 - [x] App tiles use `.dockHoverTarget` and `.accessibilityLabel`; the `.help` tooltip on app tiles is gone (widgets keep theirs for now)
 - [x] `swift build` clean (no warnings); `swift run` launches and stays up
 
 ## Follow-up (label placement)
 
-- [ ] Hover label placement is wrong: it sits nearly flush against the dock's top edge and is oversized. Fix: anchor the label to the hovered icon (not the panel top) with roughly a 6 to 10pt gap above the icon's top edge; match the native Dock label size (about 13pt system font, small horizontal and vertical padding, rounded pill, dark translucent background); keep it horizontally centered on the icon; clamp it inside the screen's visible frame so it never clips at the screen edges.
+- [x] Hover label placement is wrong: it sits nearly flush against the dock's top edge and is oversized. Fix: anchor the label to the hovered icon (not the panel top) with roughly a 6 to 10pt gap above the icon's top edge; match the native Dock label size (about 13pt system font, small horizontal and vertical padding, rounded pill, dark translucent background); keep it horizontally centered on the icon; clamp it inside the screen's visible frame so it never clips at the screen edges.
+  - Cause: the label was already anchored to the icon, but its 6pt gap equaled the strip's 6pt padding above the icons, so the label's bottom landed exactly on the dock background's top edge.
+  - Fix: gap 10pt above the icon top (4pt of air above the dock background); label 13pt regular, padding 8 by 2, radius 6, `Color(white: 0.12, opacity: 0.78)`, max width 320 with middle truncation; clamped to `visibleFrame` with a 4pt margin; origin rounded to whole points.
+  - Measured: ChatGPT icon top y 1064 (top-left coords), label 1034 to 1054 (20pt tall, was 24), dock background top 1058. Centered within 0.5pt (ChatGPT icon center 501, label center 501.5; Finder 61 vs 61.5).
+  - [ ] Hand test confirms placement and size look native
 
 ## Reveal/hide path changes (events only, no logic changes)
 
