@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import os.log
 
 /// Central coordinator for the dock.
@@ -29,6 +30,12 @@ final class DockEngine {
     private var menuIsOpen = false
     private var menuObservers: [NSObjectProtocol] = []
 
+    /// True while the separator is being dragged. The cursor can leave the
+    /// panel mid-drag, and the dock must stay up until the drag ends.
+    private var isResizing = false
+    private let interactions = DockInteractions()
+    private var edgeSubscription: AnyCancellable?
+
     /// Timestamp (CACurrentMediaTime) of the mouseEntered that started the
     /// current reveal, used for the enter -> animation start -> interactive logs.
     private var revealRequestedAt: CFTimeInterval = 0
@@ -39,9 +46,18 @@ final class DockEngine {
         self.widgets = WidgetStore(dockModel: dockModel)
         self.layout = DockLayout()
         self.hover = DockHover(overlay: OverlayPanel())
-        let strip = DockStrip(dockModel: dockModel, runningApps: runningApps, widgets: widgets, layout: layout, hover: hover)
+        let strip = DockStrip(dockModel: dockModel, runningApps: runningApps, widgets: widgets, layout: layout, hover: hover, interactions: interactions)
         self.dockPanel = DockPanel(dockModel: dockModel, strip: strip)
-        self.edgeTracker = EdgeTracker()
+        self.edgeTracker = EdgeTracker(edge: dockModel.edge)
+        hover.setEdge(dockModel.edge)
+
+        interactions.onResizingChanged = { [weak self] resizing in
+            guard let self else { return }
+            self.isResizing = resizing
+            if !resizing {
+                self.rearmHideIfCursorOutside(source: "resize ended")
+            }
+        }
 
         hover.stripToScreen = { [weak dockPanel] rect in dockPanel?.screenRect(forStripRect: rect) }
         dockPanel.onStripMouseMoved = { [weak self] point in
@@ -61,11 +77,18 @@ final class DockEngine {
             self.menuIsOpen = false
             // The hide timer skipped while the menu was up; re-arm it if the
             // cursor ended up outside the dock.
-            let location = NSEvent.mouseLocation
-            if !self.dockPanel.containsScreenPoint(location) && !self.edgeTracker.containsScreenPoint(location) {
-                self.handleExit(source: "menu closed")
-            }
+            self.rearmHideIfCursorOutside(source: "menu closed")
         })
+
+        // @Published emits from willSet, before the property holds the new
+        // value. Moving the panel there forces a synchronous SwiftUI layout
+        // that reads the old edge and leaves the strip stale, so the change
+        // is applied on the next main loop turn instead.
+        edgeSubscription = dockModel.$edge
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] edge in self?.applyEdge(edge) }
 
         edgeTracker.onMouseEntered = { [weak self] event in
             self?.handleEnter(source: "edge", event: event)
@@ -116,6 +139,26 @@ final class DockEngine {
         edgeTracker.stop()
         widgets.stopAll()
         logger.info("engine stopped")
+    }
+
+    /// Move the dock to another screen edge, live. The panel snaps hidden on
+    /// the new edge; the next edge touch reveals it from there.
+    private func applyEdge(_ edge: DockEdge) {
+        pendingHide?.cancel()
+        pendingHide = nil
+        pendingReveal?.cancel()
+        pendingReveal = nil
+        hover.setEdge(edge)
+        dockPanel.setEdge(edge)
+        edgeTracker.setEdge(edge)
+        logger.info("dock moved to the \(edge.rawValue, privacy: .public) edge")
+    }
+
+    private func rearmHideIfCursorOutside(source: String) {
+        let location = NSEvent.mouseLocation
+        if !dockPanel.containsScreenPoint(location) && !edgeTracker.containsScreenPoint(location) {
+            handleExit(source: source)
+        }
     }
 
     // MARK: - Enter / exit handling
@@ -170,6 +213,10 @@ final class DockEngine {
             self.pendingHide = nil
             if self.menuIsOpen {
                 self.logger.info("hide timer fired but a menu is open, staying revealed")
+                return
+            }
+            if self.isResizing {
+                self.logger.info("hide timer fired during a resize drag, staying revealed")
                 return
             }
             // One-shot sanity check, not polling: if the cursor is still over

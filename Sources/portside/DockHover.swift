@@ -44,7 +44,7 @@ final class DockHover {
 
     /// Converts a rect in strip root coordinates to screen coordinates.
     var stripToScreen: ((CGRect) -> NSRect?)?
-    var edge: DockEdge = .bottom
+    private(set) var edge: DockEdge = .bottom
 
     private let overlay: OverlayPanel
     private var targets: [HoverTarget] = []
@@ -52,10 +52,17 @@ final class DockHover {
     private var current: HoverTarget?
     private let logger = Logger(subsystem: "com.james.portside", category: "DockHover")
 
-    /// Gap between the label and the top edge of the icon it names. The strip
-    /// has 6pt of padding above its icons, so this leaves 4pt of air between
-    /// the label and the dock background.
+    /// Gap between the label and the icon's far edge (top on the bottom
+    /// dock, outer side on side docks). The strip has 6pt of padding on that
+    /// side, so this leaves 4pt of air between the label and the dock.
     private let labelGap: CGFloat = 10
+
+    /// Labels open on the far side of `edge`. Drops the current label so the
+    /// next hover places it for the new orientation.
+    func setEdge(_ newEdge: DockEdge) {
+        edge = newEdge
+        clear()
+    }
 
     init(overlay: OverlayPanel) {
         self.overlay = overlay
@@ -79,11 +86,14 @@ final class DockHover {
     }
 
     private func evaluate() {
+        let slop = -DockMetrics.spacing / 2
         let hit = cursor.flatMap { point in
             // Tiles have a small gap between them. Extending each hit rect by
-            // half of it means sweeping across icons swaps the label without
-            // a flicker through "nothing hovered".
-            targets.first { $0.frame.insetBy(dx: -DockMetrics.spacing / 2, dy: 0).contains(point) }
+            // half of it along the dock means sweeping across icons swaps the
+            // label without a flicker through "nothing hovered".
+            targets.first {
+                $0.frame.insetBy(dx: edge.isVertical ? 0 : slop, dy: edge.isVertical ? slop : 0).contains(point)
+            }
         }
         guard hit != current else { return }
         current = hit

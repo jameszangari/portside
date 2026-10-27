@@ -1,11 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// Which screen edge the dock sits on. Overlays open away from it.
-enum DockEdge {
-    case bottom, left, right
-}
-
 /// A floating, non-activating panel that shows SwiftUI content next to a
 /// screen rect (a hovered tile, a folder icon). It lives outside the dock
 /// strip so its content can extend past the strip's bounds.

@@ -1,7 +1,7 @@
 import AppKit
 import os.log
 
-/// EdgeTracker owns a thin, practically invisible window along the bottom
+/// EdgeTracker owns a thin, practically invisible window along the dock's
 /// screen edge and reports cursor enter/exit through an NSTrackingArea.
 /// This is the fix for Dockset's lag: zero polling, the window server tells
 /// us the instant the cursor crosses into the edge zone.
@@ -15,23 +15,27 @@ final class EdgeTracker {
     /// Called on the main thread when the cursor leaves the edge zone.
     var onMouseExited: (() -> Void)?
 
-    /// Thickness (points) of the edge-trigger zone. Kept thin so it does not
-    /// intercept clicks meant for other windows.
-    static let edgeThickness: CGFloat = 4.0
+    /// Thickness (points) of the edge-trigger zone. The window takes every
+    /// click inside it, so it is a single point: the row (or column) the
+    /// cursor is pinned to when it hits the screen edge. At 4pt it ate
+    /// clicks on window resize edges and controls at the bottom of apps.
+    static let edgeThickness: CGFloat = 1.0
 
-    /// Window level: one above the dock panel so the bottom strip always
+    /// Window level: one above the dock panel so the edge zone always
     /// belongs to the tracker, even while the panel is revealed.
     static let windowLevel = NSWindow.Level(rawValue: DockPanel.windowLevel.rawValue + 1)
 
+    private(set) var edge: DockEdge
     private let edgeWindow: NSWindow
     private let edgeView: EdgeView
     private let logger = Logger(subsystem: "com.james.portside", category: "EdgeTracker")
     private var screenObserver: NSObjectProtocol?
 
-    init() {
+    init(edge: DockEdge) {
+        self.edge = edge
         edgeView = EdgeView(frame: .zero)
         edgeWindow = NSWindow(
-            contentRect: EdgeTracker.edgeFrame(),
+            contentRect: EdgeTracker.edgeFrame(for: edge),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
@@ -48,6 +52,10 @@ final class EdgeTracker {
 
         edgeView.onMouseEntered = { [weak self] event in self?.onMouseEntered?(event) }
         edgeView.onMouseExited = { [weak self] in self?.onMouseExited?() }
+        edgeView.onMouseDown = { [weak self] event in
+            let p = NSEvent.mouseLocation
+            self?.logger.info("edge zone took a click at \(p.x, format: .fixed(precision: 1)),\(p.y, format: .fixed(precision: 1)) (button \(event.buttonNumber))")
+        }
     }
 
     deinit {
@@ -60,7 +68,7 @@ final class EdgeTracker {
 
     /// Show the edge window. Never activates the app.
     func start() {
-        edgeWindow.setFrame(EdgeTracker.edgeFrame(), display: false)
+        place()
         edgeWindow.orderFrontRegardless()
         if screenObserver == nil {
             screenObserver = NotificationCenter.default.addObserver(
@@ -68,17 +76,21 @@ final class EdgeTracker {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                guard let self else { return }
-                self.edgeWindow.setFrame(EdgeTracker.edgeFrame(), display: false)
+                self?.place()
             }
         }
-        let f = edgeWindow.frame
-        logger.info("edge window shown at y=\(f.origin.y, format: .fixed(precision: 0)) width=\(f.width, format: .fixed(precision: 0)) height=\(f.height, format: .fixed(precision: 0))")
     }
 
     func stop() {
         edgeWindow.orderOut(nil)
         logger.info("edge window hidden")
+    }
+
+    /// Move the edge zone to another screen edge.
+    func setEdge(_ newEdge: DockEdge) {
+        guard newEdge != edge else { return }
+        edge = newEdge
+        place()
     }
 
     /// Whether a point in screen coordinates is inside the edge zone.
@@ -88,10 +100,27 @@ final class EdgeTracker {
 
     // MARK: - Geometry
 
-    /// Frame of the edge zone along the bottom of the primary screen.
-    static func edgeFrame() -> NSRect {
-        let screen = NSScreen.screens.first?.frame ?? NSRect(x: 0, y: 0, width: 1920, height: 1080)
-        return NSRect(x: screen.minX, y: screen.minY, width: screen.width, height: edgeThickness)
+    private func place() {
+        edgeWindow.setFrame(EdgeTracker.edgeFrame(for: edge), display: false)
+        let f = edgeWindow.frame
+        logger.info("edge window on \(self.edge.rawValue, privacy: .public) edge at \(f.origin.x, format: .fixed(precision: 0)),\(f.origin.y, format: .fixed(precision: 0)) size \(f.width, format: .fixed(precision: 0))x\(f.height, format: .fixed(precision: 0))")
+    }
+
+    /// The zone the cursor is pinned to when pushed against `edge` of the
+    /// primary screen. Side zones stop below the menu bar so the menu bar's
+    /// corners never reveal the dock.
+    static func edgeFrame(for edge: DockEdge) -> NSRect {
+        let screen = DockScreen.frame
+        let visible = DockScreen.visibleFrame
+        let t = edgeThickness
+        switch edge {
+        case .bottom:
+            return NSRect(x: screen.minX, y: screen.minY, width: screen.width, height: t)
+        case .left:
+            return NSRect(x: screen.minX, y: screen.minY, width: t, height: visible.maxY - screen.minY)
+        case .right:
+            return NSRect(x: screen.maxX - t, y: screen.minY, width: t, height: visible.maxY - screen.minY)
+        }
     }
 }
 
@@ -100,6 +129,7 @@ final class EdgeTracker {
 private final class EdgeView: NSView {
     var onMouseEntered: ((NSEvent) -> Void)?
     var onMouseExited: (() -> Void)?
+    var onMouseDown: ((NSEvent) -> Void)?
     private var trackingArea: NSTrackingArea?
 
     override init(frame: NSRect) {
@@ -136,6 +166,8 @@ private final class EdgeView: NSView {
         onMouseExited?()
     }
 
-    /// Swallow clicks on the strip; they would otherwise go nowhere useful.
-    override func mouseDown(with event: NSEvent) {}
+    /// Clicks in the zone cannot pass through to the window below. Logged
+    /// so swallowed clicks show up in the hand test.
+    override func mouseDown(with event: NSEvent) { onMouseDown?(event) }
+    override func rightMouseDown(with event: NSEvent) { onMouseDown?(event) }
 }

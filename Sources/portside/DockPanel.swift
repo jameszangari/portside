@@ -3,7 +3,7 @@ import SwiftUI
 import os.log
 
 /// DockPanel wraps a non-activating NSPanel that renders the dock strip.
-/// It slides up from the bottom edge on `show` and back down on `hide`.
+/// It slides in from its screen edge on `show` and back out on `hide`.
 ///
 /// It knows nothing about the edge tracker or hide delays. It only reports
 /// cursor enter/exit over itself and animation milestones; `DockEngine`
@@ -41,10 +41,16 @@ final class DockPanel {
     private var generation = 0
     private var screenObserver: NSObjectProtocol?
 
-    /// Padding around the SwiftUI strip inside the panel.
-    private let horizontalInset: CGFloat = 12
-    private let bottomInset: CGFloat = 6
-    private let topInset: CGFloat = 10
+    /// Screen edge the panel is attached to.
+    private(set) var edge: DockEdge
+
+    /// Padding around the SwiftUI strip inside the panel: along the edge on
+    /// both ends, on the screen-edge side, and on the far side.
+    private let alongInset: CGFloat = 12
+    private let nearInset: CGFloat = 6
+    private let farInset: CGFloat = 10
+    /// Keeps the dock off the visible frame's corners when it is long.
+    private let screenMargin: CGFloat = 4
 
     var isRevealedOrRevealing: Bool {
         state == .revealed || state == .revealing
@@ -57,6 +63,7 @@ final class DockPanel {
 
     init(dockModel: DockModel, strip: DockStrip) {
         self.dockModel = dockModel
+        self.edge = dockModel.edge
 
         let hosting = FirstMouseHostingView(rootView: strip)
         hostingView = hosting
@@ -117,9 +124,19 @@ final class DockPanel {
     }
 
     // MARK: - Geometry
+    //
+    // The panel sits flush against the screen frame's edge (the native
+    // Dock's auto-hide can reserve a few points of `visibleFrame` there) and
+    // is centered along that edge inside `visibleFrame`, so side docks stay
+    // below the menu bar.
 
-    private var screenFrame: NSRect {
-        NSScreen.screens.first?.frame ?? NSRect(x: 0, y: 0, width: 1920, height: 1080)
+    /// Strip insets in the content view (non-flipped: y grows upward).
+    private var insets: NSEdgeInsets {
+        switch edge {
+        case .bottom: NSEdgeInsets(top: farInset, left: alongInset, bottom: nearInset, right: alongInset)
+        case .left: NSEdgeInsets(top: alongInset, left: nearInset, bottom: alongInset, right: farInset)
+        case .right: NSEdgeInsets(top: alongInset, left: farInset, bottom: alongInset, right: nearInset)
+        }
     }
 
     private var panelSize: NSSize {
@@ -127,27 +144,47 @@ final class DockPanel {
         if content.width <= 0 || content.height <= 0 {
             content = hostingView.fittingSize
         }
-        return NSSize(
-            width: content.width + horizontalInset * 2,
-            height: content.height + topInset + bottomInset
-        )
+        let i = insets
+        return NSSize(width: content.width + i.left + i.right, height: content.height + i.top + i.bottom)
     }
 
     private var revealedFrame: NSRect {
         let size = panelSize
-        let screen = screenFrame
-        return NSRect(
-            x: screen.midX - size.width / 2,
-            y: screen.minY,
-            width: size.width,
-            height: size.height
-        )
+        let screen = DockScreen.frame
+        let visible = DockScreen.visibleFrame.insetBy(dx: screenMargin, dy: screenMargin)
+        func centered(_ length: CGFloat, in lower: CGFloat, _ upper: CGFloat) -> CGFloat {
+            let mid = (lower + upper) / 2
+            return max(lower, min(mid - length / 2, upper - length)).rounded()
+        }
+        switch edge {
+        case .bottom:
+            return NSRect(x: centered(size.width, in: visible.minX, visible.maxX), y: screen.minY, width: size.width, height: size.height)
+        case .left:
+            return NSRect(x: screen.minX, y: centered(size.height, in: visible.minY, visible.maxY), width: size.width, height: size.height)
+        case .right:
+            return NSRect(x: screen.maxX - size.width, y: centered(size.height, in: visible.minY, visible.maxY), width: size.width, height: size.height)
+        }
     }
 
+    /// Same frame, pushed just past the screen edge.
     private var hiddenFrame: NSRect {
         var frame = revealedFrame
-        frame.origin.y = screenFrame.minY - frame.height
+        let screen = DockScreen.frame
+        switch edge {
+        case .bottom: frame.origin.y = screen.minY - frame.height
+        case .left: frame.origin.x = screen.minX - frame.width
+        case .right: frame.origin.x = screen.maxX
+        }
         return frame
+    }
+
+    /// Attach to another screen edge. The panel snaps hidden there; the next
+    /// edge enter reveals it from the new side.
+    func setEdge(_ newEdge: DockEdge) {
+        guard newEdge != edge else { return }
+        edge = newEdge
+        prepareHidden()
+        layout()
     }
 
     /// Size the hosting view and put the panel at the frame matching its state.
@@ -162,11 +199,12 @@ final class DockPanel {
             panel.setFrame(revealedFrame, display: false)
         }
         let bounds = contentView.bounds
+        let i = insets
         hostingView.frame = NSRect(
-            x: bounds.minX + horizontalInset,
-            y: bounds.minY + bottomInset,
-            width: bounds.width - horizontalInset * 2,
-            height: bounds.height - topInset - bottomInset
+            x: bounds.minX + i.left,
+            y: bounds.minY + i.bottom,
+            width: bounds.width - i.left - i.right,
+            height: bounds.height - i.top - i.bottom
         )
         // Keeps the insets when the window is resized without going through
         // layout(), e.g. show() picking up a new strip width.
@@ -220,7 +258,7 @@ final class DockPanel {
         panel.orderOut(nil)
     }
 
-    /// Slide the panel up from the bottom edge. Non-activating: the frontmost
+    /// Slide the panel in from its edge. Non-activating: the frontmost
     /// app keeps focus and the first click on the panel is delivered.
     func show(animated: Bool) {
         guard !isRevealedOrRevealing else { return }
@@ -255,7 +293,7 @@ final class DockPanel {
         onPanelInteractive?()
     }
 
-    /// Slide the panel down below the screen edge, then order it out.
+    /// Slide the panel out past its screen edge, then order it out.
     func hide(animated: Bool) {
         guard state == .revealed || state == .revealing else { return }
         generation += 1
@@ -313,7 +351,7 @@ private final class PortsidePanel: NSPanel {
     override var canBecomeMain: Bool { false }
 
     /// Do not let AppKit nudge the panel back on screen while it is parked
-    /// below the bottom edge.
+    /// past its screen edge.
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
         frameRect
     }

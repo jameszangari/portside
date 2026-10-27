@@ -61,11 +61,36 @@ final class DockModel: Codable, ObservableObject {
 
     // MARK: - Icon settings
 
-    /// Size (points) of dock item icons.
-    var iconSize: CGFloat = 48.0
+    /// Size (points) of dock item icons. Tiles can render smaller when the
+    /// strip would not fit on screen.
+    @Published private(set) var iconSize: CGFloat = 48.0
+
+    /// Same range as the native Dock's `tilesize`.
+    static let iconSizeRange: ClosedRange<CGFloat> = 16...128
 
     /// Whether magnification is enabled on hover.
     var magnificationEnabled: Bool = false
+
+    // MARK: - Position
+
+    /// Screen edge the dock sits on.
+    @Published private(set) var edge: DockEdge = .bottom
+
+    func setEdge(_ newEdge: DockEdge) {
+        guard newEdge != edge else { return }
+        edge = newEdge
+        persist()
+    }
+
+    /// Live resize calls this on every drag step with `persist: false`, then
+    /// once more with `persist: true` on release.
+    func setIconSize(_ size: CGFloat, persist shouldPersist: Bool) {
+        let clamped = min(max(size.rounded(), DockModel.iconSizeRange.lowerBound), DockModel.iconSizeRange.upperBound)
+        if clamped != iconSize {
+            iconSize = clamped
+        }
+        if shouldPersist { persist() }
+    }
 
     // MARK: - Pinned apps
 
@@ -136,7 +161,7 @@ final class DockModel: Codable, ObservableObject {
     // MARK: - Codable
 
     private enum CodingKeys: String, CodingKey {
-        case revealDelay, hideDelay, animationDuration, iconSize, magnificationEnabled, pinnedApps, widgetKinds
+        case revealDelay, hideDelay, animationDuration, iconSize, magnificationEnabled, edge, pinnedApps, widgetKinds
     }
 
     required init(from decoder: Decoder) throws {
@@ -146,6 +171,7 @@ final class DockModel: Codable, ObservableObject {
         animationDuration = try c.decodeIfPresent(TimeInterval.self, forKey: .animationDuration) ?? 0.15
         iconSize = try c.decodeIfPresent(CGFloat.self, forKey: .iconSize) ?? 48.0
         magnificationEnabled = try c.decodeIfPresent(Bool.self, forKey: .magnificationEnabled) ?? false
+        edge = (try? c.decodeIfPresent(DockEdge.self, forKey: .edge)) ?? .bottom
         if let apps = try c.decodeIfPresent([PinnedApp].self, forKey: .pinnedApps) {
             pinnedApps = apps
         } else {
@@ -161,6 +187,7 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(animationDuration, forKey: .animationDuration)
         try c.encode(iconSize, forKey: .iconSize)
         try c.encode(magnificationEnabled, forKey: .magnificationEnabled)
+        try c.encode(edge, forKey: .edge)
         try c.encode(pinnedApps, forKey: .pinnedApps)
         try c.encode(widgetKinds, forKey: .widgetKinds)
     }

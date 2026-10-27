@@ -9,12 +9,13 @@ struct PortsideApp: App {
 
     var body: some Scene {
         MenuBarExtra("Portside", systemImage: "bird") {
-            Text("Portside (Milestone C)")
+            Text("Portside (Milestone B.6)")
             Divider()
             Button("Add App to Dock...") {
                 appDelegate.addApps()
             }
             WidgetsMenu(dockModel: appDelegate.dockModel)
+            PositionMenu(dockModel: appDelegate.dockModel)
             Divider()
             Button("Quit Portside") {
                 NSApp.terminate(nil)
@@ -43,6 +44,23 @@ private struct WidgetsMenu: View {
                 }
             }
         }
+    }
+}
+
+/// Temporary position control until the Settings window (Milestone E).
+private struct PositionMenu: View {
+    @ObservedObject var dockModel: DockModel
+
+    var body: some View {
+        Picker("Position on Screen", selection: Binding(
+            get: { dockModel.edge },
+            set: { dockModel.setEdge($0) }
+        )) {
+            ForEach(DockEdge.allCases) { edge in
+                Text(edge.title).tag(edge)
+            }
+        }
+        .pickerStyle(.menu)
     }
 }
 

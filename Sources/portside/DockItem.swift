@@ -49,25 +49,11 @@ struct DockItemView: View {
     let isPinned: Bool
     let size: CGFloat
     @ObservedObject var dockModel: DockModel
+    @Environment(\.dockEdge) private var edge
 
     var body: some View {
-        VStack(spacing: 2) {
-            // A tap gesture rather than a Button so the strip's drag gesture
-            // can take over once the cursor moves.
-            Image(nsImage: IconCache.icon(for: app.url))
-                .resizable()
-                .interpolation(.high)
-                .frame(width: size, height: size)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    AppLauncher.open(app, running: running)
-                }
-
-            Circle()
-                .fill(Color.primary.opacity(running == nil ? 0 : 0.75))
-                .frame(width: 4, height: 4)
-        }
-        .accessibilityLabel(app.displayName)
+        tile
+            .accessibilityLabel(app.displayName)
         .dockHoverTarget(id: app.id, title: app.displayName)
         .contextMenu {
             if isPinned {
@@ -83,5 +69,34 @@ struct DockItemView: View {
                 Button("Quit") { running.terminate() }
             }
         }
+    }
+
+    /// Icon plus running dot. The dot sits between the icon and the screen
+    /// edge, like the native Dock.
+    @ViewBuilder private var tile: some View {
+        switch edge {
+        case .bottom: VStack(spacing: 2) { icon; indicator }
+        case .left: HStack(spacing: 2) { indicator; icon }
+        case .right: HStack(spacing: 2) { icon; indicator }
+        }
+    }
+
+    private var icon: some View {
+        // A tap gesture rather than a Button so the strip's drag gesture
+        // can take over once the cursor moves.
+        Image(nsImage: IconCache.icon(for: app.url))
+            .resizable()
+            .interpolation(.high)
+            .frame(width: size, height: size)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                AppLauncher.open(app, running: running)
+            }
+    }
+
+    private var indicator: some View {
+        Circle()
+            .fill(Color.primary.opacity(running == nil ? 0 : 0.75))
+            .frame(width: 4, height: 4)
     }
 }

@@ -6,11 +6,11 @@ private let stripLogger = Logger(subsystem: "com.james.portside", category: "Doc
 
 /// Screen-derived limits for the strip. Updated when displays change.
 final class DockLayout: ObservableObject {
-    @Published private(set) var maxStripWidth: CGFloat = 0
+    @Published private(set) var visibleSize: CGSize = .zero
     private var observer: NSObjectProtocol?
 
-    /// Room left for the panel's own insets and a small margin at each side.
-    private let reservedWidth: CGFloat = 40
+    /// Room left for the panel's own insets and a small margin at each end.
+    private let reservedLength: CGFloat = 40
 
     init() {
         update()
@@ -19,17 +19,31 @@ final class DockLayout: ObservableObject {
         ) { [weak self] _ in self?.update() }
     }
 
+    /// Longest the strip may be along `edge` (width on the bottom, height on
+    /// the sides, below the menu bar).
+    func maxStripLength(for edge: DockEdge) -> CGFloat {
+        (edge.isVertical ? visibleSize.height : visibleSize.width) - reservedLength
+    }
+
     private func update() {
-        let width = NSScreen.screens.first?.frame.width ?? 1440
-        maxStripWidth = width - reservedWidth
+        visibleSize = DockScreen.visibleFrame.size
     }
 }
 
-/// SwiftUI view that renders the dock strip: pinned apps, a divider, running
-/// apps that are not pinned (like the native Dock), a divider, then widgets.
+/// Strip interactions the engine has to know about (they affect hiding).
+final class DockInteractions {
+    /// True while the separator is being dragged to resize the icons.
+    var onResizingChanged: ((Bool) -> Void)?
+}
+
+/// SwiftUI view that renders the dock strip: pinned apps, a separator,
+/// running apps that are not pinned (like the native Dock), a separator,
+/// then widgets. Horizontal on the bottom edge, vertical on the sides.
 ///
 /// Like the native Dock, tiles shrink below `iconSize` when everything would
 /// not fit on screen. Widgets are measured in tiles, so they shrink too.
+/// On side docks widgets keep their width, so the column is as wide as the
+/// widest widget.
 ///
 /// Reorder uses a plain DragGesture inside the strip, not .onDrag: SwiftUI
 /// never starts a drag session from this panel because Portside is never the
@@ -42,27 +56,33 @@ struct DockStrip: View {
     /// Receives item frames for hover labels. Not observed: it never
     /// changes what the strip renders.
     let hover: DockHover
+    let interactions: DockInteractions
 
     /// The pinned app currently being dragged, if any.
     @State private var dragging: PinnedApp?
+    /// Cursor (screen coordinates) and tile size when a separator drag began.
+    @State private var resizeStart: (mouse: CGPoint, tile: CGFloat)?
 
     private let spacing = DockMetrics.spacing
-    private let horizontalPadding: CGFloat = 8
-    private let dividerWidth: CGFloat = 5
+    private let alongPadding: CGFloat = 8
+    private let separatorPadding: CGFloat = 4
+    private var separatorLength: CGFloat { 1 + separatorPadding * 2 }
     private static let space = "strip"
 
-    /// Tile size after fitting everything into the screen width.
-    private func fittedTileSize(extrasCount: Int) -> CGFloat {
+    /// Largest tile that still fits everything on screen, ignoring `iconSize`.
+    private func maxTileSize(extrasCount: Int, edge: DockEdge) -> CGFloat {
         let apps = dockModel.pinnedApps.count + extrasCount
-        let units = widgets.hosts.reduce(0) { $0 + $1.size.rawValue }
-        let dividers = (extrasCount > 0 ? 1 : 0) + (widgets.hosts.isEmpty ? 0 : 1)
-        let items = apps + widgets.hosts.count + dividers
-        let innerWidgetGaps = units - widgets.hosts.count
-        let fixed = horizontalPadding * 2 + dividerWidth * CGFloat(dividers)
+        let separators = (extrasCount > 0 ? 1 : 0) + (widgets.hosts.isEmpty ? 0 : 1)
+        let items = apps + widgets.hosts.count + separators
+        // Horizontal: widgets are N tiles wide with gaps inside them.
+        // Vertical: every item is one tile tall.
+        let units = edge.isVertical ? widgets.hosts.count : widgets.hosts.reduce(0) { $0 + $1.size.rawValue }
+        let innerWidgetGaps = edge.isVertical ? 0 : units - widgets.hosts.count
+        let fixed = alongPadding * 2 + separatorLength * CGFloat(separators)
             + spacing * CGFloat(max(items - 1, 0) + innerWidgetGaps)
         let tileUnits = CGFloat(max(apps + units, 1))
-        let fit = ((layout.maxStripWidth - fixed) / tileUnits).rounded(.down)
-        return max(16, min(dockModel.iconSize, fit))
+        let fit = ((layout.maxStripLength(for: edge) - fixed) / tileUnits).rounded(.down)
+        return max(DockModel.iconSizeRange.lowerBound, fit)
     }
 
     private var unpinnedRunning: [(PinnedApp, NSRunningApplication)] {
@@ -74,26 +94,32 @@ struct DockStrip: View {
     }
 
     var body: some View {
+        let edge = dockModel.edge
         let extras = unpinnedRunning
-        let tile = fittedTileSize(extrasCount: extras.count)
+        let maxTile = maxTileSize(extrasCount: extras.count, edge: edge)
+        let tile = min(dockModel.iconSize, maxTile)
+        // Items align to the far side so icons line up with widgets.
+        let stack = edge.isVertical
+            ? AnyLayout(VStackLayout(alignment: edge == .left ? .trailing : .leading, spacing: spacing))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: spacing))
 
-        HStack(alignment: .top, spacing: spacing) {
+        stack {
             ForEach(dockModel.pinnedApps) { app in
                 DockItemView(app: app, running: runningApps.runningInstance(of: app), isPinned: true, size: tile, dockModel: dockModel)
                     .opacity(dragging?.id == app.id ? 0.5 : 1)
-                    .scaleEffect(dragging?.id == app.id ? 1.08 : 1)
-                    .gesture(reorderGesture(for: app, tile: tile))
+                    .scaleEffect(dragging?.id == app.id ? 1.08 : 1, anchor: edge.growthAnchor)
+                    .gesture(reorderGesture(for: app, tile: tile, vertical: edge.isVertical))
             }
 
             if !extras.isEmpty {
-                divider(tile)
+                separator(tile: tile, maxTile: maxTile, edge: edge)
                 ForEach(extras, id: \.0.id) { app, running in
                     DockItemView(app: app, running: running, isPinned: false, size: tile, dockModel: dockModel)
                 }
             }
 
             if !widgets.hosts.isEmpty {
-                divider(tile)
+                separator(tile: tile, maxTile: maxTile, edge: edge)
                 ForEach(widgets.hosts) { host in
                     host.view
                         .contextMenu {
@@ -103,16 +129,17 @@ struct DockStrip: View {
             }
         }
         .environment(\.dockTileSize, tile)
+        .environment(\.dockEdge, edge)
         .coordinateSpace(name: DockStrip.space)
-        .padding(.horizontal, horizontalPadding)
-        .padding(.top, 6)
-        .padding(.bottom, 3)
+        .padding(edge.isVertical ? .vertical : .horizontal, alongPadding)
+        .padding(edge.farSide, 6)
+        .padding(edge.nearSide, 3)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(.white.opacity(0.15), lineWidth: 1)
         )
-        .onDrop(of: [.fileURL], delegate: AppFileDropDelegate(dockModel: dockModel, slotWidth: tile + spacing, leadingInset: horizontalPadding))
+        .onDrop(of: [.fileURL], delegate: AppFileDropDelegate(dockModel: dockModel, slotLength: tile + spacing, leadingInset: alongPadding, vertical: edge.isVertical))
         .fixedSize()
         // Root space = the hosting view's bounds, so DockPanel can convert
         // hover target frames to screen coordinates.
@@ -122,23 +149,67 @@ struct DockStrip: View {
         }
     }
 
-    private func divider(_ tile: CGFloat) -> some View {
-        Divider()
-            .frame(width: 1, height: tile * 0.8)
-            .padding(.horizontal, 2)
-            .padding(.top, tile * 0.1)
+    // MARK: - Separator (drag to resize)
+
+    /// A thin line between sections. Like the native Dock's separator,
+    /// dragging it away from the screen edge grows the icons and toward the
+    /// edge shrinks them.
+    private func separator(tile: CGFloat, maxTile: CGFloat, edge: DockEdge) -> some View {
+        let vertical = edge.isVertical
+        return Rectangle()
+            .fill(Color(nsColor: .separatorColor))
+            .frame(width: vertical ? tile * 0.8 : 1, height: vertical ? 1 : tile * 0.8)
+            .padding(vertical ? .vertical : .horizontal, separatorPadding)
+            .padding(edge.farSide, tile * 0.1)
+            .contentShape(Rectangle())
+            .modifier(ResizePointer(edge: edge, isResizing: resizeStart != nil))
+            .gesture(resizeGesture(maxTile: maxTile, tile: tile, edge: edge))
+            .accessibilityLabel("Dock separator")
     }
+
+    private func resizeGesture(maxTile: CGFloat, tile: CGFloat, edge: DockEdge) -> some Gesture {
+        DragGesture(minimumDistance: 2, coordinateSpace: .global)
+            .onChanged { _ in
+                // Screen coordinates on purpose: the panel moves and resizes
+                // as the tiles change, so view coordinates would drift.
+                let mouse = NSEvent.mouseLocation
+                if resizeStart == nil {
+                    resizeStart = (mouse, tile)
+                    interactions.onResizingChanged?(true)
+                    stripLogger.info("resize started at \(tile, format: .fixed(precision: 0))pt")
+                }
+                guard let start = resizeStart else { return }
+                let delta: CGFloat
+                switch edge {
+                case .bottom: delta = mouse.y - start.mouse.y
+                case .left: delta = mouse.x - start.mouse.x
+                case .right: delta = start.mouse.x - mouse.x
+                }
+                dockModel.setIconSize(min(start.tile + delta, maxTile), persist: false)
+                ResizeCursor.show(edge)
+            }
+            .onEnded { _ in
+                resizeStart = nil
+                ResizeCursor.show(nil)
+                dockModel.setIconSize(dockModel.iconSize, persist: true)
+                interactions.onResizingChanged?(false)
+                stripLogger.info("resize ended at \(dockModel.iconSize, format: .fixed(precision: 0))pt")
+            }
+    }
+
+    // MARK: - Reorder
 
     /// Live reorder: the dragged tile jumps to whichever slot the cursor is
     /// over. Order is saved once, on release.
-    private func reorderGesture(for app: PinnedApp, tile: CGFloat) -> some Gesture {
+    private func reorderGesture(for app: PinnedApp, tile: CGFloat, vertical: Bool) -> some Gesture {
         DragGesture(minimumDistance: 4, coordinateSpace: .named(DockStrip.space))
             .onChanged { value in
                 if dragging == nil {
                     dragging = app
                     stripLogger.info("reorder started: \(app.displayName, privacy: .public)")
                 }
-                let slot = Int((value.location.x / (tile + spacing)).rounded(.down))
+                let position = vertical ? value.location.y : value.location.x
+                let slot = Int((position / (tile + spacing)).rounded(.down))
                 withAnimation(.easeOut(duration: 0.12)) {
                     dockModel.move(app, toIndex: slot, persist: false)
                 }
@@ -152,11 +223,41 @@ struct DockStrip: View {
     }
 }
 
+/// Resize cursor while hovering the separator: up-down on the bottom dock,
+/// left-right on side docks. Uses SwiftUI's pointer style where available,
+/// with a manual NSCursor fallback. During a drag the cursor can leave the
+/// separator, so the gesture also sets it on every step.
+private struct ResizePointer: ViewModifier {
+    let edge: DockEdge
+    let isResizing: Bool
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.pointerStyle(edge.isVertical ? .columnResize : .rowResize)
+        } else {
+            content.onHover { inside in
+                if !isResizing { ResizeCursor.show(inside ? edge : nil) }
+            }
+        }
+    }
+}
+
+enum ResizeCursor {
+    static func show(_ edge: DockEdge?) {
+        guard let edge else {
+            NSCursor.arrow.set()
+            return
+        }
+        (edge.isVertical ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown).set()
+    }
+}
+
 /// Adds .app bundles dragged from Finder, inserted at the slot under the cursor.
 private struct AppFileDropDelegate: DropDelegate {
     let dockModel: DockModel
-    let slotWidth: CGFloat
+    let slotLength: CGFloat
     let leadingInset: CGFloat
+    let vertical: Bool
 
     func validateDrop(info: DropInfo) -> Bool {
         info.hasItemsConforming(to: [.fileURL])
@@ -167,7 +268,8 @@ private struct AppFileDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        let slot = Int(((info.location.x - leadingInset) / slotWidth).rounded())
+        let position = vertical ? info.location.y : info.location.x
+        let slot = Int(((position - leadingInset) / slotLength).rounded())
         let index = min(max(slot, 0), dockModel.pinnedApps.count)
         let providers = info.itemProviders(for: [.fileURL])
         for provider in providers {
