@@ -114,7 +114,7 @@ Hide the native Dock with the **autohide-delay trick only** (do NOT also toggle 
 **User's current native Dock settings to match in Portside AND restore to on quit:**
 position bottom, small size, magnification OFF, indicators ON, recents OFF, minimize animation = Scale Effect, minimize-into-icon ON, title-bar double-click = Minimize, auto-hide ON, animate-opening ON. Capture precise values at runtime with `defaults read com.apple.dock` rather than hardcoding.
 
-Also in Milestone F: import the user's native Dock items by reading (never writing) `persistent-apps` and `persistent-others` from `com.apple.dock`, and offer launch at login via `SMAppService`.
+Also in Milestone F: import the user's native Dock items by reading (never writing) `persistent-apps` and `persistent-others` from `com.apple.dock`, and offer launch at login via `SMAppService`. On that same import, also read the native Dock's orientation and tilesize and use them as Portside's initial position and icon size.
 
 Use `dlopen`/`dlsym` for any private call so an OS update degrades gracefully (show both docks) instead of crashing.
 
@@ -162,17 +162,20 @@ DockStrip, DockItem, indicators via `NSWorkspace.notificationCenter`, drag-reord
 **C: Widget system + 3+ widgets.** DONE.
 WidgetProtocol, WidgetHost, Clock/Battery/Calendar (+Weather/SystemStats). *Test: live data in strip.*
 
-**B.5: Hover labels with a reusable overlay panel.**
-Shared overlay that can show an app name (and later window previews) above the hovered tile without stealing focus. Build it as a reusable panel so later features plug into the same host. *Test: hover an icon, label appears quickly, leave and it dismisses; dock hide delay still respects the overlay.*
+**B.5: Hover labels with a reusable overlay panel.** DONE (hand test pending; label placement follow-up open).
+Shared overlay that can show an app name (and later window previews) above the hovered tile without stealing focus. Build it as a reusable panel so later features plug into the same host. *Test: hover an icon, label appears quickly, leave and it dismisses; dock hide delay still respects the overlay.* Follow-up: label must sit 6 to 10pt above the hovered icon's top edge (not flush with the panel), match native Dock label size, stay horizontally centered on the icon, and clamp inside the screen's visible frame.
+
+**B.6: Dock position and separator resize.**
+Bottom, left, or right position (persisted; switchable live via a temporary menu bar item until Milestone E). EdgeTracker edge window and tracking area per edge. DockPanel frames from `visibleFrame` (avoid the menu bar), sliding in from and hiding toward the chosen edge. DockStrip horizontal on the bottom and vertical on the sides, with indicators, labels, magnification direction, and the future folder popover anchor following orientation. Native-style separator drag to resize icon size live (resize cursor, clamped, persisted; dock stays revealed during the drag). *Test: switch edges live; strip orientation and labels follow; drag the separator to resize; (a) the edge strip does not swallow clicks (try resizing a window from its bottom edge and clicking a control at the very bottom of an app; if blocked, shrink the strip to 1 to 2pt or switch to an event-driven global mouse-moved monitor); (b) reveal timing logs are unchanged.*
 
 **D: App groups.**
 FolderGroup + expand/collapse (user-defined groups of apps, not filesystem stacks). *Test: click expands/collapses.*
 
 **E: Settings + persistence.**
-SettingsWindow/Model: reveal delay, hide delay, animation duration, icon size, magnification toggle, widget and group management. *Test: live changes apply.*
+SettingsWindow/Model: reveal delay, hide delay, animation duration, icon size, magnification toggle, dock position, widget and group management. *Test: live changes apply.*
 
 **F: Native Dock hide/restore + launch at login + import.**
-NativeDockManager (autohide-delay trick only, save/restore exact prior values), LaunchAtLogin (`SMAppService`), import of the user's native Dock items by reading `persistent-apps` and `persistent-others` from `com.apple.dock` (never write those keys). Private APIs only here, behind `dlopen`/`dlsym`. *Test: quit restores native Dock exactly; re-login auto-launches; imported pins match the native list.*
+NativeDockManager (autohide-delay trick only, save/restore exact prior values), LaunchAtLogin (`SMAppService`), import of the user's native Dock items by reading `persistent-apps` and `persistent-others` from `com.apple.dock` (never write those keys). On import, also read the native Dock's orientation and tilesize and use them as Portside's initial position and icon size. Private APIs only here, behind `dlopen`/`dlsym`. *Test: quit restores native Dock exactly; re-login auto-launches; imported pins match the native list; initial position and icon size match the native Dock.*
 
 **Live on it (checkpoint).**
 Daily-drive Portside with A through F in place. Collect what hurts before starting the native Dock parity backlog (P1 to P3). Do not start P1 until this checkpoint has real notes.
@@ -187,6 +190,9 @@ Features that make Portside feel like the real Dock. Ordered by daily-driver imp
 
 ### P1 (daily driver basics)
 - Right-click context menu: Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove
+- Click-and-hold on an icon opens the same menu as right-click
+- Right-click on the divider: Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings
+- Holding Option turns Quit into Force Quit
 - Drag apps in from Finder to pin
 - Drag icons out of the strip to remove
 - Drop files onto app icons to open them with that app
@@ -196,20 +202,27 @@ Features that make Portside feel like the real Dock. Ordered by daily-driver imp
 
 ### P2 (polish and stacks)
 - Trash with full/empty state and drag-to-trash (note: Full Disk Access prompt)
+- Right-click Trash shows Empty Trash
 - Filesystem folder stacks (fan/grid/list), separate from app groups in Milestone D
 - Section divider
-- Resize handle
+- System glass/translucent material matching the native Dock, with Reduce Transparency and Reduce Motion support
+- Spring-loaded drag (hovering a dragged file over an icon brings that app forward)
 - Magnification polish
 
 ### P3 (multi-display and badges)
-- Dock on left or right edge
 - Follow the display the cursor hits
 - Fullscreen apps and Spaces behavior
 - Badge counts via the real Dock's accessibility tree (needs Accessibility permission; private APIs only as a fallback)
+- Window list in the right-click menu with click to focus (titles need Screen Recording permission)
+- VoiceOver labels and keyboard navigation
+- Do not reveal the dock while the user is dragging a window or holding the mouse button, except for file drags headed to the Dock
 
 ### Explicitly out of scope
 - Minimized windows in the Dock (user has "minimize into app icon" on)
 - Attention bouncing from other apps
+- Two-finger swipe App Expose gesture
+- Assigning apps to Spaces from the menu
+- The recents section
 
 ---
 
@@ -234,4 +247,4 @@ Portside-specific features beyond native Dock parity:
 
 ---
 
-*Revised for SPM build, Portside naming, single native-dock mechanism, public-API-first, B.5 overlay, and P1-P3 parity backlog. macOS 27.0.1, Xcode 27.1, Apple Silicon M4.*
+*Revised for SPM build, Portside naming, single native-dock mechanism, public-API-first, B.5 overlay, B.6 position/resize, and P1-P3 parity backlog. macOS 27.0.1, Xcode 27.1, Apple Silicon M4.*

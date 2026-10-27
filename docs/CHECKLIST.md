@@ -1,28 +1,29 @@
 # Portside: Checklist
 
-Roadmap mirrors `docs/PLAN.md`. Milestones A to C are done. B.5 is built and waiting on the hand test. Next up is D.
+Roadmap mirrors `docs/PLAN.md`. Milestones A to C are done. B.5 is built (hand test pending; label placement follow-up open). Next up is B.6, then D.
 
 ## Roadmap
 
 - [x] **A:** Edge tracker + non-activating panel + slide
 - [x] **B:** Pinned apps + running indicators + drag reorder + persistence
 - [x] **C:** Widget protocol and widgets (clock, calendar, weather, system stats, battery)
-- [x] **B.5:** Hover labels with a reusable overlay panel (built, hand test pending)
+- [x] **B.5:** Hover labels with a reusable overlay panel (built, hand test pending; label placement follow-up open)
+- [ ] **B.6:** Dock position (bottom/left/right) and separator resize
 - [ ] **D:** App groups (expand/collapse)
-- [ ] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, widgets, groups) applying live
-- [ ] **F:** Native Dock hide/restore (autohide-delay trick only), launch at login (`SMAppService`), import `persistent-apps` and `persistent-others` from `com.apple.dock`
+- [ ] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live
+- [ ] **F:** Native Dock hide/restore (autohide-delay trick only), launch at login (`SMAppService`), import `persistent-apps` and `persistent-others` from `com.apple.dock`, plus native orientation and tilesize as Portside's initial position and icon size
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
-- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); drag apps in from Finder; drag icons out to remove; drop files onto app icons to open them; launch bounce; Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide
-- [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); filesystem folder stacks (fan/grid/list, separate from app groups); section divider; resize handle; magnification polish
-- [ ] **P3:** Dock on left/right edge; follow the display the cursor hits; fullscreen apps and Spaces; badge counts via the real Dock's accessibility tree (Accessibility permission; private APIs only as fallback)
-- [ ] **Out of scope (do not build):** minimized windows in the Dock; attention bouncing from other apps
+- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder; drag icons out to remove; drop files onto app icons to open them; launch bounce; Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide
+- [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); right-click Trash shows Empty Trash; filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag; magnification polish
+- [ ] **P3:** Follow the display the cursor hits; fullscreen apps and Spaces; badge counts via the real Dock's accessibility tree (Accessibility permission; private APIs only as fallback); window list in right-click menu with click to focus (Screen Recording for titles); VoiceOver labels and keyboard navigation; do not reveal while dragging a window or holding the mouse button (except file drags headed to the Dock)
+- [ ] **Out of scope (do not build):** minimized windows in the Dock; attention bouncing from other apps; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 
 ---
 
 # Milestone B.5: hover labels and overlay panel
 
-Status: built, launched with `swift run`, verified with synthetic mouse events and logs. Waiting on the human hand test before Milestone D.
+Status: built, launched with `swift run`, verified with synthetic mouse events and logs. Waiting on the human hand test. Label placement follow-up is open before treating B.5 as done. Next after B.5 sign-off is B.6.
 
 ## Deliverables
 
@@ -30,6 +31,10 @@ Status: built, launched with `swift run`, verified with synthetic mouse events a
 - [x] `DockHover.swift`: `.dockHoverTarget(id:title:)` modifier reports item frames through a preference key in the strip's root coordinate space; `DockHover` hit-tests the cursor against them and shows a `DockLabel` (dark rounded pill, 13pt medium, 6pt above the icon) in the overlay
 - [x] App tiles use `.dockHoverTarget` and `.accessibilityLabel`; the `.help` tooltip on app tiles is gone (widgets keep theirs for now)
 - [x] `swift build` clean (no warnings); `swift run` launches and stays up
+
+## Follow-up (label placement)
+
+- [ ] Hover label placement is wrong: it sits nearly flush against the dock's top edge and is oversized. Fix: anchor the label to the hovered icon (not the panel top) with roughly a 6 to 10pt gap above the icon's top edge; match the native Dock label size (about 13pt system font, small horizontal and vertical padding, rounded pill, dark translucent background); keep it horizontally centered on the icon; clamp it inside the screen's visible frame so it never clips at the screen edges.
 
 ## Reveal/hide path changes (events only, no logic changes)
 
@@ -49,8 +54,33 @@ Status: built, launched with `swift run`, verified with synthetic mouse events a
 ## Notes
 
 - Moving the cursor above the panel (onto the label itself) leaves the dock, same as the native Dock. That starts the normal hide delay; it is not caused by the overlay.
-- Left/right edge placement is implemented in `OverlayPanel.frame` but untested until P3 moves the dock.
+- Left/right edge placement is implemented in `OverlayPanel.frame` but untested until B.6 moves the dock.
 - Labels run only on hover targets; widgets and D's folders opt in with the same modifier.
+
+---
+
+# Milestone B.6: dock position and separator resize
+
+Status: not started. Blocked on B.5 hand test and label placement follow-up.
+
+## Deliverables
+
+- [ ] Dock position: bottom, left, or right (persisted; switchable live via a temporary menu bar item until Milestone E)
+- [ ] `EdgeTracker`: edge window and tracking area per edge
+- [ ] `DockPanel`: frames computed per edge from `visibleFrame` (avoid the menu bar); slide in from and hide toward the chosen edge
+- [ ] `DockStrip`: horizontal on the bottom, vertical on the sides; indicators, labels, magnification direction, and the future folder popover anchor follow orientation
+- [ ] Native-style separator drag to resize icon size live (resize cursor, clamped, persisted; dock stays revealed during the drag)
+- [ ] `swift build` clean; `swift run` launches and stays up
+
+## Hand test must also check
+
+- [ ] (a) The edge strip does not swallow clicks: try resizing a window from its bottom edge and clicking a control at the very bottom of an app. If blocked, shrink the strip to 1 to 2pt or switch to an event-driven global mouse-moved monitor.
+- [ ] (b) Reveal timing logs are unchanged.
+
+## Notes
+
+- Dock on left/right and the resize handle moved here from P2/P3.
+- Temporary menu bar position control is replaced by Settings in Milestone E.
 
 ---
 
