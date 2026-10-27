@@ -1,13 +1,13 @@
 # Portside: Checklist
 
-Roadmap mirrors `docs/PLAN.md`. Milestones A to C are done. Next up is B.5.
+Roadmap mirrors `docs/PLAN.md`. Milestones A to C are done. B.5 is built and waiting on the hand test. Next up is D.
 
 ## Roadmap
 
 - [x] **A:** Edge tracker + non-activating panel + slide
 - [x] **B:** Pinned apps + running indicators + drag reorder + persistence
 - [x] **C:** Widget protocol and widgets (clock, calendar, weather, system stats, battery)
-- [ ] **B.5:** Hover labels with a reusable overlay panel
+- [x] **B.5:** Hover labels with a reusable overlay panel (built, hand test pending)
 - [ ] **D:** App groups (expand/collapse)
 - [ ] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, widgets, groups) applying live
 - [ ] **F:** Native Dock hide/restore (autohide-delay trick only), launch at login (`SMAppService`), import `persistent-apps` and `persistent-others` from `com.apple.dock`
@@ -20,9 +20,43 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to C are done. Next up is B.5.
 
 ---
 
+# Milestone B.5: hover labels and overlay panel
+
+Status: built, launched with `swift run`, verified with synthetic mouse events and logs. Waiting on the human hand test before Milestone D.
+
+## Deliverables
+
+- [x] `OverlayPanel.swift`: reusable floating panel for content outside the strip. Borderless, non-activating, never key or main, click-through by default (`ignoresMouseEvents`, settable for D's interactive popover). Level 103, above the edge tracker. `present(content, anchor:, edge:, gap:)` places content beside a screen rect on the side away from the dock edge (`DockEdge` bottom/left/right) and clamps it to the screen. `dismiss()`, `containsScreenPoint`.
+- [x] `DockHover.swift`: `.dockHoverTarget(id:title:)` modifier reports item frames through a preference key in the strip's root coordinate space; `DockHover` hit-tests the cursor against them and shows a `DockLabel` (dark rounded pill, 13pt medium, 6pt above the icon) in the overlay
+- [x] App tiles use `.dockHoverTarget` and `.accessibilityLabel`; the `.help` tooltip on app tiles is gone (widgets keep theirs for now)
+- [x] `swift build` clean (no warnings); `swift run` launches and stays up
+
+## Reveal/hide path changes (events only, no logic changes)
+
+- `DockPanel`: the panel's existing tracking area also requests `.mouseMoved` and forwards it (converted to strip coordinates). Mouse-down and right-mouse-down on the strip are reported. Added `isRevealed` and coordinate conversion helpers. `show`/`hide` are untouched.
+- `DockEngine`: clears the label on panel exit, on mouse down, before the hide slide, and on stop. Hover only runs once the panel is fully revealed, plus a one-shot cursor check when the reveal slide finishes. No new timers.
+
+## Verification (agent, synthetic events)
+
+- Sweeping across icons swaps the label per icon (about 8ms apart in the log) with no hide armed between icons. Half of the 6pt gap between tiles counts toward each neighbor, so there is no blank flicker.
+- Label is centered on its icon: ChatGPT icon x 482 to 520, label x 463 to 539 (both centered at 501), 6pt above the icon top.
+- Cursor parked during the reveal slide: the label appears at "animation finished" (one-shot check), not mid-slide.
+- Moving up into the panel's top inset (under the label) hides the label and logs no panel mouseExited, so the overlay does not affect hide.
+- Click while hovering: `panel mouseDown (key window: false, portside active: false)`, label hides, returns on the next move.
+- Reveal timing unchanged: mouseEntered to animation start 0.5 to 1.4ms.
+- An app labeled `[untitled]` is real: `/Applications/[untitled].app`.
+
+## Notes
+
+- Moving the cursor above the panel (onto the label itself) leaves the dock, same as the native Dock. That starts the normal hide delay; it is not caused by the overlay.
+- Left/right edge placement is implemented in `OverlayPanel.frame` but untested until P3 moves the dock.
+- Labels run only on hover targets; widgets and D's folders opt in with the same modifier.
+
+---
+
 # Milestone C: widget system
 
-Status: built, launched with `swift run`, widgets verified rendering live data (read back through the Accessibility API). Waiting on the human hand test before Milestone B.5.
+Status: built, launched with `swift run`, widgets verified rendering live data (read back through the Accessibility API). Hand test passed; committed.
 
 ## Deliverables
 

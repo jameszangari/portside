@@ -19,6 +19,10 @@ final class DockPanel {
     var onPanelInteractive: (() -> Void)?
     /// Fired when the reveal slide completes (or immediately if instant).
     var onRevealAnimationFinished: (() -> Void)?
+    /// Cursor moved over the panel, in strip root coordinates (`DockHover.space`).
+    var onStripMouseMoved: ((CGPoint) -> Void)?
+    /// Any mouse button went down on the strip (click, drag, context menu).
+    var onMouseDown: (() -> Void)?
 
     /// Window level: above normal windows and floating panels, below the
     /// edge tracker window. Same level as menus so it sits over most UI.
@@ -45,6 +49,9 @@ final class DockPanel {
     var isRevealedOrRevealing: Bool {
         state == .revealed || state == .revealing
     }
+
+    /// Fully up and not moving, so screen positions of items are stable.
+    var isRevealed: Bool { state == .revealed }
 
     // MARK: - Init
 
@@ -82,6 +89,11 @@ final class DockPanel {
 
         contentView.onMouseEntered = { [weak self] event in self?.onMouseEntered?(event) }
         contentView.onMouseExited = { [weak self] in self?.onMouseExited?() }
+        contentView.onMouseMoved = { [weak self] event in
+            guard let self else { return }
+            self.onStripMouseMoved?(self.stripPoint(fromWindowPoint: event.locationInWindow))
+        }
+        hosting.onMouseDown = { [weak self] in self?.onMouseDown?() }
 
         layout()
         // The strip's width changes as apps are pinned, removed, launched or
@@ -165,6 +177,32 @@ final class DockPanel {
         guard panelSize != panel.frame.size else { return }
         layout()
         logger.info("panel resized to \(self.panel.frame.width, format: .fixed(precision: 0))x\(self.panel.frame.height, format: .fixed(precision: 0))")
+    }
+
+    // MARK: - Strip coordinates (for hover labels and overlays)
+    //
+    // The strip's root SwiftUI coordinate space fills the hosting view and
+    // has a top-left origin.
+
+    private func stripPoint(fromWindowPoint windowPoint: NSPoint) -> CGPoint {
+        let p = hostingView.convert(windowPoint, from: nil)
+        return CGPoint(x: p.x, y: hostingView.isFlipped ? p.y : hostingView.bounds.height - p.y)
+    }
+
+    /// Screen point -> strip root coordinates, or nil if the panel is not on screen.
+    func stripPoint(forScreenPoint screenPoint: NSPoint) -> CGPoint? {
+        guard panel.isVisible else { return nil }
+        return stripPoint(fromWindowPoint: panel.convertPoint(fromScreen: screenPoint))
+    }
+
+    /// Strip root rect -> screen rect, or nil if the panel is not on screen.
+    func screenRect(forStripRect rect: CGRect) -> NSRect? {
+        guard panel.isVisible else { return nil }
+        var local = rect
+        if !hostingView.isFlipped {
+            local.origin.y = hostingView.bounds.height - rect.maxY
+        }
+        return panel.convertToScreen(hostingView.convert(local, to: nil))
     }
 
     /// Whether a point in screen coordinates is over the visible panel.
@@ -288,6 +326,7 @@ private final class PortsidePanel: NSPanel {
 private final class PanelContentView: NSView {
     var onMouseEntered: ((NSEvent) -> Void)?
     var onMouseExited: (() -> Void)?
+    var onMouseMoved: ((NSEvent) -> Void)?
     private var trackingArea: NSTrackingArea?
 
     override func updateTrackingAreas() {
@@ -295,9 +334,11 @@ private final class PanelContentView: NSView {
         if let trackingArea {
             removeTrackingArea(trackingArea)
         }
+        // .mouseMoved drives hover labels. Events only arrive while the
+        // cursor is inside this view, so there is no cost when it is not.
         let area = NSTrackingArea(
             rect: bounds,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
             owner: self,
             userInfo: nil
         )
@@ -311,6 +352,10 @@ private final class PanelContentView: NSView {
 
     override func mouseExited(with event: NSEvent) {
         onMouseExited?()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        onMouseMoved?(event)
     }
 }
 
@@ -329,8 +374,17 @@ private final class FirstMouseHostingView<Content: View>: NSHostingView<Content>
         onIntrinsicSizeChange?()
     }
 
+    var onMouseDown: (() -> Void)?
+
     override func mouseDown(with event: NSEvent) {
         let keyWindow = window?.isKeyWindow ?? false
         logger.info("panel mouseDown (key window: \(keyWindow), portside active: \(NSApp.isActive))")
+        onMouseDown?()
         super.mouseDown(with: event)
-    }}
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        onMouseDown?()
+        super.rightMouseDown(with: event)
+    }
+}

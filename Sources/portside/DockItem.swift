@@ -67,7 +67,8 @@ struct DockItemView: View {
                 .fill(Color.primary.opacity(running == nil ? 0 : 0.75))
                 .frame(width: 4, height: 4)
         }
-        .help(app.displayName)
+        .accessibilityLabel(app.displayName)
+        .dockHoverTarget(id: app.id, title: app.displayName)
         .contextMenu {
             if isPinned {
                 Button("Remove from Dock") { dockModel.unpin(app) }

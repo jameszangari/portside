@@ -17,6 +17,7 @@ final class DockEngine {
     private let layout: DockLayout
     private let dockPanel: DockPanel
     private let edgeTracker: EdgeTracker
+    private let hover: DockHover
     private let logger = Logger(subsystem: "com.james.portside", category: "DockEngine")
 
     private var pendingHide: DispatchWorkItem?
@@ -37,9 +38,19 @@ final class DockEngine {
         self.runningApps = RunningApps()
         self.widgets = WidgetStore(dockModel: dockModel)
         self.layout = DockLayout()
-        let strip = DockStrip(dockModel: dockModel, runningApps: runningApps, widgets: widgets, layout: layout)
+        self.hover = DockHover(overlay: OverlayPanel())
+        let strip = DockStrip(dockModel: dockModel, runningApps: runningApps, widgets: widgets, layout: layout, hover: hover)
         self.dockPanel = DockPanel(dockModel: dockModel, strip: strip)
         self.edgeTracker = EdgeTracker()
+
+        hover.stripToScreen = { [weak dockPanel] rect in dockPanel?.screenRect(forStripRect: rect) }
+        dockPanel.onStripMouseMoved = { [weak self] point in
+            guard let self, self.dockPanel.isRevealed else { return }
+            self.hover.cursorMoved(to: point)
+        }
+        dockPanel.onMouseDown = { [weak self] in
+            self?.hover.clear()
+        }
 
         let center = NotificationCenter.default
         menuObservers.append(center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
@@ -66,6 +77,7 @@ final class DockEngine {
             self?.handleEnter(source: "panel", event: event)
         }
         dockPanel.onMouseExited = { [weak self] in
+            self?.hover.clear()
             self?.handleExit(source: "panel")
         }
         dockPanel.onRevealAnimationStarted = { [weak self] in
@@ -75,7 +87,14 @@ final class DockEngine {
             self?.logTiming(label: "panel interactive")
         }
         dockPanel.onRevealAnimationFinished = { [weak self] in
-            self?.logTiming(label: "animation finished")
+            guard let self else { return }
+            self.logTiming(label: "animation finished")
+            // The panel slid under a possibly stationary cursor, so no
+            // mouseMoved will arrive. Check the cursor once.
+            if let point = self.dockPanel.stripPoint(forScreenPoint: NSEvent.mouseLocation),
+               self.dockPanel.containsScreenPoint(NSEvent.mouseLocation) {
+                self.hover.cursorMoved(to: point)
+            }
         }
     }
 
@@ -92,6 +111,7 @@ final class DockEngine {
         pendingHide = nil
         pendingReveal?.cancel()
         pendingReveal = nil
+        hover.clear()
         dockPanel.hide(animated: false)
         edgeTracker.stop()
         widgets.stopAll()
@@ -162,6 +182,7 @@ final class DockEngine {
                 return
             }
             self.logger.info("hide timer fired, hiding")
+            self.hover.clear()
             self.dockPanel.hide(animated: true)
         }
         pendingHide = work

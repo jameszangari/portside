@@ -39,6 +39,9 @@ struct DockStrip: View {
     @ObservedObject var runningApps: RunningApps
     @ObservedObject var widgets: WidgetStore
     @ObservedObject var layout: DockLayout
+    /// Receives item frames for hover labels. Not observed: it never
+    /// changes what the strip renders.
+    let hover: DockHover
 
     /// The pinned app currently being dragged, if any.
     @State private var dragging: PinnedApp?
@@ -111,6 +114,12 @@ struct DockStrip: View {
         )
         .onDrop(of: [.fileURL], delegate: AppFileDropDelegate(dockModel: dockModel, slotWidth: tile + spacing, leadingInset: horizontalPadding))
         .fixedSize()
+        // Root space = the hosting view's bounds, so DockPanel can convert
+        // hover target frames to screen coordinates.
+        .coordinateSpace(name: DockHover.space)
+        .onPreferenceChange(HoverTargetsKey.self) { targets in
+            hover.updateTargets(targets)
+        }
     }
 
     private func divider(_ tile: CGFloat) -> some View {
