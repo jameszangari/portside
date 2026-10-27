@@ -1,9 +1,9 @@
-# Portside — Custom macOS Dock (Architecture Plan)
+# Portside: Custom macOS Dock (Architecture Plan)
 
 **Project:** `portside` (personal use, Apple Silicon M4, macOS 27.0.1, Xcode 27.1)
-**Goal:** A fast, event-driven dock replacement inspired by Dockset 0.2.7 — all the core features (widgets, folders, indicators) with none of the polling-based sluggishness.
+**Goal:** A fast, event-driven dock replacement inspired by Dockset 0.2.7: all the core features (widgets, folders, indicators) with none of the polling-based sluggishness.
 
-> Rename note: the app is **Portside**, NOT "Dockset". Dockset is the third-party app being replaced; it lives in /Applications with bundle id `dev.benja.dockset`. Use a distinct name/bundle id (`com.james.portside`) everywhere so there are no keychain, signing, or UserDefaults collisions with it. If you see "Dockset" anywhere in filenames, types, or bundle paths below or in generated code, it's a mistake — fix it to Portside.
+> Rename note: the app is **Portside**, NOT "Dockset". Dockset is the third-party app being replaced; it lives in /Applications with bundle id `dev.benja.dockset`. Use a distinct name/bundle id (`com.james.portside`) everywhere so there are no keychain, signing, or UserDefaults collisions with it. If you see "Dockset" anywhere in filenames, types, or bundle paths below or in generated code, it's a mistake: fix it to Portside.
 
 ---
 
@@ -31,8 +31,8 @@ Dockset detects edge reveal with **repeating polling timers** (~50ms armed / 250
 |--------|---------|-------|
 | Language / UI | Swift + AppKit/CoreGraphics | Same |
 | Window type | `NSPanel` (non-activating) | Same, built correctly from scratch |
-| Edge reveal | **Polling NSTimer** | **NSTrackingArea** `mouseEntered`/`mouseExited` — zero polling |
-| Native dock hiding | `CoreDockSetAutoHideEnabled` (private) | **autohide-delay trick only** (see §4) — pick ONE mechanism |
+| Edge reveal | **Polling NSTimer** | **NSTrackingArea** `mouseEntered`/`mouseExited` (zero polling) |
+| Native dock hiding | `CoreDockSetAutoHideEnabled` (private) | **autohide-delay trick only** (see §4); pick ONE mechanism |
 | Persistence | `DockStore` Codable JSON + UserDefaults | Same pattern |
 | Widgets | `WidgetHost` → `CustomWidgetView` | Clean plugin protocol (§5) |
 | Folders | `DockSwipeTransition` + `DockItemCollapse` | SwiftUI `withAnimation` |
@@ -104,15 +104,17 @@ portside/
 
 ---
 
-## 4. Native Dock Hide/Restore (Milestone F) — ONE mechanism
+## 4. Native Dock Hide/Restore (Milestone F): ONE mechanism
 
-Hide the native Dock with the **autohide-delay trick only** (do NOT also toggle CoreDock autohide — redundant and they fight):
+Hide the native Dock with the **autohide-delay trick only** (do NOT also toggle CoreDock autohide; redundant and they fight):
 - On launch: read and SAVE the user's exact current values (`autohide`, `autohide-delay`, `orientation`, `magnification`, `tilesize`) before changing anything.
 - Set a very large `autohide-delay` so the native Dock never reveals.
 - On quit/uninstall: restore every saved value exactly as it was. Never assume stock defaults.
 
 **User's current native Dock settings to match in Portside AND restore to on quit:**
 position bottom, small size, magnification OFF, indicators ON, recents OFF, minimize animation = Scale Effect, minimize-into-icon ON, title-bar double-click = Minimize, auto-hide ON, animate-opening ON. Capture precise values at runtime with `defaults read com.apple.dock` rather than hardcoding.
+
+Also in Milestone F: import the user's native Dock items by reading (never writing) `persistent-apps` and `persistent-others` from `com.apple.dock`, and offer launch at login via `SMAppService`.
 
 Use `dlopen`/`dlsym` for any private call so an OS update degrades gracefully (show both docks) instead of crashing.
 
@@ -149,25 +151,79 @@ Expand/collapse with SwiftUI `withAnimation`; grid pops above the strip. (Dockse
 
 ---
 
-## 7. Build Order (milestones — build & sign-off each before next)
+## 7. Build Order (milestones: build and sign-off each before next)
 
-**A — Edge tracker + non-activating panel + slide (foundation).**
-DockEngine, EdgeTracker (NSTrackingArea), DockPanel, minimal DockModel (delays/animation only), timing logs (mouseEntered → animation start → interactive). *Test: edge → reveal ~16ms; leave → hides after delay; clicking a placeholder works without focus steal.* **This is the whole point — do not move on until the reveal feels instant.**
+**A: Edge tracker + non-activating panel + slide (foundation).** DONE.
+DockEngine, EdgeTracker (NSTrackingArea), DockPanel, minimal DockModel (delays/animation only), timing logs (mouseEntered -> animation start -> interactive). *Test: edge -> reveal ~16ms; leave -> hides after delay; clicking a placeholder works without focus steal.* **This is the whole point: do not move on until the reveal feels instant.**
 
-**B — Pinned apps + running indicators.**
+**B: Pinned apps + running indicators.** DONE.
 DockStrip, DockItem, indicators via `NSWorkspace.notificationCenter`, drag-reorder, persistence. *Test: add/remove/reorder, click to launch/activate.*
 
-**C — Widget system + 3+ widgets.** WidgetProtocol, WidgetHost, Clock/Battery/Calendar (+Weather/SystemStats). *Test: live data in strip.*
+**C: Widget system + 3+ widgets.** DONE.
+WidgetProtocol, WidgetHost, Clock/Battery/Calendar (+Weather/SystemStats). *Test: live data in strip.*
 
-**D — Grouped folders.** FolderGroup + expand/collapse. *Test: click expands/collapses.*
+**B.5: Hover labels with a reusable overlay panel.**
+Shared overlay that can show an app name (and later window previews) above the hovered tile without stealing focus. Build it as a reusable panel so later features plug into the same host. *Test: hover an icon, label appears quickly, leave and it dismisses; dock hide delay still respects the overlay.*
 
-**E — Settings + persistence.** SettingsWindow/Model: reveal delay, hide delay, animation duration, icon size, magnification toggle, widget & folder management. *Test: live changes apply.*
+**D: App groups.**
+FolderGroup + expand/collapse (user-defined groups of apps, not filesystem stacks). *Test: click expands/collapses.*
 
-**F — Native dock hide/restore + launch at login (private APIs here only).** NativeDockManager (guarded), LaunchAtLogin (SMAppService). *Test: quit restores native dock exactly; re-login auto-launches.*
+**E: Settings + persistence.**
+SettingsWindow/Model: reveal delay, hide delay, animation duration, icon size, magnification toggle, widget and group management. *Test: live changes apply.*
+
+**F: Native Dock hide/restore + launch at login + import.**
+NativeDockManager (autohide-delay trick only, save/restore exact prior values), LaunchAtLogin (`SMAppService`), import of the user's native Dock items by reading `persistent-apps` and `persistent-others` from `com.apple.dock` (never write those keys). Private APIs only here, behind `dlopen`/`dlsym`. *Test: quit restores native Dock exactly; re-login auto-launches; imported pins match the native list.*
+
+**Live on it (checkpoint).**
+Daily-drive Portside with A through F in place. Collect what hurts before starting the native Dock parity backlog (P1 to P3). Do not start P1 until this checkpoint has real notes.
+
+Then: **P1**, **P2**, **P3** (see §8 Native Dock parity).
 
 ---
 
-## 8. Acceptance Criteria
+## 8. Native Dock parity
+
+Features that make Portside feel like the real Dock. Ordered by daily-driver impact. Public APIs preferred; Accessibility and private APIs only where noted.
+
+### P1 (daily driver basics)
+- Right-click context menu: Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove
+- Drag apps in from Finder to pin
+- Drag icons out of the strip to remove
+- Drop files onto app icons to open them with that app
+- Launch bounce animation
+- Modifier clicks: Cmd-click reveals in Finder, Option-click hides other apps
+- Cmd-Option-D show/hide shortcut
+
+### P2 (polish and stacks)
+- Trash with full/empty state and drag-to-trash (note: Full Disk Access prompt)
+- Filesystem folder stacks (fan/grid/list), separate from app groups in Milestone D
+- Section divider
+- Resize handle
+- Magnification polish
+
+### P3 (multi-display and badges)
+- Dock on left or right edge
+- Follow the display the cursor hits
+- Fullscreen apps and Spaces behavior
+- Badge counts via the real Dock's accessibility tree (needs Accessibility permission; private APIs only as a fallback)
+
+### Explicitly out of scope
+- Minimized windows in the Dock (user has "minimize into app icon" on)
+- Attention bouncing from other apps
+
+---
+
+## 9. Enhancements
+
+Portside-specific features beyond native Dock parity:
+- Widgets (shipped in Milestone C; more kinds later)
+- App groups (Milestone D)
+- Window previews on hover (builds on the B.5 overlay panel)
+- Profiles (saved layouts / pin sets)
+
+---
+
+## 10. Acceptance Criteria
 - Edge → reveal begins within ~16ms (timing logs prove it).
 - First click after reveal works immediately, no focus-stealing pre-click.
 - 3+ widgets rendering live data; 1+ working folder.
@@ -178,4 +234,4 @@ DockStrip, DockItem, indicators via `NSWorkspace.notificationCenter`, drag-reord
 
 ---
 
-*Revised for SPM build, Portside naming, single native-dock mechanism, public-API-first. macOS 27.0.1, Xcode 27.1, Apple Silicon M4.*
+*Revised for SPM build, Portside naming, single native-dock mechanism, public-API-first, B.5 overlay, and P1-P3 parity backlog. macOS 27.0.1, Xcode 27.1, Apple Silicon M4.*

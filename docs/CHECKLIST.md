@@ -1,8 +1,28 @@
 # Portside: Checklist
 
+Roadmap mirrors `docs/PLAN.md`. Milestones A to C are done. Next up is B.5.
+
+## Roadmap
+
+- [x] **A:** Edge tracker + non-activating panel + slide
+- [x] **B:** Pinned apps + running indicators + drag reorder + persistence
+- [x] **C:** Widget protocol and widgets (clock, calendar, weather, system stats, battery)
+- [ ] **B.5:** Hover labels with a reusable overlay panel
+- [ ] **D:** App groups (expand/collapse)
+- [ ] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, widgets, groups) applying live
+- [ ] **F:** Native Dock hide/restore (autohide-delay trick only), launch at login (`SMAppService`), import `persistent-apps` and `persistent-others` from `com.apple.dock`
+- [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
+- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); drag apps in from Finder; drag icons out to remove; drop files onto app icons to open them; launch bounce; Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide
+- [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); filesystem folder stacks (fan/grid/list, separate from app groups); section divider; resize handle; magnification polish
+- [ ] **P3:** Dock on left/right edge; follow the display the cursor hits; fullscreen apps and Spaces; badge counts via the real Dock's accessibility tree (Accessibility permission; private APIs only as fallback)
+- [ ] **Out of scope (do not build):** minimized windows in the Dock; attention bouncing from other apps
+- [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
+
+---
+
 # Milestone C: widget system
 
-Status: built, launched with `swift run`, widgets verified rendering live data (read back through the Accessibility API). Waiting on the human hand test before Milestone D.
+Status: built, launched with `swift run`, widgets verified rendering live data (read back through the Accessibility API). Waiting on the human hand test before Milestone B.5.
 
 ## Deliverables
 
