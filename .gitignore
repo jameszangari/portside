@@ -1,0 +1,13 @@
+# Swift Package Manager / Xcode build products
+.build/
+.swiftpm/
+
+# macOS / Xcode user state
+.DS_Store
+xcuserdata/
+**/xcuserdata/
+
+# REA tooling leftovers (not part of the Swift app)
+node_modules/
+package.json
+package-lock.json

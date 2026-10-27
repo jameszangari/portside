@@ -1,0 +1,182 @@
+import AppKit
+import os.log
+
+/// Central coordinator for the dock.
+///
+/// React analogy: this is the container component. `EdgeTracker` and
+/// `DockPanel` are dumb children that only emit enter/exit events; all the
+/// state (is the cursor "inside" the dock zone, is a hide pending) lives here.
+///
+/// Timers in the reveal/hide path: exactly one cancelable hide-delay work
+/// item, plus an optional cancelable reveal-delay work item that is only
+/// used when `DockModel.revealDelay > 0` (it is 0 by default).
+final class DockEngine {
+    let dockModel: DockModel
+    private let runningApps: RunningApps
+    private let widgets: WidgetStore
+    private let layout: DockLayout
+    private let dockPanel: DockPanel
+    private let edgeTracker: EdgeTracker
+    private let logger = Logger(subsystem: "com.james.portside", category: "DockEngine")
+
+    private var pendingHide: DispatchWorkItem?
+    private var pendingReveal: DispatchWorkItem?
+
+    /// True while any menu in Portside is open (item context menus). The menu
+    /// sits outside the panel, so without this the hide timer would slide
+    /// the dock away from under it.
+    private var menuIsOpen = false
+    private var menuObservers: [NSObjectProtocol] = []
+
+    /// Timestamp (CACurrentMediaTime) of the mouseEntered that started the
+    /// current reveal, used for the enter -> animation start -> interactive logs.
+    private var revealRequestedAt: CFTimeInterval = 0
+
+    init(dockModel: DockModel = DockModel.load()) {
+        self.dockModel = dockModel
+        self.runningApps = RunningApps()
+        self.widgets = WidgetStore(dockModel: dockModel)
+        self.layout = DockLayout()
+        let strip = DockStrip(dockModel: dockModel, runningApps: runningApps, widgets: widgets, layout: layout)
+        self.dockPanel = DockPanel(dockModel: dockModel, strip: strip)
+        self.edgeTracker = EdgeTracker()
+
+        let center = NotificationCenter.default
+        menuObservers.append(center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.menuIsOpen = true
+        })
+        menuObservers.append(center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            self.menuIsOpen = false
+            // The hide timer skipped while the menu was up; re-arm it if the
+            // cursor ended up outside the dock.
+            let location = NSEvent.mouseLocation
+            if !self.dockPanel.containsScreenPoint(location) && !self.edgeTracker.containsScreenPoint(location) {
+                self.handleExit(source: "menu closed")
+            }
+        })
+
+        edgeTracker.onMouseEntered = { [weak self] event in
+            self?.handleEnter(source: "edge", event: event)
+        }
+        edgeTracker.onMouseExited = { [weak self] in
+            self?.handleExit(source: "edge")
+        }
+        dockPanel.onMouseEntered = { [weak self] event in
+            self?.handleEnter(source: "panel", event: event)
+        }
+        dockPanel.onMouseExited = { [weak self] in
+            self?.handleExit(source: "panel")
+        }
+        dockPanel.onRevealAnimationStarted = { [weak self] in
+            self?.logTiming(label: "animation start")
+        }
+        dockPanel.onPanelInteractive = { [weak self] in
+            self?.logTiming(label: "panel interactive")
+        }
+        dockPanel.onRevealAnimationFinished = { [weak self] in
+            self?.logTiming(label: "animation finished")
+        }
+    }
+
+    /// Start the engine. The panel starts hidden; only the edge window is shown.
+    func start() {
+        dockPanel.prepareHidden()
+        edgeTracker.start()
+        logger.info("engine started, panel hidden, edge tracker armed")
+    }
+
+    /// Stop the engine: hide the panel and tear down the edge tracker.
+    func stop() {
+        pendingHide?.cancel()
+        pendingHide = nil
+        pendingReveal?.cancel()
+        pendingReveal = nil
+        dockPanel.hide(animated: false)
+        edgeTracker.stop()
+        widgets.stopAll()
+        logger.info("engine stopped")
+    }
+
+    // MARK: - Enter / exit handling
+
+    private func handleEnter(source: String, event: NSEvent?) {
+        // Any enter (edge zone or the panel itself) cancels a pending hide.
+        if let pendingHide {
+            pendingHide.cancel()
+            self.pendingHide = nil
+            logger.info("\(source, privacy: .public) enter: pending hide canceled")
+        }
+
+        if dockPanel.isRevealedOrRevealing {
+            return
+        }
+
+        revealRequestedAt = CACurrentMediaTime()
+        if let event {
+            // NSEvent.timestamp is system uptime; compare against the same clock
+            // to see how long the event sat in the queue before we got it.
+            let queueLatencyMs = (ProcessInfo.processInfo.systemUptime - event.timestamp) * 1000
+            logger.info("\(source, privacy: .public) mouseEntered (event -> handler \(queueLatencyMs, format: .fixed(precision: 2))ms)")
+        } else {
+            logger.info("\(source, privacy: .public) mouseEntered")
+        }
+
+        let delay = dockModel.revealDelay
+        if delay > 0 {
+            let work = DispatchWorkItem { [weak self] in
+                self?.pendingReveal = nil
+                self?.reveal()
+            }
+            pendingReveal = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        } else {
+            reveal()
+        }
+    }
+
+    private func handleExit(source: String) {
+        if let pendingReveal {
+            pendingReveal.cancel()
+            self.pendingReveal = nil
+            logger.info("\(source, privacy: .public) exit: pending reveal canceled")
+        }
+
+        guard dockPanel.isRevealedOrRevealing else { return }
+
+        pendingHide?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingHide = nil
+            if self.menuIsOpen {
+                self.logger.info("hide timer fired but a menu is open, staying revealed")
+                return
+            }
+            // One-shot sanity check, not polling: if the cursor is still over
+            // the panel or the edge zone (for example because enter/exit
+            // events raced while the panel slid under a stationary cursor),
+            // leave the panel up. A later mouseExited will re-arm the hide.
+            let location = NSEvent.mouseLocation
+            if self.dockPanel.containsScreenPoint(location) || self.edgeTracker.containsScreenPoint(location) {
+                self.logger.info("hide timer fired but cursor is still inside, staying revealed")
+                return
+            }
+            self.logger.info("hide timer fired, hiding")
+            self.dockPanel.hide(animated: true)
+        }
+        pendingHide = work
+        let delayMs = dockModel.hideDelay * 1000
+        logger.info("\(source, privacy: .public) mouseExited: hide armed in \(delayMs, format: .fixed(precision: 0))ms")
+        DispatchQueue.main.asyncAfter(deadline: .now() + dockModel.hideDelay, execute: work)
+    }
+
+    private func reveal() {
+        dockPanel.show(animated: true)
+    }
+
+    private func logTiming(label: String) {
+        guard revealRequestedAt > 0 else { return }
+        let ms = (CACurrentMediaTime() - revealRequestedAt) * 1000
+        logger.info("timing: mouseEntered -> \(label, privacy: .public) = \(ms, format: .fixed(precision: 2))ms")
+    }
+}

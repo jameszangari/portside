@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Portside</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.james.portside</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Portside shows your next event in the dock's Calendar widget.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Portside shows your next event in the dock's Calendar widget.</string>
+</dict>
+</plist>
