@@ -172,7 +172,11 @@ Bottom, left, or right position (persisted; switchable live via a temporary menu
 FolderGroup + expand/collapse (user-defined groups of apps, not filesystem stacks). *Test: click expands/collapses.*
 
 **E: Settings + persistence.**
-SettingsWindow/Model: reveal delay, hide delay, animation duration, icon size, magnification toggle, dock position, widget and group management. *Test: live changes apply.*
+SettingsWindow/Model: reveal delay, hide delay, animation duration, icon size, magnification toggle, dock position, widget and group management. Also:
+- Optional "Open groups on hover" setting (off by default). When on, hovering a group tile opens its grid after a hover-intent delay (default about 200ms, configurable) so sweeping across the dock does not pop groups open; hovering a different group tile switches the open grid immediately; moving from the tile into the grid keeps it open. Reuses D's close rules. No polling timers: one cancelable one-shot delay, like the hide timer.
+- "Name prompt on group creation": when a group is first created, prompt for its name, defaulting to "Group N" so skipping is harmless. Preferred: inline rename (editable name in the open grid or on the tile) where the panel takes key focus only while editing and returns focus to the previously frontmost app afterward. Fallback: a name field in the settings window. Must not break non-activating panel behavior for normal use.
+- "Group rename" (deferred from D): rename from the settings window, and from the group tile's context menu using the same inline mechanism.
+*Test: live changes apply; with hover-open on, a slow hover opens the group and a fast sweep does not; creating a group offers a name (default Group N); rename from settings and from the tile menu updates the tile and popover title; normal dock clicks still do not steal focus.*
 
 **F: Native Dock hide/restore + launch at login + import.**
 NativeDockManager (autohide-delay trick only, save/restore exact prior values), LaunchAtLogin (`SMAppService`), import of the user's native Dock items by reading `persistent-apps` and `persistent-others` from `com.apple.dock` (never write those keys). On import, also read the native Dock's orientation and tilesize and use them as Portside's initial position and icon size. Private APIs only here, behind `dlopen`/`dlsym`. *Test: quit restores native Dock exactly; re-login auto-launches; imported pins match the native list; initial position and icon size match the native Dock.*

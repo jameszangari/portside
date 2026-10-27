@@ -10,7 +10,7 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6 and D ar
 - [x] **B.5:** Hover labels with a reusable overlay panel (including the label placement fix)
 - [x] **B.6:** Dock position (bottom/left/right) and separator resize (built, hand test pending)
 - [ ] **D:** App groups (expand/collapse) (built, hand test pending)
-- [ ] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live
+- [ ] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live; optional "Open groups on hover"; name prompt on group creation; group rename (settings + tile context menu). See Deferred to Milestone E under D for the full specs.
 - [ ] **F:** Native Dock hide/restore (autohide-delay trick only), launch at login (`SMAppService`), import `persistent-apps` and `persistent-others` from `com.apple.dock`, plus native orientation and tilesize as Portside's initial position and icon size
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
 - [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder; drag icons out to remove; drop files onto app icons to open them; launch bounce; Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide
@@ -62,8 +62,14 @@ Status: built and verified with synthetic events; waiting on James's hand test. 
 
 ## Findings
 
-- `panel mouseExited` is logged twice per exit (about 30 microseconds apart). Pre-existing: the last commit built in a separate worktree does the same. Harmless (the second call cancels and re-arms the same one-shot timer); not fixed in D.
-- Not built in D: dragging an app onto a group tile to add it, renaming groups (E), keyboard navigation in the grid (P3), scrolling for very large groups.
+- Known harmless: `panel mouseExited` logs twice per exit (about 30 microseconds apart). Pre-existing (same on the last committed build in a separate worktree). The second call restarts the same one-shot hide timer; not fixed in D.
+- Not built in D: dragging an app onto a group tile to add it, keyboard navigation in the grid (P3), scrolling for very large groups.
+
+## Deferred to Milestone E
+
+- [ ] Open groups on hover (optional setting, off by default). When on, hovering a group tile opens its grid after a hover-intent delay (default about 200ms, configurable) so sweeping across the dock does not pop groups open. Hovering a different group tile switches the open grid immediately. Moving from the tile into the grid keeps it open. Reuses D's close rules. No polling: one cancelable one-shot delay, like the hide timer.
+- [ ] Name prompt on group creation. When a group is first created, prompt for its name, with the default "Group N" so skipping is harmless. Preferred: inline rename (editable name field in the open grid or on the tile) where the panel takes key focus only while editing and returns focus to the previously frontmost app afterward. Fallback: a name field in the settings window. Must not break the non-activating panel behavior for normal use.
+- [ ] Group rename (deferred from D). Rename from the settings window, and from the group tile's context menu using the same inline mechanism as the creation prompt.
 
 ---
 
