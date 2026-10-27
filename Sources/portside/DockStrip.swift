@@ -34,6 +34,9 @@ final class DockLayout: ObservableObject {
 final class DockInteractions {
     /// True while the separator is being dragged to resize the icons.
     var onResizingChanged: ((Bool) -> Void)?
+    /// The strip's measured size, after every change (icon size, items,
+    /// widgets, edge). The panel sizes its window from this.
+    var onContentSizeChanged: ((CGSize) -> Void)?
 }
 
 /// SwiftUI view that renders the dock strip: pinned apps, a separator,
@@ -141,6 +144,11 @@ struct DockStrip: View {
         )
         .onDrop(of: [.fileURL], delegate: AppFileDropDelegate(dockModel: dockModel, slotLength: tile + spacing, leadingInset: alongPadding, vertical: edge.isVertical))
         .fixedSize()
+        // NSHostingView does not report intrinsic size changes to AppKit
+        // here, so the strip reports its own size.
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
+            interactions.onContentSizeChanged?(size)
+        }
         // Root space = the hosting view's bounds, so DockPanel can convert
         // hover target frames to screen coordinates.
         .coordinateSpace(name: DockHover.space)
@@ -224,19 +232,21 @@ struct DockStrip: View {
 }
 
 /// Resize cursor while hovering the separator: up-down on the bottom dock,
-/// left-right on side docks. Uses SwiftUI's pointer style where available,
-/// with a manual NSCursor fallback. During a drag the cursor can leave the
+/// left-right on side docks. Set by hand on every hover move rather than
+/// with `pointerStyle`: AppKit's cursor rects only run for the active app,
+/// and Portside never is. Works while another app is frontmost only when
+/// `BackgroundCursor` is enabled. During a drag the cursor can leave the
 /// separator, so the gesture also sets it on every step.
 private struct ResizePointer: ViewModifier {
     let edge: DockEdge
     let isResizing: Bool
 
     func body(content: Content) -> some View {
-        if #available(macOS 15.0, *) {
-            content.pointerStyle(edge.isVertical ? .columnResize : .rowResize)
-        } else {
-            content.onHover { inside in
-                if !isResizing { ResizeCursor.show(inside ? edge : nil) }
+        content.onContinuousHover { phase in
+            guard !isResizing else { return }
+            switch phase {
+            case .active: ResizeCursor.show(edge)
+            case .ended: ResizeCursor.show(nil)
             }
         }
     }

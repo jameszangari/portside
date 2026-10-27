@@ -8,7 +8,7 @@ struct PortsideApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        MenuBarExtra("Portside", systemImage: "bird") {
+        MenuBarExtra {
             Text("Portside (Milestone B.6)")
             Divider()
             Button("Add App to Dock...") {
@@ -21,6 +21,11 @@ struct PortsideApp: App {
                 NSApp.terminate(nil)
             }
             .keyboardShortcut("q")
+        } label: {
+            // The title/systemImage initializer exposes the symbol name
+            // ("Bird") as the item's accessibility title.
+            Image(systemName: "bird")
+                .accessibilityLabel("Portside")
         }
     }
 }
@@ -77,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        BackgroundCursor.enable()
         let engine = DockEngine(dockModel: dockModel)
         dockEngine = engine
         engine.start()

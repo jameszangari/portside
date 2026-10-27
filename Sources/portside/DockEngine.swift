@@ -59,6 +59,10 @@ final class DockEngine {
             }
         }
 
+        interactions.onContentSizeChanged = { [weak dockPanel] size in
+            dockPanel?.contentSizeChanged(size)
+        }
+
         hover.stripToScreen = { [weak dockPanel] rect in dockPanel?.screenRect(forStripRect: rect) }
         dockPanel.onStripMouseMoved = { [weak self] point in
             guard let self, self.dockPanel.isRevealed else { return }

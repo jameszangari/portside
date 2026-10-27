@@ -40,6 +40,8 @@ final class DockPanel {
     /// Incremented on every show/hide so stale animation completions can be ignored.
     private var generation = 0
     private var screenObserver: NSObjectProtocol?
+    /// Last size the strip reported. Nil until its first layout.
+    private var measuredContentSize: CGSize?
 
     /// Screen edge the panel is attached to.
     private(set) var edge: DockEdge
@@ -103,11 +105,6 @@ final class DockPanel {
         hosting.onMouseDown = { [weak self] in self?.onMouseDown?() }
 
         layout()
-        // The strip's width changes as apps are pinned, removed, launched or
-        // quit. Deferred so SwiftUI finishes its layout pass first.
-        hosting.onIntrinsicSizeChange = { [weak self] in
-            DispatchQueue.main.async { self?.layoutIfSizeChanged() }
-        }
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
@@ -140,7 +137,7 @@ final class DockPanel {
     }
 
     private var panelSize: NSSize {
-        var content = hostingView.intrinsicContentSize
+        var content = measuredContentSize ?? hostingView.intrinsicContentSize
         if content.width <= 0 || content.height <= 0 {
             content = hostingView.fittingSize
         }
@@ -211,10 +208,19 @@ final class DockPanel {
         hostingView.autoresizingMask = [.width, .height]
     }
 
+    /// The strip reported a new size (icon size, items, widgets, edge).
+    func contentSizeChanged(_ size: CGSize) {
+        measuredContentSize = size
+        layoutIfSizeChanged()
+    }
+
+    /// Resizes in place while revealed or hidden. During a slide the
+    /// animator owns the frame; the slide's completion catches up instead.
     private func layoutIfSizeChanged() {
+        guard state == .revealed || state == .hidden else { return }
         guard panelSize != panel.frame.size else { return }
         layout()
-        logger.info("panel resized to \(self.panel.frame.width, format: .fixed(precision: 0))x\(self.panel.frame.height, format: .fixed(precision: 0))")
+        logger.info("panel resized to \(self.panel.frame.width, format: .fixed(precision: 0))x\(self.panel.frame.height, format: .fixed(precision: 0)) at icon \(self.dockModel.iconSize, format: .fixed(precision: 0))pt")
     }
 
     // MARK: - Strip coordinates (for hover labels and overlays)
@@ -321,6 +327,7 @@ final class DockPanel {
     private func finishReveal(generation: Int) {
         guard generation == self.generation else { return }
         state = .revealed
+        layoutIfSizeChanged()
         onRevealAnimationFinished?()
         logger.info("panel revealed")
     }
@@ -329,6 +336,7 @@ final class DockPanel {
         guard generation == self.generation else { return }
         state = .hidden
         panel.orderOut(nil)
+        layoutIfSizeChanged()
         logger.info("panel hidden")
     }
 
@@ -403,14 +411,8 @@ private final class PanelContentView: NSView {
 /// should both stay false).
 private final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
     private let logger = Logger(subsystem: "com.james.portside", category: "DockPanel")
-    var onIntrinsicSizeChange: (() -> Void)?
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override func invalidateIntrinsicContentSize() {
-        super.invalidateIntrinsicContentSize()
-        onIntrinsicSizeChange?()
-    }
 
     var onMouseDown: (() -> Void)?
 

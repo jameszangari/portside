@@ -59,6 +59,11 @@ enum DockScreen {
     static var visibleFrame: NSRect {
         NSScreen.screens.first?.visibleFrame ?? frame
     }
+
+    /// Points to pixels (2 on Retina).
+    static var backingScale: CGFloat {
+        NSScreen.screens.first?.backingScaleFactor ?? 2
+    }
 }
 
 private struct DockEdgeKey: EnvironmentKey {
