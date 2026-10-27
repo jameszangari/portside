@@ -19,6 +19,7 @@ final class DockEngine {
     private let dockPanel: DockPanel
     private let edgeTracker: EdgeTracker
     private let hover: DockHover
+    private let groups: GroupController
     private let logger = Logger(subsystem: "com.james.portside", category: "DockEngine")
 
     private var pendingHide: DispatchWorkItem?
@@ -46,7 +47,8 @@ final class DockEngine {
         self.widgets = WidgetStore(dockModel: dockModel)
         self.layout = DockLayout()
         self.hover = DockHover(overlay: OverlayPanel())
-        let strip = DockStrip(dockModel: dockModel, runningApps: runningApps, widgets: widgets, layout: layout, hover: hover, interactions: interactions)
+        self.groups = GroupController(dockModel: dockModel, runningApps: runningApps, hover: hover)
+        let strip = DockStrip(dockModel: dockModel, runningApps: runningApps, widgets: widgets, layout: layout, groups: groups, hover: hover, interactions: interactions)
         self.dockPanel = DockPanel(dockModel: dockModel, strip: strip)
         self.edgeTracker = EdgeTracker(edge: dockModel.edge)
         hover.setEdge(dockModel.edge)
@@ -70,7 +72,16 @@ final class DockEngine {
         }
         dockPanel.onMouseDown = { [weak self] in
             self?.hover.clear()
+            self?.groups.stripMouseDown(at: NSEvent.mouseLocation)
         }
+
+        // The open group's panel is part of "inside the dock": entering it
+        // cancels a pending hide, leaving it arms one, like the panel itself.
+        interactions.onGroupTapped = { [weak self] id in self?.groups.toggle(id) }
+        hover.onTargetsChanged = { [weak self] in self?.groups.targetsChanged() }
+        groups.onMouseEntered = { [weak self] in self?.handleEnter(source: "group", event: nil) }
+        groups.onMouseExited = { [weak self] in self?.handleExit(source: "group") }
+        groups.onCollapsed = { [weak self] in self?.rearmHideIfCursorOutside(source: "group closed") }
 
         let center = NotificationCenter.default
         menuObservers.append(center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
@@ -140,6 +151,7 @@ final class DockEngine {
         pendingReveal = nil
         hover.clear()
         dockPanel.hide(animated: false)
+        groups.collapse(reason: "engine stopped")
         edgeTracker.stop()
         widgets.stopAll()
         logger.info("engine stopped")
@@ -148,6 +160,7 @@ final class DockEngine {
     /// Move the dock to another screen edge, live. The panel snaps hidden on
     /// the new edge; the next edge touch reveals it from there.
     private func applyEdge(_ edge: DockEdge) {
+        groups.collapse(reason: "dock moved")
         pendingHide?.cancel()
         pendingHide = nil
         pendingReveal?.cancel()
@@ -159,10 +172,16 @@ final class DockEngine {
     }
 
     private func rearmHideIfCursorOutside(source: String) {
-        let location = NSEvent.mouseLocation
-        if !dockPanel.containsScreenPoint(location) && !edgeTracker.containsScreenPoint(location) {
+        if !isCursorInsideDock(NSEvent.mouseLocation) {
             handleExit(source: source)
         }
+    }
+
+    /// Over the panel, the edge zone, or an open group.
+    private func isCursorInsideDock(_ location: NSPoint) -> Bool {
+        dockPanel.containsScreenPoint(location)
+            || edgeTracker.containsScreenPoint(location)
+            || groups.containsScreenPoint(location)
     }
 
     // MARK: - Enter / exit handling
@@ -227,14 +246,15 @@ final class DockEngine {
             // the panel or the edge zone (for example because enter/exit
             // events raced while the panel slid under a stationary cursor),
             // leave the panel up. A later mouseExited will re-arm the hide.
-            let location = NSEvent.mouseLocation
-            if self.dockPanel.containsScreenPoint(location) || self.edgeTracker.containsScreenPoint(location) {
+            if self.isCursorInsideDock(NSEvent.mouseLocation) {
                 self.logger.info("hide timer fired but cursor is still inside, staying revealed")
                 return
             }
             self.logger.info("hide timer fired, hiding")
             self.hover.clear()
             self.dockPanel.hide(animated: true)
+            // After hide() so the collapse's re-check sees the dock hiding.
+            self.groups.collapse(reason: "dock hiding")
         }
         pendingHide = work
         let delayMs = dockModel.hideDelay * 1000

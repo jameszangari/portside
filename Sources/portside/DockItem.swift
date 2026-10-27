@@ -139,6 +139,13 @@ struct DockItemView: View {
             } else {
                 Button("Keep in Dock") { dockModel.pin(app) }
             }
+            Menu("Add to Group") {
+                ForEach(dockModel.groups) { group in
+                    Button(group.name) { dockModel.addToGroup(app, groupID: group.id) }
+                }
+                if !dockModel.groups.isEmpty { Divider() }
+                Button("New Group") { dockModel.createGroup(with: app) }
+            }
             Button("Show in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([app.url])
             }

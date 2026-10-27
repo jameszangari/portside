@@ -92,9 +92,15 @@ final class DockModel: Codable, ObservableObject {
         if shouldPersist { persist() }
     }
 
-    // MARK: - Pinned apps
+    // MARK: - Pinned entries
 
-    @Published var pinnedApps: [PinnedApp] = []
+    /// The pinned section in display order: apps and groups.
+    @Published private(set) var entries: [DockEntry] = []
+
+    /// Every pinned app, including the ones inside groups.
+    var allPinnedApps: [PinnedApp] { entries.flatMap(\.apps) }
+
+    var groups: [FolderGroup] { entries.compactMap(\.group) }
 
     // MARK: - Widgets
 
@@ -118,39 +124,38 @@ final class DockModel: Codable, ObservableObject {
 
     init() {}
 
-    // MARK: - Pinned app mutations (each one persists)
+    // MARK: - Pinned mutations (each one persists)
 
     func isPinned(_ app: PinnedApp) -> Bool {
-        pinnedApps.contains { $0.id == app.id }
+        allPinnedApps.contains { $0.id == app.id }
     }
 
-    /// Pin an app at `index` (end if nil). If already pinned, moves it there.
+    /// Pin an app as its own entry at `index` (end if nil). If it is already
+    /// pinned, top level or in a group, it moves there.
     func pin(_ app: PinnedApp, at index: Int? = nil) {
-        var apps = pinnedApps
-        if let existing = apps.firstIndex(where: { $0.id == app.id }) {
-            apps.remove(at: existing)
-        }
-        let target = min(max(index ?? apps.count, 0), apps.count)
-        apps.insert(app, at: target)
-        pinnedApps = apps
+        var list = Self.removing(app, from: entries)
+        let target = min(max(index ?? list.count, 0), list.count)
+        list.insert(.app(app), at: target)
+        entries = list
         persist()
     }
 
+    /// Remove an app from the dock, wherever it is. A group left empty goes too.
     func unpin(_ app: PinnedApp) {
-        pinnedApps.removeAll { $0.id == app.id }
+        entries = Self.removing(app, from: entries)
         persist()
     }
 
-    /// Move a pinned app to `index`. Drag reorder calls this on every slot
+    /// Move an entry to `index`. Drag reorder calls this on every slot
     /// change with `persist: false`, then `saveOrder()` once on release.
-    func move(_ app: PinnedApp, toIndex index: Int, persist shouldPersist: Bool = true) {
-        guard let from = pinnedApps.firstIndex(where: { $0.id == app.id }) else { return }
-        let to = min(max(index, 0), pinnedApps.count - 1)
+    func move(entryID: String, toIndex index: Int, persist shouldPersist: Bool = true) {
+        guard let from = entries.firstIndex(where: { $0.id == entryID }) else { return }
+        let to = min(max(index, 0), entries.count - 1)
         guard from != to else { return }
-        var apps = pinnedApps
-        apps.remove(at: from)
-        apps.insert(app, at: to)
-        pinnedApps = apps
+        var list = entries
+        let entry = list.remove(at: from)
+        list.insert(entry, at: to)
+        entries = list
         if shouldPersist { persist() }
     }
 
@@ -158,10 +163,93 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    // MARK: - Groups
+
+    /// Replace the app's slot with a new group holding just that app.
+    /// Returns the group's id.
+    @discardableResult
+    func createGroup(with app: PinnedApp) -> String {
+        let group = FolderGroup(name: nextGroupName(), apps: [app])
+        let slot = entries.firstIndex { $0.apps.contains { $0.id == app.id } } ?? entries.count
+        var list = Self.removing(app, from: entries)
+        list.insert(.group(group), at: min(slot, list.count))
+        entries = list
+        persist()
+        Self.logger.info("created \(group.name, privacy: .public) with \(app.displayName, privacy: .public)")
+        return group.id
+    }
+
+    /// Move an app into a group (appended). Works for top level apps, apps in
+    /// another group, and running apps that are not pinned yet.
+    func addToGroup(_ app: PinnedApp, groupID: String) {
+        var list = Self.removing(app, from: entries)
+        guard let index = list.firstIndex(where: { $0.group?.id == groupID }),
+              var group = list[index].group else { return }
+        group.apps.append(app)
+        list[index] = .group(group)
+        entries = list
+        persist()
+    }
+
+    /// Take an app out of its group and put it back on the dock right after
+    /// the group. A group left empty is removed.
+    func removeFromGroup(_ app: PinnedApp, groupID: String) {
+        guard let index = entries.firstIndex(where: { $0.group?.id == groupID }),
+              var group = entries[index].group else { return }
+        group.apps.removeAll { $0.id == app.id }
+        var list = entries
+        if group.apps.isEmpty {
+            list[index] = .app(app)
+        } else {
+            list[index] = .group(group)
+            list.insert(.app(app), at: index + 1)
+        }
+        entries = list
+        persist()
+    }
+
+    /// Replace the group with its apps, in place.
+    func ungroup(groupID: String) {
+        guard let index = entries.firstIndex(where: { $0.group?.id == groupID }),
+              let group = entries[index].group else { return }
+        var list = entries
+        list.replaceSubrange(index...index, with: group.apps.map(DockEntry.app))
+        entries = list
+        persist()
+    }
+
+    /// Remove the group and its apps from the dock.
+    func removeGroup(groupID: String) {
+        entries.removeAll { $0.group?.id == groupID }
+        persist()
+    }
+
+    private func nextGroupName() -> String {
+        let used = Set(groups.map(\.name))
+        var n = 1
+        while used.contains("Group \(n)") { n += 1 }
+        return "Group \(n)"
+    }
+
+    /// The list without `app`, wherever it was. Groups left empty are dropped.
+    private static func removing(_ app: PinnedApp, from list: [DockEntry]) -> [DockEntry] {
+        list.compactMap { entry in
+            switch entry {
+            case .app(let other):
+                return other.id == app.id ? nil : entry
+            case .group(var group):
+                group.apps.removeAll { $0.id == app.id }
+                return group.apps.isEmpty ? nil : .group(group)
+            }
+        }
+    }
+
     // MARK: - Codable
 
     private enum CodingKeys: String, CodingKey {
-        case revealDelay, hideDelay, animationDuration, iconSize, magnificationEnabled, edge, pinnedApps, widgetKinds
+        case revealDelay, hideDelay, animationDuration, iconSize, magnificationEnabled, edge, entries, widgetKinds
+        /// Before Milestone D: a flat list of apps. Read only, for migration.
+        case pinnedApps
     }
 
     required init(from decoder: Decoder) throws {
@@ -172,10 +260,12 @@ final class DockModel: Codable, ObservableObject {
         iconSize = try c.decodeIfPresent(CGFloat.self, forKey: .iconSize) ?? 48.0
         magnificationEnabled = try c.decodeIfPresent(Bool.self, forKey: .magnificationEnabled) ?? false
         edge = (try? c.decodeIfPresent(DockEdge.self, forKey: .edge)) ?? .bottom
-        if let apps = try c.decodeIfPresent([PinnedApp].self, forKey: .pinnedApps) {
-            pinnedApps = apps
+        if let saved = try c.decodeIfPresent([DockEntry].self, forKey: .entries) {
+            entries = saved
+        } else if let apps = try c.decodeIfPresent([PinnedApp].self, forKey: .pinnedApps) {
+            entries = apps.map(DockEntry.app)
         } else {
-            pinnedApps = DockModel.seedFromNativeDock()
+            entries = DockModel.seedFromNativeDock().map(DockEntry.app)
         }
         widgetKinds = try c.decodeIfPresent([String].self, forKey: .widgetKinds) ?? WidgetCatalog.defaultKinds
     }
@@ -188,7 +278,7 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(iconSize, forKey: .iconSize)
         try c.encode(magnificationEnabled, forKey: .magnificationEnabled)
         try c.encode(edge, forKey: .edge)
-        try c.encode(pinnedApps, forKey: .pinnedApps)
+        try c.encode(entries, forKey: .entries)
         try c.encode(widgetKinds, forKey: .widgetKinds)
     }
 
@@ -211,7 +301,7 @@ final class DockModel: Codable, ObservableObject {
     private func persist() {
         do {
             try save()
-            DockModel.logger.info("saved \(self.pinnedApps.count) pinned apps")
+            DockModel.logger.info("saved \(self.entries.count) entries (\(self.allPinnedApps.count) apps, \(self.groups.count) groups)")
         } catch {
             DockModel.logger.error("save failed: \(error.localizedDescription, privacy: .public)")
         }
@@ -222,13 +312,13 @@ final class DockModel: Codable, ObservableObject {
     static func load() -> DockModel {
         if let data = try? Data(contentsOf: storageURL),
            let model = try? JSONDecoder().decode(DockModel.self, from: data) {
-            logger.info("loaded \(model.pinnedApps.count) pinned apps from dock.json")
+            logger.info("loaded \(model.entries.count) entries (\(model.allPinnedApps.count) apps, \(model.groups.count) groups) from dock.json")
             return model
         }
         let model = DockModel()
-        model.pinnedApps = seedFromNativeDock()
+        model.entries = seedFromNativeDock().map(DockEntry.app)
         model.persist()
-        logger.info("first launch: seeded \(model.pinnedApps.count) pinned apps from the native Dock")
+        logger.info("first launch: seeded \(model.entries.count) pinned apps from the native Dock")
         return model
     }
 

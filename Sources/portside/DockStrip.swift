@@ -37,6 +37,8 @@ final class DockInteractions {
     /// The strip's measured size, after every change (icon size, items,
     /// widgets, edge). The panel sizes its window from this.
     var onContentSizeChanged: ((CGSize) -> Void)?
+    /// A group tile was clicked (expand or collapse it).
+    var onGroupTapped: ((String) -> Void)?
 }
 
 /// SwiftUI view that renders the dock strip: pinned apps, a separator,
@@ -56,13 +58,15 @@ struct DockStrip: View {
     @ObservedObject var runningApps: RunningApps
     @ObservedObject var widgets: WidgetStore
     @ObservedObject var layout: DockLayout
+    /// Which group is expanded, so its tile can show it.
+    @ObservedObject var groups: GroupController
     /// Receives item frames for hover labels. Not observed: it never
     /// changes what the strip renders.
     let hover: DockHover
     let interactions: DockInteractions
 
-    /// The pinned app currently being dragged, if any.
-    @State private var dragging: PinnedApp?
+    /// Id of the pinned entry (app or group) being dragged, if any.
+    @State private var dragging: String?
     /// Cursor (screen coordinates) and tile size when a separator drag began.
     @State private var resizeStart: (mouse: CGPoint, tile: CGFloat)?
 
@@ -74,7 +78,7 @@ struct DockStrip: View {
 
     /// Largest tile that still fits everything on screen, ignoring `iconSize`.
     private func maxTileSize(extrasCount: Int, edge: DockEdge) -> CGFloat {
-        let apps = dockModel.pinnedApps.count + extrasCount
+        let apps = dockModel.entries.count + extrasCount
         let separators = (extrasCount > 0 ? 1 : 0) + (widgets.hosts.isEmpty ? 0 : 1)
         let items = apps + widgets.hosts.count + separators
         // Horizontal: widgets are N tiles wide with gaps inside them.
@@ -91,7 +95,7 @@ struct DockStrip: View {
     private var unpinnedRunning: [(PinnedApp, NSRunningApplication)] {
         runningApps.apps.compactMap { running in
             guard let app = PinnedApp(runningApp: running), !dockModel.isPinned(app) else { return nil }
-            if dockModel.pinnedApps.contains(where: { runningApps.runningInstance(of: $0) == running }) { return nil }
+            if dockModel.allPinnedApps.contains(where: { runningApps.runningInstance(of: $0) == running }) { return nil }
             return (app, running)
         }
     }
@@ -107,11 +111,11 @@ struct DockStrip: View {
             : AnyLayout(HStackLayout(alignment: .top, spacing: spacing))
 
         stack {
-            ForEach(dockModel.pinnedApps) { app in
-                DockItemView(app: app, running: runningApps.runningInstance(of: app), isPinned: true, size: tile, dockModel: dockModel)
-                    .opacity(dragging?.id == app.id ? 0.5 : 1)
-                    .scaleEffect(dragging?.id == app.id ? 1.08 : 1, anchor: edge.growthAnchor)
-                    .gesture(reorderGesture(for: app, tile: tile, vertical: edge.isVertical))
+            ForEach(dockModel.entries) { entry in
+                entryView(entry, tile: tile)
+                    .opacity(dragging == entry.id ? 0.5 : 1)
+                    .scaleEffect(dragging == entry.id ? 1.08 : 1, anchor: edge.growthAnchor)
+                    .gesture(reorderGesture(for: entry, tile: tile, vertical: edge.isVertical))
             }
 
             if !extras.isEmpty {
@@ -154,6 +158,22 @@ struct DockStrip: View {
         .coordinateSpace(name: DockHover.space)
         .onPreferenceChange(HoverTargetsKey.self) { targets in
             hover.updateTargets(targets)
+        }
+    }
+
+    @ViewBuilder private func entryView(_ entry: DockEntry, tile: CGFloat) -> some View {
+        switch entry {
+        case .app(let app):
+            DockItemView(app: app, running: runningApps.runningInstance(of: app), isPinned: true, size: tile, dockModel: dockModel)
+        case .group(let group):
+            GroupTileView(
+                group: group,
+                size: tile,
+                isExpanded: groups.expandedID == group.id,
+                anyRunning: group.apps.contains { runningApps.isRunning($0) },
+                onToggle: { interactions.onGroupTapped?(group.id) },
+                dockModel: dockModel
+            )
         }
     }
 
@@ -209,24 +229,24 @@ struct DockStrip: View {
 
     /// Live reorder: the dragged tile jumps to whichever slot the cursor is
     /// over. Order is saved once, on release.
-    private func reorderGesture(for app: PinnedApp, tile: CGFloat, vertical: Bool) -> some Gesture {
+    private func reorderGesture(for entry: DockEntry, tile: CGFloat, vertical: Bool) -> some Gesture {
         DragGesture(minimumDistance: 4, coordinateSpace: .named(DockStrip.space))
             .onChanged { value in
                 if dragging == nil {
-                    dragging = app
-                    stripLogger.info("reorder started: \(app.displayName, privacy: .public)")
+                    dragging = entry.id
+                    stripLogger.info("reorder started: \(entry.id, privacy: .public)")
                 }
                 let position = vertical ? value.location.y : value.location.x
                 let slot = Int((position / (tile + spacing)).rounded(.down))
                 withAnimation(.easeOut(duration: 0.12)) {
-                    dockModel.move(app, toIndex: slot, persist: false)
+                    dockModel.move(entryID: entry.id, toIndex: slot, persist: false)
                 }
             }
             .onEnded { _ in
                 dragging = nil
                 dockModel.saveOrder()
-                let index = dockModel.pinnedApps.firstIndex { $0.id == app.id } ?? -1
-                stripLogger.info("reorder ended: \(app.displayName, privacy: .public) at slot \(index)")
+                let index = dockModel.entries.firstIndex { $0.id == entry.id } ?? -1
+                stripLogger.info("reorder ended: \(entry.id, privacy: .public) at slot \(index)")
             }
     }
 }
@@ -280,7 +300,7 @@ private struct AppFileDropDelegate: DropDelegate {
     func performDrop(info: DropInfo) -> Bool {
         let position = vertical ? info.location.y : info.location.x
         let slot = Int(((position - leadingInset) / slotLength).rounded())
-        let index = min(max(slot, 0), dockModel.pinnedApps.count)
+        let index = min(max(slot, 0), dockModel.entries.count)
         let providers = info.itemProviders(for: [.fileURL])
         for provider in providers {
             _ = provider.loadObject(ofClass: URL.self) { url, _ in

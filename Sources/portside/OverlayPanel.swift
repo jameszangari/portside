@@ -2,13 +2,14 @@ import AppKit
 import SwiftUI
 
 /// A floating, non-activating panel that shows SwiftUI content next to a
-/// screen rect (a hovered tile, a folder icon). It lives outside the dock
+/// screen rect (a hovered tile, a group tile). It lives outside the dock
 /// strip so its content can extend past the strip's bounds.
 ///
 /// Click-through by default (`ignoresMouseEvents`), so it never steals the
-/// cursor from the dock panel's tracking area. An interactive use (the
-/// Milestone D folder popover) sets `ignoresMouseEvents = false` and must also
-/// count `containsScreenPoint` as "inside the dock" in the hide logic.
+/// cursor from the dock panel's tracking area. An interactive use (the group
+/// popover) sets `ignoresMouseEvents = false`, listens to `onMouseEntered` /
+/// `onMouseExited`, and the hide logic counts `containsScreenPoint` as
+/// "inside the dock".
 ///
 /// React analogy: a portal. Content is rendered into a separate window but
 /// positioned relative to an element in the dock.
@@ -16,12 +17,21 @@ final class OverlayPanel {
     /// Above the dock panel and the edge tracker.
     static let windowLevel = NSWindow.Level(rawValue: EdgeTracker.windowLevel.rawValue + 1)
 
+    /// Cursor entered or left the panel (only while it accepts mouse events).
+    var onMouseEntered: (() -> Void)?
+    var onMouseExited: (() -> Void)?
+
     private let panel: OverlayNSPanel
-    private let hostingView: NSHostingView<AnyView>
+    private let container: OverlayContentView
+    private let hostingView: OverlayHostingView
+    private var placement: (anchor: NSRect, edge: DockEdge, gap: CGFloat)?
 
     init() {
-        hostingView = NSHostingView(rootView: AnyView(EmptyView()))
+        hostingView = OverlayHostingView(rootView: AnyView(EmptyView()))
         hostingView.sizingOptions = [.intrinsicContentSize]
+        container = OverlayContentView(frame: .zero)
+        container.addSubview(hostingView)
+        hostingView.autoresizingMask = [.width, .height]
 
         panel = OverlayNSPanel(
             contentRect: .zero,
@@ -38,7 +48,10 @@ final class OverlayPanel {
         panel.animationBehavior = .none
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = true
-        panel.contentView = hostingView
+        panel.contentView = container
+
+        container.onMouseEntered = { [weak self] in self?.onMouseEntered?() }
+        container.onMouseExited = { [weak self] in self?.onMouseExited?() }
     }
 
     var ignoresMouseEvents: Bool {
@@ -54,20 +67,45 @@ final class OverlayPanel {
 
     /// Show `content` next to `anchor` (screen coordinates), on the side
     /// facing away from `edge`, separated by `gap` points. Replaces whatever
-    /// was showing. Instant: no animation.
+    /// was showing. The panel follows the content's size if it changes later.
     func present(_ content: AnyView, anchor: NSRect, edge: DockEdge, gap: CGFloat) {
-        hostingView.rootView = content
-        let size = hostingView.fittingSize
-        let frame = OverlayPanel.frame(size: size, anchor: anchor, edge: edge, gap: gap)
-        panel.setFrame(frame, display: true)
+        placement = (anchor, edge, gap)
+        // NSHostingView does not report intrinsic size changes to AppKit
+        // here, so the content reports its own size.
+        hostingView.rootView = AnyView(
+            content
+                .fixedSize()
+                .onGeometryChange(for: CGSize.self) { $0.size } action: { [weak self] size in
+                    self?.place(size: size)
+                }
+        )
+        place(size: hostingView.fittingSize)
         if !panel.isVisible {
             panel.orderFrontRegardless()
         }
     }
 
+    /// Keep the current content but move it next to a new anchor (the tile
+    /// moved because the strip changed).
+    func reanchor(_ anchor: NSRect) {
+        guard panel.isVisible, var current = placement, current.anchor != anchor else { return }
+        current.anchor = anchor
+        placement = current
+        place(size: panel.frame.size)
+    }
+
     func dismiss() {
+        placement = nil
         guard panel.isVisible else { return }
         panel.orderOut(nil)
+    }
+
+    private func place(size: NSSize) {
+        guard let placement, size.width > 0, size.height > 0 else { return }
+        let frame = OverlayPanel.frame(size: size, anchor: placement.anchor, edge: placement.edge, gap: placement.gap)
+        guard frame != panel.frame else { return }
+        panel.setFrame(frame, display: true)
+        hostingView.frame = container.bounds
     }
 
     /// Place a box of `size` beside `anchor`, centered on it along the dock's
@@ -101,4 +139,35 @@ private final class OverlayNSPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+}
+
+/// Reports cursor enter/exit over the whole overlay.
+private final class OverlayContentView: NSView {
+    var onMouseEntered: (() -> Void)?
+    var onMouseExited: (() -> Void)?
+    private var trackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { onMouseEntered?() }
+    override func mouseExited(with event: NSEvent) { onMouseExited?() }
+}
+
+/// Takes the first click even though the panel is never key, so a click in
+/// the popover works without a "wake up" click.
+private final class OverlayHostingView: NSHostingView<AnyView> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }

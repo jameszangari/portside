@@ -55,7 +55,26 @@ final class DockHover {
     /// Gap between the label and the icon's far edge (top on the bottom
     /// dock, outer side on side docks). The strip has 6pt of padding on that
     /// side, so this leaves 4pt of air between the label and the dock.
-    private let labelGap: CGFloat = 10
+    /// The group popover uses the same gap.
+    static let labelGap: CGFloat = 10
+
+    /// Labels stay hidden while true (a group popover is open in the spot
+    /// where the label would appear).
+    var isSuppressed = false {
+        didSet {
+            guard isSuppressed != oldValue else { return }
+            current = nil
+            if isSuppressed {
+                overlay.dismiss()
+            } else {
+                evaluate()
+            }
+        }
+    }
+
+    /// Called after the hover targets' frames change (items added, removed,
+    /// resized or reordered).
+    var onTargetsChanged: (() -> Void)?
 
     /// Labels open on the far side of `edge`. Drops the current label so the
     /// next hover places it for the new orientation.
@@ -71,6 +90,14 @@ final class DockHover {
     func updateTargets(_ targets: [HoverTarget]) {
         self.targets = targets
         evaluate()
+        onTargetsChanged?()
+    }
+
+    /// A target's frame in screen coordinates, or nil if it is not in the
+    /// strip or the dock is off screen.
+    func screenFrame(forTargetID id: String) -> NSRect? {
+        guard let target = targets.first(where: { $0.id == id }) else { return nil }
+        return stripToScreen?(target.frame)
     }
 
     func cursorMoved(to point: CGPoint) {
@@ -86,6 +113,7 @@ final class DockHover {
     }
 
     private func evaluate() {
+        guard !isSuppressed else { return }
         let slop = -DockMetrics.spacing / 2
         let hit = cursor.flatMap { point in
             // Tiles have a small gap between them. Extending each hit rect by
@@ -102,7 +130,7 @@ final class DockHover {
             overlay.dismiss()
             return
         }
-        overlay.present(AnyView(DockLabel(title: hit.title)), anchor: anchor, edge: edge, gap: labelGap)
+        overlay.present(AnyView(DockLabel(title: hit.title)), anchor: anchor, edge: edge, gap: Self.labelGap)
         logger.debug("label: \(hit.title, privacy: .public)")
     }
 }

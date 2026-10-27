@@ -1,6 +1,6 @@
 # Portside: Checklist
 
-Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6 is built and waiting on the hand test. Next up is D.
+Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6 and D are built and waiting on the hand test.
 
 ## Roadmap
 
@@ -9,7 +9,7 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6 is built
 - [x] **C:** Widget protocol and widgets (clock, calendar, weather, system stats, battery)
 - [x] **B.5:** Hover labels with a reusable overlay panel (including the label placement fix)
 - [x] **B.6:** Dock position (bottom/left/right) and separator resize (built, hand test pending)
-- [ ] **D:** App groups (expand/collapse)
+- [ ] **D:** App groups (expand/collapse) (built, hand test pending)
 - [ ] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live
 - [ ] **F:** Native Dock hide/restore (autohide-delay trick only), launch at login (`SMAppService`), import `persistent-apps` and `persistent-others` from `com.apple.dock`, plus native orientation and tilesize as Portside's initial position and icon size
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
@@ -19,6 +19,51 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6 is built
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; attention bouncing from other apps; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
+
+---
+
+# Milestone D: app groups
+
+Status: built and verified with synthetic events; waiting on James's hand test. Not committed.
+
+## Deliverables
+
+- [x] `FolderGroup.swift`: `FolderGroup` (id, name, apps) and `DockEntry` (an app or a group). Deviations from PLAN.md section 6: members are full `PinnedApp`s instead of `appIDs` strings (apps without a bundle id need their path), and `isExpanded` is not persisted (the expanded grid is transient and closes whenever the dock hides).
+- [x] `DockModel`: the pinned section is now `entries` (apps and groups in display order). `allPinnedApps` flattens groups, so grouped apps count as pinned and never show again in the running section. Mutations: `pin`, `unpin`, `move(entryID:)`, `createGroup(with:)`, `addToGroup`, `removeFromGroup` (puts the app back right after the group), `ungroup` (apps return in place), `removeGroup`. A group left empty is removed. New groups are named "Group 1", "Group 2" and so on.
+- [x] Migration: an existing `dock.json` with the old `pinnedApps` key loads as app entries and is saved as `entries` on the next change. Verified on the real file (27 apps, order unchanged).
+- [x] Group tile (`GroupViews.swift`): rounded tile with up to 9 member icons (2x2, or 3x3 above four), a running dot if any member runs (placed per edge like app dots), brighter while expanded. Hover label shows the group name. Reorders by drag like an app tile.
+- [x] Expanded group: a grid in a second `OverlayPanel` (interactive): group name, 52pt icons with names and running dots, hover highlight. Columns: up to 3 in one row, 4 as 2x2, 3 wide up to 9, 4 up to 16, then 5. Opens with a 120ms scale and fade from the tile side; instant with Reduce Motion.
+- [x] Placement follows the B.5/B.6 label rules: 10pt (`DockHover.labelGap`) beyond the tile's far edge, centered on the tile along the dock's axis, clamped inside the visible frame. Above the tile on the bottom, to the right on a left dock, to the left on a right dock. Follows the tile if the strip moves while open (resize, items added).
+- [x] `OverlayPanel` gained what an interactive use needs: first-click hosting view, enter/exit tracking, sizing from the content's own measured size (`onGeometryChange`, same reason as the clipping fix), and `reanchor`.
+- [x] `GroupController.swift`: open state, presentation and every close path: tile clicked again, app opened from the grid, click elsewhere on the strip, click in another app (global mouse-down monitor, installed only while a group is open; mouse events need no permission), dock hiding, dock moved, group ungrouped or removed. Hover labels are suppressed while a group is open (they would sit where the grid is).
+- [x] Hide path: entering the grid cancels a pending hide and leaving it arms one, through the same handlers as the edge zone and panel. The hide timer's one-shot check and the re-arm check count the grid as inside. Closing a group re-checks the cursor, because a panel ordered out under the cursor sends no exit. No new timers.
+- [x] Group management until E: app context menu "Add to Group" (existing groups, New Group; works for pinned and unpinned running apps); grid item menu: Remove from Group, Remove from Dock, Show in Finder, Quit; group tile menu: Ungroup, Remove from Dock. Renaming waits for E's settings window (a text prompt would have to activate Portside).
+- [x] `swift build` clean after every batch; `swift run` launches and stays up
+
+## Verification (agent, synthetic events)
+
+- [x] Created "Group 1" through the real context menus: New Group on Discord, then Add to Group for Messages, Mail and Brave. Saved as entries.
+- [x] Bottom: click expands in 1 to 16ms; grid centered on the tile (tile mid x 794, grid mid x 794), grid bottom exactly 10pt above the tile top; label hidden while open; frontmost app unchanged.
+- [x] Left: grid starts exactly 10pt right of the tile, vertically centered on it (mid y 560 both). Right: grid ends exactly 10pt left of the tile, centered. Only the expected windows on screen while open.
+- [x] Close paths, each logged: tile clicked again, click on the separator, click in the menu bar (another process), app opened from the grid (Mail activated in 34ms on the first click, grid closed), dock hiding, group ungrouped while open.
+- [x] Hide path: tile to grid logs `panel mouseExited: hide armed`, then `group enter: pending hide canceled`; dock stays up with the cursor in the grid; leaving the grid hides the dock and closes the group.
+- [x] Remove from Group from the grid menu: Brave returned right after the group; the open grid resized live to one row.
+- [x] Group tile drag reorder moves it one slot and back without toggling the grid.
+- [x] Ungroup restored the exact original app order (compared with the pre-D `dock.json`).
+- [x] Reveal timing unchanged: mouseEntered to animation start 0.3 to 3.6ms.
+
+## Hand test must also check
+
+- [ ] Create a group from an app's right-click menu, add more apps, open and close it on all three edges
+- [ ] Moving from the tile into the grid never hides the dock, and leaving both hides it after the delay
+- [ ] Clicking an app in the grid opens it on the first click without a "wake up" click
+- [ ] Clicking another app or the desktop closes the grid
+- [ ] Grid looks right next to the tile on Bottom, Left and Right (no label overlapping it)
+
+## Findings
+
+- `panel mouseExited` is logged twice per exit (about 30 microseconds apart). Pre-existing: the last commit built in a separate worktree does the same. Harmless (the second call cancels and re-arms the same one-shot timer); not fixed in D.
+- Not built in D: dragging an app onto a group tile to add it, renaming groups (E), keyboard navigation in the grid (P3), scrolling for very large groups.
 
 ---
 
