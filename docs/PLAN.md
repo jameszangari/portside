@@ -236,7 +236,29 @@ Portside-specific features beyond native Dock parity:
 
 ---
 
-## 10. Acceptance Criteria
+## 10. UX cleanup
+
+Deferred polish after the milestone and parity backlog. Evaluate options before picking one.
+
+### Side-dock widget layout
+**Problem:** On Left and Right, widgets share one column with the apps. With 27 apps and 5 widgets, tiles shrink to about 23pt, widget text is about 4 to 5pt and unreadable, and the dock looks cramped compared to the bottom layout. Fix deferred from Milestone B.6.
+
+**Constraint:** The bottom edge must stay unchanged. Side docks should keep native-style icon sizing from the saved size, with no global shrink-to-fit just to make widgets fit.
+
+**Candidates (evaluate, do not decide yet):**
+- (a) Widgets move to a separate second column or segment on the inner side of the dock, with their own sizing.
+- (b) Widgets become compact single-line variants on side docks (time, battery %, and so on) at readable text sizes.
+- (c) Widgets move into a flyout/popover opened from a single widgets icon, using the overlay panel.
+- (d) Overflow handling: apps keep the real icon size and the column scrolls or paginates, instead of shrinking everything.
+- (e) Hide widgets entirely on side edges as a per-edge setting.
+
+**Open question:** Which widgets matter most on a side dock (clock, calendar, battery, system stats)?
+
+**Acceptance:** On Left and Right with 27+ apps and 5 widgets, icons match the configured size, widget text is at least 11pt equivalent, nothing is clipped, and the reveal and hide timing is unchanged.
+
+---
+
+## 11. Acceptance Criteria
 - Edge → reveal begins within ~16ms (timing logs prove it).
 - First click after reveal works immediately, no focus-stealing pre-click.
 - 3+ widgets rendering live data; 1+ working folder.
@@ -247,4 +269,4 @@ Portside-specific features beyond native Dock parity:
 
 ---
 
-*Revised for SPM build, Portside naming, single native-dock mechanism, public-API-first, B.5 overlay, B.6 position/resize, and P1-P3 parity backlog. macOS 27.0.1, Xcode 27.1, Apple Silicon M4.*
+*Revised for SPM build, Portside naming, single native-dock mechanism, public-API-first, B.5 overlay, B.6 position/resize, P1-P3 parity backlog, and UX cleanup. macOS 27.0.1, Xcode 27.1, Apple Silicon M4.*

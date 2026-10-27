@@ -1,14 +1,14 @@
 # Portside: Checklist
 
-Roadmap mirrors `docs/PLAN.md`. Milestones A to C are done. B.5 is built (hand test pending; label placement fix awaiting hand test). Next up is B.6, then D.
+Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6 is built and waiting on the hand test. Next up is D.
 
 ## Roadmap
 
 - [x] **A:** Edge tracker + non-activating panel + slide
 - [x] **B:** Pinned apps + running indicators + drag reorder + persistence
 - [x] **C:** Widget protocol and widgets (clock, calendar, weather, system stats, battery)
-- [x] **B.5:** Hover labels with a reusable overlay panel (built, hand test pending; label placement fix awaiting hand test)
-- [ ] **B.6:** Dock position (bottom/left/right) and separator resize
+- [x] **B.5:** Hover labels with a reusable overlay panel (including the label placement fix)
+- [x] **B.6:** Dock position (bottom/left/right) and separator resize (built, hand test pending)
 - [ ] **D:** App groups (expand/collapse)
 - [ ] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live
 - [ ] **F:** Native Dock hide/restore (autohide-delay trick only), launch at login (`SMAppService`), import `persistent-apps` and `persistent-others` from `com.apple.dock`, plus native orientation and tilesize as Portside's initial position and icon size
@@ -18,12 +18,13 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to C are done. B.5 is built (hand t
 - [ ] **P3:** Follow the display the cursor hits; fullscreen apps and Spaces; badge counts via the real Dock's accessibility tree (Accessibility permission; private APIs only as fallback); window list in right-click menu with click to focus (Screen Recording for titles); VoiceOver labels and keyboard navigation; do not reveal while dragging a window or holding the mouse button (except file drags headed to the Dock)
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; attention bouncing from other apps; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
+- [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
 ---
 
 # Milestone B.5: hover labels and overlay panel
 
-Status: built, launched with `swift run`, verified with synthetic mouse events and logs. Waiting on the human hand test. Label placement fix is built and needs hand-test confirmation before B.5 is done. Next after B.5 sign-off is B.6.
+Status: done. Hand-tested by James, including the label placement fix; committed.
 
 ## Deliverables
 
@@ -38,7 +39,7 @@ Status: built, launched with `swift run`, verified with synthetic mouse events a
   - Cause: the label was already anchored to the icon, but its 6pt gap equaled the strip's 6pt padding above the icons, so the label's bottom landed exactly on the dock background's top edge.
   - Fix: gap 10pt above the icon top (4pt of air above the dock background); label 13pt regular, padding 8 by 2, radius 6, `Color(white: 0.12, opacity: 0.78)`, max width 320 with middle truncation; clamped to `visibleFrame` with a 4pt margin; origin rounded to whole points.
   - Measured: ChatGPT icon top y 1064 (top-left coords), label 1034 to 1054 (20pt tall, was 24), dock background top 1058. Centered within 0.5pt (ChatGPT icon center 501, label center 501.5; Finder 61 vs 61.5).
-  - [ ] Hand test confirms placement and size look native
+  - [x] Hand test confirms placement and size look native
 
 ## Reveal/hide path changes (events only, no logic changes)
 
@@ -58,33 +59,94 @@ Status: built, launched with `swift run`, verified with synthetic mouse events a
 ## Notes
 
 - Moving the cursor above the panel (onto the label itself) leaves the dock, same as the native Dock. That starts the normal hide delay; it is not caused by the overlay.
-- Left/right edge placement is implemented in `OverlayPanel.frame` but untested until B.6 moves the dock.
+- Left/right edge placement in `OverlayPanel.frame` is exercised by B.6 (see below).
 - Labels run only on hover targets; widgets and D's folders opt in with the same modifier.
 
 ---
 
 # Milestone B.6: dock position and separator resize
 
-Status: not started. Blocked on B.5 hand test and label placement follow-up.
+Status: built, launched with `swift run`, verified with synthetic mouse events, Accessibility reads and logs on all three edges. Waiting on the human hand test before Milestone D.
 
 ## Deliverables
 
-- [ ] Dock position: bottom, left, or right (persisted; switchable live via a temporary menu bar item until Milestone E)
-- [ ] `EdgeTracker`: edge window and tracking area per edge
-- [ ] `DockPanel`: frames computed per edge from `visibleFrame` (avoid the menu bar); slide in from and hide toward the chosen edge
-- [ ] `DockStrip`: horizontal on the bottom, vertical on the sides; indicators, labels, magnification direction, and the future folder popover anchor follow orientation
-- [ ] Native-style separator drag to resize icon size live (resize cursor, clamped, persisted; dock stays revealed during the drag)
-- [ ] `swift build` clean; `swift run` launches and stays up
+- [x] Dock position: bottom, left, or right. `DockEdge` (new `DockEdge.swift`, raw values match the native Dock's `orientation` for F's import), persisted as `edge` in `dock.json`, switchable live from the menu bar's temporary "Position on Screen" submenu until Milestone E
+- [x] `EdgeTracker`: edge window and tracking area per edge. Bottom is a full-width row; left and right are full-height columns that stop below the menu bar. Moves live via `setEdge`.
+- [x] `DockPanel`: frames per edge. Flush against the screen frame's edge, centered along it inside `visibleFrame` (so side docks stay below the menu bar), slides in from and hides toward that edge. Insets follow the edge (6 on the screen side, 10 on the far side, 12 along). `show`/`hide` state machine unchanged.
+- [x] `DockStrip`: `AnyLayout` switches between a horizontal row (bottom) and a vertical column (sides). Items align to the far side; running dots sit between the icon and the screen edge; separators become horizontal lines on side docks; reorder and Finder drops use the dock's axis; tile fitting uses the dock's length (side docks count every item as one tile tall).
+- [x] Labels follow orientation: above the icon on the bottom, to the right on a left dock, to the left on a right dock (hit slop along the dock's axis). The overlay's `edge` parameter is the anchor D's folder popover will use.
+- [x] Magnification direction: `DockEdge.growthAnchor` (bottom, leading, trailing) so tiles grow away from the screen edge. Magnification itself is not built yet (E/P2); today the anchor drives the reorder "lift" scale.
+- [x] Separator drag to resize: drag away from the edge to grow, toward it to shrink, about 1pt per 1pt of cursor travel. Tracked in screen coordinates because the panel moves while it resizes. Clamped to 16 to 128 (native `tilesize` range) and to the largest size that fits on screen. Live while dragging, saved once on release. The dock stays revealed for the whole drag.
+- [x] Resize cursor on the separator: SwiftUI `pointerStyle(.rowResize)` / `.columnResize` (macOS 15+), NSCursor fallback below 15 and during the drag. Not verifiable by the agent (see findings).
+- [x] `swift build` clean, no warnings; `swift run` launches and stays up
+
+## Verification (agent, synthetic events)
+
+- [x] Click swallowing, before and after, with a test window against the bottom-left edge and clicks 0.5 to 4.5pt above the screen bottom. Committed B.5 build (4pt strip): clicks at 0.5, 1.5, 2.5 and 3.5pt never reached the window, only 4.5pt did. B.6 build (1pt strip): 1.5, 2.5, 3.5 and 4.5pt all reached the window; only the 0.5pt row (the trigger row itself) is taken, and it is logged as `edge zone took a click`.
+- [x] A 1pt zone still triggers: 3 of 3 reveals with the cursor pushed past the bottom edge, 3 of 3 on the left edge.
+- [x] Reveal timing unchanged: mouseEntered to animation start 1.0 to 2.0ms on the bottom and left edges, 2.6ms on the first reveal after a switch; slide finished at 143 to 150ms. B.5 measured 0.5 to 1.4ms and ~149ms.
+- [x] Live switching via the menu (pressed through Accessibility): Bottom, Left, Right, Bottom. Edge zone moved each time (bottom 1728x1; left and right 1x1084 starting below the 33pt menu bar), panel re-laid out and parked off the new edge, `dock.json` updated.
+- [x] Left dock: 77x1050 column flush left, centered below the menu bar; icons right-aligned; Finder's dot on the left of its icon; labels open 10pt to the right of the icon, vertically centered within 0.5pt; sweeping down the column swaps labels with no hide armed.
+- [x] Right dock: panel flush right (x 1651 to 1728); icons left-aligned; dot on the right; labels open to the left.
+- [x] Resize on the bottom: drag down 12pt shrank icons 38 to 28pt; dragging 130pt above the dock grew them back and clamped at 38 (the screen-fit limit). Hide timer fired mid-drag with the cursor outside and stayed revealed; release outside re-armed the hide and the dock slid away 300ms later. Size saved.
+- [x] Resize on the left: drag 8pt toward the edge shrank 23 to 17pt; drag away grew back to 23 (fit limit).
+- [x] Vertical reorder: Siri dragged one slot down mid-drag, dropped back, saved order unchanged. Lift scale grows away from the left edge.
+- [x] Widgets render in the side column (clock, calendar, weather, stats read back through Accessibility).
+- [x] Clicks on the strip still leave focus alone: `panel mouseDown (key window: false, portside active: false)`.
+- [x] Restart loads the saved edge (launched on the left from `dock.json`).
+- [x] Test settings restored afterwards: edge bottom, iconSize 48, 27 pins.
 
 ## Hand test must also check
 
-- [ ] (a) The edge strip does not swallow clicks: try resizing a window from its bottom edge and clicking a control at the very bottom of an app. If blocked, shrink the strip to 1 to 2pt or switch to an event-driven global mouse-moved monitor.
+- [ ] (a) The edge strip does not swallow clicks: try resizing a window from its bottom edge and clicking a control at the very bottom of an app. If blocked, shrink the strip to 1 to 2pt or switch to an event-driven global mouse-moved monitor. (Strip is now 1pt; agent test above passed.)
 - [ ] (b) Reveal timing logs are unchanged.
+- [ ] Resize cursor shows on the separator and during the drag
+- [ ] Left and right docks look and feel right (both docks react on the left edge while the native Dock lives there)
+
+## Follow-ups (deferred)
+
+- [ ] Resize cursor doesn't show when Portside isn't frontmost (`BackgroundCursor.swift`, SkyLight `SetsCursorInBackground`)
+- [ ] Menu bar item title/accessibility label shows "Bird" instead of "Portside"
+
+## Findings
+
+- Live edge switching first left the strip stale (horizontal panel slid in from the left). `@Published` emits from willSet, before the property holds the new value; moving the panel inside the subscriber forced a synchronous SwiftUI layout that read the old edge, and nothing invalidated it afterwards. Fixed by applying the edge change on the next main loop turn (`.receive(on: DispatchQueue.main)`). Same trap applies to any future `$property` subscriber that touches the panel.
+- Synthetic cursor moves past the screen edge (x = -50) are reported unclamped, so the 1pt zone looked like it lost the cursor and the hide timer fired. Real cursors are clamped onto the edge pixel; tests now place the cursor exactly on it.
+- The resize cursor could not be verified by the agent: a probe of `NSCursor.currentSystem` reported the arrow even for a frontmost control app that sets the resize cursor, so the probe does not work with synthetic moves. If the cursor does not change for a real mouse, the likely cause is that macOS ignores cursor changes from background apps; the public options are exhausted (`pointerStyle` and `NSCursor.set`), and the known workaround is a private CGS connection property, which belongs in Milestone F behind `dlsym`.
+- Native Dock `orientation` is currently `left` (tilesize 36) on this machine. Read only, never written. With Portside also on the left, both docks react to that edge until F.
+- At the fit limit, side docks get small tiles (23pt with 27 pins and 5 widgets on this display), and widget text gets tiny (about 4 to 5pt). Readable widgets on side docks need per-widget layouts or fewer items; candidate for Settings (E) or later polish.
+- The separator grab target grew from 5pt to 9pt along the dock, so the bottom dock is 8pt wider (1692pt).
+- The resize handle only exists when there is a separator (running unpinned apps or widgets). With neither, icon size is only adjustable in Settings (E).
+
+## Changes outside B.6's own scope
+
+- `DockModel.iconSize` is now `@Published` (needed so a live resize re-renders the strip). `edge` is new.
+- `EdgeTracker` thickness 4pt to 1pt, and swallowed clicks are logged.
+- `DockEngine` hide path: the hide timer is skipped while a resize drag is active (same pattern as open menus) and re-armed on release if the cursor is outside. No new timers.
+- `DockHover`: hit slop and label side follow the edge.
+- `PortsideApp`: "Position on Screen" submenu; title reads Milestone B.6.
 
 ## Notes
 
 - Dock on left/right and the resize handle moved here from P2/P3.
 - Temporary menu bar position control is replaced by Settings in Milestone E.
+- Multi-display behavior stays primary-display only until P3.
+- Known issue: widgets on side docks are too small (see UX cleanup: Side-dock widget layout). Left/Right otherwise verified.
+
+---
+
+# UX cleanup
+
+Deferred polish after the milestone and parity backlog. Mirrors `docs/PLAN.md` §10.
+
+## Side-dock widget layout
+
+- [ ] Side-dock widget layout
+  - Problem: on Left and Right, widgets share one column with the apps. With 27 apps and 5 widgets, tiles shrink to about 23pt, widget text is about 4 to 5pt and unreadable, and the dock looks cramped compared to the bottom layout. Fix deferred from Milestone B.6.
+  - Constraint: the bottom edge must stay unchanged. Side docks should keep native-style icon sizing from the saved size, with no global shrink-to-fit just to make widgets fit.
+  - Candidates (evaluate, do not decide yet): (a) second column/segment with own sizing; (b) compact single-line side variants; (c) flyout from a widgets icon via the overlay panel; (d) overflow scroll/paginate at real icon size; (e) hide widgets on side edges as a per-edge setting.
+  - Open question: which widgets matter most on a side dock (clock, calendar, battery, system stats)?
+  - Acceptance: on Left and Right with 27+ apps and 5 widgets, icons match the configured size, widget text is at least 11pt equivalent, nothing is clipped, and reveal/hide timing is unchanged.
 
 ---
 
