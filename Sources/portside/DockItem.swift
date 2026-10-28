@@ -119,6 +119,52 @@ enum AppLauncher {
     }
 }
 
+/// Portside's own tile, shown with the running apps while Settings is open
+/// (Portside is a regular app then). Clicking it brings Settings forward.
+struct PortsideTileView: View {
+    let size: CGFloat
+    let onOpenSettings: () -> Void
+    @Environment(\.dockEdge) private var edge
+
+    static let hoverID = "portside.self"
+
+    var body: some View {
+        tile
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Portside")
+            .accessibilityAddTraits(.isButton)
+            .dockHoverTarget(id: Self.hoverID, title: "Portside")
+            .contextMenu {
+                Button("Settings...", action: onOpenSettings)
+                Divider()
+                Button("Quit") { NSApp.terminate(nil) }
+            }
+    }
+
+    @ViewBuilder private var tile: some View {
+        switch edge {
+        case .bottom: VStack(spacing: 2) { icon; indicator }
+        case .left: HStack(spacing: 2) { indicator; icon }
+        case .right: HStack(spacing: 2) { icon; indicator }
+        }
+    }
+
+    private var icon: some View {
+        Image(nsImage: AppIcon.image)
+            .resizable()
+            .interpolation(.high)
+            .frame(width: size, height: size)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onOpenSettings)
+    }
+
+    private var indicator: some View {
+        Circle()
+            .fill(Color.primary.opacity(0.75))
+            .frame(width: 4, height: 4)
+    }
+}
+
 /// One app tile: icon, running indicator, click and context menu.
 struct DockItemView: View {
     let app: PinnedApp

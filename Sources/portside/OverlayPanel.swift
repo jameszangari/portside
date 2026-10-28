@@ -95,9 +95,32 @@ final class OverlayPanel {
     }
 
     func dismiss() {
+        endKeyFocus()
         placement = nil
         guard panel.isVisible else { return }
         panel.orderOut(nil)
+    }
+
+    var isKey: Bool { panel.isKeyWindow }
+
+    /// Let the panel take keyboard focus (for a text field) without
+    /// activating Portside: it is a non-activating panel, so the frontmost
+    /// app stays active and only key events come here.
+    func beginKeyFocus() {
+        panel.allowsKey = true
+        panel.makeKey()
+    }
+
+    /// Give keyboard focus back to the frontmost app's window by ordering
+    /// the panel out (and back in if it is still showing).
+    func endKeyFocus() {
+        guard panel.allowsKey else { return }
+        panel.allowsKey = false
+        guard panel.isKeyWindow else { return }
+        panel.orderOut(nil)
+        if placement != nil {
+            panel.orderFrontRegardless()
+        }
     }
 
     private func place(size: NSSize) {
@@ -134,9 +157,11 @@ final class OverlayPanel {
     }
 }
 
-/// Never key or main, so presenting an overlay cannot move focus.
+/// Never main, and key only while `allowsKey` is set (inline rename), so
+/// presenting an overlay cannot move focus.
 private final class OverlayNSPanel: NSPanel {
-    override var canBecomeKey: Bool { false }
+    var allowsKey = false
+    override var canBecomeKey: Bool { allowsKey }
     override var canBecomeMain: Bool { false }
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }

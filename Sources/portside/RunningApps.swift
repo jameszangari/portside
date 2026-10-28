@@ -8,6 +8,9 @@ import os.log
 /// re-renders when `apps` changes.
 final class RunningApps: ObservableObject {
     @Published private(set) var apps: [NSRunningApplication] = []
+    /// Portside itself is a regular app right now (Settings is open), so its
+    /// own dock shows it as running, like the native Dock does.
+    @Published private(set) var includesSelf = false
 
     private var observers: [NSObjectProtocol] = []
     private let logger = Logger(subsystem: "com.james.portside", category: "RunningApps")
@@ -37,7 +40,21 @@ final class RunningApps: ObservableObject {
         observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
     }
 
+    /// Portside's own activation policy changed. There is no notification for
+    /// that, so the owner calls this.
+    func activationPolicyChanged() {
+        refresh(reason: "portside activation policy")
+    }
+
     private func refresh(reason: String, app: NSRunningApplication? = nil, excluding excludedPID: pid_t? = nil) {
+        let regular = NSApp.activationPolicy() == .regular
+        if regular != includesSelf {
+            includesSelf = regular
+            logger.info("portside \(regular ? "shown" : "hidden", privacy: .public) in its own dock")
+        }
+        // Portside is listed separately (see includesSelf): an unbundled
+        // `swift run` build has no bundle URL, and clicking it must open
+        // Settings rather than launch a second copy.
         let selfPID = ProcessInfo.processInfo.processIdentifier
         let next = NSWorkspace.shared.runningApplications.filter {
             $0.activationPolicy == .regular && !$0.isTerminated

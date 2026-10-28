@@ -8,6 +8,7 @@ struct GroupTileView: View {
     let isExpanded: Bool
     let anyRunning: Bool
     let onToggle: () -> Void
+    let onRename: () -> Void
     @ObservedObject var dockModel: DockModel
     @ObservedObject private var icons = IconCache.shared
     @Environment(\.dockEdge) private var edge
@@ -19,6 +20,8 @@ struct GroupTileView: View {
             .accessibilityAddTraits(.isButton)
             .dockHoverTarget(id: DockEntry.group(group).id, title: group.name)
             .contextMenu {
+                Button("Rename", action: onRename)
+                Divider()
                 Button("Ungroup") { dockModel.ungroup(groupID: group.id) }
                 Button("Remove from Dock") { dockModel.removeGroup(groupID: group.id) }
             }
@@ -77,6 +80,7 @@ struct GroupPopoverView: View {
     let edge: DockEdge
     @ObservedObject var dockModel: DockModel
     @ObservedObject var runningApps: RunningApps
+    @ObservedObject var groups: GroupController
     let onLaunch: (PinnedApp) -> Void
 
     @State private var appeared = false
@@ -105,9 +109,17 @@ struct GroupPopoverView: View {
             Array(group.apps[$0..<min($0 + columns, group.apps.count)])
         }
         return VStack(spacing: 10) {
-            Text(group.name)
-                .font(.system(size: 13, weight: .semibold))
-                .lineLimit(1)
+            if groups.editingID == group.id {
+                GroupNameField(
+                    text: $groups.draftName,
+                    onCommit: { groups.endRename(commit: true) },
+                    onCancel: { groups.endRename(commit: false) }
+                )
+            } else {
+                Text(group.name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+            }
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(rows.indices, id: \.self) { row in
                     HStack(spacing: 4) {
@@ -143,6 +155,29 @@ struct GroupPopoverView: View {
         case ...16: 4
         default: 5
         }
+    }
+}
+
+/// The grid's title while renaming. Focused as soon as it appears (the
+/// overlay panel is key by then); the field selects its text on focus, so
+/// typing replaces "Group N".
+private struct GroupNameField: View {
+    @Binding var text: String
+    let onCommit: () -> Void
+    let onCancel: () -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("Group name", text: $text)
+            .textFieldStyle(.roundedBorder)
+            .font(.system(size: 13, weight: .semibold))
+            .multilineTextAlignment(.center)
+            .frame(width: 180)
+            .focused($focused)
+            .onSubmit(onCommit)
+            .onExitCommand(perform: onCancel)
+            .onAppear { DispatchQueue.main.async { focused = true } }
+            .accessibilityLabel("Group name")
     }
 }
 

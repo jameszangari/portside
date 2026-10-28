@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import os.log
 
 /// A pinned app. Identified by bundle id when it has one (survives the app
@@ -47,17 +48,59 @@ struct PinnedApp: Codable, Hashable, Identifiable {
 /// @ObservedObject re-render when a @Published property changes.
 final class DockModel: Codable, ObservableObject {
     // MARK: - Timing settings
+    //
+    // The engine and panel read these each time they arm a delay or start a
+    // slide, so a change applies to the next reveal or hide without any
+    // extra wiring. Published only so the Settings window shows them.
+
+    enum Defaults {
+        static let revealDelay: TimeInterval = 0.0
+        static let hideDelay: TimeInterval = 0.3
+        static let animationDuration: TimeInterval = 0.15
+        static let groupHoverDelay: TimeInterval = 0.2
+    }
+
+    static let revealDelayRange: ClosedRange<TimeInterval> = 0...1
+    static let hideDelayRange: ClosedRange<TimeInterval> = 0...2
+    static let animationDurationRange: ClosedRange<TimeInterval> = 0...0.5
 
     /// Delay (seconds) before the panel starts revealing after edge detection.
-    var revealDelay: TimeInterval = 0.0
+    @Published private(set) var revealDelay: TimeInterval = Defaults.revealDelay
 
     /// Delay (seconds) after mouse leaves before the panel hides.
-    var hideDelay: TimeInterval = 0.3
+    @Published private(set) var hideDelay: TimeInterval = Defaults.hideDelay
 
-    // MARK: - Animation settings
+    /// Duration (seconds) of the reveal/hide slide animation. 0 is instant.
+    @Published private(set) var animationDuration: TimeInterval = Defaults.animationDuration
 
-    /// Duration (seconds) of the reveal/hide slide animation.
-    var animationDuration: TimeInterval = 0.15
+    /// Sliders call these on every step with `persist: false`, then once with
+    /// `persist: true` when the drag ends.
+    func setRevealDelay(_ value: TimeInterval, persist shouldPersist: Bool = true) {
+        revealDelay = Self.clamp(value, to: Self.revealDelayRange)
+        if shouldPersist { persist() }
+    }
+
+    func setHideDelay(_ value: TimeInterval, persist shouldPersist: Bool = true) {
+        hideDelay = Self.clamp(value, to: Self.hideDelayRange)
+        if shouldPersist { persist() }
+    }
+
+    func setAnimationDuration(_ value: TimeInterval, persist shouldPersist: Bool = true) {
+        animationDuration = Self.clamp(value, to: Self.animationDurationRange)
+        if shouldPersist { persist() }
+    }
+
+    func resetTimingToDefaults() {
+        revealDelay = Defaults.revealDelay
+        hideDelay = Defaults.hideDelay
+        animationDuration = Defaults.animationDuration
+        persist()
+    }
+
+    /// Rounded to milliseconds so saved values stay readable.
+    private static func clamp(_ value: TimeInterval, to range: ClosedRange<TimeInterval>) -> TimeInterval {
+        (min(max(value, range.lowerBound), range.upperBound) * 1000).rounded() / 1000
+    }
 
     // MARK: - Icon settings
 
@@ -68,8 +111,45 @@ final class DockModel: Codable, ObservableObject {
     /// Same range as the native Dock's `tilesize`.
     static let iconSizeRange: ClosedRange<CGFloat> = 16...128
 
-    /// Whether magnification is enabled on hover.
-    var magnificationEnabled: Bool = false
+    /// Whether magnification is enabled on hover. Stored only: magnification
+    /// itself is not built yet.
+    @Published private(set) var magnificationEnabled: Bool = false
+
+    func setMagnificationEnabled(_ enabled: Bool) {
+        guard enabled != magnificationEnabled else { return }
+        magnificationEnabled = enabled
+        persist()
+    }
+
+    // MARK: - Hiding
+
+    /// Native "Automatically hide and show the Dock". Off keeps the dock
+    /// revealed all the time.
+    @Published private(set) var autoHide: Bool = true
+
+    func setAutoHide(_ enabled: Bool) {
+        guard enabled != autoHide else { return }
+        autoHide = enabled
+        persist()
+    }
+
+    // MARK: - Groups on hover
+
+    /// Open a group's grid by hovering its tile (after `groupHoverDelay`).
+    @Published private(set) var openGroupsOnHover: Bool = false
+    @Published private(set) var groupHoverDelay: TimeInterval = Defaults.groupHoverDelay
+    static let groupHoverDelayRange: ClosedRange<TimeInterval> = 0...1
+
+    func setOpenGroupsOnHover(_ enabled: Bool) {
+        guard enabled != openGroupsOnHover else { return }
+        openGroupsOnHover = enabled
+        persist()
+    }
+
+    func setGroupHoverDelay(_ value: TimeInterval, persist shouldPersist: Bool = true) {
+        groupHoverDelay = Self.clamp(value, to: Self.groupHoverDelayRange)
+        if shouldPersist { persist() }
+    }
 
     // MARK: - Position
 
@@ -116,6 +196,25 @@ final class DockModel: Codable, ObservableObject {
             let insertAt = kinds.firstIndex { (order.firstIndex(of: $0) ?? order.count) > position } ?? kinds.count
             kinds.insert(kind, at: insertAt)
         }
+        widgetKinds = kinds
+        persist()
+    }
+
+    /// Reorder enabled widgets (Settings list drag).
+    func moveWidgets(fromOffsets source: IndexSet, toOffset destination: Int) {
+        var kinds = widgetKinds
+        kinds.move(fromOffsets: source, toOffset: destination)
+        guard kinds != widgetKinds else { return }
+        widgetKinds = kinds
+        persist()
+    }
+
+    /// Move one enabled widget earlier (-1) or later (+1).
+    func moveWidget(_ kind: String, by offset: Int) {
+        guard let index = widgetKinds.firstIndex(of: kind),
+              widgetKinds.indices.contains(index + offset) else { return }
+        var kinds = widgetKinds
+        kinds.swapAt(index, index + offset)
         widgetKinds = kinds
         persist()
     }
@@ -176,8 +275,13 @@ final class DockModel: Codable, ObservableObject {
         entries = list
         persist()
         Self.logger.info("created \(group.name, privacy: .public) with \(app.displayName, privacy: .public)")
+        groupCreated.send(group.id)
         return group.id
     }
+
+    /// Emits a group's id right after `createGroup` made it, so the dock can
+    /// prompt for its name.
+    let groupCreated = PassthroughSubject<String, Never>()
 
     /// Move an app into a group (appended). Works for top level apps, apps in
     /// another group, and running apps that are not pinned yet.
@@ -218,6 +322,19 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    /// Rename a group. Blank names are ignored (the old name stays).
+    func renameGroup(groupID: String, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let index = entries.firstIndex(where: { $0.group?.id == groupID }),
+              var group = entries[index].group, group.name != trimmed else { return }
+        group.name = trimmed
+        var list = entries
+        list[index] = .group(group)
+        entries = list
+        persist()
+    }
+
     /// Remove the group and its apps from the dock.
     func removeGroup(groupID: String) {
         entries.removeAll { $0.group?.id == groupID }
@@ -248,15 +365,16 @@ final class DockModel: Codable, ObservableObject {
 
     private enum CodingKeys: String, CodingKey {
         case revealDelay, hideDelay, animationDuration, iconSize, magnificationEnabled, edge, entries, widgetKinds
+        case autoHide, openGroupsOnHover, groupHoverDelay
         /// Before Milestone D: a flat list of apps. Read only, for migration.
         case pinnedApps
     }
 
     required init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        revealDelay = try c.decodeIfPresent(TimeInterval.self, forKey: .revealDelay) ?? 0.0
-        hideDelay = try c.decodeIfPresent(TimeInterval.self, forKey: .hideDelay) ?? 0.3
-        animationDuration = try c.decodeIfPresent(TimeInterval.self, forKey: .animationDuration) ?? 0.15
+        revealDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .revealDelay) ?? Defaults.revealDelay, to: Self.revealDelayRange)
+        hideDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .hideDelay) ?? Defaults.hideDelay, to: Self.hideDelayRange)
+        animationDuration = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .animationDuration) ?? Defaults.animationDuration, to: Self.animationDurationRange)
         iconSize = try c.decodeIfPresent(CGFloat.self, forKey: .iconSize) ?? 48.0
         magnificationEnabled = try c.decodeIfPresent(Bool.self, forKey: .magnificationEnabled) ?? false
         edge = (try? c.decodeIfPresent(DockEdge.self, forKey: .edge)) ?? .bottom
@@ -268,6 +386,9 @@ final class DockModel: Codable, ObservableObject {
             entries = DockModel.seedFromNativeDock().map(DockEntry.app)
         }
         widgetKinds = try c.decodeIfPresent([String].self, forKey: .widgetKinds) ?? WidgetCatalog.defaultKinds
+        autoHide = try c.decodeIfPresent(Bool.self, forKey: .autoHide) ?? true
+        openGroupsOnHover = try c.decodeIfPresent(Bool.self, forKey: .openGroupsOnHover) ?? false
+        groupHoverDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverDelay) ?? Defaults.groupHoverDelay, to: Self.groupHoverDelayRange)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -280,6 +401,9 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(edge, forKey: .edge)
         try c.encode(entries, forKey: .entries)
         try c.encode(widgetKinds, forKey: .widgetKinds)
+        try c.encode(autoHide, forKey: .autoHide)
+        try c.encode(openGroupsOnHover, forKey: .openGroupsOnHover)
+        try c.encode(groupHoverDelay, forKey: .groupHoverDelay)
     }
 
     // MARK: - Persistence

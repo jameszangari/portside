@@ -76,6 +76,12 @@ final class DockHover {
     /// resized or reordered).
     var onTargetsChanged: (() -> Void)?
 
+    /// The item under the cursor changed (nil when none). Reported even
+    /// while labels are suppressed, so hovering another group tile can
+    /// switch the open grid.
+    var onHoveredTargetChanged: ((String?) -> Void)?
+    private var hoveredID: String?
+
     /// Labels open on the far side of `edge`. Drops the current label so the
     /// next hover places it for the new orientation.
     func setEdge(_ newEdge: DockEdge) {
@@ -113,7 +119,6 @@ final class DockHover {
     }
 
     private func evaluate() {
-        guard !isSuppressed else { return }
         let slop = -DockMetrics.spacing / 2
         let hit = cursor.flatMap { point in
             // Tiles have a small gap between them. Extending each hit rect by
@@ -123,7 +128,11 @@ final class DockHover {
                 $0.frame.insetBy(dx: edge.isVertical ? 0 : slop, dy: edge.isVertical ? slop : 0).contains(point)
             }
         }
-        guard hit != current else { return }
+        if hit?.id != hoveredID {
+            hoveredID = hit?.id
+            onHoveredTargetChanged?(hoveredID)
+        }
+        guard !isSuppressed, hit != current else { return }
         current = hit
 
         guard let hit, let anchor = stripToScreen?(hit.frame) else {

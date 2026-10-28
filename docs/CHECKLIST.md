@@ -1,6 +1,6 @@
 # Portside: Checklist
 
-Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6 and D are built and waiting on the hand test.
+Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D and E (parts 1 and 2) are built and waiting on the hand test.
 
 ## Roadmap
 
@@ -10,7 +10,7 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6 and D ar
 - [x] **B.5:** Hover labels with a reusable overlay panel (including the label placement fix)
 - [x] **B.6:** Dock position (bottom/left/right) and separator resize (built, hand test pending)
 - [ ] **D:** App groups (expand/collapse) (built, hand test pending)
-- [ ] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live; optional "Open groups on hover"; name prompt on group creation; group rename (settings + tile context menu). See Deferred to Milestone E under D for the full specs.
+- [ ] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live (part 1: built, hand test pending); part 2 (built, hand test pending): auto-hide toggle with Cmd+Option+D, Portside as a regular app while Settings is open, inline group naming and rename, open groups on hover
 - [ ] **F:** Native Dock hide/restore (autohide-delay trick only), launch at login (`SMAppService`), import `persistent-apps` and `persistent-others` from `com.apple.dock`, plus native orientation and tilesize as Portside's initial position and icon size
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
 - [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder; drag icons out to remove; drop files onto app icons to open them; launch bounce; Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide
@@ -19,6 +19,93 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6 and D ar
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; attention bouncing from other apps; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
+
+---
+
+# Milestone E part 2: auto-hide toggle, real app while in Settings, group naming, hover open
+
+Status: built and verified with synthetic events; waiting on James's hand test. Not committed. New files: `HotKey.swift`, `AppIcon.swift` (plus `SettingsWindow.swift` from part 1).
+
+## Deliverables
+
+- [x] Auto-hide toggle (native "Automatically hide and show the Dock"): `DockModel.autoHide` (default on, saved in `dock.json`). Three controls stay in sync: the General tab toggle, the menu bar item "Turn Hiding Off/On", and the separator right-click menu.
+- [x] Auto-hide off: the edge tracker is stopped (edge window ordered out, no tracking at all) and the panel stays revealed. Exits do nothing and the hide timer cannot fire. Switching edges re-reveals on the new edge. Turning it back on re-arms the tracker and hides if the cursor is outside. No new timers.
+- [x] Cmd+Option+D global hotkey through Carbon `RegisterEventHotKey` (`HotKey.swift`, no permissions needed). See Known gaps for the conflict with the native Dock's own shortcut.
+- [x] Settings makes Portside a real app: opening switches the activation policy to `.regular` (shows in the native Dock, Cmd+Tab and the app switcher); closing activates the app that was frontmost before (tracked while Settings is open, so Cmd+Tab detours are handled), then returns to `.accessory`. Reopening from the native Dock opens Settings.
+- [x] Runtime app icon (`AppIcon.swift`): white `bird.fill` on a rounded blue gradient. `applicationIconImage` alone left the generic exec icon in the native Dock for an unbundled executable; setting `dockTile.contentView` and calling `display()` fixed it.
+- [x] Portside's own dock shows a Portside tile with a running dot while Settings is open (extras section, after running apps). Click opens Settings; right-click has Settings... and Quit.
+- [x] Inline group naming: creating a group opens its grid with an editable name field ("Group N" selected). The overlay panel becomes key only while editing (no app activation; the frontmost app stays frontmost), then orders out and back in to hand keys back. Return saves, Escape cancels, blank reverts. Clicking elsewhere saves and closes. The dock stays revealed while editing.
+- [x] Group tile context menu: Rename (same field), Ungroup, Remove from Dock. The Settings Groups tab updates live.
+- [x] Open groups on hover (Groups tab, off by default) with a hover delay slider (0 to 1000ms, default 200ms). One cancelable one-shot work item, no polling. Hovering another group tile while one is open switches immediately. Tile to grid stays open. A click on the tile right after a hover-open keeps it open instead of closing it. D's close rules unchanged.
+- [x] `swift build` clean after every batch; launches and stays up
+
+## Verification (agent, synthetic events)
+
+- [x] Auto-hide off on Bottom, Left and Right: panel stays up through repeated exits and edge switches; edge window offscreen. On again: hides 300ms after leaving. Relaunch with it off: `engine started, auto-hide off, panel revealed, edge tracker idle`.
+- [x] Hotkey mechanism: a test combo (Ctrl+Option+Cmd+J) fired the handler; Cmd+Option+D registers successfully. Not pressed for real (see Known gaps).
+- [x] Settings: policy regular and active, bird icon in the native Dock (screenshot), Portside tile with a dot in our dock. Cmd+Tab away and back works. Closing: policy accessory, gone from both docks, focus back on the previous app.
+- [x] Rename with a keystroke logger app frontmost, bottom, left and right: overlay key true while editing, typed name saved, keys after Return went to the logger, logger stayed frontmost throughout. Escape kept the old name; blank reverted; Settings showed the new name.
+- [x] Hover open: opened 209 to 217ms after reaching the tile on all three edges; a fast sweep opened nothing; switch between groups immediate; tile to grid stayed open; grid placed 10pt off the tile on each side.
+- [x] Reveal timing unchanged: mouseEntered to animation start 1.7 to 3.6ms over 5 reveals (D was 0.3 to 3.6ms). Dock click with Settings closed: frontmost app unchanged.
+- [x] Test changes undone: `dock.json` restored from the pre-E2 backup.
+
+## Known gaps
+
+- [ ] No screen-space reservation with hiding off. The native Dock shrinks `NSScreen.visibleFrame` so maximized and zoomed windows stop above it; macOS has no public API for a third-party app to do that (the Dock does it inside WindowServer). Doing it ourselves would mean moving other apps' windows through Accessibility, which fights every app's own zoom. Shipped as an always-visible overlay; windows can extend under it. The Settings toggle says so.
+- [ ] Cmd+Option+D conflict: the system shortcut "Turn Dock hiding on/off" (System Settings > Keyboard > Keyboard Shortcuts > Launchpad & Dock) is enabled by default and most likely wins, toggling the native Dock instead. Disable it there for ours to work. Milestone F hides the native Dock anyway; F should decide whether to claim the shortcut.
+- [ ] Unbundled `swift run`: the icon is set at runtime and Bartender treats the menu bar item as new. A real `.app` bundle (F) fixes both.
+
+## Hand test must also check
+
+- [ ] Cmd+Option+D (with the system shortcut disabled) toggles hiding on all three edges
+- [ ] With Settings open, Portside shows in Cmd+Tab and both docks; closing returns you to where you were
+- [ ] New Group and Rename feel natural: typing goes into the field, the app you were in keeps focus afterward
+- [ ] Hover open delay feels right and sweeping never pops groups open
+
+---
+
+# Milestone E part 1: settings window and model
+
+Status: built and verified with synthetic events; waiting on James's hand test. Not committed.
+
+## Deliverables
+
+- [x] `SettingsWindow.swift`: `SettingsWindowController` owns a normal titled window hosting a SwiftUI `SettingsView` with General, Widgets and Groups tabs. Opened from the menu bar item "Settings..." (Cmd+, shown on the item).
+- [x] Focus: opening calls `NSApp.activate()` and `orderFrontRegardless()` (activation is cooperative and can be declined; the window still comes up on top, one click makes it key). Closing hands activation back to the app that was frontmost when Settings opened (`activate(from:)`); `NSApp.deactivate()` alone left Portside active. The dock panel is unchanged and still non-activating.
+- [x] General tab: Position (Bottom/Left/Right segmented, same `setEdge` as the menu bar picker, both stay in sync); Icon size; Magnification toggle, disabled, "Coming soon." (stored as `magnificationEnabled`, nothing reads it yet); Timing: reveal delay 0 to 1000ms, hide delay 0 to 2000ms (50ms steps), animation 0 to 500ms (10ms steps, 0 shows "Instant"), Reset to Defaults (0, 300, 150ms). Footer notes Reduce Motion always wins.
+- [x] Icon size and separator stay in sync: the strip publishes its fit limit (`DockLayout.fitTileSize`, the same `maxTileSize` the separator drag clamps to). The slider runs 16pt up to that limit, shows `min(iconSize, fit)` like the strip renders, and stores at most the fit. A caption shows the limit when it is under 128pt. It updates live when the edge, apps or widgets change.
+- [x] Sliders update the model live while dragging and save once on release (like the separator). Keyboard changes have no drag and save immediately.
+- [x] `DockModel`: timing values and `magnificationEnabled` are now `@Published private(set)` with setters (`setRevealDelay`, `setHideDelay`, `setAnimationDuration`, `resetTimingToDefaults`, `setMagnificationEnabled`). Defaults and ranges live in one place (`DockModel.Defaults`, `*Range`). Values loaded from `dock.json` are clamped to the ranges. Same top-level keys as before, so no migration.
+- [x] Widgets tab: "In the Dock" list in display order with a switch per widget, up/down arrow buttons, and drag to reorder (`moveWidgets`, `moveWidget(_:by:)`); "Available" lists disabled widgets. Re-enabling keeps the existing catalog-order insert.
+- [x] Groups tab: each group with member icons, an editable name field (commits on Return or when focus leaves; blank reverts), app count, Ungroup, and Delete... with a confirmation sheet. Empty state explains how to create a group. `DockModel.renameGroup(groupID:to:)` added.
+- [x] Menu bar: title is now just "Portside"; Widgets and Position menus stay as quick switches. Temporary label (sailboat icon plus "Portside" text) so the item is easy to find.
+- [x] Separator right-click: "Settings..." (the start of P1's divider menu). Needed because Bartender parks the item off screen while Portside runs unbundled through `swift run` (same spot as its Always Hidden items). From a real right-click, Settings opens focused and closing returns focus.
+- [x] No new timers anywhere; the engine and panel already read the timing values at use time, so nothing in the reveal/hide path changed.
+- [x] `swift build` clean after every batch; `swift run` launches and stays up
+
+## Verification (agent, synthetic events)
+
+- [x] Settings window opens on top of the frontmost app; a click in it makes Portside frontmost; closing returns focus to the previous app (3 of 3 runs).
+- [x] Timing live, no relaunch, Settings window still open: reveal 200ms gave mouseEntered to animation start 212ms; animation Instant gave start to finished 4ms; hide 1000ms logged `hide armed in 1000ms` and fired on time. Reset to Defaults saved 0 / 0.3 / 0.15.
+- [x] Reveal timing unchanged at defaults: mouseEntered to animation start 0.57 to 1.17ms over 4 reveals (D was 0.3 to 3.6ms).
+- [x] Position Left from Settings: edge window moved to the left edge, panel revealed there, saved `left`; fit limit changed live from 61 to 33pt (two 2560x1440 displays attached during testing).
+- [x] Icon size: slider to the minimum saved 16pt (panel 63pt wide on the left); dragged past the end saved exactly 33pt, the fit limit (panel 1390pt tall in a 1410pt visible frame). A separator drag from 33 to 23pt moved the slider and its label live.
+- [x] Widgets: switch off removes it from the dock and moves it to Available; drag and arrow reorder both saved and the strip reordered live (screenshots before and after); re-enable works.
+- [x] Groups: rename on Return and on focus loss both saved and the dock tile's label updated live; a blank name reverted; Ungroup returned the apps in place; Delete's Cancel changed nothing, Delete removed the group and its apps.
+- [x] Relaunch: edge, icon size, timing and widget order all came back from `dock.json`.
+- [x] Dock click with Settings closed: frontmost app unchanged.
+- [x] Test changes undone: `dock.json` restored from the pre-E backup.
+
+## Hand test must also check
+
+- [ ] "Settings..." from the real menu bar click comes up focused (activation from a real menu click could not be tested here; Bartender owns the status item area)
+- [ ] Every setting applies live and survives a relaunch
+- [ ] With Settings closed, clicking the dock never takes focus from the frontmost app
+
+## Findings
+
+- SwiftUI sliders and switches here ignore Accessibility value sets and increments (`AXIncrement` returns success, value unchanged); real mouse input works. Worth a look for VoiceOver in P3.
+- A grouped `Form`'s rows cannot be drag-reordered with `.onMove`; the enabled widgets use a real `List` inside the section.
 
 ---
 
@@ -65,11 +152,11 @@ Status: built and verified with synthetic events; waiting on James's hand test. 
 - Known harmless: `panel mouseExited` logs twice per exit (about 30 microseconds apart). Pre-existing (same on the last committed build in a separate worktree). The second call restarts the same one-shot hide timer; not fixed in D.
 - Not built in D: dragging an app onto a group tile to add it, keyboard navigation in the grid (P3), scrolling for very large groups.
 
-## Deferred to Milestone E
+## Deferred to Milestone E (all three built in E part 2)
 
-- [ ] Open groups on hover (optional setting, off by default). When on, hovering a group tile opens its grid after a hover-intent delay (default about 200ms, configurable) so sweeping across the dock does not pop groups open. Hovering a different group tile switches the open grid immediately. Moving from the tile into the grid keeps it open. Reuses D's close rules. No polling: one cancelable one-shot delay, like the hide timer.
-- [ ] Name prompt on group creation. When a group is first created, prompt for its name, with the default "Group N" so skipping is harmless. Preferred: inline rename (editable name field in the open grid or on the tile) where the panel takes key focus only while editing and returns focus to the previously frontmost app afterward. Fallback: a name field in the settings window. Must not break the non-activating panel behavior for normal use.
-- [ ] Group rename (deferred from D). Rename from the settings window, and from the group tile's context menu using the same inline mechanism as the creation prompt.
+- [x] Open groups on hover (optional setting, off by default). When on, hovering a group tile opens its grid after a hover-intent delay (default about 200ms, configurable) so sweeping across the dock does not pop groups open. Hovering a different group tile switches the open grid immediately. Moving from the tile into the grid keeps it open. Reuses D's close rules. No polling: one cancelable one-shot delay, like the hide timer.
+- [x] Name prompt on group creation. When a group is first created, prompt for its name, with the default "Group N" so skipping is harmless. Preferred: inline rename (editable name field in the open grid or on the tile) where the panel takes key focus only while editing and returns focus to the previously frontmost app afterward. Fallback: a name field in the settings window. Must not break the non-activating panel behavior for normal use.
+- [x] Group rename (deferred from D). Rename from the settings window (done in E part 1), and from the group tile's context menu using the same inline mechanism as the creation prompt (E2).
 
 ---
 

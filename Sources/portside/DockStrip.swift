@@ -7,6 +7,10 @@ private let stripLogger = Logger(subsystem: "com.james.portside", category: "Doc
 /// Screen-derived limits for the strip. Updated when displays change.
 final class DockLayout: ObservableObject {
     @Published private(set) var visibleSize: CGSize = .zero
+    /// Largest tile that fits everything on screen right now, as computed by
+    /// the strip. The Settings icon size slider stops here, the same limit
+    /// the separator drag uses.
+    @Published private(set) var fitTileSize: CGFloat = DockModel.iconSizeRange.upperBound
     private var observer: NSObjectProtocol?
 
     /// Room left for the panel's own insets and a small margin at each end.
@@ -25,6 +29,11 @@ final class DockLayout: ObservableObject {
         (edge.isVertical ? visibleSize.height : visibleSize.width) - reservedLength
     }
 
+    func reportFitTileSize(_ size: CGFloat) {
+        let clamped = min(size, DockModel.iconSizeRange.upperBound)
+        if clamped != fitTileSize { fitTileSize = clamped }
+    }
+
     private func update() {
         visibleSize = DockScreen.visibleFrame.size
     }
@@ -39,6 +48,10 @@ final class DockInteractions {
     var onContentSizeChanged: ((CGSize) -> Void)?
     /// A group tile was clicked (expand or collapse it).
     var onGroupTapped: ((String) -> Void)?
+    /// "Rename" from a group tile's context menu.
+    var onRenameGroup: ((String) -> Void)?
+    /// "Settings..." from the separator's context menu.
+    var onOpenSettings: (() -> Void)?
 }
 
 /// SwiftUI view that renders the dock strip: pinned apps, a separator,
@@ -103,7 +116,8 @@ struct DockStrip: View {
     var body: some View {
         let edge = dockModel.edge
         let extras = unpinnedRunning
-        let maxTile = maxTileSize(extrasCount: extras.count, edge: edge)
+        let showsSelf = runningApps.includesSelf
+        let maxTile = maxTileSize(extrasCount: extras.count + (showsSelf ? 1 : 0), edge: edge)
         let tile = min(dockModel.iconSize, maxTile)
         // Items align to the far side so icons line up with widgets.
         let stack = edge.isVertical
@@ -118,10 +132,13 @@ struct DockStrip: View {
                     .gesture(reorderGesture(for: entry, tile: tile, vertical: edge.isVertical))
             }
 
-            if !extras.isEmpty {
+            if !extras.isEmpty || showsSelf {
                 separator(tile: tile, maxTile: maxTile, edge: edge)
                 ForEach(extras, id: \.0.id) { app, running in
                     DockItemView(app: app, running: running, isPinned: false, size: tile, dockModel: dockModel)
+                }
+                if showsSelf {
+                    PortsideTileView(size: tile) { interactions.onOpenSettings?() }
                 }
             }
 
@@ -147,6 +164,7 @@ struct DockStrip: View {
                 .strokeBorder(.white.opacity(0.15), lineWidth: 1)
         )
         .onDrop(of: [.fileURL], delegate: AppFileDropDelegate(dockModel: dockModel, slotLength: tile + spacing, leadingInset: alongPadding, vertical: edge.isVertical))
+        .onChange(of: maxTile, initial: true) { _, fit in layout.reportFitTileSize(fit) }
         .fixedSize()
         // NSHostingView does not report intrinsic size changes to AppKit
         // here, so the strip reports its own size.
@@ -172,6 +190,7 @@ struct DockStrip: View {
                 isExpanded: groups.expandedID == group.id,
                 anyRunning: group.apps.contains { runningApps.isRunning($0) },
                 onToggle: { interactions.onGroupTapped?(group.id) },
+                onRename: { interactions.onRenameGroup?(group.id) },
                 dockModel: dockModel
             )
         }
@@ -192,6 +211,13 @@ struct DockStrip: View {
             .contentShape(Rectangle())
             .modifier(ResizePointer(edge: edge, isResizing: resizeStart != nil))
             .gesture(resizeGesture(maxTile: maxTile, tile: tile, edge: edge))
+            .contextMenu {
+                Button(dockModel.autoHide ? "Turn Hiding Off" : "Turn Hiding On") {
+                    dockModel.setAutoHide(!dockModel.autoHide)
+                }
+                Divider()
+                Button("Settings...") { interactions.onOpenSettings?() }
+            }
             .accessibilityLabel("Dock separator")
     }
 

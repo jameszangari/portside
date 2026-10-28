@@ -15,7 +15,14 @@ final class DockEngine {
     let dockModel: DockModel
     private let runningApps: RunningApps
     private let widgets: WidgetStore
-    private let layout: DockLayout
+    /// Shared with the Settings window for the icon size fit limit.
+    let layout: DockLayout
+
+    /// Called from the dock's own menus (separator right-click).
+    var onOpenSettings: (() -> Void)? {
+        get { interactions.onOpenSettings }
+        set { interactions.onOpenSettings = newValue }
+    }
     private let dockPanel: DockPanel
     private let edgeTracker: EdgeTracker
     private let hover: DockHover
@@ -36,6 +43,7 @@ final class DockEngine {
     private var isResizing = false
     private let interactions = DockInteractions()
     private var edgeSubscription: AnyCancellable?
+    private var autoHideSubscription: AnyCancellable?
 
     /// Timestamp (CACurrentMediaTime) of the mouseEntered that started the
     /// current reveal, used for the enter -> animation start -> interactive logs.
@@ -82,6 +90,11 @@ final class DockEngine {
         groups.onMouseEntered = { [weak self] in self?.handleEnter(source: "group", event: nil) }
         groups.onMouseExited = { [weak self] in self?.handleExit(source: "group") }
         groups.onCollapsed = { [weak self] in self?.rearmHideIfCursorOutside(source: "group closed") }
+        groups.onEditingChanged = { [weak self] editing in
+            if !editing { self?.rearmHideIfCursorOutside(source: "rename ended") }
+        }
+        interactions.onRenameGroup = { [weak self] id in self?.groups.beginRename(id, reason: "tile menu") }
+        hover.onHoveredTargetChanged = { [weak self] id in self?.groups.hoveredTargetChanged(id) }
 
         let center = NotificationCenter.default
         menuObservers.append(center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
@@ -104,6 +117,11 @@ final class DockEngine {
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] edge in self?.applyEdge(edge) }
+        autoHideSubscription = dockModel.$autoHide
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] on in self?.applyAutoHide(on) }
 
         edgeTracker.onMouseEntered = { [weak self] event in
             self?.handleEnter(source: "edge", event: event)
@@ -136,11 +154,43 @@ final class DockEngine {
         }
     }
 
-    /// Start the engine. The panel starts hidden; only the edge window is shown.
+    /// Start the engine. With auto-hide on, the panel starts hidden and only
+    /// the edge window is shown. With it off, the panel is simply up.
     func start() {
         dockPanel.prepareHidden()
-        edgeTracker.start()
-        logger.info("engine started, panel hidden, edge tracker armed")
+        if dockModel.autoHide {
+            edgeTracker.start()
+            logger.info("engine started, panel hidden, edge tracker armed")
+        } else {
+            dockPanel.show(animated: false)
+            logger.info("engine started, auto-hide off, panel revealed, edge tracker idle")
+        }
+    }
+
+    /// Turn auto-hide on or off, live. Off: the edge window goes away (no
+    /// tracking at all) and the panel stays revealed. On: the edge window
+    /// comes back and the panel hides once the cursor is outside it.
+    private func applyAutoHide(_ on: Bool) {
+        pendingHide?.cancel()
+        pendingHide = nil
+        pendingReveal?.cancel()
+        pendingReveal = nil
+        if on {
+            edgeTracker.start()
+            logger.info("auto-hide on, edge tracker armed")
+            rearmHideIfCursorOutside(source: "auto-hide on")
+        } else {
+            edgeTracker.stop()
+            revealRequestedAt = CACurrentMediaTime()
+            dockPanel.show(animated: true)
+            logger.info("auto-hide off, panel stays revealed")
+        }
+    }
+
+    /// Portside switched between regular and accessory (Settings opened or
+    /// closed), which decides whether its own tile shows in the strip.
+    func activationPolicyChanged() {
+        runningApps.activationPolicyChanged()
     }
 
     /// Stop the engine: hide the panel and tear down the edge tracker.
@@ -168,6 +218,9 @@ final class DockEngine {
         hover.setEdge(edge)
         dockPanel.setEdge(edge)
         edgeTracker.setEdge(edge)
+        if !dockModel.autoHide {
+            dockPanel.show(animated: true)
+        }
         logger.info("dock moved to the \(edge.rawValue, privacy: .public) edge")
     }
 
@@ -222,6 +275,7 @@ final class DockEngine {
     }
 
     private func handleExit(source: String) {
+        guard dockModel.autoHide else { return }
         if let pendingReveal {
             pendingReveal.cancel()
             self.pendingReveal = nil
@@ -234,12 +288,17 @@ final class DockEngine {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.pendingHide = nil
+            guard self.dockModel.autoHide else { return }
             if self.menuIsOpen {
                 self.logger.info("hide timer fired but a menu is open, staying revealed")
                 return
             }
             if self.isResizing {
                 self.logger.info("hide timer fired during a resize drag, staying revealed")
+                return
+            }
+            if self.groups.isEditing {
+                self.logger.info("hide timer fired while a group name is being edited, staying revealed")
                 return
             }
             // One-shot sanity check, not polling: if the cursor is still over
