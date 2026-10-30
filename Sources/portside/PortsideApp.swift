@@ -14,6 +14,9 @@ enum PortsideMain {
         if CommandLine.arguments.contains("--restore-dock") {
             exit(restoreDockCommand())
         }
+        if let index = CommandLine.arguments.firstIndex(of: "--export-icon") {
+            exit(exportIconCommand(argumentIndex: index))
+        }
         NativeDock.recoverIfNeeded()
         installSignalHandlers()
         PortsideApp.main()
@@ -28,6 +31,25 @@ enum PortsideMain {
             case .nothingToRestore:
                 print("No backup at \(NativeDock.backupURL.path). Portside has not changed the macOS Dock.")
             }
+            return 0
+        } catch {
+            FileHandle.standardError.write(Data("portside: \(error.localizedDescription)\n".utf8))
+            return 1
+        }
+    }
+
+    /// `portside --export-icon <path.png>`: writes the app icon as a 1024px
+    /// PNG and exits. Hidden; scripts/build-app.sh uses it for AppIcon.icns.
+    private static func exportIconCommand(argumentIndex: Int) -> Int32 {
+        let arguments = CommandLine.arguments
+        guard argumentIndex + 1 < arguments.count else {
+            FileHandle.standardError.write(Data("usage: portside --export-icon <path.png>\n".utf8))
+            return 2
+        }
+        let url = URL(fileURLWithPath: arguments[argumentIndex + 1])
+        do {
+            try AppIcon.writePNG(to: url, pixels: 1024)
+            print("Wrote \(url.path)")
             return 0
         } catch {
             FileHandle.standardError.write(Data("portside: \(error.localizedDescription)\n".utf8))

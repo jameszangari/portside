@@ -11,3 +11,6 @@ xcuserdata/
 node_modules/
 package.json
 package-lock.json
+
+# App bundle output (scripts/build-app.sh)
+build/

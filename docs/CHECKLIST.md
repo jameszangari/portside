@@ -1,6 +1,6 @@
 # Portside: Checklist
 
-Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand-tested. Milestone F is partly done (native Dock hide/restore); launch at login, a real .app bundle and the native Dock import are still open. P1 and P2 are partly built, see below.
+Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand-tested. Milestone F is partly done (native Dock hide/restore, .app bundle, launch at login; the last two await James's hand test); the native Dock import is still open. P1 and P2 are partly built, see below.
 
 ## Roadmap
 
@@ -11,7 +11,7 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [x] **B.6:** Dock position (bottom/left/right) and separator resize
 - [x] **D:** App groups (expand/collapse)
 - [x] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live; includes auto-hide toggle with Cmd+Option+D, Portside as a regular app while Settings is open, inline group naming and rename, open groups on hover
-- [ ] **F:** [x] Hide the macOS Dock (autohide-delay trick only, exact save and restore); [ ] launch at login (`SMAppService`); [ ] a real .app bundle; [ ] import native orientation and tilesize as Portside's initial position and icon size; [ ] a manual "Import from macOS Dock" action; [ ] import `persistent-others`. First-launch seeding of pinned apps from `persistent-apps` is already built (`DockModel.seedFromNativeDock`).
+- [ ] **F:** [x] Hide the macOS Dock (autohide-delay trick only, exact save and restore); [x] launch at login (`SMAppService`, hand test pending); [x] a real .app bundle (`scripts/build-app.sh`, hand test pending); [ ] import native orientation and tilesize as Portside's initial position and icon size; [ ] a manual "Import from macOS Dock" action; [ ] import `persistent-others`. First-launch seeding of pinned apps from `persistent-apps` is already built (`DockModel.seedFromNativeDock`).
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
 - [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder (built); drag icons out to remove; drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide (built)
 - [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); right-click Trash shows Empty Trash; filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag (built for app groups; folder stacks not yet); magnification polish
@@ -19,6 +19,61 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section; bounce on attention request (needs private APIs, not wanted for now)
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
+
+---
+
+# Milestone F part 2: .app bundle + launch at login
+
+Status: built and agent-verified, waiting for James's hand test. New files: `scripts/build-app.sh`, `Sources/portside/LaunchAtLogin.swift`.
+
+## Deliverables
+
+- [x] `scripts/build-app.sh` (bash, no network): `swift build -c release`, assembles `build/Portside.app` (`Contents/MacOS/portside`, `Contents/Info.plist`, `Contents/Resources/AppIcon.icns`, plus any SPM resource bundles)
+- [x] Info.plist built from the repo's `Info.plist` (one source for the Calendar strings) with `plutil -replace`: executable, bundle id, name, display name, APPL, version and build from `VERSION`, `LSMinimumSystemVersion` 14.0, `LSUIElement`, `NSHighResolutionCapable`, `CFBundleIconFile`. Linker-embedded plist kept for `swift run`.
+- [x] Hidden `portside --export-icon <path.png>`: renders `AppIcon` at exactly 1024px and exits before any UI. Missing path prints usage, exit 2.
+- [x] `.iconset` (16 to 512 @1x/@2x via `sips`) and `AppIcon.icns` via `iconutil`
+- [x] Ad-hoc signing by default, `SIGN_IDENTITY` for a real identity, `codesign --verify --deep --strict` after signing
+- [x] `--install`: copies to `~/Applications/Portside.app` with `ditto`, refuses while that copy is running. Never `/Applications`.
+- [x] `build/` in `.gitignore`
+- [x] `LaunchAtLogin.swift`: `SMAppService.mainApp` register/unregister, status read on every Settings open and after each toggle, nothing in dock.json, os.Logger category `LaunchAtLogin`
+- [x] Settings > General > Startup: "Open Portside at login". enabled = on; notRegistered = off; requiresApproval = on plus helper line and "Open Login Items Settings..." button; notFound = off plus explanation; failures show a red inline error and the toggle snaps to the real status
+- [x] Unbundled (`swift run`): toggle disabled with "Available when running Portside.app."
+- [x] `swift build` (debug) and `swift build -c release`: no warnings
+
+## Verification (agent)
+
+- `codesign --verify --deep --strict --verbose=2`: valid on disk, satisfies its Designated Requirement. `codesign -dv`: Identifier com.james.portside, adhoc, Info.plist entries=14.
+- `plutil -lint` OK; `plutil -p` shows every required key.
+- `build/Portside.app/Contents/MacOS/portside --export-icon /tmp/p2.png`: wrote a 1024x1024 PNG, exit 0. Image checked visually.
+- `open build/Portside.app`: process runs from the bundle path, cwd `/`. Log shows dock.json loaded and "launch: Hide the macOS Dock is on, hiding" with the exact values saved; `autohide-delay` became 1000000. So the login launch path (same `applyAtLaunch`) does not depend on a terminal or working directory: data paths come from `FileManager` Application Support, `killall` is called by absolute path.
+- Menu bar item exists (System Events: "Portside", status menu, 92x24) but Bartender put it in its hidden section (x = -1).
+- Opened Settings from the menu via System Events: log `LaunchAtLogin status: notFound`.
+- Quit via AppleEvent: `autohide-delay` back to unset (as before). `swift run portside` still launches; SIGTERM restores the Dock.
+- Did not toggle the login item or run `--install` (left to the hand test).
+
+## Findings
+
+- On macOS 27, `SMAppService.mainApp.status` is `notFound` before the app was ever registered, not `notRegistered`. The notFound helper text is therefore phrased as "Not registered with macOS yet" instead of an error.
+- New SPM puts the debug binary at `.build/out/Products/Debug/portside`; the script asks `swift build --show-bin-path` instead of assuming a path.
+- The Settings window's saved frame was mostly off screen (top at y 972 of 1117); moved it back on screen through System Events while testing, which updated the saved frame.
+- Generic icon: the bundle has a real `AppIcon.icns`, so Finder and the native Dock should show it without the runtime dock-tile workaround (still in place, harmless). Needs the hand test to confirm.
+- Bartender: the bundled app has a stable bundle id, so Bartender should remember its menu bar item across launches. Unconfirmed: on the first bundle launch it treated the item as new and hid it.
+
+## Known gaps
+
+- Ad-hoc signatures change every build: Calendar permission may be asked again, and Login Items may list a stale or duplicate entry after a rebuild. A self-signed `SIGN_IDENTITY` avoids both.
+- The login item points at whichever copy registered it. Register from `~/Applications/Portside.app`, not `build/`.
+- Not notarized and no hardened runtime (personal use only).
+- Registration itself (enabled, requiresApproval, failures) is untested by the agent.
+
+## Hand test must also check
+
+- [ ] Icon in Finder and in the native Dock while Settings is open
+- [ ] Toggle on: Portside listed in System Settings > General > Login Items
+- [ ] Log out and in: Portside starts, and hides the native Dock if that option is on
+- [ ] Toggle off: removed from Login Items
+- [ ] `swift run portside`: toggle disabled with "Available when running Portside.app."
+- [ ] Bartender keeps the menu bar item placement across two bundle launches
 
 ---
 

@@ -2,7 +2,7 @@
 
 A fast, event-driven dock replacement for macOS, written in Swift (SwiftUI and AppKit) and built with SwiftPM.
 
-Portside is a personal project for macOS on Apple Silicon. It is not packaged, signed, or meant for general distribution.
+Portside is a personal project for macOS on Apple Silicon. It builds into a locally signed .app but is not notarized or meant for general distribution.
 
 ## Features
 
@@ -49,10 +49,14 @@ Portside is a personal project for macOS on Apple Silicon. It is not packaged, s
 - "Hide the macOS Dock" (Settings > General): keeps the native Dock from ever appearing while Portside runs, using the autohide-delay trick. Its exact prior settings are saved first and restored when you turn this off, quit, or stop Portside with Ctrl+C or `kill`. After a crash or `kill -9`, the next launch restores them first.
 - "Restore macOS Dock" in the menu bar item, and `portside --restore-dock` (restores from the backup and exits, no UI).
 
+**App bundle and startup**
+- `scripts/build-app.sh` builds a signed `build/Portside.app` with its own icon, version from `VERSION`, and the Calendar usage strings. `--install` copies it to `~/Applications`.
+- "Open Portside at login" (Settings > General > Startup) through `SMAppService`. macOS is the source of truth; the toggle shows its real status, links to Login Items when approval is needed, and is disabled under `swift run`.
+
 ## Planned
 
 From `docs/CHECKLIST.md` and `docs/PLAN.md`:
-- Milestone F, what is left: a real `.app` bundle, launch at login, the native Dock's orientation and icon size as initial values, and a manual "Import from macOS Dock" action. Seeding pinned apps from the native Dock on first launch already works.
+- Milestone F, what is left: the native Dock's orientation and icon size as initial values, and a manual "Import from macOS Dock" action. Seeding pinned apps from the native Dock on first launch already works.
 - Magnification (the stored setting exists, no UI yet).
 - Update checker: compare AppInfo.version with the latest GitHub release tag (vX.Y.Z), show 'up to date' or a link to the release. The Check for Updates button is a placeholder until then.
 - Native Dock parity: click-and-hold menu, drag icons out to remove, modifier clicks, Trash, folder stacks.
@@ -79,6 +83,27 @@ View logs while it runs:
 
 ```
 log stream --level info --predicate 'subsystem == "com.james.portside"'
+```
+
+## Build the app
+
+```
+scripts/build-app.sh            # builds build/Portside.app
+scripts/build-app.sh --install  # also copies it to ~/Applications/Portside.app
+open build/Portside.app
+```
+
+- Runs `swift build -c release`, then assembles `Contents/MacOS/portside`, `Contents/Info.plist` (from the repo's `Info.plist` plus bundle keys and the version from `VERSION`), and `Contents/Resources/AppIcon.icns` (drawn by the app via the hidden `portside --export-icon <path.png>` flag). No network.
+- `--install` copies to `~/Applications/Portside.app`, never `/Applications`. It refuses while that copy is running; quit Portside first. Without the flag nothing is installed.
+- Signing is ad-hoc by default. Ad-hoc signatures change on every build, so macOS may ask for Calendar permission again after each rebuild, and may treat each build as a new login item. To avoid that, create a self-signed code signing certificate in Keychain Access (Certificate Assistant > Create a Certificate, type Code Signing) and build with `SIGN_IDENTITY="Your Cert Name" scripts/build-app.sh`.
+- Turn on "Open Portside at login" from the copy you keep (normally `~/Applications/Portside.app`). macOS remembers the path it was registered from.
+- `swift build` and `swift run portside` are unchanged and still work for development.
+
+Restore the native Dock from the bundle's binary:
+
+```
+build/Portside.app/Contents/MacOS/portside --restore-dock
+~/Applications/Portside.app/Contents/MacOS/portside --restore-dock
 ```
 
 ## Versioning and releases
@@ -119,6 +144,9 @@ The Settings window controls:
 - Widgets: on/off and order
 - Groups: rename, ungroup, delete, open on hover, open delay, close grace
 - Hide the macOS Dock (`hideNativeDock`, plus `nativeDockExplained` once the first-time dialog was confirmed)
+- Open Portside at login: not stored by Portside. macOS keeps it (System Settings > General > Login Items).
+
+The built app lives at `build/Portside.app` (ignored by git), and at `~/Applications/Portside.app` after `scripts/build-app.sh --install`.
 
 ## Notes
 
@@ -132,7 +160,7 @@ The Settings window controls:
 
 ```
 Sources/portside/
-  PortsideApp.swift         Entry point (--restore-dock, crash recovery, signals), menu bar, app delegate
+  PortsideApp.swift         Entry point (--restore-dock, --export-icon, crash recovery, signals), menu bar, app delegate
   DockEngine.swift          Coordinator for tracker, panel, hide timer, and model
   EdgeTracker.swift         Edge window with NSTrackingArea (event-driven reveal)
   DockPanel.swift           Non-activating NSPanel, slide animation, panel tracking
@@ -150,10 +178,11 @@ Sources/portside/
   RunningApps.swift         Running app tracking via NSWorkspace notifications
   NativeDock.swift          Native Dock hide/restore: prefs backup, writes, Dock restart, verify
   NativeDockController.swift  "Hide the macOS Dock" toggle, first-time dialog, alerts
+  LaunchAtLogin.swift       "Open Portside at login" via SMAppService.mainApp
   SettingsWindow.swift      Settings window: header, tabs (General, Widgets, Groups)
   HotKey.swift              Global hotkey through Carbon RegisterEventHotKey
   BackgroundCursor.swift    Guarded SkyLight call for the resize cursor
-  AppIcon.swift             Runtime-drawn app icon
+  AppIcon.swift             Runtime-drawn app icon, PNG export for the .icns
   AppInfo.swift             App name, author, version line, and repo URL
   BuildInfo.swift           Generated by scripts/gen-version.sh: version, git hash, dirty flag
   UpdateChecker.swift       Update check (stub until GitHub releases are wired up)
@@ -166,4 +195,8 @@ Sources/portside/
     WeatherWidget.swift     Temperature and conditions (Open-Meteo)
     SystemStatsWidget.swift CPU and memory usage
   Support/                  Resources folder (empty placeholder)
+scripts/
+  gen-version.sh            Writes BuildInfo.swift from VERSION and git
+  release.sh                Bumps VERSION, commits, and tags a release
+  build-app.sh              Builds and signs build/Portside.app (--install to ~/Applications)
 ```

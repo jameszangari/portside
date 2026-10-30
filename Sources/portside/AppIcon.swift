@@ -25,6 +25,28 @@ enum AppIcon {
         tile.display()
     }
 
+    /// Renders the icon into an exact pixel size (no screen scale) and saves
+    /// it as PNG. Used by `portside --export-icon` to build AppIcon.icns.
+    static func writePNG(to url: URL, pixels: Int) throws {
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ), let context = NSGraphicsContext(bitmapImageRep: rep) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        let size = CGFloat(pixels)
+        rep.size = NSSize(width: size, height: size)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        draw(size: size).draw(in: NSRect(x: 0, y: 0, width: size, height: size))
+        NSGraphicsContext.restoreGraphicsState()
+        guard let data = rep.representation(using: .png, properties: [:]) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        try data.write(to: url)
+    }
+
     static func draw(size: CGFloat) -> NSImage {
         NSImage(size: NSSize(width: size, height: size), flipped: false) { bounds in
             // Same proportions as macOS app icons: artwork inset from the
