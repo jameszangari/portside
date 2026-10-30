@@ -95,7 +95,9 @@ final class IconCache: ObservableObject {
 
 /// Launch or activate an app, like clicking it in the native Dock.
 enum AppLauncher {
-    static func open(_ app: PinnedApp, running: NSRunningApplication?) {
+    /// `completion` runs on the main queue with Launch Services' result.
+    static func open(_ app: PinnedApp, running: NSRunningApplication?,
+                     completion: ((NSRunningApplication?, Error?) -> Void)? = nil) {
         let url = running?.bundleURL ?? app.url
         let started = CACurrentMediaTime()
         let action = running == nil ? "launching" : "activating"
@@ -114,6 +116,9 @@ enum AppLauncher {
                 itemLogger.error("open failed for \(app.displayName, privacy: .public): \(error.localizedDescription, privacy: .public)")
             } else {
                 itemLogger.info("opened \(result?.localizedName ?? "?", privacy: .public) in \(ms, format: .fixed(precision: 1))ms")
+            }
+            if let completion {
+                DispatchQueue.main.async { completion(result, error) }
             }
         }
     }
@@ -172,6 +177,7 @@ struct DockItemView: View {
     let isPinned: Bool
     let size: CGFloat
     @ObservedObject var dockModel: DockModel
+    @ObservedObject var bouncer: LaunchBouncer
     @ObservedObject private var icons = IconCache.shared
     @Environment(\.dockEdge) private var edge
 
@@ -219,9 +225,16 @@ struct DockItemView: View {
             .resizable()
             .interpolation(.high)
             .frame(width: size, height: size)
+            // While launching, the bounce window draws the icon. Hidden here
+            // only visually: the slot and its click target stay put.
+            .opacity(bouncer.bouncingID == app.id ? 0 : 1)
             .contentShape(Rectangle())
             .onTapGesture {
-                AppLauncher.open(app, running: running)
+                if running == nil && isPinned {
+                    bouncer.launch(app, size: size)
+                } else {
+                    AppLauncher.open(app, running: running)
+                }
             }
     }
 
