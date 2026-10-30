@@ -13,6 +13,11 @@ import os.log
 /// cancelable): the optional hover-intent delay to open, a short grace delay
 /// when a hover-opened grid closes, and the close animation's length.
 ///
+/// Launch bounce: clicking a not-running app in the grid keeps the grid open
+/// and bounces that cell until the app finishes launching, then the grid
+/// closes. Any close (or switching groups) stops the bounce first, so
+/// nothing is left floating or hidden.
+///
 /// Inline rename: the grid's title becomes a text field and the overlay
 /// panel takes key focus only while it is being edited.
 ///
@@ -42,6 +47,11 @@ final class GroupController: ObservableObject {
     private let dockModel: DockModel
     private let runningApps: RunningApps
     private let hover: DockHover
+    let bouncer: LaunchBouncer
+    /// Grid cell icon frames (overlay content coordinates), by bounce key.
+    /// Kept across closes: reopening the same group reuses its SwiftUI
+    /// views, which do not report an unchanged frame again.
+    private var cellIconFrames: [String: CGRect] = [:]
     private var outsideClickMonitor: Any?
     private var subscriptions: Set<AnyCancellable> = []
     /// A rename asked for before the group's tile was laid out (a group that
@@ -56,10 +66,11 @@ final class GroupController: ObservableObject {
     private var openedByHover = false
     private let logger = Logger(subsystem: "com.james.portside", category: "Groups")
 
-    init(dockModel: DockModel, runningApps: RunningApps, hover: DockHover) {
+    init(dockModel: DockModel, runningApps: RunningApps, hover: DockHover, bouncer: LaunchBouncer) {
         self.dockModel = dockModel
         self.runningApps = runningApps
         self.hover = hover
+        self.bouncer = bouncer
         overlay.ignoresMouseEvents = false
         overlay.onMouseEntered = { [weak self] in
             guard let self else { return }
@@ -130,6 +141,9 @@ final class GroupController: ObservableObject {
         isClosing = false
         guard let group = dockModel.groups.first(where: { $0.id == groupID }),
               let anchor = hover.screenFrame(forTargetID: DockEntry.group(group).id) else { return }
+        if expandedID != groupID {
+            bouncer.cancelGridBounce(reason: "switched group")
+        }
         if isEditing { endRename(commit: true) }
         let started = CACurrentMediaTime()
         expandedID = groupID
@@ -165,6 +179,9 @@ final class GroupController: ObservableObject {
             return
         }
         if isEditing { endRename(commit: true) }
+        // Before the close animation: the bounce window sits above the grid
+        // and would otherwise float over it while it fades.
+        bouncer.cancelGridBounce(reason: "group closed")
         if animated && GroupPopoverMotion.shouldAnimate {
             pendingCollapseReason = reason
             isClosing = true
@@ -187,6 +204,7 @@ final class GroupController: ObservableObject {
         isClosing = false
         expandedID = nil
         openedByHover = false
+        bouncer.cancelGridBounce(reason: "group closed")
         overlay.dismiss()
         removeOutsideClickMonitor()
         hover.isSuppressed = false
@@ -254,6 +272,8 @@ final class GroupController: ObservableObject {
         guard let id = expandedID,
               let anchor = hover.screenFrame(forTargetID: "group:" + id) else { return }
         overlay.reanchor(anchor)
+        // The engine calls the bouncer's tilesChanged right after this, so a
+        // bouncing grid cell follows the grid.
     }
 
     /// The hovered strip item changed (nil: nothing, or the cursor left the
@@ -326,8 +346,38 @@ final class GroupController: ObservableObject {
     }
 
     private func launch(_ app: PinnedApp) {
-        AppLauncher.open(app, running: runningApps.runningInstance(of: app))
+        let running = runningApps.runningInstance(of: app)
+        if running == nil, let groupID = expandedID, !isClosing, bouncer.isEnabled {
+            let target = LaunchBouncer.BounceTarget(
+                key: LaunchBouncer.gridKey(groupID: groupID, appID: app.id),
+                // Above the grid overlay (and its labels' level).
+                level: NSWindow.Level(rawValue: OverlayPanel.windowLevel.rawValue + 1)
+            ) { [weak self] _ in self?.cellIconScreenFrame(appID: app.id, groupID: groupID) }
+            let bouncing = bouncer.launch(app, size: GroupPopoverView.iconSize, target: target) { [weak self] landed in
+                // Landed: the app is up, so close the grid like any launch.
+                // Cut short: the grid closed, the dock hid or moved, or the
+                // launch failed; leave the grid as it is.
+                if landed { self?.collapse(reason: "opened \(app.displayName)") }
+            }
+            if bouncing { return }
+            // Bounce did not start (cell not on screen); it was launched anyway.
+            collapse(reason: "opened \(app.displayName)")
+            return
+        }
+        AppLauncher.open(app, running: running)
         collapse(reason: "opened \(app.displayName)")
+    }
+
+    /// A grid cell's icon moved, appeared (frame) or went away (nil).
+    func cellIconFrameChanged(groupID: String, appID: String, frame: CGRect?) {
+        cellIconFrames[LaunchBouncer.gridKey(groupID: groupID, appID: appID)] = frame
+        if groupID == expandedID { bouncer.tilesChanged() }
+    }
+
+    private func cellIconScreenFrame(appID: String, groupID: String) -> NSRect? {
+        guard expandedID == groupID, !isClosing,
+              let rect = cellIconFrames[LaunchBouncer.gridKey(groupID: groupID, appID: appID)] else { return nil }
+        return overlay.screenRect(forContentRect: rect)
     }
 
     /// Clicks in other apps never reach Portside's windows, so a global

@@ -111,6 +111,14 @@ final class OverlayPanel {
 
     var isKey: Bool { panel.isKeyWindow }
 
+    /// A rect in the content's SwiftUI global space (top-left origin, the
+    /// hosting view fills the panel) in screen coordinates. Nil while hidden.
+    func screenRect(forContentRect rect: CGRect) -> NSRect? {
+        guard panel.isVisible, placement != nil else { return nil }
+        let frame = panel.frame
+        return NSRect(x: frame.minX + rect.minX, y: frame.maxY - rect.maxY, width: rect.width, height: rect.height)
+    }
+
     /// Let the panel take keyboard focus (for a text field) without
     /// activating Portside: it is a non-activating panel, so the frontmost
     /// app stays active and only key events come here.

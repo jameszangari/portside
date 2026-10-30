@@ -108,7 +108,7 @@ struct GroupPopoverView: View {
 
     @State private var appeared = false
 
-    private static let iconSize: CGFloat = 52
+    static let iconSize: CGFloat = 52
     private static let cellWidth: CGFloat = 76
     /// Room around the card for its shadow, on every side except the tile's.
     static let shadowPadding: CGFloat = 18
@@ -179,6 +179,8 @@ struct GroupPopoverView: View {
                                 iconSize: Self.iconSize,
                                 width: Self.cellWidth,
                                 dockModel: dockModel,
+                                groups: groups,
+                                bouncer: groups.bouncer,
                                 onLaunch: onLaunch
                             )
                         }
@@ -241,9 +243,13 @@ private struct GroupAppCell: View {
     let iconSize: CGFloat
     let width: CGFloat
     @ObservedObject var dockModel: DockModel
+    let groups: GroupController
+    @ObservedObject var bouncer: LaunchBouncer
     let onLaunch: (PinnedApp) -> Void
     @ObservedObject private var icons = IconCache.shared
     @State private var hovered = false
+
+    private var bounceKey: String { LaunchBouncer.gridKey(groupID: groupID, appID: app.id) }
 
     var body: some View {
         VStack(spacing: 3) {
@@ -251,6 +257,16 @@ private struct GroupAppCell: View {
                 .resizable()
                 .interpolation(.high)
                 .frame(width: iconSize, height: iconSize)
+                // While launching, the bounce window draws the icon.
+                .opacity(bouncer.bouncingID == bounceKey ? 0 : 1)
+                // Where the bounce window goes (the hosting view fills the
+                // overlay, so global is overlay content space).
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                    groups.cellIconFrameChanged(groupID: groupID, appID: app.id, frame: frame)
+                }
+                .onDisappear {
+                    groups.cellIconFrameChanged(groupID: groupID, appID: app.id, frame: nil)
+                }
             Circle()
                 .fill(Color.primary.opacity(running == nil ? 0 : 0.75))
                 .frame(width: 4, height: 4)

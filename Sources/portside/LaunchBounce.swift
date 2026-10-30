@@ -2,7 +2,9 @@ import AppKit
 import QuartzCore
 import os.log
 
-/// Native-style launch bounce for pinned app tiles on the bottom dock.
+/// Native-style launch bounce for pinned app tiles in the strip (any edge)
+/// and app cells in an open group grid. The icon always bounces away from
+/// the screen edge: up on the bottom dock, sideways on the side docks.
 ///
 /// The dock panel has only a few points of room above the icons, so a
 /// SwiftUI offset would clip. Instead the bouncing icon is drawn in its own
@@ -17,8 +19,23 @@ import os.log
 /// React analogy: a portal plus a tiny store. `bouncingID` is the state the
 /// tile subscribes to; the window is the portal content.
 final class LaunchBouncer: ObservableObject {
-    /// Pinned app id whose tile is bouncing. The tile hides its icon while set.
+    /// Key of the tile that is bouncing (`BounceTarget.key`). The tile hides
+    /// its icon while set.
     @Published private(set) var bouncingID: String?
+
+    /// What bounces: where its icon is on screen, and which window level the
+    /// bounce window needs to sit above it.
+    struct BounceTarget {
+        /// Strip tiles use the app id; grid cells use `gridKey`.
+        let key: String
+        let level: NSWindow.Level
+        /// The icon's screen rect for an icon size, or nil if it is gone.
+        let iconFrame: (CGFloat) -> NSRect?
+    }
+
+    static func gridKey(groupID: String, appID: String) -> String {
+        "grid:\(groupID)/\(appID)"
+    }
 
     /// Measured from a screen recording of the native Dock (macOS 27, 37pt
     /// tiles): each bounce is a plain parabola, like a ball thrown straight
@@ -38,6 +55,12 @@ final class LaunchBouncer: ObservableObject {
     private let logger = Logger(subsystem: "com.james.portside", category: "LaunchBounce")
 
     private var app: PinnedApp?
+    private var target: BounceTarget?
+    /// Edge the bounce started on. It points away from this edge.
+    private var edge: DockEdge = .bottom
+    /// Called once when this bounce ends; true if it landed (launched or
+    /// safety cap), false if it was cut short.
+    private var onEnd: ((Bool) -> Void)?
     private var tileSize: CGFloat = 0
     private var startedAt: CFTimeInterval = 0
     /// Layer time the bounce animation began, so a shortened copy keeps its phase.
@@ -78,54 +101,98 @@ final class LaunchBouncer: ObservableObject {
 
     // MARK: - Start
 
-    /// A pinned tile was clicked and its app is not running. Starts the bounce
-    /// if it applies, then launches the app either way.
+    /// A pinned strip tile was clicked and its app is not running. Starts the
+    /// bounce if it applies, then launches the app either way.
     func launch(_ app: PinnedApp, size: CGFloat) {
-        let bounces = shouldBounce(app)
-        if bounces { start(app, size: size) }
+        launch(app, size: size, target: stripTarget(for: app))
+    }
+
+    /// Launches a not-running app and bounces `target` while it starts, if
+    /// the setting and Reduce Motion allow. True if the bounce is running.
+    @discardableResult
+    func launch(_ app: PinnedApp, size: CGFloat, target: BounceTarget, onEnd: ((Bool) -> Void)? = nil) -> Bool {
+        let bounces = shouldBounce(target)
+        if bounces { start(app, size: size, target: target, onEnd: onEnd) }
         let myGeneration = generation
         AppLauncher.open(app, running: nil) { [weak self] result, error in
             guard bounces, let self, myGeneration == self.generation else { return }
             self.launchResult(result, error: error)
         }
+        return bouncingID == target.key
     }
 
-    private func shouldBounce(_ app: PinnedApp) -> Bool {
-        guard dockModel.animateOpeningApplications, dockModel.edge == .bottom else { return false }
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { return false }
+    /// Whether a click would bounce right now (setting on, no Reduce Motion).
+    var isEnabled: Bool {
+        dockModel.animateOpeningApplications && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
+    private func shouldBounce(_ target: BounceTarget) -> Bool {
         // A second click while it is still launching does not restart it.
-        return bouncingID != app.id
+        isEnabled && bouncingID != target.key
     }
 
-    private func start(_ app: PinnedApp, size: CGFloat) {
+    /// The tile's icon in the strip. The running dot sits between the icon
+    /// and the screen edge, so the icon is the far `size` points of the tile.
+    private func stripTarget(for app: PinnedApp) -> BounceTarget {
+        BounceTarget(key: app.id, level: EdgeTracker.windowLevel) { [weak hover] size in
+            guard let hover, let tile = hover.screenFrame(forTargetID: app.id) else { return nil }
+            switch hover.edge {
+            case .bottom: return NSRect(x: tile.midX - size / 2, y: tile.maxY - size, width: size, height: size)
+            case .left: return NSRect(x: tile.maxX - size, y: tile.midY - size / 2, width: size, height: size)
+            case .right: return NSRect(x: tile.minX, y: tile.midY - size / 2, width: size, height: size)
+            }
+        }
+    }
+
+    private func start(_ app: PinnedApp, size: CGFloat, target: BounceTarget, onEnd: ((Bool) -> Void)?) {
         cancel(reason: "another app clicked")
         generation += 1
         self.app = app
+        self.target = target
+        self.onEnd = onEnd
+        edge = hover.edge
         tileSize = size
         isStopping = false
         startedAt = CACurrentMediaTime()
+        // Above whatever the tile lives in (dock panel or group overlay).
+        window.level = target.level
         guard place() else {
             logger.info("bounce skipped for \(app.displayName, privacy: .public): tile not on screen")
             self.app = nil
+            self.target = nil
+            self.onEnd = nil
             return
         }
 
         renderIcon()
         window.orderFrontRegardless()
-        bouncingID = app.id
+        bouncingID = target.key
 
         animationBegin = iconLayer.convertTime(CACurrentMediaTime(), from: nil)
         addAnimation(repeatCount: Self.maxCycles)
         observeWorkspaceLaunch(of: app)
-        logger.info("bounce started: \(app.displayName, privacy: .public) at \(size, format: .fixed(precision: 0))pt")
+        let kind = Self.isGridKey(target.key) ? "grid cell" : "strip tile"
+        logger.info("bounce started: \(app.displayName, privacy: .public) \(kind, privacy: .public) at \(size, format: .fixed(precision: 0))pt on the \(self.edge.rawValue, privacy: .public) edge")
+    }
+
+    /// Unit vector the icon moves along at the top of a bounce (layer
+    /// coordinates, y up): away from the screen edge.
+    private var direction: CGVector {
+        switch edge {
+        case .bottom: CGVector(dx: 0, dy: 1)
+        case .left: CGVector(dx: 1, dy: 0)
+        case .right: CGVector(dx: -1, dy: 0)
+        }
     }
 
     // MARK: - Animation
 
     private func addAnimation(repeatCount: Float) {
         let height = tileSize * Self.heightRatio
-        let anim = CAKeyframeAnimation(keyPath: "transform.translation.y")
-        anim.values = [0, height, 0]
+        let vertical = direction.dy != 0
+        let peak = height * (vertical ? direction.dy : direction.dx)
+        let anim = CAKeyframeAnimation(keyPath: vertical ? "transform.translation.y" : "transform.translation.x")
+        anim.values = [0, peak, 0]
         anim.keyTimes = [0, 0.5, 1]
         // These two curves are exact parabolas: y = 1 - (1 - x)^2 going up,
         // y = x^2 coming down.
@@ -209,22 +276,22 @@ final class LaunchBouncer: ObservableObject {
 
     // MARK: - Placement
 
-    /// Puts the window over the tile's icon, with headroom above for the
-    /// bounce. False if the tile is not in the strip or the dock is off screen.
+    /// Puts the window over the tile's icon, with headroom on the side the
+    /// bounce goes. False if the tile is gone or off screen.
     @discardableResult
     private func place() -> Bool {
-        guard let app, let tile = hover.screenFrame(forTargetID: app.id) else { return false }
+        guard let target, let icon = target.iconFrame(tileSize) else { return false }
         let size = tileSize
         let headroom = (size * Self.heightRatio).rounded() + 2
-        // Bottom dock: the icon is the top `size` points of the tile, the
-        // running dot sits below it.
-        let icon = NSRect(x: tile.midX - size / 2, y: tile.maxY - size, width: size, height: size)
+        let travel = direction
+        // The icon plus the space it travels through.
+        let reach = icon.union(icon.offsetBy(dx: travel.dx * headroom, dy: travel.dy * headroom))
         // Tiles can sit on half points. The window server rounds window
         // frames to whole points, so the window takes the whole part and the
         // layer the fraction; otherwise the icon lands half a point off and
         // visibly ticks when the tile's own icon comes back.
-        let origin = NSPoint(x: icon.minX.rounded(.down), y: icon.minY.rounded(.down))
-        let frame = NSRect(x: origin.x, y: origin.y, width: size.rounded(.up) + 1, height: (size + headroom).rounded(.up) + 1)
+        let origin = NSPoint(x: reach.minX.rounded(.down), y: reach.minY.rounded(.down))
+        let frame = NSRect(x: origin.x, y: origin.y, width: reach.width.rounded(.up) + 1, height: reach.height.rounded(.up) + 1)
         if window.frame != frame { window.setFrame(frame, display: false) }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -233,16 +300,16 @@ final class LaunchBouncer: ObservableObject {
         return true
     }
 
-    /// Tile frames changed (items added, removed, reordered, dock resized).
-    /// Follows the tile, or stops if it is gone.
+    /// Tile frames changed (items added, removed, reordered, dock resized,
+    /// grid moved). Follows the tile, or stops if it is gone.
     func tilesChanged() {
         guard app != nil else { return }
         if !place() { cancel(reason: "tile removed") }
     }
 
-    /// Icon size changed while bouncing.
+    /// Strip icon size changed while bouncing (grid cells keep their size).
     func tileSizeChanged(_ size: CGFloat) {
-        guard app != nil, size != tileSize else { return }
+        guard app != nil, let target, !Self.isGridKey(target.key), size != tileSize else { return }
         tileSize = size
         renderIcon()
         tilesChanged()
@@ -287,12 +354,24 @@ final class LaunchBouncer: ObservableObject {
         finish(reason: reason)
     }
 
+    /// The group grid is closing or switching groups: stop a grid cell's
+    /// bounce right away. Strip bounces keep going.
+    func cancelGridBounce(reason: String) {
+        guard app != nil, let target, Self.isGridKey(target.key) else { return }
+        finish(reason: reason)
+    }
+
+    private static func isGridKey(_ key: String) -> Bool { key.hasPrefix("grid:") }
+
     private func finish(reason: String, landed: Bool = false) {
         guard let app else { return }
         let ms = (CACurrentMediaTime() - startedAt) * 1000
         logger.info("bounce ended (\(reason, privacy: .public)): \(app.displayName, privacy: .public) after \(ms, format: .fixed(precision: 0))ms")
         generation += 1
         self.app = nil
+        target = nil
+        let ended = onEnd
+        onEnd = nil
         isStopping = false
         observations.forEach { $0.invalidate() }
         observations = []
@@ -314,6 +393,8 @@ final class LaunchBouncer: ObservableObject {
         } else {
             window.orderOut(nil)
         }
+        // Last, with all state cleared, so the callback can start anything.
+        ended?(landed)
     }
 }
 

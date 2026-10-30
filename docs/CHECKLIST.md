@@ -1,6 +1,6 @@
 # Portside: Checklist
 
-Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (parts 1 and 2) and the bottom-edge launch bounce are built and waiting on the hand test.
+Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (parts 1 and 2) and the launch bounce (all edges and group grids) are built and waiting on the hand test.
 
 ## Roadmap
 
@@ -13,12 +13,60 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (p
 - [ ] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live (part 1: built, hand test pending); part 2 (built, hand test pending): auto-hide toggle with Cmd+Option+D, Portside as a regular app while Settings is open, inline group naming and rename, open groups on hover
 - [ ] **F:** Native Dock hide/restore (autohide-delay trick only), launch at login (`SMAppService`), import `persistent-apps` and `persistent-others` from `com.apple.dock`, plus native orientation and tilesize as Portside's initial position and icon size; bounce on attention request (`requestUserAttention`; no public API exposes another app's request, so it needs private APIs, dlopen/dlsym guarded)
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
-- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder; drag icons out to remove; drop files onto app icons to open them; launch bounce (bottom edge pinned tiles built, hand test pending; side edges and groups to do); Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide
+- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder; drag icons out to remove; drop files onto app icons to open them; launch bounce (all three edges plus group grid cells built, hand test pending); Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide
 - [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); right-click Trash shows Empty Trash; filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag; magnification polish
 - [ ] **P3:** Follow the display the cursor hits; fullscreen apps and Spaces; badge counts via the real Dock's accessibility tree (Accessibility permission; private APIs only as fallback); window list in right-click menu with click to focus (Screen Recording for titles); VoiceOver labels and keyboard navigation; do not reveal while dragging a window or holding the mouse button (except file drags headed to the Dock)
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
+
+---
+
+# P1 slice: launch bounce on side edges and in group grids
+
+Status: built and verified with synthetic events; waiting on James's hand test. Not committed. No new files.
+
+## Deliverables
+
+- [x] Left and Right edges: pinned strip tiles bounce sideways, away from the screen edge (right on Left, left on Right). Same animation as the bottom (700ms parabola, peak 0.33 of the icon), only the axis and sign change. The bounce window grows on the side the icon travels to.
+- [x] Group grid cells: clicking a not-running app in an open grid bounces that cell's icon (52pt) away from the screen edge. The grid stays open while it launches and closes when the bounce lands, like any launch.
+- [x] Grid closing mid-launch stops the bounce first, before the close animation: tile click, click elsewhere, click outside Portside, hover-out close, switching groups, dock hiding, dock moved. The cell's icon comes back; nothing is left floating.
+- [x] "Animate opening applications" (and Reduce Motion) applies to strip and grid. Off: the grid launches and closes at once, as before.
+- [x] Bottom edge unchanged: same window frame math (verified 33x46 window for a 32pt tile, as before), same keyframes.
+- [x] `swift build` clean; `swift run` stays up
+
+## Changes
+
+- `LaunchBounce.swift`: a `BounceTarget` (key, window level, icon frame provider) replaces the hard-coded strip lookup. Strip tiles compute the icon rect per edge (the running dot sits on the screen-edge side). The animation uses `transform.translation.x` on side edges. `cancelGridBounce` and an `onEnd(landed)` callback for the grid.
+- `GroupController.swift`: launches not-running apps through the bouncer; cancels a grid bounce on collapse start, finish and group switch; keeps cell icon frames reported by the grid.
+- `GroupViews.swift`: cells hide their icon while bouncing and report the icon frame (`onGeometryChange`, global space).
+- `OverlayPanel.swift`: `screenRect(forContentRect:)`.
+- `DockEngine.swift`: bouncer created before the group controller and passed in.
+- Reveal/hide path: untouched.
+
+## Verification (agent, synthetic events)
+
+Throwaway test app in `/tmp` that takes 3s to finish launching (run loop kept responsive), pinned temporarily plus a test group holding it and Calculator. `dock.json` backed up first and restored byte for byte after.
+
+- [x] Bottom strip: bounced up, landed after bounce 5 at 3508ms. Bounce window 33x46, same as before the change.
+- [x] Bottom grid cell: bounced up inside the grid (window x lines up with the cell icon), landed at 3502ms, then `collapsed (opened SlowBounce)`.
+- [x] Left strip: bounced right (window 35x25 = 24pt icon + 10pt travel). Left grid cell: bounced right.
+- [x] Right strip: bounced left (window starts 10pt left of the icon). Right grid cell: bounced left.
+- [x] Grid closed by tile click mid-launch: `bounce ended (group closed)` at 1012ms, no bounce window left, reopened grid shows the icon at rest.
+- [x] Grid closed by a click elsewhere (right edge) mid-launch: `bounce ended (group closed)`, windows gone.
+- [x] Dock hidden mid-launch from a grid (left edge): `bounce ended (dock hiding)`, `collapsed (dock hiding)`, only the edge window left.
+- [x] Setting off: strip and grid launch with no bounce; grid closes at once.
+- [x] Reveal timing (mouseEntered to animation start), same session and conditions: HEAD build 0.51 to 3.21ms over 18 reveals; this build 0.52 to 3.06ms over 24 reveals, all three edges.
+
+## Findings
+
+- Reopening the same group reuses its SwiftUI views, so `onGeometryChange` does not report the unchanged cell frames again. The first build cleared frames on close and then could not bounce on the second open ("tile not on screen"). Frames are now kept per group and only dropped when a cell disappears.
+- A test app that blocks its main thread while launching also delays synthetic clicks on Portside by seconds (the window server holds events while that app activates). Real apps that hang at launch may do the same; worth watching in the hand test.
+
+## Hand test must also check
+
+- [ ] Sideways bounce feels like the bottom one (speed, height)
+- [ ] Hover-opened grid: moving off the grid mid-launch closes it and stops the bounce cleanly
 
 ---
 
