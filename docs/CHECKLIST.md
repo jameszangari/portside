@@ -1,6 +1,6 @@
 # Portside: Checklist
 
-Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (parts 1 and 2), the launch bounce (all edges and group grids), reveal on file drag, drop-to-open on app tiles, spring-loaded groups, the Milestone F native Dock hide/restore and the Settings window redesign are built and waiting on the hand test.
+Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (parts 1 and 2), the launch bounce (all edges and group grids), reveal on file drag, drop-to-open on app tiles, spring-loaded groups, the Milestone F native Dock hide/restore, the Settings window redesign and automated versioning are built and waiting on the hand test.
 
 ## Roadmap
 
@@ -19,6 +19,47 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (p
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
+
+---
+
+# Tooling slice: automated versioning
+
+Status: built, verified with `swift build` and a release dry run; waiting on James's hand test. Not committed. New files: `VERSION`, `scripts/gen-version.sh`, `scripts/release.sh`, `Sources/portside/BuildInfo.swift`.
+
+## Deliverables
+
+- [x] `VERSION` at the repo root (`0.1.0`) is the only place the version number is edited.
+- [x] `scripts/gen-version.sh` (bash 3.2, no network) writes `Sources/portside/BuildInfo.swift`: version, short commit hash, dirty flag, release flag. Marked as generated. Commit and dirty fall back to `"unknown"` / `nil` without git. Rewrites only on change.
+- [x] `BuildInfo.swift` is meant to be committed so `swift build` works without running the script.
+- [x] `AppInfo` reads version, commit, dirty and release from `BuildInfo`. Header: "Version 0.1.0 by James Cliff", plus ` (abc1234)` for unreleased builds or ` (abc1234-dirty)` for dirty ones. Header layout untouched (`SettingsWindow.swift` not edited).
+- [x] `scripts/release.sh patch|minor|major`: dry run by default; `--apply` refuses on a dirty tree or an existing tag, bumps `VERSION`, runs `gen-version.sh --release`, one commit "Release vX.Y.Z", annotated tag vX.Y.Z, never pushes, prints the push and `gh release create` commands.
+- [x] README "Versioning and releases" section.
+- [x] `swift build` clean, no warnings; launches and stays up
+
+## Verification (agent)
+
+- `gen-version.sh` run twice: second run reports "unchanged". In a non-git copy it writes commit `"unknown"`, `isDirty: nil`.
+- `release.sh minor` dry run printed 0.1.0 -> 0.2.0, the dirty-tree warning, the steps, and the push commands. `VERSION` unchanged afterwards.
+- No args and a bogus arg print usage (exit 2). `release.sh patch --apply` on the dirty tree refused before changing anything (exit 1).
+- The full `--apply` path (commit and tag) was not run, per instructions.
+
+## Findings
+
+- The release commit can't contain its own hash, so `--release` writes the pre-release HEAD as `commit` and sets `isRelease = true`, which hides the hash in the header.
+- `BuildInfo.swift` is excluded from the dirty check, otherwise regenerating it would mark the next run dirty.
+- The author was "James" in `AppInfo`; changed to "James Cliff" to match the requested header text.
+
+## Known gaps
+
+- `BuildInfo.swift` is only as fresh as the last `gen-version.sh` run. Nothing runs it automatically before `swift build` (that needs an SPM build plugin). After a release, it still says release until regenerated, so dev builds show no hash until you run the script.
+- Running the script on a dirty tree changes the committed `BuildInfo.swift`; commit or discard it as you like.
+- No tags exist yet, so until the first release the header shows the hash.
+
+## Hand test must also check
+
+- [ ] Settings header reads "Version 0.1.0 by James Cliff (<hash>-dirty)" now, and the same look as before otherwise
+- [ ] After committing, `scripts/gen-version.sh` then `swift run`: header shows the clean hash
+- [ ] `scripts/release.sh patch` prints a dry run and changes nothing (`git status`)
 
 ---
 
@@ -53,7 +94,7 @@ Status: built and screenshot-reviewed by the agent (two rounds, dark and light);
 
 - A grouped `Form` ignores `ForEach.onMove`; a plain `List` reorders but loses the grouped look and its content height cannot be read. Widget rows reorder with `onDrag`/`onDrop` instead and move live under the cursor, without the native insertion line.
 - `AppIcon.image` redraws its vector handler at every size and its shadow blur does not scale, so small renders showed a square edge. `AppIcon.bitmap` renders it once at 512px.
-- No git hash in the header: SwiftPM has no clean way to pass a build-time string without a build plugin, so it was skipped.
+- No git hash in the header: SwiftPM has no clean way to pass a build-time string without a build plugin, so it was skipped. (Later solved by the versioning slice: a generated, committed `BuildInfo.swift`.)
 
 ## Known gaps
 
