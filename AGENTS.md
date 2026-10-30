@@ -53,4 +53,4 @@ Follow this at the end of every task, before reporting.
 3. If you added a Swift file, add it to the README project layout tree with a one-line description, and tell me to `git add` it.
 4. If dock.json gained new keys or the settings changed, update the README "Where data lives" section.
 5. Final report, in this order: what changed, what I should hand test (a short numbered list), new untracked files, known gaps.
-6. Never commit or push.
+6. Never commit or push unless I ask. When I ask to commit, commit directly on main; no feature branch needed while the project is in its early stages.
