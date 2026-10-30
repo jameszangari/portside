@@ -19,6 +19,7 @@ Portside is a personal project for macOS on Apple Silicon. It is not packaged, s
 - Pinned apps with running indicators, updated from `NSWorkspace` notifications.
 - Drag to reorder.
 - Drag an .app from Finder onto the strip to pin it.
+- Drop files on an app tile to open them in that app, like the native Dock. Only tiles whose app can open the files highlight and accept the drop (Finder takes folders). A not-running pinned app launches with the bounce.
 - Running apps that are not pinned show after the pinned section.
 - Right-click menu: Keep in Dock or Remove from Dock, Add to Group, Show in Finder, Quit.
 - Native-style launch bounce for pinned apps on any edge (sideways on the side docks) and for apps opened from a group grid (optional, off under Reduce Motion).
@@ -47,7 +48,7 @@ From `docs/CHECKLIST.md` and `docs/PLAN.md`:
 - Milestone F: hide the native Dock (autohide-delay trick only) with exact save and restore, launch at login, and import of the native Dock's items, position, and icon size.
 - A real `.app` bundle.
 - Magnification (the setting exists but is disabled).
-- Native Dock parity: click-and-hold menu, drag icons out to remove, drop files onto icons, modifier clicks, Trash, folder stacks.
+- Native Dock parity: click-and-hold menu, drag icons out to remove, modifier clicks, Trash, folder stacks. Drop files onto apps inside a group grid.
 - Multi-display, fullscreen and Spaces behavior, badges.
 - Better widget layout on side docks.
 
@@ -107,6 +108,7 @@ Sources/portside/
   DockEdge.swift            Bottom/Left/Right enum and screen selection
   DockStrip.swift           SwiftUI strip: tiles, widgets, separator, reorder, drops
   DockItem.swift            App tile, icon cache, launch/activate, context menu
+  FileDrop.swift            Per-drag state for file drops: pin vs open, can-open checks
   DockHover.swift           Hover target frames and label placement
   FolderGroup.swift         Group and entry models
   GroupController.swift     Group open/close state and every close path

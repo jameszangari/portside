@@ -96,12 +96,14 @@ final class IconCache: ObservableObject {
 /// Launch or activate an app, like clicking it in the native Dock.
 enum AppLauncher {
     /// `completion` runs on the main queue with Launch Services' result.
-    static func open(_ app: PinnedApp, running: NSRunningApplication?,
+    /// With `documents`, the app opens them (a file dropped on its tile).
+    static func open(_ app: PinnedApp, running: NSRunningApplication?, documents: [URL] = [],
                      completion: ((NSRunningApplication?, Error?) -> Void)? = nil) {
         let url = running?.bundleURL ?? app.url
         let started = CACurrentMediaTime()
         let action = running == nil ? "launching" : "activating"
-        itemLogger.info("\(action, privacy: .public) \(app.displayName, privacy: .public)")
+        let opening = documents.isEmpty ? "" : " to open \(documents.count) item(s)"
+        itemLogger.info("\(action, privacy: .public) \(app.displayName, privacy: .public)\(opening, privacy: .public)")
 
         running?.unhide()
         // openApplication goes through Launch Services, which may activate
@@ -110,7 +112,7 @@ enum AppLauncher {
         // one, matching the native Dock.
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
-        NSWorkspace.shared.openApplication(at: url, configuration: config) { result, error in
+        let handler: (NSRunningApplication?, Error?) -> Void = { result, error in
             let ms = (CACurrentMediaTime() - started) * 1000
             if let error {
                 itemLogger.error("open failed for \(app.displayName, privacy: .public): \(error.localizedDescription, privacy: .public)")
@@ -120,6 +122,11 @@ enum AppLauncher {
             if let completion {
                 DispatchQueue.main.async { completion(result, error) }
             }
+        }
+        if documents.isEmpty {
+            NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: handler)
+        } else {
+            NSWorkspace.shared.open(documents, withApplicationAt: url, configuration: config, completionHandler: handler)
         }
     }
 }
@@ -178,6 +185,8 @@ struct DockItemView: View {
     let size: CGFloat
     @ObservedObject var dockModel: DockModel
     @ObservedObject var bouncer: LaunchBouncer
+    /// A file drag is over this tile and the app can open it.
+    var isDropTarget = false
     @ObservedObject private var icons = IconCache.shared
     @Environment(\.dockEdge) private var edge
 
@@ -228,6 +237,13 @@ struct DockItemView: View {
             // While launching, the bounce window draws the icon. Hidden here
             // only visually: the slot and its click target stay put.
             .opacity(bouncer.bouncingID == app.id ? 0 : 1)
+            // Native-Dock-style drop highlight. Negative padding inside the
+            // background, so it never changes the tile's layout.
+            .background(
+                RoundedRectangle(cornerRadius: size * 0.25, style: .continuous)
+                    .fill(Color.primary.opacity(isDropTarget ? 0.22 : 0))
+                    .padding(-3)
+            )
             .contentShape(Rectangle())
             .onTapGesture {
                 if running == nil && isPinned {

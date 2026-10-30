@@ -1,6 +1,6 @@
 # Portside: Checklist
 
-Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (parts 1 and 2), the launch bounce (all edges and group grids) and reveal on file drag are built and waiting on the hand test.
+Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (parts 1 and 2), the launch bounce (all edges and group grids), reveal on file drag and drop-to-open on app tiles are built and waiting on the hand test.
 
 ## Roadmap
 
@@ -13,12 +13,74 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (p
 - [ ] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live (part 1: built, hand test pending); part 2 (built, hand test pending): auto-hide toggle with Cmd+Option+D, Portside as a regular app while Settings is open, inline group naming and rename, open groups on hover
 - [ ] **F:** Native Dock hide/restore (autohide-delay trick only), launch at login (`SMAppService`), import `persistent-apps` and `persistent-others` from `com.apple.dock`, plus native orientation and tilesize as Portside's initial position and icon size; bounce on attention request (`requestUserAttention`; no public API exposes another app's request, so it needs private APIs, dlopen/dlsym guarded)
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
-- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder; drag icons out to remove; drop files onto app icons to open them; launch bounce (all three edges plus group grid cells built, hand test pending); reveal when a file is dragged to the edge (built, hand test pending); Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide
+- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder; drag icons out to remove; drop files onto app icons to open them (strip tiles built, hand test pending; group grid cells not yet); launch bounce (all three edges plus group grid cells built, hand test pending); reveal when a file is dragged to the edge (built, hand test pending); Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide
 - [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); right-click Trash shows Empty Trash; filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag; magnification polish
 - [ ] **P3:** Follow the display the cursor hits; fullscreen apps and Spaces; badge counts via the real Dock's accessibility tree (Accessibility permission; private APIs only as fallback); window list in right-click menu with click to focus (Screen Recording for titles); VoiceOver labels and keyboard navigation; do not reveal while dragging a window or holding the mouse button (except file drags headed to the Dock)
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
+
+---
+
+# P1 slice: drop files onto app tiles to open them
+
+Status: built and verified with synthetic drags; waiting on James's hand test. Not committed. New file: `FileDrop.swift`.
+
+## Deliverables
+
+- [x] While a file drag is over an app tile (pinned or running-unpinned), the tile shows a rounded highlight only if the app can open every dragged item (`NSWorkspace.urlsForApplications(toOpen:)`). Finder also takes folders.
+- [x] No capable tile under the cursor: no highlight, the proposal is `.forbidden` (no green plus), and the drop is rejected (drag session reports operation 0).
+- [x] Drop opens the items with `NSWorkspace.open(_:withApplicationAt:configuration:)`, `activates = true`. A not-running pinned app launches with the existing bounce; running or unpinned apps just open.
+- [x] `.app` drags keep pinning: empty strip space, between tiles, on a tile or on a widget all pin at the slot under the cursor (clamped to the end), as before.
+- [x] Decision: a drag made only of `.app` bundles always pins, even when dropped right on another app tile (no highlight, no "open with"). Opening an app with another app is rare; pinning is what a dock drag almost always means. A mixed drag (apps plus other files) is treated as an open and needs a tile that can open every item.
+- [x] Groups, Portside's own tile, widgets and separators reject non-app drops.
+- [x] Drag tracking from the reveal slice unchanged: the dock stays up during the drag, the hide timer does not hide, normal hide after the drop.
+- [x] Panel stays non-activating; drops worked with the test app frontmost.
+- [x] Bottom, Left, Right, and hiding off.
+- [x] `swift build` clean; `swift run` stays up
+
+## Changes
+
+- `FileDrop.swift` (new): `FileDropSession` reads the dragged file URLs from the drag pasteboard (`NSPasteboard(name: .drag)`) once per drag, picks pin or open mode, and caches the can-open answer per app for the rest of the drag. Reading the pasteboard is synchronous; `DropInfo`'s item providers only load asynchronously, which is too late for a highlight that follows the cursor.
+- `DockStrip.swift`: `AppFileDropDelegate` became `FileDropDelegate`. Hit-tests the cursor against the hover target frames (same half-gap slop as labels, so no flicker between tiles), sets `dropTargetID`, proposes `.copy` or `.forbidden`, and opens or pins on drop. Still reports enter/exit/drop to `DockInteractions.onDragOverStrip`.
+- `DockItem.swift`: `DockItemView.isDropTarget` draws the highlight (background with negative padding, so layout never moves). `AppLauncher.open` takes optional `documents`.
+- `LaunchBounce.swift`: `launch` passes `documents` through to `AppLauncher.open`.
+
+## Verification (agent, synthetic drags)
+
+Throwaway app in `/tmp/portside-droptest` that starts a real file drag session from its own window, driven by CGEvents. TextEdit and Preview were pinned for the run; `dock.json` backed up and restored byte for byte (checked with `cmp`).
+
+- [x] Sweep with a `.txt` along the bottom strip: targets only on apps that can open it (TextEdit, VS Code, Zed, Cursor, Claude, Notes, Brave); none on Finder, Preview, System Settings, Ghostty, the group, Portside's test app, widgets. Can-open check 0.4 to 8ms, once per tile per drag.
+- [x] `.txt` on TextEdit (not running): bounce started, `launching TextEdit to open 1 item(s)`, opened in 104ms, bounce landed after 1 cycle. Drag session op=1.
+- [x] `.png` on Preview (not running): same, with bounce. Folder on Finder: `activating Finder to open 1 item(s)`, opened in 32ms.
+- [x] `.txt` on System Settings, on a widget, and on a non-capable app: op=0, no target logged, nothing opened.
+- [x] Calculator.app dropped before the first tile, on the Preview tile, and on a widget: pinned each time (mode pin), op=1.
+- [x] Left and Right: `.txt` on TextEdit (running) opened in 35ms; folder on Finder on the right; `.txt` on a non-capable tile rejected.
+- [x] Hiding off: `.png` on Preview opened; non-capable tile rejected.
+- [x] Screenshots during a held drag: rounded highlight and green plus on VS Code; neither on Ghostty.
+- [x] Hover reveal timing unchanged: mouseEntered to animation start 0.73 to 2.46ms across the runs.
+- [x] After each drop: `hide timer fired but cursor is still inside, staying revealed`, then hidden 300ms after the cursor left.
+
+## Findings
+
+- On side docks the icons hug the far side of the column (the column is as wide as the widest widget), so the drop area for a tile is its icon plus dot, not the whole column width.
+- Moving out of the strip and back in starts a fresh session (re-reads the pasteboard, clears the cache), which costs one extra can-open check per tile.
+
+## Known gaps
+
+- Activation of the target app could not be confirmed from here (the frontmost check was taken over by a system prompt); needs the hand test.
+- No drop-to-open on apps inside an open group grid, and a group tile does not spring open during a drag.
+- No Cmd+Option "force open with any app" like the native Dock.
+- File promises (images dragged out of Photos or Safari) are not file URLs: they neither reveal the dock nor open.
+- Pasteboard read failure falls back to pin mode (old behavior: accepted, only `.app` bundles do anything). Not seen in testing.
+
+## Hand test must also check
+
+- [ ] `.txt` onto TextEdit, an image onto Preview, a folder onto Finder: highlight shows, drop opens, app comes forward
+- [ ] A file onto an app that cannot open it: no highlight, no green plus, nothing happens
+- [ ] A `.app` onto empty strip space pins it; a `.app` onto another app's tile pins it next to that tile
+- [ ] First drop works with another app frontmost, and Portside never takes focus
+- [ ] Bottom, Left, Right, and with hiding off
 
 ---
 
@@ -63,7 +125,7 @@ Throwaway app in `/tmp` that starts a real file drag session from its own window
 - Tracking-area exits do arrive during drags (`mouseExited: drag still over the dock, hide not armed`), which is why exits are ignored while a drag is over the dock.
 - Right edge only: about 700ms into resting at the edge, a system overlay (WindowManager and Bartender windows sweeping across the screen, seen with `CGWindowListCopyWindowInfo`) takes the drag for about 250ms, so the edge gets a drag exit and re-enter. The dock stayed up. If that lasted longer than the hide delay, the hide timer's "cursor still inside" check would still keep it up.
 - The strip's drop delegate calls `dropExited` right after `performDrop`, so a drop arms the hide twice; both find the cursor inside and stay.
-- Dropping a non-app file on the strip is accepted (green plus, drag session reports copy) but does nothing: the only drop handler pins `.app` bundles. "Drop files onto app icons to open them" is still not built.
+- Dropping a non-app file on the strip was accepted but did nothing. Fixed by the drop-to-open slice above.
 
 ## Known gaps
 

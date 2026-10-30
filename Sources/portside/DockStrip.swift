@@ -87,6 +87,12 @@ struct DockStrip: View {
     @State private var dragging: String?
     /// Cursor (screen coordinates) and tile size when a separator drag began.
     @State private var resizeStart: (mouse: CGPoint, tile: CGFloat)?
+    /// App tile a file drag is over that can open the dragged items.
+    @State private var dropTargetID: String?
+    /// The file drag over the strip right now (URLs and per-app verdicts).
+    @State private var fileDrop = FileDropSession()
+    /// Tile frames in the strip's root space, for hit-testing drops.
+    @State private var tileFrames: [HoverTarget] = []
 
     private let spacing = DockMetrics.spacing
     private let alongPadding: CGFloat = 8
@@ -140,7 +146,8 @@ struct DockStrip: View {
             if !extras.isEmpty || showsSelf {
                 separator(tile: tile, maxTile: maxTile, edge: edge)
                 ForEach(extras, id: \.0.id) { app, running in
-                    DockItemView(app: app, running: running, isPinned: false, size: tile, dockModel: dockModel, bouncer: bouncer)
+                    DockItemView(app: app, running: running, isPinned: false, size: tile, dockModel: dockModel, bouncer: bouncer,
+                                 isDropTarget: dropTargetID == app.id)
                 }
                 if showsSelf {
                     PortsideTileView(size: tile) { interactions.onOpenSettings?() }
@@ -168,7 +175,10 @@ struct DockStrip: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(.white.opacity(0.15), lineWidth: 1)
         )
-        .onDrop(of: [.fileURL], delegate: AppFileDropDelegate(dockModel: dockModel, interactions: interactions, slotLength: tile + spacing, leadingInset: alongPadding, vertical: edge.isVertical))
+        .onDrop(of: [.fileURL], delegate: FileDropDelegate(
+            dockModel: dockModel, interactions: interactions, session: fileDrop, targetID: $dropTargetID,
+            tileFrames: tileFrames, apps: dropApps(extras: extras), runningApps: runningApps, bouncer: bouncer,
+            tile: tile, slotLength: tile + spacing, leadingInset: alongPadding, vertical: edge.isVertical))
         .onChange(of: maxTile, initial: true) { _, fit in layout.reportFitTileSize(fit) }
         .onChange(of: tile) { _, size in bouncer.tileSizeChanged(size) }
         .fixedSize()
@@ -182,13 +192,25 @@ struct DockStrip: View {
         .coordinateSpace(name: DockHover.space)
         .onPreferenceChange(HoverTargetsKey.self) { targets in
             hover.updateTargets(targets)
+            tileFrames = targets
         }
+    }
+
+    /// App tiles that take file drops, by hover id: pinned apps and running
+    /// apps that are not pinned. Groups, Portside's own tile, widgets and
+    /// separators are not in here, so they reject non-app drops.
+    private func dropApps(extras: [(PinnedApp, NSRunningApplication)]) -> [String: (app: PinnedApp, isPinned: Bool)] {
+        var apps: [String: (app: PinnedApp, isPinned: Bool)] = [:]
+        for case .app(let app) in dockModel.entries { apps[app.id] = (app, true) }
+        for (app, _) in extras { apps[app.id] = (app, false) }
+        return apps
     }
 
     @ViewBuilder private func entryView(_ entry: DockEntry, tile: CGFloat) -> some View {
         switch entry {
         case .app(let app):
-            DockItemView(app: app, running: runningApps.runningInstance(of: app), isPinned: true, size: tile, dockModel: dockModel, bouncer: bouncer)
+            DockItemView(app: app, running: runningApps.runningInstance(of: app), isPinned: true, size: tile, dockModel: dockModel, bouncer: bouncer,
+                         isDropTarget: dropTargetID == app.id)
         case .group(let group):
             GroupTileView(
                 group: group,
@@ -314,10 +336,20 @@ enum ResizeCursor {
     }
 }
 
-/// Adds .app bundles dragged from Finder, inserted at the slot under the cursor.
-private struct AppFileDropDelegate: DropDelegate {
+/// File drops on the strip (see `FileDropSession` for the rules):
+/// `.app` bundles pin at the slot under the cursor; other files open in the
+/// app tile under the cursor if that app can open them, else the drop is
+/// rejected (no plus cursor, nothing happens).
+private struct FileDropDelegate: DropDelegate {
     let dockModel: DockModel
     let interactions: DockInteractions
+    let session: FileDropSession
+    @Binding var targetID: String?
+    let tileFrames: [HoverTarget]
+    let apps: [String: (app: PinnedApp, isPinned: Bool)]
+    let runningApps: RunningApps
+    let bouncer: LaunchBouncer
+    let tile: CGFloat
     let slotLength: CGFloat
     let leadingInset: CGFloat
     let vertical: Bool
@@ -327,19 +359,80 @@ private struct AppFileDropDelegate: DropDelegate {
     }
 
     func dropEntered(info: DropInfo) {
+        session.begin()
         interactions.onDragOverStrip?(true, "entered")
+        updateTarget(info)
     }
 
     func dropExited(info: DropInfo) {
+        setTarget(nil)
+        session.end()
         interactions.onDragOverStrip?(false, "exited")
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: .copy)
+        switch session.mode {
+        case .pin:
+            return DropProposal(operation: .copy)
+        case .open:
+            return DropProposal(operation: updateTarget(info) == nil ? .forbidden : .copy)
+        }
     }
 
     func performDrop(info: DropInfo) -> Bool {
         interactions.onDragOverStrip?(false, "dropped")
+        defer {
+            setTarget(nil)
+            session.end()
+        }
+        switch session.mode {
+        case .pin:
+            return pin(info)
+        case .open:
+            guard let id = updateTarget(info), let entry = apps[id] else {
+                stripLogger.info("file drop rejected: no app here can open it")
+                return false
+            }
+            open(session.urls, with: entry.app, isPinned: entry.isPinned)
+            return true
+        }
+    }
+
+    /// The app tile under the cursor that can open the dragged items, now
+    /// also the highlighted one.
+    @discardableResult
+    private func updateTarget(_ info: DropInfo) -> String? {
+        guard session.mode == .open else {
+            setTarget(nil)
+            return nil
+        }
+        // Same slop as hover labels: no gap between neighbors.
+        let slop = -DockMetrics.spacing / 2
+        let hit = tileFrames.first {
+            $0.frame.insetBy(dx: vertical ? 0 : slop, dy: vertical ? slop : 0).contains(info.location)
+        }
+        let id = hit.flatMap { hit in apps[hit.id].flatMap { session.canOpen(with: $0.app) ? hit.id : nil } }
+        setTarget(id)
+        return id
+    }
+
+    private func setTarget(_ id: String?) {
+        guard targetID != id else { return }
+        targetID = id
+        stripLogger.info("drop target: \(id ?? "none", privacy: .public)")
+    }
+
+    private func open(_ urls: [URL], with app: PinnedApp, isPinned: Bool) {
+        let running = runningApps.runningInstance(of: app)
+        stripLogger.info("file drop: opening \(urls.count) item(s) with \(app.displayName, privacy: .public)")
+        if running == nil && isPinned {
+            bouncer.launch(app, size: tile, documents: urls)
+        } else {
+            AppLauncher.open(app, running: running, documents: urls)
+        }
+    }
+
+    private func pin(_ info: DropInfo) -> Bool {
         let position = vertical ? info.location.y : info.location.x
         let slot = Int(((position - leadingInset) / slotLength).rounded())
         let index = min(max(slot, 0), dockModel.entries.count)

@@ -103,18 +103,20 @@ final class LaunchBouncer: ObservableObject {
 
     /// A pinned strip tile was clicked and its app is not running. Starts the
     /// bounce if it applies, then launches the app either way.
-    func launch(_ app: PinnedApp, size: CGFloat) {
-        launch(app, size: size, target: stripTarget(for: app))
+    /// With `documents`, the app opens them once launched (a file drop).
+    func launch(_ app: PinnedApp, size: CGFloat, documents: [URL] = []) {
+        launch(app, size: size, target: stripTarget(for: app), documents: documents)
     }
 
     /// Launches a not-running app and bounces `target` while it starts, if
     /// the setting and Reduce Motion allow. True if the bounce is running.
     @discardableResult
-    func launch(_ app: PinnedApp, size: CGFloat, target: BounceTarget, onEnd: ((Bool) -> Void)? = nil) -> Bool {
+    func launch(_ app: PinnedApp, size: CGFloat, target: BounceTarget, documents: [URL] = [],
+                onEnd: ((Bool) -> Void)? = nil) -> Bool {
         let bounces = shouldBounce(target)
         if bounces { start(app, size: size, target: target, onEnd: onEnd) }
         let myGeneration = generation
-        AppLauncher.open(app, running: nil) { [weak self] result, error in
+        AppLauncher.open(app, running: nil, documents: documents) { [weak self] result, error in
             guard bounces, let self, myGeneration == self.generation else { return }
             self.launchResult(result, error: error)
         }
