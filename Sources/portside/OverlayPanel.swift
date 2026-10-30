@@ -25,6 +25,8 @@ final class OverlayPanel {
     private let container: OverlayContentView
     private let hostingView: OverlayHostingView
     private var placement: (anchor: NSRect, edge: DockEdge, gap: CGFloat)?
+    /// Transparent margin (a shadow) that does not count as the panel.
+    private var hitInsets = NSEdgeInsetsZero
 
     init() {
         hostingView = OverlayHostingView(rootView: AnyView(EmptyView()))
@@ -62,14 +64,19 @@ final class OverlayPanel {
     var isVisible: Bool { panel.isVisible }
 
     func containsScreenPoint(_ point: NSPoint) -> Bool {
-        panel.isVisible && panel.frame.contains(point)
+        panel.isVisible && OverlayPanel.inset(panel.frame, by: hitInsets).contains(point)
     }
 
     /// Show `content` next to `anchor` (screen coordinates), on the side
     /// facing away from `edge`, separated by `gap` points. Replaces whatever
     /// was showing. The panel follows the content's size if it changes later.
-    func present(_ content: AnyView, anchor: NSRect, edge: DockEdge, gap: CGFloat) {
+    /// `hitInsets` marks a transparent margin (room for a SwiftUI shadow)
+    /// that is ignored by `containsScreenPoint` and the enter/exit tracking.
+    func present(_ content: AnyView, anchor: NSRect, edge: DockEdge, gap: CGFloat, showsShadow: Bool = false, hitInsets: NSEdgeInsets = NSEdgeInsetsZero) {
         placement = (anchor, edge, gap)
+        self.hitInsets = hitInsets
+        container.hitInsets = hitInsets
+        panel.hasShadow = showsShadow
         // NSHostingView does not report intrinsic size changes to AppKit
         // here, so the content reports its own size.
         hostingView.rootView = AnyView(
@@ -97,6 +104,7 @@ final class OverlayPanel {
     func dismiss() {
         endKeyFocus()
         placement = nil
+        panel.hasShadow = false
         guard panel.isVisible else { return }
         panel.orderOut(nil)
     }
@@ -129,6 +137,16 @@ final class OverlayPanel {
         guard frame != panel.frame else { return }
         panel.setFrame(frame, display: true)
         hostingView.frame = container.bounds
+    }
+
+    /// `rect` minus `insets` (AppKit coordinates: bottom-left origin).
+    static func inset(_ rect: NSRect, by insets: NSEdgeInsets) -> NSRect {
+        NSRect(
+            x: rect.minX + insets.left,
+            y: rect.minY + insets.bottom,
+            width: max(rect.width - insets.left - insets.right, 0),
+            height: max(rect.height - insets.top - insets.bottom, 0)
+        )
     }
 
     /// Place a box of `size` beside `anchor`, centered on it along the dock's
@@ -166,10 +184,13 @@ private final class OverlayNSPanel: NSPanel {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }
 
-/// Reports cursor enter/exit over the whole overlay.
+/// Reports cursor enter/exit over the overlay, minus its hit insets.
 private final class OverlayContentView: NSView {
     var onMouseEntered: (() -> Void)?
     var onMouseExited: (() -> Void)?
+    var hitInsets = NSEdgeInsetsZero {
+        didSet { updateTrackingAreas() }
+    }
     private var trackingArea: NSTrackingArea?
 
     override func updateTrackingAreas() {
@@ -178,8 +199,8 @@ private final class OverlayContentView: NSView {
             removeTrackingArea(trackingArea)
         }
         let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            rect: OverlayPanel.inset(bounds, by: hitInsets),
+            options: [.mouseEnteredAndExited, .activeAlways],
             owner: self,
             userInfo: nil
         )

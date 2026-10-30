@@ -338,7 +338,7 @@ private struct GroupSettings: View {
                     set: { dockModel.setOpenGroupsOnHover($0) }
                 ))
                 PersistingSlider(
-                    title: "Hover delay",
+                    title: "Open delay",
                     value: dockModel.groupHoverDelay,
                     range: DockModel.groupHoverDelayRange,
                     step: 0.05,
@@ -346,8 +346,17 @@ private struct GroupSettings: View {
                     set: { dockModel.setGroupHoverDelay($0, persist: $1) }
                 )
                 .disabled(!dockModel.openGroupsOnHover)
+                PersistingSlider(
+                    title: "Close grace",
+                    value: dockModel.groupHoverCloseGrace,
+                    range: DockModel.groupHoverCloseGraceRange,
+                    step: 0.05,
+                    format: { "\(Int(($0 * 1000).rounded())) ms" },
+                    set: { dockModel.setGroupHoverCloseGrace($0, persist: $1) }
+                )
+                .disabled(!dockModel.openGroupsOnHover)
             } footer: {
-                Text("Resting on a group tile for the delay opens it, so sweeping across the dock does not. Clicking still works either way.")
+                Text("Open delay: rest on a tile this long before the grid appears. Close grace: brief pause when leaving the tile or grid so moving across the gap does not flicker. Clicking still works either way.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

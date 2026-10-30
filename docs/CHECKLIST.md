@@ -36,7 +36,7 @@ Status: built and verified with synthetic events; waiting on James's hand test. 
 - [x] Portside's own dock shows a Portside tile with a running dot while Settings is open (extras section, after running apps). Click opens Settings; right-click has Settings... and Quit.
 - [x] Inline group naming: creating a group opens its grid with an editable name field ("Group N" selected). The overlay panel becomes key only while editing (no app activation; the frontmost app stays frontmost), then orders out and back in to hand keys back. Return saves, Escape cancels, blank reverts. Clicking elsewhere saves and closes. The dock stays revealed while editing.
 - [x] Group tile context menu: Rename (same field), Ungroup, Remove from Dock. The Settings Groups tab updates live.
-- [x] Open groups on hover (Groups tab, off by default) with a hover delay slider (0 to 1000ms, default 200ms). One cancelable one-shot work item, no polling. Hovering another group tile while one is open switches immediately. Tile to grid stays open. A click on the tile right after a hover-open keeps it open instead of closing it. D's close rules unchanged.
+- [x] Open groups on hover (Groups tab, off by default) with **Open delay** (0 to 1000ms, default **50ms**) and **Close grace** (0 to 500ms, default 50ms) sliders; both persist in `dock.json`. Group grid opens with a light spring (scale 0.9 to 1 plus fade, about 260ms, tile-side anchor) and closes with a 140ms ease-in; SwiftUI card shadow. Reduce Motion and dock hide stay instant.
 - [x] `swift build` clean after every batch; launches and stays up
 
 ## Verification (agent, synthetic events)
@@ -45,8 +45,16 @@ Status: built and verified with synthetic events; waiting on James's hand test. 
 - [x] Hotkey mechanism: a test combo (Ctrl+Option+Cmd+J) fired the handler; Cmd+Option+D registers successfully. Not pressed for real (see Known gaps).
 - [x] Settings: policy regular and active, bird icon in the native Dock (screenshot), Portside tile with a dot in our dock. Cmd+Tab away and back works. Closing: policy accessory, gone from both docks, focus back on the previous app.
 - [x] Rename with a keystroke logger app frontmost, bottom, left and right: overlay key true while editing, typed name saved, keys after Return went to the logger, logger stayed frontmost throughout. Escape kept the old name; blank reverted; Settings showed the new name.
-- [x] Hover open: opened 209 to 217ms after reaching the tile on all three edges; a fast sweep opened nothing; switch between groups immediate; tile to grid stayed open; grid placed 10pt off the tile on each side.
-- [x] Reveal timing unchanged: mouseEntered to animation start 1.7 to 3.6ms over 5 reveals (D was 0.3 to 3.6ms). Dock click with Settings closed: frontmost app unchanged.
+- [x] Hover open (prior run): opened 209 to 217ms after reaching the tile on all three edges; a fast sweep opened nothing; switch between groups immediate; tile to grid stayed open; grid placed 10pt off the tile on each side.
+- [x] Hover-open transient close: close grace read from `DockModel.groupHoverCloseGrace` (settings slider); click-opened grids unchanged; rename and dock hide paths unchanged. `swift build` clean; `swift run` stays up.
+- [x] Animation and timing fixes (after the first motion pass misbehaved):
+  - The 10pt gap between tile and grid belonged to no window, and the grid barely took the mouse while fading in, so a slow crossing outlasted the grace and the grid closed. The overlay now includes a near-clear bridge across the gap. The hit fill sits outside the animation, so the whole grid region takes the mouse from the first frame. The shadow padding is excluded from `containsScreenPoint` and tracking (`OverlayPanel` hit insets).
+  - Switching groups reused the SwiftUI view, so the open never replayed. Fixed with `.id(groupID)`.
+  - During the close fade, hovering or clicking the tile (or re-entering a hover-opened grid) was ignored, then the grid vanished. Now it reopens from where it is. An instant collapse (dock hiding) cuts a running fade short.
+  - The close completion moved from a view-side `asyncAfter` (it could finish a later close early) to one cancelable `DispatchWorkItem` in `GroupController`.
+  - The window shadow was computed from the transparent first frame. Replaced with a SwiftUI shadow that animates with the card.
+- [x] Hover close re-verified with synthetic glides on Bottom, Left and Right: a slow tile-to-grid crossing (about 0.2pt/ms) stays open, leaving the grid or sliding sideways onto an app closes after grace plus fade, an out-and-back during the fade logs `reopened while closing by hover`, a click after hover-open pins it, and a second click closes it.
+- [x] Reveal timing unchanged: mouseEntered to animation start 1.7 to 3.6ms over 5 reveals (D was 0.3 to 3.6ms); after the motion fixes 0.63 to 1.32ms. Dock click with Settings closed: frontmost app unchanged.
 - [x] Test changes undone: `dock.json` restored from the pre-E2 backup.
 
 ## Known gaps
@@ -60,7 +68,7 @@ Status: built and verified with synthetic events; waiting on James's hand test. 
 - [ ] Cmd+Option+D (with the system shortcut disabled) toggles hiding on all three edges
 - [ ] With Settings open, Portside shows in Cmd+Tab and both docks; closing returns you to where you were
 - [ ] New Group and Rename feel natural: typing goes into the field, the app you were in keeps focus afterward
-- [ ] Hover open delay feels right and sweeping never pops groups open
+- [ ] Hover open delay feels right; hover-opened grids close when you leave them but stay open tile to grid; click-opened grids stay until you dismiss them; sweeping never pops groups open
 
 ---
 
@@ -154,7 +162,7 @@ Status: built and verified with synthetic events; waiting on James's hand test. 
 
 ## Deferred to Milestone E (all three built in E part 2)
 
-- [x] Open groups on hover (optional setting, off by default). When on, hovering a group tile opens its grid after a hover-intent delay (default about 200ms, configurable) so sweeping across the dock does not pop groups open. Hovering a different group tile switches the open grid immediately. Moving from the tile into the grid keeps it open. Reuses D's close rules. No polling: one cancelable one-shot delay, like the hide timer.
+- [x] Open groups on hover (optional setting, off by default). When on, hovering a group tile opens its grid after a hover-intent delay (default about 200ms, configurable) so sweeping across the dock does not pop groups open. Hover-opened grids close when the cursor leaves the tile and grid (100ms grace across the gap). Hovering a different group tile switches the open grid immediately. Click-opened grids keep D's close rules; a tile click after hover-open pins sticky. No polling: cancelable one-shot delays only, like the hide timer.
 - [x] Name prompt on group creation. When a group is first created, prompt for its name, with the default "Group N" so skipping is harmless. Preferred: inline rename (editable name field in the open grid or on the tile) where the panel takes key focus only while editing and returns focus to the previously frontmost app afterward. Fallback: a name field in the settings window. Must not break the non-activating panel behavior for normal use.
 - [x] Group rename (deferred from D). Rename from the settings window (done in E part 1), and from the group tile's context menu using the same inline mechanism as the creation prompt (E2).
 
