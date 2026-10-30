@@ -19,6 +19,7 @@ Dockset feels laggy because its edge reveal uses repeating polling timers (about
 5. No polling timers in the reveal/hide path. Allowed timers: one cancelable hide-delay timer, widget refresh, running-app cache refresh.
 6. Don't modify com.apple.dock settings until Milestone F, and then always save the user's exact prior values first and restore them on quit. Test the restore.
 7. No em dashes in docs or comments I'll read.
+8. If a task needs a new private API, isolate it in its own guarded file (dlopen/dlsym, graceful fallback) and mention it in the README notes.
 
 ## Current state
 Milestone A files exist: DockEngine, EdgeTracker, DockPanel, DockModel, DockStrip (placeholder), PortsideApp, Info.plist, Package.swift. It builds but crashes at launch.
@@ -45,3 +46,11 @@ The user's native Dock settings to match and restore: bottom position, small siz
 - Keep docs/CHECKLIST.md updated with status and findings per milestone.
 - Note that the native Dock is set to auto-hide at the bottom, so until Milestone F both docks may react to the bottom edge. For testing, you may put the edge on the left or right temporarily.
 - Be concise. I'm a front-end dev (React/TypeScript), new to Swift, so SwiftUI-to-React analogies help.
+## Definition of done
+Follow this at the end of every task, before reporting.
+1. Update docs/CHECKLIST.md: mark finished items, add new findings or deferred items, and note known gaps honestly.
+2. Update the "Features" and "Planned" sections of README.md. Move an item from Planned to Features only when it is built and working, and add any new user-facing feature or setting. Keep wording short and match the existing style. Never list a feature that isn't in the code.
+3. If you added a Swift file, add it to the README project layout tree with a one-line description, and tell me to `git add` it.
+4. If dock.json gained new keys or the settings changed, update the README "Where data lives" section.
+5. Final report, in this order: what changed, what I should hand test (a short numbered list), new untracked files, known gaps.
+6. Never commit or push.
