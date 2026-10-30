@@ -14,6 +14,15 @@ final class EdgeTracker {
     var onMouseEntered: ((NSEvent) -> Void)?
     /// Called on the main thread when the cursor leaves the edge zone.
     var onMouseExited: (() -> Void)?
+    /// A file drag reached the edge zone. Tracking areas are unreliable
+    /// while another app owns a drag session, so drags are tracked through
+    /// the dragging destination callbacks instead.
+    var onDragEntered: (() -> Void)?
+    /// The file drag left the edge zone or ended (`reason`: exited, ended).
+    var onDragExited: ((String) -> Void)?
+
+    /// Pasteboard types that reveal the dock when dragged to the edge.
+    static let dragTypes: [NSPasteboard.PasteboardType] = [.fileURL]
 
     /// Thickness (points) of the edge-trigger zone. The window takes every
     /// click inside it, so it is a single point: the row (or column) the
@@ -52,6 +61,8 @@ final class EdgeTracker {
 
         edgeView.onMouseEntered = { [weak self] event in self?.onMouseEntered?(event) }
         edgeView.onMouseExited = { [weak self] in self?.onMouseExited?() }
+        edgeView.onDragEntered = { [weak self] in self?.onDragEntered?() }
+        edgeView.onDragExited = { [weak self] reason in self?.onDragExited?(reason) }
         edgeView.onMouseDown = { [weak self] event in
             let p = NSEvent.mouseLocation
             self?.logger.info("edge zone took a click at \(p.x, format: .fixed(precision: 1)),\(p.y, format: .fixed(precision: 1)) (button \(event.buttonNumber))")
@@ -130,10 +141,16 @@ private final class EdgeView: NSView {
     var onMouseEntered: ((NSEvent) -> Void)?
     var onMouseExited: (() -> Void)?
     var onMouseDown: ((NSEvent) -> Void)?
+    var onDragEntered: (() -> Void)?
+    var onDragExited: ((String) -> Void)?
     private var trackingArea: NSTrackingArea?
+    /// Whether a drag is inside the zone, so `draggingEnded` after an
+    /// exit does not report it twice.
+    private var dragInside = false
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        registerForDraggedTypes(EdgeTracker.dragTypes)
     }
 
     @available(*, unavailable)
@@ -170,4 +187,30 @@ private final class EdgeView: NSView {
     /// so swallowed clicks show up in the hand test.
     override func mouseDown(with event: NSEvent) { onMouseDown?(event) }
     override func rightMouseDown(with event: NSEvent) { onMouseDown?(event) }
+
+    // MARK: Drag destination (reveal only, never accepts a drop)
+
+    /// Returns no operation: the zone only reveals the dock, the drop
+    /// belongs to the strip. AppKit still reports exit and end.
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        dragInside = true
+        onDragEntered?()
+        return []
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        guard dragInside else { return }
+        dragInside = false
+        onDragExited?("exited")
+    }
+
+    /// Drag released or canceled while still inside the zone.
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        guard dragInside else { return }
+        dragInside = false
+        onDragExited?("ended")
+    }
+
+    /// No periodic draggingUpdated calls while the cursor rests in the zone.
+    override func wantsPeriodicDraggingUpdates() -> Bool { false }
 }

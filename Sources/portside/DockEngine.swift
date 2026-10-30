@@ -50,6 +50,13 @@ final class DockEngine {
     /// Timestamp (CACurrentMediaTime) of the mouseEntered that started the
     /// current reveal, used for the enter -> animation start -> interactive logs.
     private var revealRequestedAt: CFTimeInterval = 0
+    /// Event that started the current reveal (mouseEntered or draggingEntered).
+    private var revealTrigger = "mouseEntered"
+
+    /// Drag destinations ("edge", "panel", "strip") a file drag is over.
+    /// While any is set and the button is held, exits do not arm the hide
+    /// and the hide timer will not hide.
+    private var dragTargets: Set<String> = []
 
     init(dockModel: DockModel = DockModel.load()) {
         self.dockModel = dockModel
@@ -149,6 +156,17 @@ final class DockEngine {
             self?.hover.clear()
             self?.handleExit(source: "panel")
         }
+        edgeTracker.onDragEntered = { [weak self] in self?.handleDragEntered("edge") }
+        edgeTracker.onDragExited = { [weak self] reason in self?.handleDragExited("edge", reason: reason) }
+        dockPanel.onDragEntered = { [weak self] in self?.handleDragEntered("panel") }
+        dockPanel.onDragExited = { [weak self] reason in self?.handleDragExited("panel", reason: reason) }
+        interactions.onDragOverStrip = { [weak self] inside, reason in
+            if inside {
+                self?.handleDragEntered("strip")
+            } else {
+                self?.handleDragExited("strip", reason: reason)
+            }
+        }
         dockPanel.onRevealAnimationStarted = { [weak self] in
             self?.logTiming(label: "animation start")
         }
@@ -195,6 +213,7 @@ final class DockEngine {
         } else {
             edgeTracker.stop()
             revealRequestedAt = CACurrentMediaTime()
+            revealTrigger = "mouseEntered"
             dockPanel.show(animated: true)
             logger.info("auto-hide off, panel stays revealed")
         }
@@ -252,9 +271,42 @@ final class DockEngine {
             || groups.containsScreenPoint(location)
     }
 
+    // MARK: - Drag handling
+    //
+    // A file drag owned by another app (Finder) does not reliably produce
+    // mouseEntered on the tracking areas, so the edge zone, the panel and
+    // the strip also act as drag destinations and feed the same enter/exit
+    // path. None of them polls: AppKit calls them as the drag moves.
+
+    /// A drag is over the dock right now. The button check drops stale
+    /// entries if AppKit ever skipped an exit (the drag is over by then).
+    private var isDragOverDock: Bool {
+        !dragTargets.isEmpty && NSEvent.pressedMouseButtons & 1 != 0
+    }
+
+    private func handleDragEntered(_ target: String) {
+        dragTargets.insert(target)
+        if dockPanel.isRevealedOrRevealing {
+            logger.info("\(target, privacy: .public) draggingEntered (dock already up)")
+        }
+        handleEnter(source: target, event: nil, trigger: "draggingEntered")
+    }
+
+    /// Exited, ended (released or canceled inside), or dropped on the strip.
+    /// Arms the normal hide unless the drag is still over another part of
+    /// the dock; the hide timer's own check keeps the dock up while the
+    /// cursor stays over it after a drop.
+    private func handleDragExited(_ target: String, reason: String) {
+        dragTargets.remove(target)
+        if NSEvent.pressedMouseButtons & 1 == 0 {
+            dragTargets.removeAll()
+        }
+        handleExit(source: target, trigger: "drag \(reason)")
+    }
+
     // MARK: - Enter / exit handling
 
-    private func handleEnter(source: String, event: NSEvent?) {
+    private func handleEnter(source: String, event: NSEvent?, trigger: String = "mouseEntered") {
         // Any enter (edge zone or the panel itself) cancels a pending hide.
         if let pendingHide {
             pendingHide.cancel()
@@ -267,13 +319,14 @@ final class DockEngine {
         }
 
         revealRequestedAt = CACurrentMediaTime()
+        revealTrigger = trigger
         if let event {
             // NSEvent.timestamp is system uptime; compare against the same clock
             // to see how long the event sat in the queue before we got it.
             let queueLatencyMs = (ProcessInfo.processInfo.systemUptime - event.timestamp) * 1000
-            logger.info("\(source, privacy: .public) mouseEntered (event -> handler \(queueLatencyMs, format: .fixed(precision: 2))ms)")
+            logger.info("\(source, privacy: .public) \(trigger, privacy: .public) (event -> handler \(queueLatencyMs, format: .fixed(precision: 2))ms)")
         } else {
-            logger.info("\(source, privacy: .public) mouseEntered")
+            logger.info("\(source, privacy: .public) \(trigger, privacy: .public)")
         }
 
         let delay = dockModel.revealDelay
@@ -289,8 +342,14 @@ final class DockEngine {
         }
     }
 
-    private func handleExit(source: String) {
+    private func handleExit(source: String, trigger: String = "mouseExited") {
         guard dockModel.autoHide else { return }
+        // A drag moving between the edge zone, the panel and the strip, or
+        // a tracking-area exit that slips through during the drag.
+        if isDragOverDock {
+            logger.info("\(source, privacy: .public) \(trigger, privacy: .public): drag still over the dock, hide not armed")
+            return
+        }
         if let pendingReveal {
             pendingReveal.cancel()
             self.pendingReveal = nil
@@ -310,6 +369,10 @@ final class DockEngine {
             }
             if self.isResizing {
                 self.logger.info("hide timer fired during a resize drag, staying revealed")
+                return
+            }
+            if self.isDragOverDock {
+                self.logger.info("hide timer fired during a drag over the dock, staying revealed")
                 return
             }
             if self.groups.isEditing {
@@ -333,7 +396,7 @@ final class DockEngine {
         }
         pendingHide = work
         let delayMs = dockModel.hideDelay * 1000
-        logger.info("\(source, privacy: .public) mouseExited: hide armed in \(delayMs, format: .fixed(precision: 0))ms")
+        logger.info("\(source, privacy: .public) \(trigger, privacy: .public): hide armed in \(delayMs, format: .fixed(precision: 0))ms")
         DispatchQueue.main.asyncAfter(deadline: .now() + dockModel.hideDelay, execute: work)
     }
 
@@ -344,6 +407,6 @@ final class DockEngine {
     private func logTiming(label: String) {
         guard revealRequestedAt > 0 else { return }
         let ms = (CACurrentMediaTime() - revealRequestedAt) * 1000
-        logger.info("timing: mouseEntered -> \(label, privacy: .public) = \(ms, format: .fixed(precision: 2))ms")
+        logger.info("timing: \(self.revealTrigger, privacy: .public) -> \(label, privacy: .public) = \(ms, format: .fixed(precision: 2))ms")
     }
 }
