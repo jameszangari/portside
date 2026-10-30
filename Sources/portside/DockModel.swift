@@ -490,30 +490,105 @@ final class DockModel: Codable, ObservableObject {
             return model
         }
         let model = DockModel()
-        model.entries = seedFromNativeDock().map(DockEntry.app)
+        let native = NativeDockImport.readSnapshot()
+        model.entries = native.apps.map(DockEntry.app)
+        model.edge = native.edge
+        model.iconSize = NativeDockImport.clampedIconSize(
+            native.tileSize, edge: native.edge, itemCount: model.entries.count, widgetKinds: model.widgetKinds.count
+        )
         model.persist()
-        logger.info("first launch: seeded \(model.entries.count) pinned apps from the native Dock")
+        logger.info("first launch: seeded \(model.entries.count) pinned apps, edge \(native.edge.rawValue, privacy: .public), icon size \(Double(model.iconSize), format: .fixed(precision: 0)) from the native Dock")
         return model
     }
 
     /// Read (never write) the native Dock's pinned apps, with Finder first
     /// like the real Dock.
     static func seedFromNativeDock() -> [PinnedApp] {
-        var result: [PinnedApp] = [
-            PinnedApp(bundleIdentifier: "com.apple.finder", path: "/System/Library/CoreServices/Finder.app")
-        ]
-        let tiles = CFPreferencesCopyAppValue("persistent-apps" as CFString, "com.apple.dock" as CFString) as? [[String: Any]] ?? []
-        for tile in tiles {
-            guard tile["tile-type"] as? String == "file-tile",
-                  let data = tile["tile-data"] as? [String: Any],
-                  let fileData = data["file-data"] as? [String: Any],
-                  let urlString = fileData["_CFURLString"] as? String,
-                  let url = URL(string: urlString), url.isFileURL else { continue }
-            let app = PinnedApp(bundleIdentifier: data["bundle-identifier"] as? String, path: url.path)
-            if !result.contains(where: { $0.id == app.id }) {
-                result.append(app)
+        NativeDockImport.readSnapshot().apps
+    }
+
+    // MARK: - Import from the native Dock
+
+    struct ImportResult {
+        var added = 0
+        /// Replace mode: apps already inside a group, left there.
+        var inGroups = 0
+        /// Replace mode: top level apps that were dropped.
+        var removed = 0
+        var appliedLook = false
+    }
+
+    static var beforeImportURL: URL {
+        storageURL.deletingLastPathComponent().appendingPathComponent("dock.json.before-import")
+    }
+
+    static var hasBeforeImport: Bool {
+        FileManager.default.fileExists(atPath: beforeImportURL.path)
+    }
+
+    /// Copy dock.json to dock.json.before-import (overwriting the last one),
+    /// then apply. Nothing changes if the copy fails. Groups, widgets,
+    /// separators and all other settings are never touched.
+    func importFromNativeDock(_ native: NativeDockSnapshot, replace: Bool, applyLook: Bool, fitTileSize: CGFloat?) throws -> ImportResult {
+        try save() // the file must match memory (slider drags persist late)
+        let backup = Self.beforeImportURL
+        try? FileManager.default.removeItem(at: backup)
+        try FileManager.default.copyItem(at: Self.storageURL, to: backup)
+
+        var result = ImportResult()
+        var list = entries
+        if replace {
+            let grouped = Set(groups.flatMap(\.apps).map(\.id))
+            let incoming = native.apps.filter { !grouped.contains($0.id) }
+            result.inGroups = native.apps.count - incoming.count
+            result.removed = list.filter { if case .app = $0 { return true } else { return false } }.count
+            result.added = incoming.count
+            // Groups keep their slots (capped at the new length).
+            var merged = incoming.map(DockEntry.app)
+            for (index, entry) in list.enumerated() where entry.group != nil {
+                merged.insert(entry, at: min(index, merged.count))
             }
+            list = merged
+        } else {
+            let have = Set(allPinnedApps.map(\.id))
+            let new = native.apps.filter { !have.contains($0.id) }
+            list.append(contentsOf: new.map(DockEntry.app))
+            result.added = new.count
         }
+        entries = list
+
+        if applyLook {
+            edge = native.edge
+            iconSize = NativeDockImport.clampedIconSize(
+                native.tileSize, edge: native.edge, itemCount: entries.count, widgetKinds: widgetKinds.count, fit: fitTileSize
+            )
+            result.appliedLook = true
+        }
+        persist()
+        importLogger.info("import: \(replace ? "replace" : "add missing", privacy: .public), added \(result.added), removed \(result.removed), left in groups \(result.inGroups), look \(result.appliedLook)")
         return result
+    }
+
+    /// Restore dock.json.before-import live, then delete it. The two native
+    /// Dock hiding flags stay as they are: they describe the real Dock now.
+    func undoLastImport() throws {
+        let data = try Data(contentsOf: Self.beforeImportURL)
+        let old = try JSONDecoder().decode(DockModel.self, from: data)
+        revealDelay = old.revealDelay
+        hideDelay = old.hideDelay
+        animationDuration = old.animationDuration
+        iconSize = old.iconSize
+        magnificationEnabled = old.magnificationEnabled
+        animateOpeningApplications = old.animateOpeningApplications
+        autoHide = old.autoHide
+        openGroupsOnHover = old.openGroupsOnHover
+        groupHoverDelay = old.groupHoverDelay
+        groupHoverCloseGrace = old.groupHoverCloseGrace
+        edge = old.edge
+        entries = old.entries
+        widgetKinds = old.widgetKinds
+        persist()
+        try? FileManager.default.removeItem(at: Self.beforeImportURL)
+        importLogger.info("import: undone, restored \(old.entries.count) entries from dock.json.before-import")
     }
 }

@@ -157,7 +157,7 @@ enum SettingsLayout {
 }
 
 /// Secondary helper text under a control.
-private extension Text {
+extension Text {
     func helperStyle() -> some View {
         font(.system(size: 12)).foregroundStyle(.secondary)
     }
@@ -348,6 +348,10 @@ private struct GeneralSettings: View {
     let nativeDock: NativeDockController
     @ObservedObject var launchAtLogin: LaunchAtLogin
 
+    @State private var importRequest: ImportRequest?
+    @State private var canUndoImport = DockModel.hasBeforeImport
+    @State private var importStatus: String?
+
     /// Same limit the separator drag clamps to. Kept one point above the
     /// minimum so the slider range is never empty.
     private var maxIconSize: CGFloat {
@@ -442,8 +446,71 @@ private struct GeneralSettings: View {
             Section("Startup") {
                 LaunchAtLoginRow(launchAtLogin: launchAtLogin)
             }
+
+            Section("Import") {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Button("Import from macOS Dock...") {
+                            importStatus = nil
+                            importRequest = ImportRequest(NativeDockImport.readSnapshot())
+                        }
+                        if canUndoImport {
+                            Button("Undo last import") { undoImport() }
+                        }
+                    }
+                    Text(importStatus ?? "Bring apps, position, and icon size over from the macOS Dock. Nothing in the macOS Dock changes.")
+                        .helperStyle()
+                }
+            }
         }
+        .sheet(item: $importRequest) { request in
+            ImportSheet(
+                snapshot: request.snapshot,
+                hasExistingFile: true,
+                onCancel: { importRequest = nil },
+                onImport: { mode, look in
+                    importRequest = nil
+                    runImport(request.snapshot, replace: mode == .replace, applyLook: look)
+                }
+            )
+        }
+        .onAppear { canUndoImport = DockModel.hasBeforeImport }
     }
+
+    private func runImport(_ snapshot: NativeDockSnapshot, replace: Bool, applyLook: Bool) {
+        do {
+            let r = try dockModel.importFromNativeDock(snapshot, replace: replace, applyLook: applyLook, fitTileSize: maxIconSize)
+            var parts = ["Added \(r.added) \(r.added == 1 ? "app" : "apps")"]
+            if replace { parts.append("removed \(r.removed)") }
+            if r.inGroups > 0 { parts.append("\(r.inGroups) already in groups") }
+            if snapshot.missingApps > 0 { parts.append("skipped \(snapshot.missingApps) missing") }
+            if snapshot.others > 0 { parts.append("skipped \(snapshot.others) folder or file \(snapshot.others == 1 ? "tile" : "tiles")") }
+            if r.appliedLook { parts.append("set position and size") }
+            importStatus = parts.joined(separator: ", ") + "."
+        } catch {
+            importLogger.error("import failed: \(error.localizedDescription, privacy: .public)")
+            importStatus = "Import failed: \(error.localizedDescription)"
+        }
+        canUndoImport = DockModel.hasBeforeImport
+    }
+
+    private func undoImport() {
+        do {
+            try dockModel.undoLastImport()
+            importStatus = "Restored your dock from before the last import."
+        } catch {
+            importLogger.error("undo failed: \(error.localizedDescription, privacy: .public)")
+            importStatus = "Undo failed: \(error.localizedDescription)"
+        }
+        canUndoImport = DockModel.hasBeforeImport
+    }
+}
+
+private struct ImportRequest: Identifiable, Equatable {
+    let id = UUID()
+    let snapshot: NativeDockSnapshot
+    init(_ snapshot: NativeDockSnapshot) { self.snapshot = snapshot }
+    static func == (a: Self, b: Self) -> Bool { a.id == b.id }
 }
 
 /// "Open Portside at login". Shows the system's status, never a stored

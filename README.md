@@ -47,6 +47,8 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 
 **Native Dock**
 - "Hide the macOS Dock" (Settings > General): keeps the native Dock from ever appearing while Portside runs, using the autohide-delay trick. Its exact prior settings are saved first and restored when you turn this off, quit, or stop Portside with Ctrl+C or `kill`. After a crash or `kill -9`, the next launch restores them first.
+- First launch (no `dock.json`): pinned apps, position, and icon size are taken from the native Dock (Finder first). If a Hide-the-Dock backup exists, position and size come from it instead of the live values.
+- "Import from macOS Dock..." (Settings > General > Import): a confirmation sheet shows what was found. Add missing apps (appended, nothing reordered) or replace the apps (groups and widgets stay), and optionally take the native position and icon size. Apps no longer on disk, spacers, and folder/file tiles are skipped. Your dock is copied to `dock.json.before-import` first, and "Undo last import" restores it. Read only: nothing in `com.apple.dock` is written.
 - "Restore macOS Dock" in the menu bar item, and `portside --restore-dock` (restores from the backup and exits, no UI).
 
 **App bundle and startup**
@@ -56,7 +58,7 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 ## Planned
 
 From `docs/CHECKLIST.md` and `docs/PLAN.md`:
-- Milestone F, what is left: the native Dock's orientation and icon size as initial values, and a manual "Import from macOS Dock" action. Seeding pinned apps from the native Dock on first launch already works.
+- Milestone F, what is left: importing the native Dock's folders and files (`persistent-others`), once folder stacks exist.
 - Magnification (the stored setting exists, no UI yet).
 - Update checker: compare AppInfo.version with the latest GitHub release tag (vX.Y.Z), show 'up to date' or a link to the release. The Check for Updates button is a placeholder until then.
 - Native Dock parity: click-and-hold menu, drag icons out to remove, modifier clicks, Trash, folder stacks.
@@ -128,6 +130,8 @@ Settings and the dock layout are saved as JSON at:
 ~/Library/Application Support/com.james.portside/dock.json
 ```
 
+Before each "Import from macOS Dock", the previous layout is copied to `dock.json.before-import` in the same folder (overwritten by the next import, deleted by "Undo last import").
+
 While "Hide the macOS Dock" is on, the native Dock's prior settings are backed up at:
 
 ```
@@ -144,6 +148,7 @@ The Settings window controls:
 - Widgets: on/off and order
 - Groups: rename, ungroup, delete, open on hover, open delay, close grace
 - Hide the macOS Dock (`hideNativeDock`, plus `nativeDockExplained` once the first-time dialog was confirmed)
+- Import from macOS Dock and Undo last import (nothing new stored in `dock.json`; imported apps, position, and icon size land in `entries`, `edge`, and `iconSize`)
 - Open Portside at login: not stored by Portside. macOS keeps it (System Settings > General > Login Items).
 
 The built app lives at `build/Portside.app` (ignored by git), and at `~/Applications/Portside.app` after `scripts/build-app.sh --install`.
@@ -178,6 +183,7 @@ Sources/portside/
   RunningApps.swift         Running app tracking via NSWorkspace notifications
   NativeDock.swift          Native Dock hide/restore: prefs backup, writes, Dock restart, verify
   NativeDockController.swift  "Hide the macOS Dock" toggle, first-time dialog, alerts
+  NativeDockImport.swift    Reads the native Dock (apps, position, size) and the import sheet
   LaunchAtLogin.swift       "Open Portside at login" via SMAppService.mainApp
   SettingsWindow.swift      Settings window: header, tabs (General, Widgets, Groups)
   HotKey.swift              Global hotkey through Carbon RegisterEventHotKey

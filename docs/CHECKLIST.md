@@ -1,6 +1,6 @@
 # Portside: Checklist
 
-Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand-tested. Milestone F is partly done (native Dock hide/restore, .app bundle, launch at login; the last two await James's hand test); the native Dock import is still open. P1 and P2 are partly built, see below.
+Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand-tested. Milestone F is partly done (native Dock hide/restore, .app bundle, launch at login; the last two await James's hand test); the native Dock import is built (hand test pending) except `persistent-others`. P1 and P2 are partly built, see below.
 
 ## Roadmap
 
@@ -11,7 +11,7 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [x] **B.6:** Dock position (bottom/left/right) and separator resize
 - [x] **D:** App groups (expand/collapse)
 - [x] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live; includes auto-hide toggle with Cmd+Option+D, Portside as a regular app while Settings is open, inline group naming and rename, open groups on hover
-- [ ] **F:** [x] Hide the macOS Dock (autohide-delay trick only, exact save and restore); [x] launch at login (`SMAppService`, hand test pending); [x] a real .app bundle (`scripts/build-app.sh`, hand test pending); [ ] import native orientation and tilesize as Portside's initial position and icon size; [ ] a manual "Import from macOS Dock" action; [ ] import `persistent-others`. First-launch seeding of pinned apps from `persistent-apps` is already built (`DockModel.seedFromNativeDock`).
+- [ ] **F:** [x] Hide the macOS Dock (autohide-delay trick only, exact save and restore); [x] launch at login (`SMAppService`, hand test pending); [x] a real .app bundle (`scripts/build-app.sh`, hand test pending); [x] import native orientation and tilesize as Portside's initial position and icon size (hand test pending); [x] a manual "Import from macOS Dock" action with undo (hand test pending); [ ] import `persistent-others` (deferred until folder stacks exist). First-launch seeding of pinned apps from `persistent-apps` is built.
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
 - [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder (built); drag icons out to remove; drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide (built)
 - [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); right-click Trash shows Empty Trash; filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag (built for app groups; folder stacks not yet); magnification polish
@@ -19,6 +19,43 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section; bounce on attention request (needs private APIs, not wanted for now)
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
+
+---
+
+# Milestone F part 3: import from the native Dock
+
+Status: built and agent-verified for first launch; the Settings sheet awaits James's hand test. New file: `NativeDockImport.swift`. Reads `com.apple.dock` through CFPreferences only, never writes it. Log category `Import`.
+
+## Deliverables
+
+- [x] First launch (no dock.json): pinned apps, `orientation` (missing = bottom) and `tilesize` (clamped to 16...128 and to what fits) become the initial apps, position and icon size. If `native-dock-backup.json` exists, orientation and tilesize come from its saved values.
+- [x] Settings > General > Import: "Import from macOS Dock..." opens a sheet with the summary (apps, native position and size, folder/file tiles and missing apps to be skipped), the apps choice (Add missing, default; Replace apps, keep widgets and groups), a checkbox for position and size (off by default), and the undo note.
+- [x] Before applying, dock.json is saved and copied to `dock.json.before-import` (overwritten each time). "Undo last import" shows only while that file exists, restores it live and deletes it.
+- [x] Native order, Finder first. Missing paths skipped and counted. Spacer tiles skipped, `persistent-others` counted and skipped. Counts logged.
+- [x] Add missing: appends new apps after the existing entries, never removes or reorders. Replace: top level apps replaced by the native list; groups keep their slots; apps already inside a group are not duplicated. Widgets, separators, other settings untouched. Applies live.
+- [ ] `persistent-others` (folders and files): deferred until folder stacks exist.
+
+## Verification (agent)
+
+- First launch on the real prefs (dock.json moved aside): log `read native Dock: 27 apps, 0 missing, 0 spacers skipped, 1 folder/file tiles skipped, edge bottom, tilesize 37.0 (live)`; dock.json got edge bottom, iconSize 37, 27 entries. dock.json restored byte for byte afterwards.
+- `swift build` and `swift build -c release`: no warnings. No native Dock key written (autohide-delay still unset).
+- Not run by the agent: the sheet, Add missing, Replace, Undo, and the backup-sourced path (a fake backup would trigger launch recovery and touch the Dock). Hand test below.
+
+## Findings
+
+- Native `orientation` is absent on this Mac (bottom is the default), `tilesize` is 37.
+- Undo restores everything in dock.json except `hideNativeDock` and `nativeDockExplained`, which describe the real Dock and must not go stale.
+- The first-launch icon size clamp is an estimate (no strip yet); the strip clamps again at render time. The manual import uses the live strip limit.
+- Settings window height now includes the Import section; the Form fits it.
+
+## Known gaps
+
+- Undo is one level deep and also reverts any other change made after the import.
+- Folder and file tiles are not imported.
+
+## Hand test must also check
+
+- [ ] See the numbered test in the report
 
 ---
 
