@@ -1,30 +1,23 @@
-# PORTSIDE / SAIL IDENTITY — v1.0
+# Portside — Approved Sail Artwork — corrected v2
 
-**Direction:** Nautical sail silhouette with a quiet, geometric P suggestion. Navy, sailcloth, and safety-orange primary palette.
+This package corrects the identity mismatch in v1. **The approved original render, not the redesigned v1 vectors, is the source of truth**.
 
-## Start here
-- `brand-guide/portside-brand-identity-v1.pdf` — 9-page identity presentation.
-- `brand-guide/portside-brand-overview.png` — visual overview.
-- `master-svg/portside-sail-mark-editable-master.svg` — fully editable paths, no raster artwork.
-- `icon-composer/AppIcon.icon/` — Icon Composer format package (`icon.json` and layered SVG assets). See adjacent README.
-- `macos-icns/portside-dark.icns` — native .icns fallback.
+## Choose the right file
+- `approved-icon/png/portside-approved-original-1024.png`: faithful 1024px enlargement and extraction from the approved sailboat icon. Shading, shape proportions, navy backdrop and hull are **directly from the original generated artwork**; only masking, crop and resolution conversion have changed.
+- `approved-icon/icns/portside-approved-original.icns`: generated from that same PNG.
+- `icon-composer/AppIcon.icon`: an Icon Composer `.icon` package containing a single PNG layer of the approved illustration for maximum fidelity. The JSON uses `supported-platforms.squares: "shared"` rather than the invalid v1 array.
+- `icon-composer/import-original-layers`: separate images with original pixels, for manual import if desired. **Importing individual layers and applying dynamic materials may alter the original appearance**.
+- `vector-reconstruction/`: actual editable SVG paths, but reconstructed from the render; these are NOT pixel-exact and must not be substituted for the approved original in production without visual signoff.
+- `wordmarks/`: raster versions use the exact approved icon; editable SVG wordmarks use reconstructed geometry.
+- `presentation/`: two-page updated brand reference.
+- `reference/`: original unaltered concept board and the original icon with shadow on its white studio background.
 
-## Files
-- `master-svg/` — transparent symbol, geometry source, and square icons.
-- `png-exports/` — 16 to 1024px icons (4 colorways), transparent marks.
-- `wordmarks/` — horizontal/stacked SVG, both editable live text and paths converted to outlines; previews.
-- `menubar/` — black, white, and navy SVG + PNG assets at status-bar sizes.
-- `icon-composer/` — layered AppIcon.icon and individual import sources.
-- `macos-icns/` — .icns legacy macOS icon exports.
-- `brand-guide/` — 9-page PDF with source SVG pages and PNG previews.
-- `mockups/` — macOS Dock and settings illustrations, both SVG and PNG.
-- `design-tokens/` — color JSON and CSS variables.
+## Icon Composer caveat
+Apple has not publicly documented its complete `icon.json` schema. This file structure follows known examples, but **has not been opened or validated by Apple's macOS-only app or `actool`**. If your Icon Composer build refuses the package, create a new document in Icon Composer and import the approved PNG (`approved-icon/png/portside-approved-original-1024.png`). That ensures the visual design stays unchanged. Save the document to create an official `.icon`.
 
-## Typography
-Display: Inter Display Semibold, a freely accessible font. Product interface: prefer the system's SF Pro. Font files are deliberately not included. Wordmark SVGs labeled `outlined` are paths and display consistently without any font installed.
+## Color reference (original render sampled)
+- Navy: `#10283F` (supporting palette, original has subtle lighting gradient)
+- Cream: `#F4EEDF` (supporting palette, original has soft warm highlights)
+- Orange: `#F06A42` (supporting palette, original hull contains gradients)
 
-## App icon use
-The 1024px PNGs are flat transparent-corner app-icon assets (do not upscale small icons). Prefer Icon Composer when targeting newer macOS, or the packaged `.icns` as a traditional fallback. The Icon Composer `.icon` is a real directory-form package, but **not tested in Apple's editor** in this environment; see verification instructions.
-
-## Keep it simple
-Never add waves, ropes, literal letters, shine effects, translucent glass atop the mark, or extra accent colors. The sail geometry is the identity.
+Note: the 1024 icon is enlarged from a roughly 518px-wide icon in the original board. It is an exact-source design, not a newly generated high-res raster. The 3D shading does not have exact editable vector equivalents.

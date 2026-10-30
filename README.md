@@ -205,5 +205,5 @@ scripts/
   gen-version.sh            Writes BuildInfo.swift from VERSION and git
   release.sh                Bumps VERSION, commits, and tags a release
   build-app.sh              Builds and signs build/Portside.app (--install to ~/Applications)
-design/brand/               Brand identity assets (sail mark, icons, wordmarks, menu bar, guide, tokens); see its README
+design/brand/               Approved Portside sail icon, wordmarks, menu bar assets, and tokens; see its README
 ```

@@ -1,13 +1,6 @@
-/* Portside brand palette */
 :root {
- --portside-harbor-navy: #10283F;
- --portside-deep-harbor: #071E30;
- --portside-sailcloth: #F4EEDF;
- --portside-safety-orange: #F06A42;
- --portside-surface: #FCFAF5;
- --portside-ink: #112B3F;
- --portside-radius-card: 20px;
- --portside-radius-control: 12px;
- --portside-font-display: "Inter Display", system-ui, sans-serif;
- --portside-font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  --portside-navy: #10283F;
+  --portside-sailcloth: #F4EEDF;
+  --portside-orange: #F06A42;
+  --portside-font: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
 }

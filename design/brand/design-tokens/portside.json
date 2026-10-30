@@ -1,0 +1,12 @@
+{
+  "colors": {
+    "navy": "#10283F",
+    "sailcloth": "#F4EEDF",
+    "safetyOrange": "#F06A42"
+  },
+  "typography": {
+    "display": "Inter Display",
+    "system": "SF Pro (macOS)"
+  },
+  "visualSource": "Approved original image-generated icon; raster export locked"
+}
