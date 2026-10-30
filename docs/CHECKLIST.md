@@ -1,6 +1,6 @@
 # Portside: Checklist
 
-Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (parts 1 and 2), the launch bounce (all edges and group grids), reveal on file drag and drop-to-open on app tiles are built and waiting on the hand test.
+Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (parts 1 and 2), the launch bounce (all edges and group grids), reveal on file drag, drop-to-open on app tiles and spring-loaded groups are built and waiting on the hand test.
 
 ## Roadmap
 
@@ -13,12 +13,72 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (p
 - [ ] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live (part 1: built, hand test pending); part 2 (built, hand test pending): auto-hide toggle with Cmd+Option+D, Portside as a regular app while Settings is open, inline group naming and rename, open groups on hover
 - [ ] **F:** Native Dock hide/restore (autohide-delay trick only), launch at login (`SMAppService`), import `persistent-apps` and `persistent-others` from `com.apple.dock`, plus native orientation and tilesize as Portside's initial position and icon size; bounce on attention request (`requestUserAttention`; no public API exposes another app's request, so it needs private APIs, dlopen/dlsym guarded)
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
-- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder; drag icons out to remove; drop files onto app icons to open them (strip tiles built, hand test pending; group grid cells not yet); launch bounce (all three edges plus group grid cells built, hand test pending); reveal when a file is dragged to the edge (built, hand test pending); Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide
-- [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); right-click Trash shows Empty Trash; filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag; magnification polish
+- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder; drag icons out to remove; drop files onto app icons to open them (strip tiles and group grid cells built, hand test pending); launch bounce (all three edges plus group grid cells built, hand test pending); reveal when a file is dragged to the edge (built, hand test pending); Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide
+- [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); right-click Trash shows Empty Trash; filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag (app groups built, hand test pending; folder stacks not yet); magnification polish
 - [ ] **P3:** Follow the display the cursor hits; fullscreen apps and Spaces; badge counts via the real Dock's accessibility tree (Accessibility permission; private APIs only as fallback); window list in right-click menu with click to focus (Screen Recording for titles); VoiceOver labels and keyboard navigation; do not reveal while dragging a window or holding the mouse button (except file drags headed to the Dock)
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
+
+---
+
+# P1 slice: spring-loaded groups during file drags
+
+Status: built and verified with synthetic drags; waiting on James's hand test. Not committed. No new files.
+
+## Deliverables
+
+- [x] A file drag resting on a group tile opens its grid after 600ms (`GroupController.springLoadDelay`). One-shot cancelable `DispatchWorkItem`, armed when the drag reaches the tile, canceled when it leaves the tile, exits the strip or drops. No polling.
+- [x] If another group is already open, the drag switches to the new group at once (same as hover).
+- [x] Member cells in the grid take file drops with the strip's rules (`FileDropSession`): only a member that can open every dragged item highlights (same rounded highlight as a dock tile) and accepts the drop; the rest propose `.forbidden`.
+- [x] Dropping on a member opens the file in that app and closes the grid. A not-running member bounces in the grid first (same as a click), then the grid closes when it lands.
+- [x] The grid is part of the drag region: its drop delegate reports enter/exit to the engine as a fourth drag target (`"group"`), so the hide timer does not hide while the drag is over it. Tile to grid is seamless (the grid's bridge covers the gap).
+- [x] Drag leaves both tile and grid: the hover close grace applies, then the grid closes; the dock hides on the normal delay.
+- [x] A spring-loaded grid is transient (opened as by hover), so the existing hover-opened rules apply after the drag ends.
+- [x] Non-app files dropped on the group tile itself: still rejected (op 0).
+- [x] `.app` drags: unchanged. They never spring-load; dropping one on a group tile pins it as its own tile at that slot (pulling it out of a group if it was in one), as before. The grid rejects `.app` drags, which matches before (the overlay was not a drop destination). In practice a grid cannot be open during a `.app` drag from another app anyway: the mouse down that starts the drag closes any open grid (outside-click monitor).
+- [x] Bottom, Left, Right, and hiding off. Overlay panel unchanged (non-activating); the target app came forward after each drop.
+- [x] Hover reveal timing unchanged: mouseEntered to animation start 0.60 to 1.73ms.
+- [x] `swift build` clean, no warnings; `swift run` stays up
+
+## Changes
+
+- `GroupController.swift`: `dragOverGroupTileChanged(_:)` (arms/cancels the spring-load), `dragOverGridChanged` (drag-region tracking, cancels or starts the grace close), `onDragOverGrid` callback, `launch` takes `documents`. The grace-close check also stays open while a drag is over the grid or the tile. A close while a drag is over the grid reports the drag exit, so the engine never keeps a stale drag target.
+- `GroupViews.swift`: `GroupFileDropDelegate` on the card plus bridge (not the shadow), cell frames via a preference key in a named space, drop highlight on `GroupAppCell`.
+- `DockStrip.swift`: the strip's drop delegate reports the group tile under an open-mode drag through `DockInteractions.onDragOverGroupTile` (nil on exit, drop, or pin mode).
+- `DockEngine.swift`: wires the two new callbacks; `"group"` joins the drag targets.
+
+## Verification (agent, synthetic drags)
+
+Throwaway harness in `/tmp/portside-spring` (real drag session from its own window, CGEvents). A test group (TextEdit, Preview, Calculator) was added for the run; `dock.json` backed up and restored byte for byte (`cmp`).
+
+- [x] Spring-load opened after 601 to 630ms on the tile, all edges. A 370ms pass over the tile: `spring-load: canceled`, no grid.
+- [x] Bottom: `.txt` on TextEdit (not running): highlight in a screenshot, bounce in the grid, opened in 77ms, grid closed after landing, TextEdit frontmost, dock hid once the grid was gone. `.txt` on Calculator: op 0. `.txt` dropped on the group tile: op 0. `Chess.app` on the group tile: no spring-load, pinned (op 1).
+- [x] Left: `.png` on Preview opened (op 1, Preview frontmost); `.txt` on Calculator op 0; drag away closed the grid then hid the dock.
+- [x] Right: `.txt` on TextEdit (running) opened in 24ms; `.txt` on Preview op 0; drag away closed and hid.
+- [x] Hiding off: spring-load, `.png` on Preview opened, `.txt` on Calculator rejected, grid closed after the drag left. No hide armed.
+- [x] Strip to grid: `strip drag exited` arms the hide, then `group draggingEntered` cancels it within 1ms.
+
+## Findings
+
+- SwiftUI does not call `performDrop` when the last proposal was `.forbidden`, so rejected drops on the grid or group tile log nothing beyond the drag exit.
+- After a drop SwiftUI sends one more `dropUpdated` after `performDrop`, which asks for a can-open answer with an empty session (logged as `can open: false`). Harmless; the next drag resets the cache.
+- Plain-hover group opening could not be checked with synthetic `mouseMoved` events (it did not open on the unmodified build either), so it is in the hand test. Its code path only gained spring-load cancels.
+
+## Known gaps
+
+- Folder stacks do not exist yet, so only app groups spring-load.
+- No visual cue while the 600ms delay runs (the native Dock flashes the tile).
+- The delay is fixed at 600ms, not a setting.
+
+## Hand test must also check
+
+- [ ] Bottom, Left, Right: drag a file from Finder onto a group tile; the grid opens after about 600ms
+- [ ] Move onto a member that can open it: highlight, drop opens it in that app, app comes forward, grid closes
+- [ ] Onto a member that cannot: no highlight, no green plus, drop does nothing
+- [ ] Drag away without dropping: grid closes, dock hides
+- [ ] With hiding off, the same, minus the hide
+- [ ] Plain hover-open of groups (no drag) still works
 
 ---
 
@@ -69,7 +129,7 @@ Throwaway app in `/tmp/portside-droptest` that starts a real file drag session f
 ## Known gaps
 
 - Activation of the target app could not be confirmed from here (the frontmost check was taken over by a system prompt); needs the hand test.
-- No drop-to-open on apps inside an open group grid, and a group tile does not spring open during a drag.
+- No drop-to-open on apps inside an open group grid, and a group tile does not spring open during a drag. (Both built in the spring-loading slice above.)
 - No Cmd+Option "force open with any app" like the native Dock.
 - File promises (images dragged out of Photos or Safari) are not file URLs: they neither reveal the dock nor open.
 - Pasteboard read failure falls back to pin mode (old behavior: accepted, only `.app` bundles do anything). Not seen in testing.
@@ -130,8 +190,8 @@ Throwaway app in `/tmp` that starts a real file drag session from its own window
 ## Known gaps
 
 - Only file drags (`.fileURL`) reveal. Text, links and file promises (for example images dragged out of Photos or Safari) do not.
-- No hover labels or group spring-loading while dragging over the strip (mouseMoved does not arrive during a drag).
-- A drag over an open group grid is not tracked as a drag; the cursor-inside check still keeps the dock up there.
+- No hover labels while dragging over the strip (mouseMoved does not arrive during a drag). Group spring-loading was added later through the strip's drop delegate.
+- A drag over an open group grid is not tracked as a drag; the cursor-inside check still keeps the dock up there. (Fixed in the spring-loading slice: the grid is a drag target now.)
 
 ## Hand test must also check
 

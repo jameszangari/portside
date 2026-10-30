@@ -53,7 +53,7 @@ final class DockEngine {
     /// Event that started the current reveal (mouseEntered or draggingEntered).
     private var revealTrigger = "mouseEntered"
 
-    /// Drag destinations ("edge", "panel", "strip") a file drag is over.
+    /// Drag destinations ("edge", "panel", "strip", "group") a file drag is over.
     /// While any is set and the button is held, exits do not arm the hide
     /// and the hide timer will not hide.
     private var dragTargets: Set<String> = []
@@ -110,6 +110,16 @@ final class DockEngine {
         }
         interactions.onRenameGroup = { [weak self] id in self?.groups.beginRename(id, reason: "tile menu") }
         hover.onHoveredTargetChanged = { [weak self] id in self?.groups.hoveredTargetChanged(id) }
+        // Spring-loading: a file drag resting on a group tile opens it, and
+        // the open grid is part of the drag region like the strip.
+        interactions.onDragOverGroupTile = { [weak self] id in self?.groups.dragOverGroupTileChanged(id) }
+        groups.onDragOverGrid = { [weak self] inside, reason in
+            if inside {
+                self?.handleDragEntered("group")
+            } else {
+                self?.handleDragExited("group", reason: reason)
+            }
+        }
 
         let center = NotificationCenter.default
         menuObservers.append(center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in

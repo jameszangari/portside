@@ -18,6 +18,12 @@ import os.log
 /// closes. Any close (or switching groups) stops the bounce first, so
 /// nothing is left floating or hidden.
 ///
+/// Spring-loading: a file drag resting on a group tile opens its grid after
+/// `springLoadDelay` (one-shot, cancelable). The grid opens as if hovered
+/// (transient), counts as part of the drag region while the drag is over
+/// it, and closes after the hover grace delay once the drag has left both
+/// the tile and the grid.
+///
 /// Inline rename: the grid's title becomes a text field and the overlay
 /// panel takes key focus only while it is being edited.
 ///
@@ -42,6 +48,12 @@ final class GroupController: ObservableObject {
     var onCollapsed: (() -> Void)?
     /// Editing started or ended. The dock must not hide while editing.
     var onEditingChanged: ((Bool) -> Void)?
+    /// A file drag entered the open grid (true) or left it, dropped or not
+    /// (false, with a reason for the log). Feeds the engine's drag region.
+    var onDragOverGrid: ((Bool, String) -> Void)?
+
+    /// How long a file drag rests on a group tile before its grid opens.
+    static let springLoadDelay: TimeInterval = 0.6
 
     private let overlay = OverlayPanel()
     private let dockModel: DockModel
@@ -61,6 +73,11 @@ final class GroupController: ObservableObject {
     private var pendingHoverOpen: DispatchWorkItem?
     private var pendingHoverClose: DispatchWorkItem?
     private var pendingDismiss: DispatchWorkItem?
+    private var pendingSpringOpen: DispatchWorkItem?
+    /// Group tile a file drag is over right now (nil: none, or no drag).
+    private var dragTileGroupID: String?
+    /// A file drag is over the open grid right now.
+    private(set) var isDragOverGrid = false
     /// The open grid came from hovering, so the next click on its tile
     /// keeps it open instead of toggling it shut.
     private var openedByHover = false
@@ -127,6 +144,7 @@ final class GroupController: ObservableObject {
     func expand(_ groupID: String, byHover: Bool = false) {
         pendingHoverOpen?.cancel()
         pendingHoverOpen = nil
+        cancelSpringOpen()
         cancelHoverClose()
         pendingDismiss?.cancel()
         pendingDismiss = nil
@@ -157,7 +175,9 @@ final class GroupController: ObservableObject {
             dockModel: dockModel,
             runningApps: runningApps,
             groups: self,
-            onLaunch: { [weak self] app in self?.launch(app) }
+            onLaunch: { [weak self] app in self?.launch(app) },
+            onOpenDocuments: { [weak self] urls, app in self?.launch(app, documents: urls) },
+            onDragOverGrid: { [weak self] inside, reason in self?.dragOverGridChanged(inside, reason: reason) }
         )
         .id(groupID)
         // The popover draws its own bridge across the gap and its own shadow.
@@ -171,6 +191,7 @@ final class GroupController: ObservableObject {
     func collapse(reason: String, animated: Bool = true) {
         pendingHoverOpen?.cancel()
         pendingHoverOpen = nil
+        cancelSpringOpen()
         cancelHoverClose()
         guard expandedID != nil else { return }
         if isClosing {
@@ -204,6 +225,11 @@ final class GroupController: ObservableObject {
         isClosing = false
         expandedID = nil
         openedByHover = false
+        if isDragOverGrid {
+            // The grid vanished under the drag; no exit will come from it.
+            isDragOverGrid = false
+            onDragOverGrid?(false, "grid closed")
+        }
         bouncer.cancelGridBounce(reason: "group closed")
         overlay.dismiss()
         removeOutsideClickMonitor()
@@ -334,6 +360,9 @@ final class GroupController: ObservableObject {
 
     private func closeHoverOpenedIfCursorOutside() {
         guard openedByHover, let id = expandedID, !isEditing else { return }
+        // A drag over the grid or the tile keeps it, wherever the cursor
+        // reads (drag callbacks and the cursor can disagree at the edges).
+        if isDragOverGrid || dragTileGroupID == id { return }
         let location = NSEvent.mouseLocation
         if overlay.containsScreenPoint(location) { return }
         if let tile = hover.screenFrame(forTargetID: "group:" + id), tile.contains(location) { return }
@@ -345,7 +374,74 @@ final class GroupController: ObservableObject {
         pendingHoverClose = nil
     }
 
-    private func launch(_ app: PinnedApp) {
+    // MARK: - Spring-loading (file drags)
+
+    /// The group tile under a file drag over the strip changed (nil: not on
+    /// a group tile, or the drag left the strip or dropped). Called from the
+    /// strip's drop delegate only for drags that would open files, never
+    /// for `.app` drags (those pin).
+    func dragOverGroupTileChanged(_ groupID: String?) {
+        guard groupID != dragTileGroupID else { return }
+        dragTileGroupID = groupID
+        cancelSpringOpen()
+        guard let groupID else {
+            // Left the tile: a spring-loaded grid stays only while the drag
+            // goes on into it. The grid's own enter cancels this close.
+            scheduleHoverCloseIfHoverOpened()
+            return
+        }
+        guard !isEditing else { return }
+        if expandedID == groupID {
+            cancelHoverClose()
+            // Back on the tile while its transient grid fades out.
+            if isClosing, openedByHover { expand(groupID, byHover: true) }
+            return
+        }
+        if expandedID != nil {
+            // Another group is open: switch at once, like hovering.
+            logger.info("spring-load: switching to group \(groupID, privacy: .public) at once")
+            expand(groupID, byHover: true)
+            return
+        }
+        let armed = CACurrentMediaTime()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingSpringOpen = nil
+            let ms = (CACurrentMediaTime() - armed) * 1000
+            self.logger.info("spring-load: opening after \(ms, format: .fixed(precision: 0))ms on the tile")
+            self.expand(groupID, byHover: true)
+        }
+        pendingSpringOpen = work
+        logger.info("spring-load: armed for group \(groupID, privacy: .public)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.springLoadDelay, execute: work)
+    }
+
+    private func cancelSpringOpen() {
+        guard let pendingSpringOpen else { return }
+        pendingSpringOpen.cancel()
+        self.pendingSpringOpen = nil
+        logger.info("spring-load: canceled")
+    }
+
+    /// A file drag entered or left the open grid (from the grid's drop
+    /// delegate). Inside, the grid never closes on a grace timer; leaving
+    /// starts the grace close unless the drag is back on the tile.
+    private func dragOverGridChanged(_ inside: Bool, reason: String) {
+        guard inside != isDragOverGrid else {
+            // Dropped: the delegate reports exit again right after.
+            return
+        }
+        isDragOverGrid = inside
+        if inside {
+            cancelHoverClose()
+            if isClosing, openedByHover, let id = expandedID { expand(id, byHover: true) }
+        } else {
+            scheduleHoverCloseIfHoverOpened()
+        }
+        onDragOverGrid?(inside, reason)
+    }
+
+    private func launch(_ app: PinnedApp, documents: [URL] = []) {
         let running = runningApps.runningInstance(of: app)
         if running == nil, let groupID = expandedID, !isClosing, bouncer.isEnabled {
             let target = LaunchBouncer.BounceTarget(
@@ -353,7 +449,7 @@ final class GroupController: ObservableObject {
                 // Above the grid overlay (and its labels' level).
                 level: NSWindow.Level(rawValue: OverlayPanel.windowLevel.rawValue + 1)
             ) { [weak self] _ in self?.cellIconScreenFrame(appID: app.id, groupID: groupID) }
-            let bouncing = bouncer.launch(app, size: GroupPopoverView.iconSize, target: target) { [weak self] landed in
+            let bouncing = bouncer.launch(app, size: GroupPopoverView.iconSize, target: target, documents: documents) { [weak self] landed in
                 // Landed: the app is up, so close the grid like any launch.
                 // Cut short: the grid closed, the dock hid or moved, or the
                 // launch failed; leave the grid as it is.
@@ -364,7 +460,7 @@ final class GroupController: ObservableObject {
             collapse(reason: "opened \(app.displayName)")
             return
         }
-        AppLauncher.open(app, running: running)
+        AppLauncher.open(app, running: running, documents: documents)
         collapse(reason: "opened \(app.displayName)")
     }
 

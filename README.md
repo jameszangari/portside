@@ -38,6 +38,7 @@ Portside is a personal project for macOS on Apple Silicon. It is not packaged, s
 - User-defined groups of apps shown as one tile that opens a grid.
 - Inline naming on creation, rename, ungroup, and remove-from-group from context menus.
 - Optional open on hover, with configurable open delay and close grace.
+- Spring-loading: resting a file drag on a group tile for about 600ms opens its grid. Drop on a member that can open the file (it highlights) to open it there. The grid closes when the drag leaves both the tile and the grid.
 
 **Settings window**
 - General, Widgets, and Groups tabs. Changes apply live.
@@ -48,7 +49,7 @@ From `docs/CHECKLIST.md` and `docs/PLAN.md`:
 - Milestone F: hide the native Dock (autohide-delay trick only) with exact save and restore, launch at login, and import of the native Dock's items, position, and icon size.
 - A real `.app` bundle.
 - Magnification (the setting exists but is disabled).
-- Native Dock parity: click-and-hold menu, drag icons out to remove, modifier clicks, Trash, folder stacks. Drop files onto apps inside a group grid.
+- Native Dock parity: click-and-hold menu, drag icons out to remove, modifier clicks, Trash, folder stacks.
 - Multi-display, fullscreen and Spaces behavior, badges.
 - Better widget layout on side docks.
 
@@ -72,7 +73,7 @@ log stream --level info --predicate 'subsystem == "com.james.portside"'
 
 - `EdgeTracker` owns a thin, near-invisible window along the chosen screen edge. An `NSTrackingArea` on it reports `mouseEntered` and `mouseExited`, so reveal starts the moment the window server delivers the event. It is also a drag destination for files, since tracking areas are unreliable during another app's drag.
 - `DockPanel` is a non-activating `NSPanel` that slides in from the edge. It has its own tracking area so hovering it cancels the hide timer.
-- `DockEngine` coordinates both. The only timers are the one-shot hide delay, widget refresh, and group hover/close delays, none of which poll.
+- `DockEngine` coordinates both. The only timers are the one-shot hide delay, widget refresh, and group hover/close/spring-load delays, none of which poll.
 - `OverlayPanel` is a second non-activating panel used for hover labels and group grids. It sits outside the strip so its content can extend past the strip's bounds.
 
 ## Where data lives

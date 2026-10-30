@@ -1,4 +1,5 @@
 import SwiftUI
+import os.log
 
 /// Present and dismiss motion for the group grid overlay (Dock-stack feel).
 enum GroupPopoverMotion {
@@ -105,13 +106,24 @@ struct GroupPopoverView: View {
     @ObservedObject var runningApps: RunningApps
     @ObservedObject var groups: GroupController
     let onLaunch: (PinnedApp) -> Void
+    /// A file drop on a member that can open it.
+    let onOpenDocuments: ([URL], PinnedApp) -> Void
+    /// A file drag entered (true) or left (false, with a reason) the grid.
+    let onDragOverGrid: (Bool, String) -> Void
 
     @State private var appeared = false
+    /// The file drag over the grid right now (same rules as the strip).
+    @State private var fileDrop = FileDropSession()
+    /// Member a file drag is over that can open the dragged items.
+    @State private var dropTargetID: String?
+    /// Member cell frames in the grid's space, for hit-testing drops.
+    @State private var cellFrames: [String: CGRect] = [:]
 
     static let iconSize: CGFloat = 52
     private static let cellWidth: CGFloat = 76
     /// Room around the card for its shadow, on every side except the tile's.
     static let shadowPadding: CGFloat = 18
+    fileprivate static let dropSpace = "groupGrid"
 
     /// The parts of the overlay that are not hoverable: the shadow padding.
     /// Everything else (the card and the bridge to the tile) counts as the grid.
@@ -135,6 +147,13 @@ struct GroupPopoverView: View {
                 // the mouse from the first frame, even while fading in.
                 .padding(edge.nearSide, DockHover.labelGap)
                 .background(Color.black.opacity(0.01))
+                // Card plus bridge take file drags; the shadow does not.
+                .coordinateSpace(name: Self.dropSpace)
+                .onPreferenceChange(GroupCellFramesKey.self) { cellFrames = $0 }
+                .onDrop(of: [.fileURL], delegate: GroupFileDropDelegate(
+                    session: fileDrop, targetID: $dropTargetID, cellFrames: cellFrames,
+                    apps: Dictionary(group.apps.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }),
+                    onOpen: onOpenDocuments, onDragOverGrid: onDragOverGrid))
                 .padding(Edge.Set.all.subtracting(edge.nearSide), Self.shadowPadding)
                 .onAppear { setAppeared(true, animation: GroupPopoverMotion.present) }
                 .onChange(of: groups.isClosing) { _, closing in
@@ -181,6 +200,7 @@ struct GroupPopoverView: View {
                                 dockModel: dockModel,
                                 groups: groups,
                                 bouncer: groups.bouncer,
+                                isDropTarget: dropTargetID == app.id,
                                 onLaunch: onLaunch
                             )
                         }
@@ -245,6 +265,7 @@ private struct GroupAppCell: View {
     @ObservedObject var dockModel: DockModel
     let groups: GroupController
     @ObservedObject var bouncer: LaunchBouncer
+    var isDropTarget = false
     let onLaunch: (PinnedApp) -> Void
     @ObservedObject private var icons = IconCache.shared
     @State private var hovered = false
@@ -259,6 +280,12 @@ private struct GroupAppCell: View {
                 .frame(width: iconSize, height: iconSize)
                 // While launching, the bounce window draws the icon.
                 .opacity(bouncer.bouncingID == bounceKey ? 0 : 1)
+                // Same drop highlight as a dock tile.
+                .background(
+                    RoundedRectangle(cornerRadius: iconSize * 0.25, style: .continuous)
+                        .fill(Color.primary.opacity(isDropTarget ? 0.22 : 0))
+                        .padding(-3)
+                )
                 // Where the bounce window goes (the hosting view fills the
                 // overlay, so global is overlay content space).
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
@@ -278,6 +305,10 @@ private struct GroupAppCell: View {
         }
         .padding(.vertical, 6)
         .frame(width: width)
+        .background(GeometryReader { proxy in
+            Color.clear.preference(key: GroupCellFramesKey.self,
+                                   value: [app.id: proxy.frame(in: .named(GroupPopoverView.dropSpace))])
+        })
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.primary.opacity(hovered ? 0.12 : 0))
@@ -299,3 +330,79 @@ private struct GroupAppCell: View {
         }
     }
 }
+
+/// Member cell frames in the grid's drop space, by app id.
+private struct GroupCellFramesKey: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
+/// File drops on an open group grid. Same rules as the strip's delegate
+/// (`FileDropSession`): a member that can open every dragged item
+/// highlights and takes the drop; anything else is rejected. `.app` drags
+/// are rejected here too, as before (pinning happens on the strip).
+private struct GroupFileDropDelegate: DropDelegate {
+    let session: FileDropSession
+    @Binding var targetID: String?
+    let cellFrames: [String: CGRect]
+    let apps: [String: PinnedApp]
+    let onOpen: ([URL], PinnedApp) -> Void
+    let onDragOverGrid: (Bool, String) -> Void
+
+    func validateDrop(info: DropInfo) -> Bool {
+        info.hasItemsConforming(to: [.fileURL])
+    }
+
+    func dropEntered(info: DropInfo) {
+        session.begin()
+        onDragOverGrid(true, "entered")
+        updateTarget(info)
+    }
+
+    func dropExited(info: DropInfo) {
+        setTarget(nil)
+        session.end()
+        onDragOverGrid(false, "exited")
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: updateTarget(info) == nil ? .forbidden : .copy)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        let id = updateTarget(info)
+        let urls = session.urls
+        setTarget(nil)
+        session.end()
+        onDragOverGrid(false, "dropped")
+        guard let id, let app = apps[id] else {
+            gridDropLogger.info("grid file drop rejected: no member here can open it")
+            return false
+        }
+        gridDropLogger.info("grid file drop: opening \(urls.count) item(s) with \(app.displayName, privacy: .public)")
+        onOpen(urls, app)
+        return true
+    }
+
+    @discardableResult
+    private func updateTarget(_ info: DropInfo) -> String? {
+        guard session.mode == .open else {
+            setTarget(nil)
+            return nil
+        }
+        let hit = cellFrames.first { $0.value.contains(info.location) }?.key
+        let id = hit.flatMap { id in apps[id].flatMap { session.canOpen(with: $0) ? id : nil } }
+        setTarget(id)
+        return id
+    }
+
+    private func setTarget(_ id: String?) {
+        guard targetID != id else { return }
+        targetID = id
+        gridDropLogger.info("grid drop target: \(id ?? "none", privacy: .public)")
+    }
+}
+
+private let gridDropLogger = Logger(subsystem: "com.james.portside", category: "Groups")

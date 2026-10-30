@@ -55,6 +55,9 @@ final class DockInteractions {
     /// A file drag entered the strip (true) or left it, dropped or not
     /// (false, with a reason for the log).
     var onDragOverStrip: ((Bool, String) -> Void)?
+    /// The group tile under a file drag that would open files (nil: none,
+    /// or the drag left or dropped). Drives spring-loading.
+    var onDragOverGroupTile: ((String?) -> Void)?
 }
 
 /// SwiftUI view that renders the dock strip: pinned apps, a separator,
@@ -367,6 +370,7 @@ private struct FileDropDelegate: DropDelegate {
     func dropExited(info: DropInfo) {
         setTarget(nil)
         session.end()
+        interactions.onDragOverGroupTile?(nil)
         interactions.onDragOverStrip?(false, "exited")
     }
 
@@ -384,6 +388,7 @@ private struct FileDropDelegate: DropDelegate {
         defer {
             setTarget(nil)
             session.end()
+            interactions.onDragOverGroupTile?(nil)
         }
         switch session.mode {
         case .pin:
@@ -404,6 +409,7 @@ private struct FileDropDelegate: DropDelegate {
     private func updateTarget(_ info: DropInfo) -> String? {
         guard session.mode == .open else {
             setTarget(nil)
+            interactions.onDragOverGroupTile?(nil)
             return nil
         }
         // Same slop as hover labels: no gap between neighbors.
@@ -411,6 +417,9 @@ private struct FileDropDelegate: DropDelegate {
         let hit = tileFrames.first {
             $0.frame.insetBy(dx: vertical ? 0 : slop, dy: vertical ? slop : 0).contains(info.location)
         }
+        // Group tiles never take the drop, but resting on one springs it open.
+        let groupPrefix = "group:"
+        interactions.onDragOverGroupTile?(hit.flatMap { $0.id.hasPrefix(groupPrefix) ? String($0.id.dropFirst(groupPrefix.count)) : nil })
         let id = hit.flatMap { hit in apps[hit.id].flatMap { session.canOpen(with: $0.app) ? hit.id : nil } }
         setTarget(id)
         return id
