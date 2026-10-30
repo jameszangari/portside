@@ -1,0 +1,45 @@
+{
+  "name": "Portside",
+  "version": "1.0",
+  "color": {
+    "harborNavy": {
+      "value": "#10283F",
+      "role": "primary background / type"
+    },
+    "deepHarbor": {
+      "value": "#071E30",
+      "role": "dark gradient depth"
+    },
+    "sailcloth": {
+      "value": "#F4EEDF",
+      "role": "symbol / warm neutral"
+    },
+    "safetyOrange": {
+      "value": "#F06A42",
+      "role": "single accent / active state"
+    },
+    "ink": {
+      "value": "#112B3F",
+      "role": "body type"
+    },
+    "surface": {
+      "value": "#FCFAF5",
+      "role": "UI light surfaces"
+    }
+  },
+  "font": {
+    "display": "Inter Display Semibold (application: SF Pro Display where available)",
+    "body": "Inter Regular (application: SF Pro Text where available)"
+  },
+  "radius": {
+    "appIcon": "platform mask supplied by Apple",
+    "card": 20,
+    "control": 12
+  },
+  "logo": {
+    "clearSpace": "25% of mark width",
+    "minimumDock": 32,
+    "minimumWordmarkWidth": 160
+  },
+  "tagline": "Make your Dock yours."
+}
