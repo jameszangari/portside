@@ -1,5 +1,27 @@
 import SwiftUI
 
+/// Present and dismiss motion for the group grid overlay (Dock-stack feel).
+enum GroupPopoverMotion {
+    /// How long the close plays before the overlay is removed.
+    static let dismissDuration: TimeInterval = 0.14
+    static let collapsedScale: CGFloat = 0.9
+
+    static var shouldAnimate: Bool {
+        !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
+    /// A quick, lightly damped spring: settles in about 250ms with a hint of
+    /// overshoot, like a native stack or popover.
+    static var present: Animation {
+        .spring(duration: 0.26, bounce: 0.14)
+    }
+
+    /// Accelerates away, a little quicker than the open.
+    static var dismiss: Animation {
+        .easeIn(duration: dismissDuration)
+    }
+}
+
 /// A group's tile in the strip: up to nine member icons in a mini grid,
 /// with a running dot if any member is running.
 struct GroupTileView: View {
@@ -45,6 +67,7 @@ struct GroupTileView: View {
         let grid = Array(repeating: GridItem(.fixed(cell), spacing: gap), count: columns)
         return RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
             .fill(Color.white.opacity(isExpanded ? 0.32 : 0.18))
+            .animation(GroupPopoverMotion.present, value: isExpanded)
             .overlay(
                 RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
                     .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5)
@@ -87,19 +110,44 @@ struct GroupPopoverView: View {
 
     private static let iconSize: CGFloat = 52
     private static let cellWidth: CGFloat = 76
+    /// Room around the card for its shadow, on every side except the tile's.
+    static let shadowPadding: CGFloat = 18
+
+    /// The parts of the overlay that are not hoverable: the shadow padding.
+    /// Everything else (the card and the bridge to the tile) counts as the grid.
+    static func hitInsets(for edge: DockEdge) -> NSEdgeInsets {
+        let p = shadowPadding
+        switch edge {
+        case .bottom: return NSEdgeInsets(top: p, left: p, bottom: 0, right: p)
+        case .left: return NSEdgeInsets(top: p, left: 0, bottom: p, right: p)
+        case .right: return NSEdgeInsets(top: p, left: p, bottom: p, right: 0)
+        }
+    }
 
     var body: some View {
         if let group = dockModel.groups.first(where: { $0.id == groupID }) {
             content(group)
-                .scaleEffect(appeared ? 1 : 0.92, anchor: edge.growthAnchor)
+                .scaleEffect(appeared ? 1 : GroupPopoverMotion.collapsedScale, anchor: edge.growthAnchor)
                 .opacity(appeared ? 1 : 0)
-                .onAppear {
-                    if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-                        appeared = true
-                    } else {
-                        withAnimation(.easeOut(duration: 0.12)) { appeared = true }
-                    }
+                // The bridge spans the gap to the tile, so the cursor never
+                // crosses dead space between tile and grid. The near-clear
+                // fill sits outside the animation: the whole region takes
+                // the mouse from the first frame, even while fading in.
+                .padding(edge.nearSide, DockHover.labelGap)
+                .background(Color.black.opacity(0.01))
+                .padding(Edge.Set.all.subtracting(edge.nearSide), Self.shadowPadding)
+                .onAppear { setAppeared(true, animation: GroupPopoverMotion.present) }
+                .onChange(of: groups.isClosing) { _, closing in
+                    setAppeared(!closing, animation: closing ? GroupPopoverMotion.dismiss : GroupPopoverMotion.present)
                 }
+        }
+    }
+
+    private func setAppeared(_ value: Bool, animation: Animation) {
+        if GroupPopoverMotion.shouldAnimate {
+            withAnimation(animation) { appeared = value }
+        } else {
+            appeared = value
         }
     }
 
@@ -139,7 +187,11 @@ struct GroupPopoverView: View {
             }
         }
         .padding(12)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .shadow(color: .black.opacity(0.3), radius: 12, y: 5)
+        }
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(.white.opacity(0.15), lineWidth: 1)

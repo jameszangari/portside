@@ -201,7 +201,7 @@ final class DockEngine {
         pendingReveal = nil
         hover.clear()
         dockPanel.hide(animated: false)
-        groups.collapse(reason: "engine stopped")
+        groups.collapse(reason: "engine stopped", animated: false)
         edgeTracker.stop()
         widgets.stopAll()
         logger.info("engine stopped")
@@ -210,7 +210,7 @@ final class DockEngine {
     /// Move the dock to another screen edge, live. The panel snaps hidden on
     /// the new edge; the next edge touch reveals it from there.
     private func applyEdge(_ edge: DockEdge) {
-        groups.collapse(reason: "dock moved")
+        groups.collapse(reason: "dock moved", animated: false)
         pendingHide?.cancel()
         pendingHide = nil
         pendingReveal?.cancel()
@@ -313,7 +313,7 @@ final class DockEngine {
             self.hover.clear()
             self.dockPanel.hide(animated: true)
             // After hide() so the collapse's re-check sees the dock hiding.
-            self.groups.collapse(reason: "dock hiding")
+            self.groups.collapse(reason: "dock hiding", animated: false)
         }
         pendingHide = work
         let delayMs = dockModel.hideDelay * 1000

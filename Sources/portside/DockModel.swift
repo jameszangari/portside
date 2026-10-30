@@ -57,7 +57,8 @@ final class DockModel: Codable, ObservableObject {
         static let revealDelay: TimeInterval = 0.0
         static let hideDelay: TimeInterval = 0.3
         static let animationDuration: TimeInterval = 0.15
-        static let groupHoverDelay: TimeInterval = 0.2
+        static let groupHoverDelay: TimeInterval = 0.05
+        static let groupHoverCloseGrace: TimeInterval = 0.05
     }
 
     static let revealDelayRange: ClosedRange<TimeInterval> = 0...1
@@ -139,6 +140,9 @@ final class DockModel: Codable, ObservableObject {
     @Published private(set) var openGroupsOnHover: Bool = false
     @Published private(set) var groupHoverDelay: TimeInterval = Defaults.groupHoverDelay
     static let groupHoverDelayRange: ClosedRange<TimeInterval> = 0...1
+    /// Grace after leaving the tile or grid before a hover-opened popover closes.
+    @Published private(set) var groupHoverCloseGrace: TimeInterval = Defaults.groupHoverCloseGrace
+    static let groupHoverCloseGraceRange: ClosedRange<TimeInterval> = 0...0.5
 
     func setOpenGroupsOnHover(_ enabled: Bool) {
         guard enabled != openGroupsOnHover else { return }
@@ -148,6 +152,11 @@ final class DockModel: Codable, ObservableObject {
 
     func setGroupHoverDelay(_ value: TimeInterval, persist shouldPersist: Bool = true) {
         groupHoverDelay = Self.clamp(value, to: Self.groupHoverDelayRange)
+        if shouldPersist { persist() }
+    }
+
+    func setGroupHoverCloseGrace(_ value: TimeInterval, persist shouldPersist: Bool = true) {
+        groupHoverCloseGrace = Self.clamp(value, to: Self.groupHoverCloseGraceRange)
         if shouldPersist { persist() }
     }
 
@@ -365,7 +374,7 @@ final class DockModel: Codable, ObservableObject {
 
     private enum CodingKeys: String, CodingKey {
         case revealDelay, hideDelay, animationDuration, iconSize, magnificationEnabled, edge, entries, widgetKinds
-        case autoHide, openGroupsOnHover, groupHoverDelay
+        case autoHide, openGroupsOnHover, groupHoverDelay, groupHoverCloseGrace
         /// Before Milestone D: a flat list of apps. Read only, for migration.
         case pinnedApps
     }
@@ -389,6 +398,7 @@ final class DockModel: Codable, ObservableObject {
         autoHide = try c.decodeIfPresent(Bool.self, forKey: .autoHide) ?? true
         openGroupsOnHover = try c.decodeIfPresent(Bool.self, forKey: .openGroupsOnHover) ?? false
         groupHoverDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverDelay) ?? Defaults.groupHoverDelay, to: Self.groupHoverDelayRange)
+        groupHoverCloseGrace = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverCloseGrace) ?? Defaults.groupHoverCloseGrace, to: Self.groupHoverCloseGraceRange)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -404,6 +414,7 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(autoHide, forKey: .autoHide)
         try c.encode(openGroupsOnHover, forKey: .openGroupsOnHover)
         try c.encode(groupHoverDelay, forKey: .groupHoverDelay)
+        try c.encode(groupHoverCloseGrace, forKey: .groupHoverCloseGrace)
     }
 
     // MARK: - Persistence
