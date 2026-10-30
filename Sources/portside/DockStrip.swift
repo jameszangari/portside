@@ -52,6 +52,9 @@ final class DockInteractions {
     var onRenameGroup: ((String) -> Void)?
     /// "Settings..." from the separator's context menu.
     var onOpenSettings: (() -> Void)?
+    /// A file drag entered the strip (true) or left it, dropped or not
+    /// (false, with a reason for the log).
+    var onDragOverStrip: ((Bool, String) -> Void)?
 }
 
 /// SwiftUI view that renders the dock strip: pinned apps, a separator,
@@ -165,7 +168,7 @@ struct DockStrip: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(.white.opacity(0.15), lineWidth: 1)
         )
-        .onDrop(of: [.fileURL], delegate: AppFileDropDelegate(dockModel: dockModel, slotLength: tile + spacing, leadingInset: alongPadding, vertical: edge.isVertical))
+        .onDrop(of: [.fileURL], delegate: AppFileDropDelegate(dockModel: dockModel, interactions: interactions, slotLength: tile + spacing, leadingInset: alongPadding, vertical: edge.isVertical))
         .onChange(of: maxTile, initial: true) { _, fit in layout.reportFitTileSize(fit) }
         .onChange(of: tile) { _, size in bouncer.tileSizeChanged(size) }
         .fixedSize()
@@ -314,6 +317,7 @@ enum ResizeCursor {
 /// Adds .app bundles dragged from Finder, inserted at the slot under the cursor.
 private struct AppFileDropDelegate: DropDelegate {
     let dockModel: DockModel
+    let interactions: DockInteractions
     let slotLength: CGFloat
     let leadingInset: CGFloat
     let vertical: Bool
@@ -322,11 +326,20 @@ private struct AppFileDropDelegate: DropDelegate {
         info.hasItemsConforming(to: [.fileURL])
     }
 
+    func dropEntered(info: DropInfo) {
+        interactions.onDragOverStrip?(true, "entered")
+    }
+
+    func dropExited(info: DropInfo) {
+        interactions.onDragOverStrip?(false, "exited")
+    }
+
     func dropUpdated(info: DropInfo) -> DropProposal? {
         DropProposal(operation: .copy)
     }
 
     func performDrop(info: DropInfo) -> Bool {
+        interactions.onDragOverStrip?(false, "dropped")
         let position = vertical ? info.location.y : info.location.x
         let slot = Int(((position - leadingInset) / slotLength).rounded())
         let index = min(max(slot, 0), dockModel.entries.count)

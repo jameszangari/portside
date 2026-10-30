@@ -11,7 +11,8 @@ Portside is a personal project for macOS on Apple Silicon. It is not packaged, s
 - Non-activating panel: the first click works and the frontmost app keeps focus.
 - Animated slide with a configurable duration, an instant option, and Reduce Motion support.
 - Cancelable one-shot hide delay, canceled on re-entering the edge zone, the panel, or an open group grid.
-- Timing logs for mouseEntered, animation start, and panel-interactive.
+- Dragging a file to the edge reveals the dock, and it stays up while the drag is over it. Hides with the normal delay after the drop or when the drag leaves.
+- Timing logs for mouseEntered (or draggingEntered), animation start, and panel-interactive.
 - Auto-hide toggle (menu bar item, separator right-click menu, Settings, or Cmd+Option+D). With hiding off, the dock stays revealed.
 
 **Apps**
@@ -68,7 +69,7 @@ log stream --level info --predicate 'subsystem == "com.james.portside"'
 
 ## How it works
 
-- `EdgeTracker` owns a thin, near-invisible window along the chosen screen edge. An `NSTrackingArea` on it reports `mouseEntered` and `mouseExited`, so reveal starts the moment the window server delivers the event.
+- `EdgeTracker` owns a thin, near-invisible window along the chosen screen edge. An `NSTrackingArea` on it reports `mouseEntered` and `mouseExited`, so reveal starts the moment the window server delivers the event. It is also a drag destination for files, since tracking areas are unreliable during another app's drag.
 - `DockPanel` is a non-activating `NSPanel` that slides in from the edge. It has its own tracking area so hovering it cancels the hide timer.
 - `DockEngine` coordinates both. The only timers are the one-shot hide delay, widget refresh, and group hover/close delays, none of which poll.
 - `OverlayPanel` is a second non-activating panel used for hover labels and group grids. It sits outside the strip so its content can extend past the strip's bounds.

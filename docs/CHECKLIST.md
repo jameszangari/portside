@@ -1,6 +1,6 @@
 # Portside: Checklist
 
-Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (parts 1 and 2) and the launch bounce (all edges and group grids) are built and waiting on the hand test.
+Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (parts 1 and 2), the launch bounce (all edges and group grids) and reveal on file drag are built and waiting on the hand test.
 
 ## Roadmap
 
@@ -13,12 +13,70 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (p
 - [ ] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live (part 1: built, hand test pending); part 2 (built, hand test pending): auto-hide toggle with Cmd+Option+D, Portside as a regular app while Settings is open, inline group naming and rename, open groups on hover
 - [ ] **F:** Native Dock hide/restore (autohide-delay trick only), launch at login (`SMAppService`), import `persistent-apps` and `persistent-others` from `com.apple.dock`, plus native orientation and tilesize as Portside's initial position and icon size; bounce on attention request (`requestUserAttention`; no public API exposes another app's request, so it needs private APIs, dlopen/dlsym guarded)
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
-- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder; drag icons out to remove; drop files onto app icons to open them; launch bounce (all three edges plus group grid cells built, hand test pending); Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide
+- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder; drag icons out to remove; drop files onto app icons to open them; launch bounce (all three edges plus group grid cells built, hand test pending); reveal when a file is dragged to the edge (built, hand test pending); Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide
 - [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); right-click Trash shows Empty Trash; filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag; magnification polish
 - [ ] **P3:** Follow the display the cursor hits; fullscreen apps and Spaces; badge counts via the real Dock's accessibility tree (Accessibility permission; private APIs only as fallback); window list in right-click menu with click to focus (Screen Recording for titles); VoiceOver labels and keyboard navigation; do not reveal while dragging a window or holding the mouse button (except file drags headed to the Dock)
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
+
+---
+
+# P1 slice: reveal on file drag to the edge
+
+Status: built and verified with synthetic drags; waiting on James's hand test. Not committed. No new files.
+
+## Deliverables
+
+- [x] Dragging a file (`.fileURL`) to the edge reveals the dock on Bottom, Left and Right. The edge view is a drag destination; `draggingEntered` goes through the same `handleEnter` path as mouseEntered (reveal delay, slide, timing logs). It returns no drag operation, so it never accepts a drop itself.
+- [x] Stays up while the drag is over the dock: the edge zone, the panel's margin (`PanelContentView`) and the strip (the existing SwiftUI drop delegate's enter/exit) all report enter/exit. Moving between them cancels any armed hide. While a drag is over any of them with the button held, exits do not arm the hide and the hide timer will not hide.
+- [x] After a drop or drag exit, the normal hide delay applies. After a drop on the strip the dock stays while the cursor is over it and hides 300ms after the cursor leaves.
+- [x] A drag elsewhere on screen does not reveal (only the 1pt zone is a destination).
+- [x] Edge zone unchanged: still 1pt (`1728x1` bottom, `1x1084` sides), no new click handling. No "edge zone took a click" logs during the run.
+- [x] Auto-hide off: no edge window; drops on the strip are accepted and nothing arms a hide.
+- [x] No timers added. `wantsPeriodicDraggingUpdates` is off on both new destinations, so AppKit sends no periodic updates while the cursor rests.
+- [x] Timing logs: `timing: draggingEntered -> animation start / panel interactive / animation finished`. Hover keeps its `mouseEntered` lines.
+- [x] `swift build` clean; `swift run` stays up
+
+## Changes
+
+- `EdgeTracker.swift`: `EdgeView` registers `EdgeTracker.dragTypes` (`.fileURL`), reports `draggingEntered`, `draggingExited` and `draggingEnded` through `onDragEntered` / `onDragExited`.
+- `DockPanel.swift`: `PanelContentView` registers the same types and reports the same way (covers the margin around the strip).
+- `DockStrip.swift`: `AppFileDropDelegate` reports `dropEntered`, `dropExited` and `performDrop` through `DockInteractions.onDragOverStrip`. Its pinning behavior is unchanged.
+- `DockEngine.swift`: `dragTargets` set, `handleDragEntered` / `handleDragExited`, drag guard in `handleExit` and in the hide work item, trigger name in reveal and timing logs.
+
+## Verification (agent, synthetic drags)
+
+Throwaway app in `/tmp` that starts a real file drag session from its own window (like Finder), driven by CGEvents. `dock.json` backed up and restored byte for byte (edge and auto-hide were changed for the run).
+
+- [x] Drag-only path: with the edge view's mouseEntered temporarily disabled, `edge draggingEntered` revealed the dock on all three edges: draggingEntered to animation start 1.27, 1.43, 1.29, 1.75, 5.73, 1.12ms. Reverted before the final runs.
+- [x] Drop on the strip (Bottom, Left, Right): stayed up from the edge, through the margin, onto the strip, for 1.5s rests at each; after the drop `hide timer fired but cursor is still inside, staying revealed`; moving the plain cursor away hid it 300ms later.
+- [x] Drag to the edge and back without dropping (Bottom, Left, Right): `hide armed in 300ms` on leaving, then hidden.
+- [x] Escape while at the edge: drag exit arms the hide, the timer finds the cursor still in the edge zone and stays; moving away hides it.
+- [x] Drag around the middle of the screen: no reveal.
+- [x] Auto-hide off: drop accepted, no hide armed.
+- [x] Hover reveal timing unchanged: mouseEntered to animation start 2.98, 1.37, 1.63, 0.70, 0.77, 1.34, 0.74ms (launch bounce build: 0.51 to 3.21ms).
+
+## Findings
+
+- In these synthetic drags the edge's normal mouseEntered did fire during the drag, usually about 60ms before `draggingEntered`. Real Finder drags may differ (James reported it often does not fire), so both paths stay; whichever comes first reveals and the other logs `draggingEntered (dock already up)` or nothing.
+- Tracking-area exits do arrive during drags (`mouseExited: drag still over the dock, hide not armed`), which is why exits are ignored while a drag is over the dock.
+- Right edge only: about 700ms into resting at the edge, a system overlay (WindowManager and Bartender windows sweeping across the screen, seen with `CGWindowListCopyWindowInfo`) takes the drag for about 250ms, so the edge gets a drag exit and re-enter. The dock stayed up. If that lasted longer than the hide delay, the hide timer's "cursor still inside" check would still keep it up.
+- The strip's drop delegate calls `dropExited` right after `performDrop`, so a drop arms the hide twice; both find the cursor inside and stay.
+- Dropping a non-app file on the strip is accepted (green plus, drag session reports copy) but does nothing: the only drop handler pins `.app` bundles. "Drop files onto app icons to open them" is still not built.
+
+## Known gaps
+
+- Only file drags (`.fileURL`) reveal. Text, links and file promises (for example images dragged out of Photos or Safari) do not.
+- No hover labels or group spring-loading while dragging over the strip (mouseMoved does not arrive during a drag).
+- A drag over an open group grid is not tracked as a drag; the cursor-inside check still keeps the dock up there.
+
+## Hand test must also check
+
+- [ ] Reveal from a real Finder drag on Bottom, Left and Right, and whether the log shows `edge draggingEntered` or `edge mouseEntered` first
+- [ ] Dock stays up while dragging along and over the strip, with pauses
+- [ ] Drag away without dropping: hides after the hide delay
+- [ ] Clicks right at the screen edge (window resize edges, bottom controls) still work
 
 ---
 

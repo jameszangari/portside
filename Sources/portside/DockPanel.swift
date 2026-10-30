@@ -23,6 +23,11 @@ final class DockPanel {
     var onStripMouseMoved: ((CGPoint) -> Void)?
     /// Any mouse button went down on the strip (click, drag, context menu).
     var onMouseDown: (() -> Void)?
+    /// A file drag entered the panel's margin around the strip. Over the
+    /// strip itself, its SwiftUI drop delegate reports instead.
+    var onDragEntered: (() -> Void)?
+    /// The file drag left the margin or ended there (`reason`: exited, ended).
+    var onDragExited: ((String) -> Void)?
 
     /// Window level: above normal windows and floating panels, below the
     /// edge tracker window. Same level as menus so it sits over most UI.
@@ -98,6 +103,8 @@ final class DockPanel {
 
         contentView.onMouseEntered = { [weak self] event in self?.onMouseEntered?(event) }
         contentView.onMouseExited = { [weak self] in self?.onMouseExited?() }
+        contentView.onDragEntered = { [weak self] in self?.onDragEntered?() }
+        contentView.onDragExited = { [weak self] reason in self?.onDragExited?(reason) }
         contentView.onMouseMoved = { [weak self] event in
             guard let self else { return }
             self.onStripMouseMoved?(self.stripPoint(fromWindowPoint: event.locationInWindow))
@@ -373,7 +380,22 @@ private final class PanelContentView: NSView {
     var onMouseEntered: ((NSEvent) -> Void)?
     var onMouseExited: (() -> Void)?
     var onMouseMoved: ((NSEvent) -> Void)?
+    var onDragEntered: (() -> Void)?
+    var onDragExited: ((String) -> Void)?
     private var trackingArea: NSTrackingArea?
+    private var dragInside = false
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        // Same types as the edge zone, so a drag stays "over the dock" in
+        // the margin between the strip and the panel's edges.
+        registerForDraggedTypes(EdgeTracker.dragTypes)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -403,6 +425,28 @@ private final class PanelContentView: NSView {
     override func mouseMoved(with event: NSEvent) {
         onMouseMoved?(event)
     }
+
+    // MARK: Drag destination (keeps the dock up, never accepts a drop)
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        dragInside = true
+        onDragEntered?()
+        return []
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        guard dragInside else { return }
+        dragInside = false
+        onDragExited?("exited")
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        guard dragInside else { return }
+        dragInside = false
+        onDragExited?("ended")
+    }
+
+    override func wantsPeriodicDraggingUpdates() -> Bool { false }
 }
 
 /// NSHostingView that accepts the first click even when its window is not
