@@ -27,6 +27,8 @@ final class DockEngine {
     private let edgeTracker: EdgeTracker
     private let hover: DockHover
     private let groups: GroupController
+    private let bouncer: LaunchBouncer
+    private var bounceSettingSubscription: AnyCancellable?
     private let logger = Logger(subsystem: "com.james.portside", category: "DockEngine")
 
     private var pendingHide: DispatchWorkItem?
@@ -56,7 +58,8 @@ final class DockEngine {
         self.layout = DockLayout()
         self.hover = DockHover(overlay: OverlayPanel())
         self.groups = GroupController(dockModel: dockModel, runningApps: runningApps, hover: hover)
-        let strip = DockStrip(dockModel: dockModel, runningApps: runningApps, widgets: widgets, layout: layout, groups: groups, hover: hover, interactions: interactions)
+        self.bouncer = LaunchBouncer(dockModel: dockModel, hover: hover)
+        let strip = DockStrip(dockModel: dockModel, runningApps: runningApps, widgets: widgets, layout: layout, groups: groups, bouncer: bouncer, hover: hover, interactions: interactions)
         self.dockPanel = DockPanel(dockModel: dockModel, strip: strip)
         self.edgeTracker = EdgeTracker(edge: dockModel.edge)
         hover.setEdge(dockModel.edge)
@@ -69,8 +72,10 @@ final class DockEngine {
             }
         }
 
-        interactions.onContentSizeChanged = { [weak dockPanel] size in
+        interactions.onContentSizeChanged = { [weak dockPanel, weak bouncer] size in
             dockPanel?.contentSizeChanged(size)
+            // The panel recenters when it resizes, which moves every tile.
+            bouncer?.tilesChanged()
         }
 
         hover.stripToScreen = { [weak dockPanel] rect in dockPanel?.screenRect(forStripRect: rect) }
@@ -86,7 +91,10 @@ final class DockEngine {
         // The open group's panel is part of "inside the dock": entering it
         // cancels a pending hide, leaving it arms one, like the panel itself.
         interactions.onGroupTapped = { [weak self] id in self?.groups.toggle(id) }
-        hover.onTargetsChanged = { [weak self] in self?.groups.targetsChanged() }
+        hover.onTargetsChanged = { [weak self] in
+            self?.groups.targetsChanged()
+            self?.bouncer.tilesChanged()
+        }
         groups.onMouseEntered = { [weak self] in self?.handleEnter(source: "group", event: nil) }
         groups.onMouseExited = { [weak self] in self?.handleExit(source: "group") }
         groups.onCollapsed = { [weak self] in self?.rearmHideIfCursorOutside(source: "group closed") }
@@ -122,6 +130,11 @@ final class DockEngine {
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] on in self?.applyAutoHide(on) }
+        bounceSettingSubscription = dockModel.$animateOpeningApplications
+            .removeDuplicates()
+            .dropFirst()
+            .filter { !$0 }
+            .sink { [weak self] _ in self?.bouncer.cancel(reason: "setting turned off") }
 
         edgeTracker.onMouseEntered = { [weak self] event in
             self?.handleEnter(source: "edge", event: event)
@@ -200,6 +213,7 @@ final class DockEngine {
         pendingReveal?.cancel()
         pendingReveal = nil
         hover.clear()
+        bouncer.cancel(reason: "engine stopped")
         dockPanel.hide(animated: false)
         groups.collapse(reason: "engine stopped", animated: false)
         edgeTracker.stop()
@@ -211,6 +225,7 @@ final class DockEngine {
     /// the new edge; the next edge touch reveals it from there.
     private func applyEdge(_ edge: DockEdge) {
         groups.collapse(reason: "dock moved", animated: false)
+        bouncer.cancel(reason: "dock moved")
         pendingHide?.cancel()
         pendingHide = nil
         pendingReveal?.cancel()
@@ -311,6 +326,7 @@ final class DockEngine {
             }
             self.logger.info("hide timer fired, hiding")
             self.hover.clear()
+            self.bouncer.cancel(reason: "dock hiding")
             self.dockPanel.hide(animated: true)
             // After hide() so the collapse's re-check sees the dock hiding.
             self.groups.collapse(reason: "dock hiding", animated: false)

@@ -73,6 +73,8 @@ struct DockStrip: View {
     @ObservedObject var layout: DockLayout
     /// Which group is expanded, so its tile can show it.
     @ObservedObject var groups: GroupController
+    /// Not observed here: only the tiles care which one is bouncing.
+    let bouncer: LaunchBouncer
     /// Receives item frames for hover labels. Not observed: it never
     /// changes what the strip renders.
     let hover: DockHover
@@ -135,7 +137,7 @@ struct DockStrip: View {
             if !extras.isEmpty || showsSelf {
                 separator(tile: tile, maxTile: maxTile, edge: edge)
                 ForEach(extras, id: \.0.id) { app, running in
-                    DockItemView(app: app, running: running, isPinned: false, size: tile, dockModel: dockModel)
+                    DockItemView(app: app, running: running, isPinned: false, size: tile, dockModel: dockModel, bouncer: bouncer)
                 }
                 if showsSelf {
                     PortsideTileView(size: tile) { interactions.onOpenSettings?() }
@@ -165,6 +167,7 @@ struct DockStrip: View {
         )
         .onDrop(of: [.fileURL], delegate: AppFileDropDelegate(dockModel: dockModel, slotLength: tile + spacing, leadingInset: alongPadding, vertical: edge.isVertical))
         .onChange(of: maxTile, initial: true) { _, fit in layout.reportFitTileSize(fit) }
+        .onChange(of: tile) { _, size in bouncer.tileSizeChanged(size) }
         .fixedSize()
         // NSHostingView does not report intrinsic size changes to AppKit
         // here, so the strip reports its own size.
@@ -182,7 +185,7 @@ struct DockStrip: View {
     @ViewBuilder private func entryView(_ entry: DockEntry, tile: CGFloat) -> some View {
         switch entry {
         case .app(let app):
-            DockItemView(app: app, running: runningApps.runningInstance(of: app), isPinned: true, size: tile, dockModel: dockModel)
+            DockItemView(app: app, running: runningApps.runningInstance(of: app), isPinned: true, size: tile, dockModel: dockModel, bouncer: bouncer)
         case .group(let group):
             GroupTileView(
                 group: group,

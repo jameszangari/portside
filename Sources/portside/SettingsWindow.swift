@@ -158,6 +158,11 @@ private struct GeneralSettings: View {
                         .foregroundStyle(.secondary)
                 }
 
+                Toggle("Animate opening applications", isOn: Binding(
+                    get: { dockModel.animateOpeningApplications },
+                    set: { dockModel.setAnimateOpeningApplications($0) }
+                ))
+
                 Toggle("Magnification", isOn: Binding(
                     get: { dockModel.magnificationEnabled },
                     set: { dockModel.setMagnificationEnabled($0) }

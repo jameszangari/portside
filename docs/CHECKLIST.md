@@ -1,6 +1,6 @@
 # Portside: Checklist
 
-Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D and E (parts 1 and 2) are built and waiting on the hand test.
+Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (parts 1 and 2) and the bottom-edge launch bounce are built and waiting on the hand test.
 
 ## Roadmap
 
@@ -11,14 +11,59 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D and E
 - [x] **B.6:** Dock position (bottom/left/right) and separator resize (built, hand test pending)
 - [ ] **D:** App groups (expand/collapse) (built, hand test pending)
 - [ ] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live (part 1: built, hand test pending); part 2 (built, hand test pending): auto-hide toggle with Cmd+Option+D, Portside as a regular app while Settings is open, inline group naming and rename, open groups on hover
-- [ ] **F:** Native Dock hide/restore (autohide-delay trick only), launch at login (`SMAppService`), import `persistent-apps` and `persistent-others` from `com.apple.dock`, plus native orientation and tilesize as Portside's initial position and icon size
+- [ ] **F:** Native Dock hide/restore (autohide-delay trick only), launch at login (`SMAppService`), import `persistent-apps` and `persistent-others` from `com.apple.dock`, plus native orientation and tilesize as Portside's initial position and icon size; bounce on attention request (`requestUserAttention`; no public API exposes another app's request, so it needs private APIs, dlopen/dlsym guarded)
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
-- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder; drag icons out to remove; drop files onto app icons to open them; launch bounce; Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide
+- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder; drag icons out to remove; drop files onto app icons to open them; launch bounce (bottom edge pinned tiles built, hand test pending; side edges and groups to do); Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide
 - [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); right-click Trash shows Empty Trash; filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag; magnification polish
 - [ ] **P3:** Follow the display the cursor hits; fullscreen apps and Spaces; badge counts via the real Dock's accessibility tree (Accessibility permission; private APIs only as fallback); window list in right-click menu with click to focus (Screen Recording for titles); VoiceOver labels and keyboard navigation; do not reveal while dragging a window or holding the mouse button (except file drags headed to the Dock)
-- [ ] **Out of scope (do not build):** minimized windows in the Dock; attention bouncing from other apps; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section
+- [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
+
+---
+
+# P1 slice: launch bounce (bottom edge, pinned tiles)
+
+Status: built and verified with synthetic events; waiting on James's hand test. Not committed. New file: `LaunchBounce.swift`.
+
+## Deliverables
+
+- [x] Clicking a pinned tile whose app is not running bounces it on the bottom dock. Runs on Core Animation (`CAKeyframeAnimation`), no timers.
+- [x] Motion matched to the native Dock by measurement (see Verification): each bounce is an exact parabola (two cubic Beziers that are exactly `1 - (1 - x)^2` up and `x^2` down), 700ms per bounce, peak 0.33 of the tile size (12.2pt at 37pt), no pause or settle at the bottom. The overlay icon is pre-rendered at the tile's exact pixel size with high quality interpolation, and its window is snapped to whole points with the fraction on the layer, so handing back to the tile does not shimmer.
+- [x] Stops when the app finishes launching: KVO on `NSRunningApplication.isFinishedLaunching` (and `isTerminated`) from the `openApplication` result, plus `NSWorkspace.didLaunchApplicationNotification`, whichever comes first. The bounce in progress lands first (the animation is swapped for a copy with the same start time and just enough repeats).
+- [x] Safety cap: 14 bounces (9.8s), built into the animation's repeat count.
+- [x] Cancels immediately on launch failure, app quitting while launching, tile removed, dock hiding, dock moved, setting turned off, engine stopped.
+- [x] Visual only: the bouncing icon is drawn in a click-through window over the tile (the panel has about 16pt of room above the icons, so a SwiftUI offset would clip). The tile hides its icon meanwhile but keeps its slot and its click target, so neighbors never move. The window follows the tile if the strip changes size or order.
+- [x] Running apps, unpinned extras, side edges and group cells do not bounce. A second click while launching does not restart it. One bounce at a time (a new launch replaces the old one). Skipped under Reduce Motion.
+- [x] Settings > General: "Animate opening applications" (default on, `animateOpeningApplications` in `dock.json`).
+- [x] `AppLauncher.open` takes an optional main-queue completion with Launch Services' result.
+- [x] `swift build` clean; `swift run` stays up
+
+## Verification (agent, synthetic events)
+
+Used a throwaway test app in `/tmp` that delays finishing launch by a configurable time, pinned temporarily.
+
+- [x] Native reference: recorded the native Dock (37pt tiles, Portside not running, no Dock settings touched) while the test app launched for 5s, tracked the icon edge per frame (about 60fps) and fitted models over 7 bounces. Parabola: period 0.700s, peak 12.2pt, error 0.3pt (pixel rounding); a sine-shaped bounce fit worse (0.5pt). Native lands at the end of the bounce in progress, like ours.
+- [x] Portside at 37pt, recorded the same way: period 0.700s, peak 11.9pt, error 0.17pt; per-phase heights within 0.2pt of the native curve. Landing: one 16ms frame differs from the resting tile by 2.6/255 on average (not visible).
+- [ ] Not measured: whether the native peak scales with tile size (changing `tilesize` is off limits before F). Portside assumes it scales.
+
+- [x] Notes: bounced once, landed at 626ms (launch notification at 221ms). Screenshots mid-bounce: icon above the dock, empty slot, neighbors in place. Frontmost app became Notes, as with any launch.
+- [x] 3s launch: bounced continuously, landed after bounce 6 (3.7s). A second click mid-bounce registered on the tile and did not restart the bounce.
+- [x] Dock hiding mid-launch: `bounce ended (dock hiding)`; nothing left floating; after re-reveal the tile sat at rest with its icon visible.
+- [x] Safety cap with a 15s launch: `bounce ended (safety cap)` after 9922ms (at the earlier 16 x 620ms; now 14 x 700ms).
+- [x] Remove from Dock mid-bounce (context menu): `bounce ended (tile removed)`, strip closed the gap, nothing left floating.
+- [x] Finder (running) click: activates, no bounce. Setting off: launches, no bounce.
+- [x] Reveal timing unchanged: mouseEntered to animation start 0.55 to 1.49ms over 5 reveals (E part 2: 0.63 to 1.32ms); after the motion change 0.49 to 2.37ms.
+- [x] Test changes undone: `dock.json` restored from backup; test app quit.
+
+## Findings
+
+- KVO on an `NSRunningApplication` that deallocates while observed throws inside AppKit (`removeEntryAndReturnIfEmpty:` unrecognized selector) and crashed the first build. The bouncer now holds the instance until it removes its observers.
+
+## Hand test must also check
+
+- [ ] Bounce side by side with the native Dock (for example launch an app from Finder with the native Dock revealed, then from Portside)
+- [ ] A slow app (for example Android Studio or Ableton Live) bounces until its window is about to appear, then lands
 
 ---
 

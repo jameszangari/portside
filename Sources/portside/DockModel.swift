@@ -122,6 +122,16 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    /// Native "Animate opening applications": a pinned tile bounces while
+    /// its app launches (bottom dock only for now).
+    @Published private(set) var animateOpeningApplications: Bool = true
+
+    func setAnimateOpeningApplications(_ enabled: Bool) {
+        guard enabled != animateOpeningApplications else { return }
+        animateOpeningApplications = enabled
+        persist()
+    }
+
     // MARK: - Hiding
 
     /// Native "Automatically hide and show the Dock". Off keeps the dock
@@ -375,6 +385,7 @@ final class DockModel: Codable, ObservableObject {
     private enum CodingKeys: String, CodingKey {
         case revealDelay, hideDelay, animationDuration, iconSize, magnificationEnabled, edge, entries, widgetKinds
         case autoHide, openGroupsOnHover, groupHoverDelay, groupHoverCloseGrace
+        case animateOpeningApplications
         /// Before Milestone D: a flat list of apps. Read only, for migration.
         case pinnedApps
     }
@@ -396,6 +407,7 @@ final class DockModel: Codable, ObservableObject {
         }
         widgetKinds = try c.decodeIfPresent([String].self, forKey: .widgetKinds) ?? WidgetCatalog.defaultKinds
         autoHide = try c.decodeIfPresent(Bool.self, forKey: .autoHide) ?? true
+        animateOpeningApplications = try c.decodeIfPresent(Bool.self, forKey: .animateOpeningApplications) ?? true
         openGroupsOnHover = try c.decodeIfPresent(Bool.self, forKey: .openGroupsOnHover) ?? false
         groupHoverDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverDelay) ?? Defaults.groupHoverDelay, to: Self.groupHoverDelayRange)
         groupHoverCloseGrace = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverCloseGrace) ?? Defaults.groupHoverCloseGrace, to: Self.groupHoverCloseGraceRange)
@@ -412,6 +424,7 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(entries, forKey: .entries)
         try c.encode(widgetKinds, forKey: .widgetKinds)
         try c.encode(autoHide, forKey: .autoHide)
+        try c.encode(animateOpeningApplications, forKey: .animateOpeningApplications)
         try c.encode(openGroupsOnHover, forKey: .openGroupsOnHover)
         try c.encode(groupHoverDelay, forKey: .groupHoverDelay)
         try c.encode(groupHoverCloseGrace, forKey: .groupHoverCloseGrace)
