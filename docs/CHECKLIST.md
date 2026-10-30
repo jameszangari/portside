@@ -1,6 +1,6 @@
 # Portside: Checklist
 
-Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (parts 1 and 2), the launch bounce (all edges and group grids), reveal on file drag, drop-to-open on app tiles, spring-loaded groups and the Milestone F native Dock hide/restore are built and waiting on the hand test.
+Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (parts 1 and 2), the launch bounce (all edges and group grids), reveal on file drag, drop-to-open on app tiles, spring-loaded groups, the Milestone F native Dock hide/restore and the Settings window redesign are built and waiting on the hand test.
 
 ## Roadmap
 
@@ -19,6 +19,58 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (p
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
+
+---
+
+# UX slice: Settings window redesign
+
+Status: built and screenshot-reviewed by the agent (two rounds, dark and light); waiting on James's hand test. Not committed. Visual and layout only: no behavior, settings key, or dock.json changes. New files: `AppInfo.swift`, `UpdateChecker.swift`.
+
+## Deliverables
+
+- [x] One container level: a grouped `Form` per tab, no bordered tab pane.
+- [x] Branding header above the tabs: app icon, "Portside", "Version 0.1.0 by James", Check for Updates. Name, author, version, and repo URL live in `AppInfo.swift`.
+- [x] Toolbar-style tabs (SF Symbol above label): General, Widgets, Groups. Title stays "Portside Settings".
+- [x] Window 520pt wide; height fits the selected tab (animated, top edge fixed, off under Reduce Motion). Position is remembered (`NSWindow Frame PortsideSettings` in the `com.james.portside` defaults). Cmd+W closes.
+- [x] Continuous sliders (no ticks), values snapped in the binding (delays and animation to 10ms, icon size to 1pt), fixed label column, right-aligned monospaced value.
+- [x] Helper text 12pt secondary, directly under its control; unneeded helper text removed.
+- [x] General: Dock (Position, Icon size, Hide dock automatically, Animate opening applications), Timing (with Reset to Defaults in the header), macOS Dock (toggle plus two helper lines incl. the Cmd+Option+D note). Fits without scrolling (686pt content), so Timing stays on General.
+- [x] Magnification row and "Coming soon" removed; `magnificationEnabled` stays in dock.json.
+- [x] Widgets: one list, icon + name + switch. Up/down arrows removed; Move Up and Move Down are accessibility actions.
+- [x] Groups: hover options (sliders and footer only while hover is on), then the group list: mini icon, inline name that looks like plain text until hovered or focused, app count, Ungroup, Delete (with confirmation). Centered empty state.
+- [x] "Hide the macOS Dock?" alert (and the other native Dock alerts) use Portside's icon instead of the generic alias folder.
+- [x] Check for Updates is a stub: shows "Update checks aren't set up yet." under the version line for 4s, no network calls. `UpdateChecker.check()` is the one function to fill in.
+- [x] `swift build` clean, no warnings; launches and stays up
+
+## Verification (agent)
+
+- Screenshots of every tab, dark and light, with and without groups, plus the alert. Round 1 fixes: footers were trailing-aligned, the icon showed a clipped square shadow at small sizes (fixed with `AppIcon.bitmap`), title bar separator doubled the tab divider, macOS Dock helper wrapped. Round 2 fixes: footer inset to match section headers, header height pinned so the update status line does not resize the window, disabled widget icons dimmed, name field padding.
+- Synthetic drags: Clock dragged below Weather and back; `widgetKinds` in dock.json followed both moves.
+- Tab switch heights: General 686, Widgets 410, Groups 460 (top edge stays put). Cmd+W closed the window. A saved frame was restored at launch.
+- dock.json backed up and restored byte for byte (`cmp`); native Dock restored on stop and hidden again on relaunch.
+
+## Findings
+
+- A grouped `Form` ignores `ForEach.onMove`; a plain `List` reorders but loses the grouped look and its content height cannot be read. Widget rows reorder with `onDrag`/`onDrop` instead and move live under the cursor, without the native insertion line.
+- `AppIcon.image` redraws its vector handler at every size and its shadow blur does not scale, so small renders showed a square edge. `AppIcon.bitmap` renders it once at 512px.
+- No git hash in the header: SwiftPM has no clean way to pass a build-time string without a build plugin, so it was skipped.
+
+## Known gaps
+
+- Fitting the window to the tab needs macOS 15 (`onScrollGeometryChange`). On macOS 14 every tab uses a fixed 470pt content height and scrolls if needed.
+- Widget reorder is drag and drop, not the native list move (see Findings).
+- Deferred: Update checker: compare AppInfo.version with the latest GitHub release tag, show 'up to date' or a link to the release.
+
+## Hand test must also check
+
+- [ ] Each tab looks right in dark and light; switching tabs resizes smoothly with no jump
+- [ ] Drag a widget row to reorder; the dock follows. VoiceOver actions Move Up/Move Down work
+- [ ] Hover a group name: outline appears; click to rename, Return or click away saves; blank reverts
+- [ ] Delete still asks first; Ungroup puts apps back
+- [ ] Turning "Open groups on hover" off hides the two sliders and footer
+- [ ] Check for Updates shows the status line, which clears after a few seconds
+- [ ] Close and reopen Settings: same position. Cmd+W closes
+- [ ] First-time "Hide the macOS Dock?" alert shows the Portside icon (reset `nativeDockExplained` to see it again)
 
 ---
 

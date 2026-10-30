@@ -21,6 +21,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var previousApp: NSRunningApplication?
     private var activationObserver: NSObjectProtocol?
 
+    private static let frameName = "PortsideSettings"
+
     init(dockModel: DockModel, layout: DockLayout, nativeDock: NativeDockController) {
         self.dockModel = dockModel
         self.layout = layout
@@ -61,15 +63,46 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     private func makeWindow() -> NSWindow {
-        let window = NSWindow(contentViewController: NSHostingController(
-            rootView: SettingsView(dockModel: dockModel, layout: layout, nativeDock: nativeDock)
+        let hosting = NSHostingController(rootView: SettingsView(
+            dockModel: dockModel, layout: layout, nativeDock: nativeDock,
+            onContentHeight: { [weak self] in self?.fitContent(height: $0) }
         ))
+        // The window's height follows the selected tab (fitContent), so the
+        // hosting controller must not size the window itself.
+        hosting.sizingOptions = []
+        let window = SettingsNSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: SettingsLayout.windowWidth, height: 560),
+            styleMask: [.titled, .closable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = hosting
         window.title = "Portside Settings"
-        window.styleMask = [.titled, .closable, .miniaturizable]
+        // The header sits right under the title bar; one divider (under the
+        // tabs) is enough.
+        window.titlebarSeparatorStyle = .none
         window.isReleasedWhenClosed = false
         window.delegate = self
-        window.center()
+        if !window.setFrameUsingName(Self.frameName) {
+            window.center()
+        }
+        window.setFrameAutosaveName(Self.frameName)
         return window
+    }
+
+    /// Resizes the window to the selected tab's content, keeping its top
+    /// edge in place (like native Settings windows). Animated when visible.
+    private func fitContent(height: CGFloat) {
+        guard let window else { return }
+        let available = (window.screen ?? NSScreen.main)?.visibleFrame.height ?? 800
+        let maxContent = window.contentRect(forFrameRect: NSRect(x: 0, y: 0, width: 100, height: available)).height
+        let size = NSSize(width: SettingsLayout.windowWidth, height: min(height.rounded(.up), maxContent))
+        let old = window.frame
+        var frame = window.frameRect(forContentRect: NSRect(origin: .zero, size: size))
+        guard abs(frame.height - old.height) > 0.5 || abs(frame.width - old.width) > 0.5 else { return }
+        frame.origin = NSPoint(x: old.minX, y: old.maxY - frame.height)
+        let animate = window.isVisible && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        window.setFrame(frame, display: true, animate: animate)
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -96,21 +129,209 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 }
 
+/// Cmd+W closes the window. Portside has no File menu to provide it.
+private final class SettingsNSWindow: NSWindow {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+           event.charactersIgnoringModifiers == "w" {
+            performClose(nil)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+}
+
+/// Shared sizes so every tab lines up.
+enum SettingsLayout {
+    static let windowWidth: CGFloat = 520
+    /// Label column for slider rows.
+    static let labelWidth: CGFloat = 136
+    /// Value column for slider rows ("150 ms", "Instant").
+    static let valueWidth: CGFloat = 56
+    /// Fallback content height per tab before macOS 15 (no scroll geometry).
+    static let fallbackFormHeight: CGFloat = 470
+}
+
+/// Secondary helper text under a control.
+private extension Text {
+    func helperStyle() -> some View {
+        font(.system(size: 12)).foregroundStyle(.secondary)
+    }
+
+    /// Section footer: helper style, leading-aligned under the section
+    /// (grouped Forms align footers trailing by default).
+    func footerStyle() -> some View {
+        helperStyle()
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - Root
+
+private enum SettingsTab: String, CaseIterable, Identifiable {
+    case general, widgets, groups
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general: "General"
+        case .widgets: "Widgets"
+        case .groups: "Groups"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .general: "gearshape"
+        case .widgets: "square.grid.2x2"
+        case .groups: "folder"
+        }
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var dockModel: DockModel
     @ObservedObject var layout: DockLayout
     let nativeDock: NativeDockController
+    /// Total content height the window should have for the selected tab.
+    let onContentHeight: (CGFloat) -> Void
+
+    @State private var tab: SettingsTab = .general
+    @State private var chromeHeight: CGFloat = 0
+    @State private var formHeight: CGFloat = SettingsLayout.fallbackFormHeight
 
     var body: some View {
-        TabView {
-            GeneralSettings(dockModel: dockModel, layout: layout, nativeDock: nativeDock)
-                .tabItem { Label("General", systemImage: "gearshape") }
-            WidgetSettings(dockModel: dockModel)
-                .tabItem { Label("Widgets", systemImage: "square.grid.2x2") }
-            GroupSettings(dockModel: dockModel)
-                .tabItem { Label("Groups", systemImage: "folder") }
+        VStack(spacing: 0) {
+            VStack(spacing: 0) {
+                SettingsHeader()
+                SettingsTabBar(selection: $tab)
+                Divider()
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+                chromeHeight = $0
+                report()
+            }
+
+            Group {
+                switch tab {
+                case .general: GeneralSettings(dockModel: dockModel, layout: layout, nativeDock: nativeDock)
+                case .widgets: WidgetSettings(dockModel: dockModel)
+                case .groups: GroupSettings(dockModel: dockModel)
+                }
+            }
+            .formStyle(.grouped)
+            .modifier(FormHeightReader { height in
+                formHeight = height
+                report()
+            })
+            .frame(maxHeight: .infinity)
         }
-        .frame(width: 480, height: 540)
+        .frame(width: SettingsLayout.windowWidth)
+    }
+
+    private func report() {
+        guard chromeHeight > 0 else { return }
+        onContentHeight(chromeHeight + formHeight)
+    }
+}
+
+/// Reads the grouped Form's content height so the window can fit it.
+private struct FormHeightReader: ViewModifier {
+    let onChange: (CGFloat) -> Void
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content.onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, height in
+                if height > 0 { onChange(height) }
+            }
+        } else {
+            content
+        }
+    }
+}
+
+// MARK: - Header and tabs
+
+/// App icon, name, version, and the update check. No container: it sits
+/// on the window background above the tabs.
+private struct SettingsHeader: View {
+    @State private var status: String?
+    @State private var clearStatus: Task<Void, Never>?
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(nsImage: AppIcon.bitmap)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 48, height: 48)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(AppInfo.name)
+                    .font(.title2.weight(.bold))
+                Text(AppInfo.versionLine)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                if let status {
+                    Text(status)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .transition(.opacity)
+                }
+            }
+            Spacer(minLength: 12)
+            Button("Check for Updates", action: checkForUpdates)
+        }
+        // Tall enough for the status line, so it never resizes the window.
+        .frame(height: 60)
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+        .padding(.bottom, 4)
+    }
+
+    private func checkForUpdates() {
+        clearStatus?.cancel()
+        clearStatus = Task { @MainActor in
+            let result = await UpdateChecker.check()
+            withAnimation { status = result.message }
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            withAnimation { status = nil }
+        }
+    }
+}
+
+/// Toolbar-style tabs: an SF Symbol above a label, like native Settings.
+private struct SettingsTabBar: View {
+    @Binding var selection: SettingsTab
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(SettingsTab.allCases) { tab in
+                let selected = tab == selection
+                Button { selection = tab } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: tab.symbol)
+                            .font(.system(size: 18, weight: .regular))
+                            .frame(height: 22)
+                        Text(tab.title)
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .frame(width: 72, height: 48)
+                    .foregroundStyle(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(selected ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -130,7 +351,7 @@ private struct GeneralSettings: View {
     var body: some View {
         Form {
             Section("Dock") {
-                Picker("Position on screen", selection: Binding(
+                Picker("Position", selection: Binding(
                     get: { dockModel.edge },
                     set: { dockModel.setEdge($0) }
                 )) {
@@ -138,114 +359,97 @@ private struct GeneralSettings: View {
                 }
                 .pickerStyle(.segmented)
 
-                Toggle("Automatically hide and show the Dock", isOn: Binding(
-                    get: { dockModel.autoHide },
-                    set: { dockModel.setAutoHide($0) }
-                ))
-                if !dockModel.autoHide {
-                    Text("Windows can extend under the dock: macOS gives apps no public way to reserve screen space the way the native Dock does.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                PersistingSlider(
+                SettingsSlider(
                     title: "Icon size",
                     value: min(Double(dockModel.iconSize), Double(maxIconSize)),
                     range: Double(DockModel.iconSizeRange.lowerBound)...Double(maxIconSize),
-                    step: 1,
+                    snap: 1,
                     format: { "\(Int($0)) pt" },
                     set: { dockModel.setIconSize(min(CGFloat($0), maxIconSize), persist: $1) }
                 )
-                if layout.fitTileSize < DockModel.iconSizeRange.upperBound {
-                    Text("Largest size that fits on this screen: \(Int(layout.fitTileSize)) pt")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+
+                Toggle(isOn: Binding(
+                    get: { dockModel.autoHide },
+                    set: { dockModel.setAutoHide($0) }
+                )) {
+                    Text("Hide dock automatically")
+                    if !dockModel.autoHide {
+                        Text("Windows can extend under the dock while it stays visible.").helperStyle()
+                    }
                 }
 
                 Toggle("Animate opening applications", isOn: Binding(
                     get: { dockModel.animateOpeningApplications },
                     set: { dockModel.setAnimateOpeningApplications($0) }
                 ))
-
-                Toggle("Magnification", isOn: Binding(
-                    get: { dockModel.magnificationEnabled },
-                    set: { dockModel.setMagnificationEnabled($0) }
-                ))
-                .disabled(true)
-                Text("Coming soon.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             Section {
-                PersistingSlider(
+                SettingsSlider(
                     title: "Reveal delay",
                     value: dockModel.revealDelay,
                     range: DockModel.revealDelayRange,
-                    step: 0.05,
-                    format: Self.milliseconds,
+                    snap: 0.01,
+                    format: milliseconds,
                     set: { dockModel.setRevealDelay($0, persist: $1) }
                 )
-                PersistingSlider(
+                SettingsSlider(
                     title: "Hide delay",
                     value: dockModel.hideDelay,
                     range: DockModel.hideDelayRange,
-                    step: 0.05,
-                    format: Self.milliseconds,
+                    snap: 0.01,
+                    format: milliseconds,
                     set: { dockModel.setHideDelay($0, persist: $1) }
                 )
-                PersistingSlider(
+                SettingsSlider(
                     title: "Animation duration",
                     value: dockModel.animationDuration,
                     range: DockModel.animationDurationRange,
-                    step: 0.01,
-                    format: { $0 == 0 ? "Instant" : Self.milliseconds($0) },
+                    snap: 0.01,
+                    format: { $0 == 0 ? "Instant" : milliseconds($0) },
                     set: { dockModel.setAnimationDuration($0, persist: $1) }
                 )
             } header: {
-                Text("Timing")
-            } footer: {
                 HStack {
-                    Text("Reduce Motion in Accessibility settings always makes the slide instant.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text("Timing")
                     Spacer()
                     Button("Reset to Defaults") { dockModel.resetTimingToDefaults() }
+                        .buttonStyle(.link)
+                        .font(.system(size: 12))
                 }
             }
 
-            Section {
-                Toggle("Hide the macOS Dock", isOn: Binding(
+            Section("macOS Dock") {
+                Toggle(isOn: Binding(
                     get: { dockModel.hideNativeDock },
                     // Async: hiding may open a modal alert, which should not
                     // run inside SwiftUI's binding update. The toggle shows
                     // the model, so it only turns on after a verified hide.
                     set: { hidden in DispatchQueue.main.async { nativeDock.setHidden(hidden) } }
-                ))
-            } header: {
-                Text("macOS Dock")
-            } footer: {
-                Text("Keeps the native Dock from appearing while Portside runs. Its settings are saved first and restored when you turn this off or quit.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                )) {
+                    Text("Hide the macOS Dock")
+                    Text("Its settings are saved first and restored when you turn this off or quit.").helperStyle()
+                    Text("⌥⌘D can interfere. Turn it off in Keyboard Shortcuts > Launchpad & Dock.").helperStyle()
+                }
             }
         }
-        .formStyle(.grouped)
-    }
-
-    private static func milliseconds(_ seconds: Double) -> String {
-        "\(Int((seconds * 1000).rounded())) ms"
     }
 }
 
-/// Slider that updates the model live while dragging and saves once when
-/// the drag ends. Keyboard and accessibility changes have no drag, so they
-/// save immediately.
-private struct PersistingSlider: View {
+private func milliseconds(_ seconds: Double) -> String {
+    "\(Int((seconds * 1000).rounded())) ms"
+}
+
+/// Continuous slider (no tick marks) with a fixed label column on the left
+/// and the current value right-aligned. The value snaps in the binding.
+/// Updates the model live while dragging and saves once when the drag ends;
+/// keyboard and accessibility changes have no drag, so they save at once.
+private struct SettingsSlider: View {
     let title: String
     let value: Double
     let range: ClosedRange<Double>
-    let step: Double
+    /// Values round to a multiple of this (0.01 s = 10 ms, 1 pt).
+    let snap: Double
     let format: (Double) -> String
     /// (new value, persist)
     let set: (Double, Bool) -> Void
@@ -253,24 +457,30 @@ private struct PersistingSlider: View {
     @State private var isDragging = false
 
     var body: some View {
-        LabeledContent(title) {
-            HStack {
-                Slider(
-                    value: Binding(get: { value }, set: { set($0, !isDragging) }),
-                    in: range,
-                    step: step
-                ) {
-                    EmptyView()
-                } onEditingChanged: { editing in
-                    isDragging = editing
-                    if !editing { set(value, true) }
-                }
-                .labelsHidden()
-                Text(format(value))
-                    .monospacedDigit()
-                    .frame(width: 64, alignment: .trailing)
+        HStack(spacing: 12) {
+            Text(title)
+                .frame(width: SettingsLayout.labelWidth, alignment: .leading)
+            Slider(
+                value: Binding(get: { value }, set: { set(snapped($0), !isDragging) }),
+                in: range
+            ) {
+                Text(title)
+            } onEditingChanged: { editing in
+                isDragging = editing
+                if !editing { set(value, true) }
             }
+            .labelsHidden()
+            .accessibilityValue(format(value))
+            Text(format(value))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .frame(width: SettingsLayout.valueWidth, alignment: .trailing)
+                .accessibilityHidden(true)
         }
+    }
+
+    private func snapped(_ raw: Double) -> Double {
+        min(max((raw / snap).rounded() * snap, range.lowerBound), range.upperBound)
     }
 }
 
@@ -278,6 +488,8 @@ private struct PersistingSlider: View {
 
 private struct WidgetSettings: View {
     @ObservedObject var dockModel: DockModel
+    /// Widget being dragged in the list, nil when no drag is in progress.
+    @State private var dragging: String?
 
     private var available: [String] {
         WidgetCatalog.defaultKinds.filter { !dockModel.widgetKinds.contains($0) }
@@ -286,67 +498,73 @@ private struct WidgetSettings: View {
     var body: some View {
         Form {
             Section {
-                if dockModel.widgetKinds.isEmpty {
-                    Text("No widgets in the dock.").foregroundStyle(.secondary)
-                }
-                // A grouped Form's own rows cannot be dragged, so the
-                // enabled widgets get a real List for .onMove.
-                List {
-                    ForEach(Array(dockModel.widgetKinds.enumerated()), id: \.element) { index, kind in
-                        row(kind, enabled: true) {
-                            Button { dockModel.moveWidget(kind, by: -1) } label: { Image(systemName: "chevron.up") }
-                                .disabled(index == 0)
-                                .accessibilityLabel("Move \(WidgetCatalog.info(kind)?.name ?? kind) up")
-                            Button { dockModel.moveWidget(kind, by: 1) } label: { Image(systemName: "chevron.down") }
-                                .disabled(index == dockModel.widgetKinds.count - 1)
-                                .accessibilityLabel("Move \(WidgetCatalog.info(kind)?.name ?? kind) down")
+                // A grouped Form ignores .onMove, so enabled rows reorder
+                // live under the drag with onDrag/onDrop instead.
+                ForEach(dockModel.widgetKinds, id: \.self) { kind in
+                    row(kind, enabled: true)
+                        .contentShape(Rectangle())
+                        .onDrag {
+                            dragging = kind
+                            return NSItemProvider(object: kind as NSString)
                         }
-                        .frame(height: Self.rowHeight)
-                        .listRowInsets(EdgeInsets(top: 2, leading: 10, bottom: 2, trailing: 10))
-                    }
-                    .onMove { dockModel.moveWidgets(fromOffsets: $0, toOffset: $1) }
+                        .onDrop(of: [.text], delegate: WidgetReorderDelegate(
+                            target: kind, dragging: $dragging, dockModel: dockModel
+                        ))
+                        .accessibilityAction(named: "Move Up") { dockModel.moveWidget(kind, by: -1) }
+                        .accessibilityAction(named: "Move Down") { dockModel.moveWidget(kind, by: 1) }
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .scrollDisabled(true)
-                .frame(height: CGFloat(dockModel.widgetKinds.count) * (Self.rowHeight + 4))
-            } header: {
-                Text("In the Dock")
-            } footer: {
-                Text("Drag a row or use the arrows to reorder. Order runs left to right, or top to bottom on a side dock.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
 
-            if !available.isEmpty {
-                Section("Available") {
-                    ForEach(available, id: \.self) { kind in
-                        row(kind, enabled: false) { EmptyView() }
-                    }
+                ForEach(available, id: \.self) { kind in
+                    row(kind, enabled: false)
                 }
+            } footer: {
+                Text("Drag to reorder. Order runs left to right, or top to bottom on a side dock.").footerStyle()
             }
         }
-        .formStyle(.grouped)
     }
 
-    private static let rowHeight: CGFloat = 26
-
     @ViewBuilder
-    private func row(_ kind: String, enabled: Bool, @ViewBuilder accessories: () -> some View) -> some View {
+    private func row(_ kind: String, enabled: Bool) -> some View {
         if let info = WidgetCatalog.info(kind) {
-            HStack {
-                Label { Text(info.name) } icon: { info.icon }
-                Spacer()
-                accessories()
-                    .buttonStyle(.borderless)
-                Toggle(info.name, isOn: Binding(
-                    get: { enabled },
-                    set: { dockModel.setWidget(kind, enabled: $0) }
-                ))
-                .toggleStyle(.switch)
-                .labelsHidden()
+            Toggle(isOn: Binding(
+                get: { enabled },
+                set: { dockModel.setWidget(kind, enabled: $0) }
+            )) {
+                HStack(spacing: 8) {
+                    info.icon
+                        .foregroundStyle(enabled ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                        .frame(width: 20)
+                    Text(info.name)
+                }
             }
+            .toggleStyle(.switch)
         }
+    }
+}
+
+/// Moves the dragged widget into the hovered row's slot as the drag
+/// passes over it, so the list shows the new order before the drop.
+private struct WidgetReorderDelegate: DropDelegate {
+    let target: String
+    @Binding var dragging: String?
+    let dockModel: DockModel
+
+    func dropEntered(info: DropInfo) {
+        guard let dragging, dragging != target,
+              let from = dockModel.widgetKinds.firstIndex(of: dragging),
+              let to = dockModel.widgetKinds.firstIndex(of: target) else { return }
+        withAnimation(.easeInOut(duration: 0.15)) {
+            dockModel.moveWidgets(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: dragging == nil ? .forbidden : .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        dragging = nil
+        return true
     }
 }
 
@@ -362,47 +580,44 @@ private struct GroupSettings: View {
                     get: { dockModel.openGroupsOnHover },
                     set: { dockModel.setOpenGroupsOnHover($0) }
                 ))
-                PersistingSlider(
-                    title: "Open delay",
-                    value: dockModel.groupHoverDelay,
-                    range: DockModel.groupHoverDelayRange,
-                    step: 0.05,
-                    format: { "\(Int(($0 * 1000).rounded())) ms" },
-                    set: { dockModel.setGroupHoverDelay($0, persist: $1) }
-                )
-                .disabled(!dockModel.openGroupsOnHover)
-                PersistingSlider(
-                    title: "Close grace",
-                    value: dockModel.groupHoverCloseGrace,
-                    range: DockModel.groupHoverCloseGraceRange,
-                    step: 0.05,
-                    format: { "\(Int(($0 * 1000).rounded())) ms" },
-                    set: { dockModel.setGroupHoverCloseGrace($0, persist: $1) }
-                )
-                .disabled(!dockModel.openGroupsOnHover)
+                if dockModel.openGroupsOnHover {
+                    SettingsSlider(
+                        title: "Open delay",
+                        value: dockModel.groupHoverDelay,
+                        range: DockModel.groupHoverDelayRange,
+                        snap: 0.01,
+                        format: milliseconds,
+                        set: { dockModel.setGroupHoverDelay($0, persist: $1) }
+                    )
+                    SettingsSlider(
+                        title: "Close grace",
+                        value: dockModel.groupHoverCloseGrace,
+                        range: DockModel.groupHoverCloseGraceRange,
+                        snap: 0.01,
+                        format: milliseconds,
+                        set: { dockModel.setGroupHoverCloseGrace($0, persist: $1) }
+                    )
+                }
             } footer: {
-                Text("Open delay: rest on a tile this long before the grid appears. Close grace: brief pause when leaving the tile or grid so moving across the gap does not flicker. Clicking still works either way.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if dockModel.openGroupsOnHover {
+                    Text("Close grace keeps the grid open while you cross the gap from the tile.").footerStyle()
+                }
             }
 
-            Section {
+            Section("Groups") {
                 if dockModel.groups.isEmpty {
-                    Text("No groups yet. Right-click an app in the dock and choose Add to Group, then New Group.")
+                    Text("No groups yet. Right-click an app in the dock and choose Add to Group.")
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                } else {
+                    ForEach(dockModel.groups) { group in
+                        GroupSettingsRow(group: group, dockModel: dockModel)
+                    }
                 }
-                ForEach(dockModel.groups) { group in
-                    GroupSettingsRow(group: group, dockModel: dockModel)
-                }
-            } header: {
-                Text("Groups")
-            } footer: {
-                Text("Ungroup puts the apps back in the dock. Delete removes the group and its apps from the dock.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
     }
 }
 
@@ -412,33 +627,27 @@ private struct GroupSettingsRow: View {
 
     @State private var draft = ""
     @State private var confirmingDelete = false
+    @State private var hovering = false
     @FocusState private var nameFocused: Bool
 
     var body: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: -6) {
-                ForEach(group.apps.prefix(4)) { app in
-                    Image(nsImage: IconCache.shared.icon(for: app.url))
-                        .resizable()
-                        .frame(width: 22, height: 22)
-                }
-            }
-            .frame(width: 70, alignment: .leading)
+        HStack(spacing: 12) {
+            GroupMiniIcon(group: group)
 
-            VStack(alignment: .leading, spacing: 2) {
-                TextField("Name", text: $draft)
-                    .labelsHidden()
-                    .textFieldStyle(.roundedBorder)
-                    .focused($nameFocused)
-                    .onSubmit(commit)
+            VStack(alignment: .leading, spacing: 0) {
+                nameField
                 Text(group.apps.count == 1 ? "1 app" : "\(group.apps.count) apps")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .helperStyle()
             }
+
+            Spacer(minLength: 8)
 
             Button("Ungroup") { dockModel.ungroup(groupID: group.id) }
-            Button("Delete...") { confirmingDelete = true }
+                .help("Put the apps back in the dock")
+            Button("Delete…") { confirmingDelete = true }
+                .help("Remove the group and its apps from the dock")
         }
+        .padding(.vertical, 2)
         .onAppear { draft = group.name }
         .onChange(of: group.name) { _, name in draft = name }
         .onChange(of: nameFocused) { _, focused in if !focused { commit() } }
@@ -450,9 +659,62 @@ private struct GroupSettingsRow: View {
         }
     }
 
+    /// Looks like plain text until hovered or focused, then shows a field
+    /// outline. The text stays aligned with the app count below it.
+    private var nameField: some View {
+        let active = hovering || nameFocused
+        return TextField("Name", text: $draft)
+            .labelsHidden()
+            .textFieldStyle(.plain)
+            .focused($nameFocused)
+            .onSubmit(commit)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(nameFocused ? Color(nsColor: .textBackgroundColor) : .clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .strokeBorder(active ? Color(nsColor: .separatorColor) : .clear)
+            )
+            .padding(.horizontal, -6)
+            .frame(maxWidth: 220, alignment: .leading)
+            .onHover { hovering = $0 }
+            .accessibilityLabel("Group name")
+    }
+
     /// Blank names revert to the current name.
     private func commit() {
         dockModel.renameGroup(groupID: group.id, to: draft)
         draft = dockModel.groups.first { $0.id == group.id }?.name ?? group.name
+    }
+}
+
+/// Small 2x2 preview of a group's first four apps, like its dock tile.
+private struct GroupMiniIcon: View {
+    let group: FolderGroup
+    @ObservedObject private var icons = IconCache.shared
+
+    private let size: CGFloat = 36
+
+    var body: some View {
+        let cell: CGFloat = 14
+        let grid = Array(repeating: GridItem(.fixed(cell), spacing: 2), count: 2)
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(.quaternary)
+            .overlay {
+                LazyVGrid(columns: grid, spacing: 2) {
+                    ForEach(group.apps.prefix(4)) { app in
+                        Image(nsImage: icons.icon(for: app.url))
+                            .resizable()
+                            .interpolation(.high)
+                            .frame(width: cell, height: cell)
+                    }
+                }
+                .frame(width: cell * 2 + 2, height: cell * 2 + 2, alignment: .topLeading)
+            }
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
     }
 }

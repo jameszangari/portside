@@ -42,6 +42,8 @@ Portside is a personal project for macOS on Apple Silicon. It is not packaged, s
 
 **Settings window**
 - General, Widgets, and Groups tabs. Changes apply live.
+- Header with the app icon, version, and author. The window fits each tab and remembers its position.
+- Drag widget rows to reorder them.
 
 **Native Dock**
 - "Hide the macOS Dock" (Settings > General): keeps the native Dock from ever appearing while Portside runs, using the autohide-delay trick. Its exact prior settings are saved first and restored when you turn this off, quit, or stop Portside with Ctrl+C or `kill`. After a crash or `kill -9`, the next launch restores them first.
@@ -52,7 +54,8 @@ Portside is a personal project for macOS on Apple Silicon. It is not packaged, s
 From `docs/CHECKLIST.md` and `docs/PLAN.md`:
 - Milestone F: launch at login, and import of the native Dock's items, position, and icon size.
 - A real `.app` bundle.
-- Magnification (the setting exists but is disabled).
+- Magnification (the stored setting exists, no UI yet).
+- Update checker: compare AppInfo.version with the latest GitHub release tag, show 'up to date' or a link to the release. The Check for Updates button is a placeholder until then.
 - Native Dock parity: click-and-hold menu, drag icons out to remove, modifier clicks, Trash, folder stacks.
 - Multi-display, fullscreen and Spaces behavior, badges.
 - Better widget layout on side docks.
@@ -102,6 +105,8 @@ While "Hide the macOS Dock" is on, the native Dock's prior settings are backed u
 
 It is deleted after a verified restore. If it exists when Portside starts, Portside restores from it first.
 
+The Settings window's position is kept in the app's defaults (`defaults read com.james.portside`, key `NSWindow Frame PortsideSettings`).
+
 The Settings window controls:
 - Position, auto-hide, icon size, "Animate opening applications"
 - Reveal delay, hide delay, animation duration (with reset to defaults)
@@ -139,10 +144,12 @@ Sources/portside/
   RunningApps.swift         Running app tracking via NSWorkspace notifications
   NativeDock.swift          Native Dock hide/restore: prefs backup, writes, Dock restart, verify
   NativeDockController.swift  "Hide the macOS Dock" toggle, first-time dialog, alerts
-  SettingsWindow.swift      Settings window (General, Widgets, Groups)
+  SettingsWindow.swift      Settings window: header, tabs (General, Widgets, Groups)
   HotKey.swift              Global hotkey through Carbon RegisterEventHotKey
   BackgroundCursor.swift    Guarded SkyLight call for the resize cursor
   AppIcon.swift             Runtime-drawn app icon
+  AppInfo.swift             App name, author, version, and repo URL
+  UpdateChecker.swift       Update check (stub until GitHub releases are wired up)
   WidgetProtocol.swift      Widget plugin protocol and sizes
   WidgetHost.swift          Widget lifecycle and refresh timer
   Widgets/

@@ -6,6 +6,15 @@ import AppKit
 enum AppIcon {
     static let image: NSImage = draw(size: 512)
 
+    /// `image` rendered once to a 512px bitmap. The drawing handler reruns
+    /// at every display size and its shadow blur does not scale with it, so
+    /// small renders (Settings header, alerts) show a clipped square shadow.
+    static let bitmap: NSImage = {
+        var rect = NSRect(x: 0, y: 0, width: 512, height: 512)
+        guard let cg = image.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { return image }
+        return NSImage(cgImage: cg, size: NSSize(width: 512, height: 512))
+    }()
+
     /// The Dock keeps showing an unbundled executable's generic icon even
     /// after `applicationIconImage` is set, so the tile also draws the icon
     /// itself.
