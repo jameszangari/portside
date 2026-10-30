@@ -43,10 +43,14 @@ Portside is a personal project for macOS on Apple Silicon. It is not packaged, s
 **Settings window**
 - General, Widgets, and Groups tabs. Changes apply live.
 
+**Native Dock**
+- "Hide the macOS Dock" (Settings > General): keeps the native Dock from ever appearing while Portside runs, using the autohide-delay trick. Its exact prior settings are saved first and restored when you turn this off, quit, or stop Portside with Ctrl+C or `kill`. After a crash or `kill -9`, the next launch restores them first.
+- "Restore macOS Dock" in the menu bar item, and `portside --restore-dock` (restores from the backup and exits, no UI).
+
 ## Planned
 
 From `docs/CHECKLIST.md` and `docs/PLAN.md`:
-- Milestone F: hide the native Dock (autohide-delay trick only) with exact save and restore, launch at login, and import of the native Dock's items, position, and icon size.
+- Milestone F: launch at login, and import of the native Dock's items, position, and icon size.
 - A real `.app` bundle.
 - Magnification (the setting exists but is disabled).
 - Native Dock parity: click-and-hold menu, drag icons out to remove, modifier clicks, Trash, folder stacks.
@@ -61,6 +65,12 @@ From `docs/CHECKLIST.md` and `docs/PLAN.md`:
 ```
 swift build
 swift run portside
+```
+
+Restore the native Dock from the backup without starting the app:
+
+```
+swift run portside --restore-dock
 ```
 
 View logs while it runs:
@@ -84,16 +94,26 @@ Settings and the dock layout are saved as JSON at:
 ~/Library/Application Support/com.james.portside/dock.json
 ```
 
+While "Hide the macOS Dock" is on, the native Dock's prior settings are backed up at:
+
+```
+~/Library/Application Support/com.james.portside/native-dock-backup.json
+```
+
+It is deleted after a verified restore. If it exists when Portside starts, Portside restores from it first.
+
 The Settings window controls:
 - Position, auto-hide, icon size, "Animate opening applications"
 - Reveal delay, hide delay, animation duration (with reset to defaults)
 - Widgets: on/off and order
 - Groups: rename, ungroup, delete, open on hover, open delay, close grace
+- Hide the macOS Dock (`hideNativeDock`, plus `nativeDockExplained` once the first-time dialog was confirmed)
 
 ## Notes
 
 - The separator's resize cursor needs a private SkyLight call, because macOS ignores cursor changes from a background app. `BackgroundCursor.swift` loads it with `dlopen`/`dlsym`. If the framework or symbols are missing, the cursor feature is disabled and nothing crashes. No other private APIs are used.
-- The native Dock is not modified yet, and no `com.apple.dock` settings are touched. Until Milestone F, both docks can react to the same edge. Portside is separate from the third-party Dockset app.
+- The native Dock is modified only while "Hide the macOS Dock" is on: Portside writes `autohide` and `autohide-delay` in `com.apple.dock` (public CFPreferences, then `killall Dock`) and restores every saved value on the way out. With the option off, no `com.apple.dock` settings are touched and both docks can react to the same edge. Portside is separate from the third-party Dockset app.
+- The system's Cmd+Option+D shortcut toggles the native Dock's auto-hide. While Portside hides the native Dock, it makes the native Dock appear until restore.
 - Opening Settings turns Portside into a regular app (visible in Cmd+Tab and the native Dock) until the window closes.
 - Cmd+Option+D may conflict with the system's own "Turn Dock hiding on/off" shortcut. Disable that one in System Settings to use Portside's.
 
@@ -101,7 +121,7 @@ The Settings window controls:
 
 ```
 Sources/portside/
-  PortsideApp.swift         SwiftUI entry point, menu bar item, app delegate
+  PortsideApp.swift         Entry point (--restore-dock, crash recovery, signals), menu bar, app delegate
   DockEngine.swift          Coordinator for tracker, panel, hide timer, and model
   EdgeTracker.swift         Edge window with NSTrackingArea (event-driven reveal)
   DockPanel.swift           Non-activating NSPanel, slide animation, panel tracking
@@ -117,6 +137,8 @@ Sources/portside/
   OverlayPanel.swift        Reusable non-activating overlay panel
   LaunchBounce.swift        Native-style launch bounce animation
   RunningApps.swift         Running app tracking via NSWorkspace notifications
+  NativeDock.swift          Native Dock hide/restore: prefs backup, writes, Dock restart, verify
+  NativeDockController.swift  "Hide the macOS Dock" toggle, first-time dialog, alerts
   SettingsWindow.swift      Settings window (General, Widgets, Groups)
   HotKey.swift              Global hotkey through Carbon RegisterEventHotKey
   BackgroundCursor.swift    Guarded SkyLight call for the resize cursor

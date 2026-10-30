@@ -1,6 +1,6 @@
 # Portside: Checklist
 
-Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (parts 1 and 2), the launch bounce (all edges and group grids), reveal on file drag, drop-to-open on app tiles and spring-loaded groups are built and waiting on the hand test.
+Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (parts 1 and 2), the launch bounce (all edges and group grids), reveal on file drag, drop-to-open on app tiles, spring-loaded groups and the Milestone F native Dock hide/restore are built and waiting on the hand test.
 
 ## Roadmap
 
@@ -11,7 +11,7 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (p
 - [x] **B.6:** Dock position (bottom/left/right) and separator resize (built, hand test pending)
 - [ ] **D:** App groups (expand/collapse) (built, hand test pending)
 - [ ] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live (part 1: built, hand test pending); part 2 (built, hand test pending): auto-hide toggle with Cmd+Option+D, Portside as a regular app while Settings is open, inline group naming and rename, open groups on hover
-- [ ] **F:** Native Dock hide/restore (autohide-delay trick only), launch at login (`SMAppService`), import `persistent-apps` and `persistent-others` from `com.apple.dock`, plus native orientation and tilesize as Portside's initial position and icon size; bounce on attention request (`requestUserAttention`; no public API exposes another app's request, so it needs private APIs, dlopen/dlsym guarded)
+- [ ] **F:** Native Dock hide/restore (autohide-delay trick only; built, hand test pending), launch at login (`SMAppService`), import `persistent-apps` and `persistent-others` from `com.apple.dock`, plus native orientation and tilesize as Portside's initial position and icon size; bounce on attention request (`requestUserAttention`; no public API exposes another app's request, so it needs private APIs, dlopen/dlsym guarded)
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
 - [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder; drag icons out to remove; drop files onto app icons to open them (strip tiles and group grid cells built, hand test pending); launch bounce (all three edges plus group grid cells built, hand test pending); reveal when a file is dragged to the edge (built, hand test pending); Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide
 - [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); right-click Trash shows Empty Trash; filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag (app groups built, hand test pending; folder stacks not yet); magnification polish
@@ -19,6 +19,67 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (p
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
+
+---
+
+# F slice: hide the macOS Dock (autohide-delay trick)
+
+Status: built and verified on the real Dock by the agent; waiting on James's hand test. Not committed. New files: `NativeDock.swift`, `NativeDockController.swift`.
+
+## Deliverables
+
+- [x] Settings > General > macOS Dock: "Hide the macOS Dock" (`hideNativeDock` in dock.json, off by default). The toggle only turns on after a verified hide.
+- [x] First-time dialog (once, `nativeDockExplained`): what changes, that position and size are untouched, how to undo. Cancel leaves everything as is.
+- [x] Before any write: exact values (with plist type) of `autohide`, `autohide-delay`, `autohide-time-modifier`, `orientation`, `tilesize`, `magnification`, `largesize`, `show-recents` saved to `native-dock-backup.json`, with keys that did not exist marked `existed: false`. The backup is read back before anything is written.
+- [x] An existing backup is never overwritten. Hide refuses while one exists (unless it is ours and the Dock is still hidden, then it is a no-op).
+- [x] Hide writes only `autohide = true` and `autohide-delay = 1000000` (real) through CFPreferences, runs `killall Dock`, reads both back, then marks the backup `hidden`.
+- [x] Restore writes every saved key back (deletes ones that did not exist), restarts the Dock, verifies all 8 keys, then deletes the backup. On any failure the backup stays for a retry.
+- [x] Restore triggers: toggle off, normal quit (applicationWillTerminate), SIGTERM, SIGINT, SIGHUP, menu bar "Restore macOS Dock", and `portside --restore-dock`.
+- [x] Crash safety: at launch, before SwiftUI or AppKit start (`PortsideMain`), any backup (state `applying` or `hidden`) is restored. If the setting is still on, Portside then hides again with a fresh backup.
+- [x] Hide failure (write, Dock restart, verify): rolls back from the backup, logs, setting stays off, alert shown.
+- [x] Refuses to hide if `autohide-delay` is already 1000s or more (another app, for example a crashed Dockset, hid the Dock this way), since that value would be saved as the "real" one.
+- [x] Every step logged under category `NativeDock`. Nothing outside `com.apple.dock` is written. No private APIs.
+- [x] `swift build` clean, no warnings; `swift run` stays up
+
+## Verified on the real Dock (agent)
+
+`defaults read com.apple.dock` snapshot taken before, plus a full `defaults export` as a safety net. dock.json backed up and restored byte for byte (`cmp`).
+
+- [x] Launch with the setting on: backup correct (autohide bool true, autohide-delay and three others `existed: false`, tilesize real 37), `autohide-delay` reads back 1000000 (float).
+- [x] SIGTERM, SIGINT, normal quit (Apple Event quit, so applicationWillTerminate), and `kill -9` then relaunch (log: `launch: found a native Dock backup ... restoring`, then re-hide), and `kill -9` then `portside --restore-dock` (exit 0): each left the diff against the snapshot empty except `last-analytics-stamp`, and removed the backup.
+- [x] `--restore-dock` with no backup prints "No backup ..." and exits 0.
+- [x] Screenshot with the cursor resting on the bottom edge while hidden: only Portside's dock appears. After restore, the native Dock reveals normally.
+
+## Verified on a scratch prefs domain (agent)
+
+Copy of `NativeDock.swift` pointed at `com.james.portside.ndtest`, a temp backup folder, and `/usr/bin/true` instead of `killall` (13 checks, all pass, domain deleted after):
+
+- [x] Prior state autohide off, `autohide-delay` 0.2 (real), `tilesize` 48 (integer), string, array and missing keys: restored exactly, types preserved.
+- [x] Autohide flipped and tilesize changed mid-session: restore puts the saved values back.
+- [x] Second hide while hidden leaves the backup untouched; restore with no backup is a no-op.
+- [x] Refuses to hide when `autohide-delay` is already 1000000; refuses with an unrestored `applying` backup and leaves it byte for byte; launch recovery restores from `applying`.
+- [x] A damaged backup is not treated as "none": restore throws and keeps it, hide refuses, prefs untouched.
+
+## Findings
+
+- The Dock rewrites `last-analytics-stamp` every time it restarts, so a `defaults read` diff after any Dock restart shows that key. It is not one of ours. Filter it out of the hand test diff.
+- The system shortcut Cmd+Option+D ("Turn Dock hiding on/off") toggles the native Dock's `autohide`. While Portside is hiding the native Dock, pressing it turns native auto-hide off and the native Dock appears permanently until restore (restore puts the saved value back). It is also the same key combo as Portside's own auto-hide hotkey. Disable it in System Settings > Keyboard > Keyboard Shortcuts > Launchpad & Dock.
+- Escape hatch if Portside is gone and the native Dock is stuck hidden: `portside --restore-dock`, or by hand `defaults delete com.apple.dock autohide-delay; killall Dock` (only if the delay did not exist before, which is the case on this Mac).
+- The `CGWindowList` probe is useless for "is the native Dock revealed": a full-screen Dock window at layer 20 is on screen whenever the cursor is at any edge, hidden or not. Screenshots work.
+
+## Known gaps
+
+- If Portside crashes and is never relaunched, the native Dock stays hidden until `--restore-dock` or the next launch. Uncaught crashes (SIGSEGV, SIGABRT) are not handled in-process, since prefs writes are not safe in a signal handler.
+- Restore puts back all 8 saved keys, so a native Dock change made in System Settings while hiding is on (for example size) is reverted on restore. Logged as `changed while hidden`.
+- After a crash, relaunching with the setting on restarts the Dock twice (restore, then hide).
+- `--restore-dock` while Portside is running restores anyway; the running copy still shows the setting on until it is toggled or quit (quit then finds no backup, which is fine).
+- Launch at login and native Dock import (rest of F) not started.
+
+## Hand test must also check
+
+- [ ] (a) to (f) from the report: before snapshot, enable, disable, quit, kill -9 plus relaunch, `--restore-dock`, each diff empty except `last-analytics-stamp`
+- [ ] First-time dialog appears once; Cancel leaves the toggle off and the Dock untouched
+- [ ] Menu bar "Restore macOS Dock" restores and turns the toggle off; with nothing to restore it says so
 
 ---
 

@@ -13,6 +13,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     private let dockModel: DockModel
     private let layout: DockLayout
+    private let nativeDock: NativeDockController
     private var window: NSWindow?
     /// The other app that was frontmost most recently while Settings was
     /// open. Focus goes back to it on close; NSApp.deactivate() alone does
@@ -20,9 +21,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var previousApp: NSRunningApplication?
     private var activationObserver: NSObjectProtocol?
 
-    init(dockModel: DockModel, layout: DockLayout) {
+    init(dockModel: DockModel, layout: DockLayout, nativeDock: NativeDockController) {
         self.dockModel = dockModel
         self.layout = layout
+        self.nativeDock = nativeDock
     }
 
     var isOpen: Bool { window?.isVisible == true || window?.isMiniaturized == true }
@@ -60,7 +62,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     private func makeWindow() -> NSWindow {
         let window = NSWindow(contentViewController: NSHostingController(
-            rootView: SettingsView(dockModel: dockModel, layout: layout)
+            rootView: SettingsView(dockModel: dockModel, layout: layout, nativeDock: nativeDock)
         ))
         window.title = "Portside Settings"
         window.styleMask = [.titled, .closable, .miniaturizable]
@@ -97,10 +99,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 struct SettingsView: View {
     @ObservedObject var dockModel: DockModel
     @ObservedObject var layout: DockLayout
+    let nativeDock: NativeDockController
 
     var body: some View {
         TabView {
-            GeneralSettings(dockModel: dockModel, layout: layout)
+            GeneralSettings(dockModel: dockModel, layout: layout, nativeDock: nativeDock)
                 .tabItem { Label("General", systemImage: "gearshape") }
             WidgetSettings(dockModel: dockModel)
                 .tabItem { Label("Widgets", systemImage: "square.grid.2x2") }
@@ -116,6 +119,7 @@ struct SettingsView: View {
 private struct GeneralSettings: View {
     @ObservedObject var dockModel: DockModel
     @ObservedObject var layout: DockLayout
+    let nativeDock: NativeDockController
 
     /// Same limit the separator drag clamps to. Kept one point above the
     /// minimum so the slider range is never empty.
@@ -208,6 +212,22 @@ private struct GeneralSettings: View {
                     Spacer()
                     Button("Reset to Defaults") { dockModel.resetTimingToDefaults() }
                 }
+            }
+
+            Section {
+                Toggle("Hide the macOS Dock", isOn: Binding(
+                    get: { dockModel.hideNativeDock },
+                    // Async: hiding may open a modal alert, which should not
+                    // run inside SwiftUI's binding update. The toggle shows
+                    // the model, so it only turns on after a verified hide.
+                    set: { hidden in DispatchQueue.main.async { nativeDock.setHidden(hidden) } }
+                ))
+            } header: {
+                Text("macOS Dock")
+            } footer: {
+                Text("Keeps the native Dock from appearing while Portside runs. Its settings are saved first and restored when you turn this off or quit.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

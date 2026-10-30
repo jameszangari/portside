@@ -144,6 +144,27 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    // MARK: - Native Dock
+
+    /// "Hide the macOS Dock". Written only by `NativeDockController`, after
+    /// the native Dock was actually hidden (or restored).
+    @Published private(set) var hideNativeDock: Bool = false
+
+    /// The first-time explanation for `hideNativeDock` was confirmed.
+    private(set) var nativeDockExplained: Bool = false
+
+    func setHideNativeDock(_ enabled: Bool) {
+        guard enabled != hideNativeDock else { return }
+        hideNativeDock = enabled
+        persist()
+    }
+
+    func markNativeDockExplained() {
+        guard !nativeDockExplained else { return }
+        nativeDockExplained = true
+        persist()
+    }
+
     // MARK: - Groups on hover
 
     /// Open a group's grid by hovering its tile (after `groupHoverDelay`).
@@ -386,6 +407,7 @@ final class DockModel: Codable, ObservableObject {
         case revealDelay, hideDelay, animationDuration, iconSize, magnificationEnabled, edge, entries, widgetKinds
         case autoHide, openGroupsOnHover, groupHoverDelay, groupHoverCloseGrace
         case animateOpeningApplications
+        case hideNativeDock, nativeDockExplained
         /// Before Milestone D: a flat list of apps. Read only, for migration.
         case pinnedApps
     }
@@ -408,6 +430,8 @@ final class DockModel: Codable, ObservableObject {
         widgetKinds = try c.decodeIfPresent([String].self, forKey: .widgetKinds) ?? WidgetCatalog.defaultKinds
         autoHide = try c.decodeIfPresent(Bool.self, forKey: .autoHide) ?? true
         animateOpeningApplications = try c.decodeIfPresent(Bool.self, forKey: .animateOpeningApplications) ?? true
+        hideNativeDock = try c.decodeIfPresent(Bool.self, forKey: .hideNativeDock) ?? false
+        nativeDockExplained = try c.decodeIfPresent(Bool.self, forKey: .nativeDockExplained) ?? false
         openGroupsOnHover = try c.decodeIfPresent(Bool.self, forKey: .openGroupsOnHover) ?? false
         groupHoverDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverDelay) ?? Defaults.groupHoverDelay, to: Self.groupHoverDelayRange)
         groupHoverCloseGrace = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverCloseGrace) ?? Defaults.groupHoverCloseGrace, to: Self.groupHoverCloseGraceRange)
@@ -425,6 +449,8 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(widgetKinds, forKey: .widgetKinds)
         try c.encode(autoHide, forKey: .autoHide)
         try c.encode(animateOpeningApplications, forKey: .animateOpeningApplications)
+        try c.encode(hideNativeDock, forKey: .hideNativeDock)
+        try c.encode(nativeDockExplained, forKey: .nativeDockExplained)
         try c.encode(openGroupsOnHover, forKey: .openGroupsOnHover)
         try c.encode(groupHoverDelay, forKey: .groupHoverDelay)
         try c.encode(groupHoverCloseGrace, forKey: .groupHoverCloseGrace)

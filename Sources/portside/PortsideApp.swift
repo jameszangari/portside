@@ -2,9 +2,58 @@ import Carbon.HIToolbox
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// SwiftUI entry point. There is no main window: the only scene is a tiny
-/// menu bar item. All the real work happens in `AppDelegate` -> `DockEngine`.
+/// Process entry point. Runs before SwiftUI and AppKit start, so native
+/// Dock crash recovery happens before anything else, and
+/// `portside --restore-dock` can restore and exit without showing any UI.
 @main
+enum PortsideMain {
+    /// Kept alive for the life of the process.
+    private static var signalSources: [DispatchSourceSignal] = []
+
+    static func main() {
+        if CommandLine.arguments.contains("--restore-dock") {
+            exit(restoreDockCommand())
+        }
+        NativeDock.recoverIfNeeded()
+        installSignalHandlers()
+        PortsideApp.main()
+    }
+
+    /// `portside --restore-dock`: restore from the backup file and exit.
+    private static func restoreDockCommand() -> Int32 {
+        do {
+            switch try NativeDock.restore() {
+            case .restored:
+                print("Restored the macOS Dock from \(NativeDock.backupURL.path)")
+            case .nothingToRestore:
+                print("No backup at \(NativeDock.backupURL.path). Portside has not changed the macOS Dock.")
+            }
+            return 0
+        } catch {
+            FileHandle.standardError.write(Data("portside: \(error.localizedDescription)\n".utf8))
+            return 1
+        }
+    }
+
+    /// Ctrl+C, `kill`, and closing the terminal would otherwise end the
+    /// process without applicationWillTerminate. SIGKILL cannot be caught;
+    /// the next launch's recovery covers it.
+    private static func installSignalHandlers() {
+        for (number, name) in [(SIGTERM, "SIGTERM"), (SIGINT, "SIGINT"), (SIGHUP, "SIGHUP")] {
+            signal(number, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
+            source.setEventHandler {
+                NativeDockController.restoreForExit(reason: name)
+                exit(0)
+            }
+            source.resume()
+            signalSources.append(source)
+        }
+    }
+}
+
+/// SwiftUI app. There is no main window: the only scene is a tiny menu bar
+/// item. All the real work happens in `AppDelegate` -> `DockEngine`.
 struct PortsideApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
@@ -22,6 +71,10 @@ struct PortsideApp: App {
             HidingMenuItem(dockModel: appDelegate.dockModel)
             WidgetsMenu(dockModel: appDelegate.dockModel)
             PositionMenu(dockModel: appDelegate.dockModel)
+            Divider()
+            Button("Restore macOS Dock") {
+                appDelegate.nativeDock.restoreFromMenu()
+            }
             Divider()
             Button("Quit Portside") {
                 NSApp.terminate(nil)
@@ -94,6 +147,7 @@ private struct PositionMenu: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Created with the delegate so the menu bar scene can observe it.
     let dockModel = DockModel.load()
+    lazy var nativeDock = NativeDockController(dockModel: dockModel)
     private var dockEngine: DockEngine?
     private var settings: SettingsWindowController?
     private var hideHotKey: HotKey?
@@ -107,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.applicationIconImage = AppIcon.image
+        nativeDock.applyAtLaunch()
         BackgroundCursor.enable()
         let engine = DockEngine(dockModel: dockModel)
         dockEngine = engine
@@ -132,6 +187,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         dockEngine?.stop()
+        NativeDockController.restoreForExit(reason: "applicationWillTerminate")
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -142,7 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// panel itself stays non-activating.
     func openSettings() {
         guard let dockEngine else { return }
-        let controller = settings ?? SettingsWindowController(dockModel: dockModel, layout: dockEngine.layout)
+        let controller = settings ?? SettingsWindowController(dockModel: dockModel, layout: dockEngine.layout, nativeDock: nativeDock)
         controller.onActivationPolicyChanged = { [weak dockEngine] in dockEngine?.activationPolicyChanged() }
         settings = controller
         controller.show()
