@@ -17,7 +17,7 @@
 2. **Build after every single file-creation batch.** After writing files, run `swift build` and paste the result. Do not write more than ~3 files without compiling. If it doesn't compile, fix it before adding anything new.
 3. **If you catch yourself repeating the same sentence or tool call, STOP.** Output "STUCK: <one line on why>" and wait. Do not retry the same action more than twice.
 4. **One milestone at a time.** Finish, build, and get sign-off on milestone A before touching B. Do not scaffold later milestones early.
-5. **Use only public APIs for Milestones A–E.** Private APIs (CoreDock, SkyLight, badge reading) are Milestone F only, isolated behind `dlopen`/`dlsym`.
+5. **Public APIs by default.** Private APIs (CoreDock, SkyLight, badges) only as small guarded shims (`dlopen`/`dlsym`, graceful fallback so an OS update degrades instead of crashing), each in its own file and listed in the checklist. Currently: `BackgroundCursor.swift`.
 
 ---
 
@@ -75,30 +75,44 @@ Only timers allowed: the one-shot hide delay, widget refresh (off critical path)
 ```
 portside/
 ├── Package.swift
+├── VERSION
+├── scripts/
+│   ├── gen-version.sh              # writes BuildInfo.swift
+│   └── release.sh                  # version bump, commit, tag
 ├── Sources/portside/
-│   ├── PortsideApp.swift              # @main SwiftUI App, LSUIElement via Info.plist
+│   ├── PortsideApp.swift           # entry point, menu bar, app delegate
 │   ├── DockEngine.swift            # coordinator
 │   ├── EdgeTracker.swift           # event-driven edge detection (THE FIX)
 │   ├── DockPanel.swift             # non-activating NSPanel
-│   ├── DockModel.swift             # Codable model
+│   ├── DockModel.swift             # Codable model, persistence
+│   ├── DockEdge.swift              # bottom/left/right
 │   ├── DockStrip.swift             # SwiftUI strip
-│   ├── DockItem.swift              # app icon view + launch/activate
+│   ├── DockItem.swift              # app tile, launch/activate
+│   ├── DockHover.swift             # hover targets and labels
+│   ├── FileDrop.swift              # file drop state: pin vs open
+│   ├── FolderGroup.swift           # group models
+│   ├── GroupController.swift       # group open/close state
+│   ├── GroupViews.swift            # group tile and grid
+│   ├── OverlayPanel.swift          # reusable overlay panel
+│   ├── LaunchBounce.swift          # launch bounce animation
+│   ├── RunningApps.swift           # NSWorkspace running-app tracking
+│   ├── NativeDock.swift            # native Dock hide/restore (prefs backup)
+│   ├── NativeDockController.swift  # hide toggle, dialog, alerts
+│   ├── SettingsWindow.swift        # settings UI
+│   ├── HotKey.swift                # Carbon global hotkey
+│   ├── BackgroundCursor.swift      # guarded SkyLight shim (resize cursor)
+│   ├── AppIcon.swift               # runtime app icon
+│   ├── AppInfo.swift               # name, author, version line
+│   ├── BuildInfo.swift             # generated version info
+│   ├── UpdateChecker.swift         # update check stub
 │   ├── WidgetProtocol.swift        # plugin protocol
 │   ├── WidgetHost.swift            # widget lifecycle + refresh
-│   ├── Widgets/
-│   │   ├── ClockWidget.swift
-│   │   ├── BatteryWidget.swift
-│   │   ├── CalendarWidget.swift
-│   │   ├── WeatherWidget.swift
-│   │   └── SystemStatsWidget.swift
-│   ├── FolderGroup.swift           # grouped apps + expand/collapse
-│   ├── SettingsWindow.swift
-│   ├── SettingsModel.swift
-│   ├── NativeDockManager.swift     # Milestone F: save/restore native dock (guarded)
-│   ├── BadgeReader.swift           # Milestone F: private badge API (isolated)
-│   └── Support/
-│       ├── LaunchAtLogin.swift     # SMAppService
-│       └── Info.plist              # LSUIElement = true
+│   └── Widgets/
+│       ├── ClockWidget.swift
+│       ├── BatteryWidget.swift
+│       ├── CalendarWidget.swift
+│       ├── WeatherWidget.swift
+│       └── SystemStatsWidget.swift
 └── README.md
 ```
 
@@ -162,24 +176,24 @@ DockStrip, DockItem, indicators via `NSWorkspace.notificationCenter`, drag-reord
 **C: Widget system + 3+ widgets.** DONE.
 WidgetProtocol, WidgetHost, Clock/Battery/Calendar (+Weather/SystemStats). *Test: live data in strip.*
 
-**B.5: Hover labels with a reusable overlay panel.** DONE (hand test pending; label placement fix awaiting hand test).
+**B.5: Hover labels with a reusable overlay panel.** DONE.
 Shared overlay that can show an app name (and later window previews) above the hovered tile without stealing focus. Build it as a reusable panel so later features plug into the same host. *Test: hover an icon, label appears quickly, leave and it dismisses; dock hide delay still respects the overlay.* Follow-up: label must sit 6 to 10pt above the hovered icon's top edge (not flush with the panel), match native Dock label size, stay horizontally centered on the icon, and clamp inside the screen's visible frame.
 
 **B.6: Dock position and separator resize.**
 Bottom, left, or right position (persisted; switchable live via a temporary menu bar item until Milestone E). EdgeTracker edge window and tracking area per edge. DockPanel frames from `visibleFrame` (avoid the menu bar), sliding in from and hiding toward the chosen edge. DockStrip horizontal on the bottom and vertical on the sides, with indicators, labels, magnification direction, and the future folder popover anchor following orientation. Native-style separator drag to resize icon size live (resize cursor, clamped, persisted; dock stays revealed during the drag). *Test: switch edges live; strip orientation and labels follow; drag the separator to resize; (a) the edge strip does not swallow clicks (try resizing a window from its bottom edge and clicking a control at the very bottom of an app; if blocked, shrink the strip to 1 to 2pt or switch to an event-driven global mouse-moved monitor); (b) reveal timing logs are unchanged.*
 
-**D: App groups.**
+**D: App groups.** DONE.
 FolderGroup + expand/collapse (user-defined groups of apps, not filesystem stacks). *Test: click expands/collapses.*
 
-**E: Settings + persistence.**
+**E: Settings + persistence.** DONE.
 SettingsWindow/Model: reveal delay, hide delay, animation duration, icon size, magnification toggle, dock position, widget and group management. Also:
 - Optional "Open groups on hover" setting (off by default). When on, hovering a group tile opens its grid after a hover-intent delay (default about 200ms, configurable) so sweeping across the dock does not pop groups open; hovering a different group tile switches the open grid immediately; moving from the tile into the grid keeps it open. Reuses D's close rules. No polling timers: one cancelable one-shot delay, like the hide timer.
 - "Name prompt on group creation": when a group is first created, prompt for its name, defaulting to "Group N" so skipping is harmless. Preferred: inline rename (editable name in the open grid or on the tile) where the panel takes key focus only while editing and returns focus to the previously frontmost app afterward. Fallback: a name field in the settings window. Must not break non-activating panel behavior for normal use.
 - "Group rename" (deferred from D): rename from the settings window, and from the group tile's context menu using the same inline mechanism.
 *Test: live changes apply; with hover-open on, a slow hover opens the group and a fast sweep does not; creating a group offers a name (default Group N); rename from settings and from the tile menu updates the tile and popover title; normal dock clicks still do not steal focus.*
 
-**F: Native Dock hide/restore + launch at login + import.**
-NativeDockManager (autohide-delay trick only, save/restore exact prior values), LaunchAtLogin (`SMAppService`), import of the user's native Dock items by reading `persistent-apps` and `persistent-others` from `com.apple.dock` (never write those keys). On import, also read the native Dock's orientation and tilesize and use them as Portside's initial position and icon size. Private APIs only here, behind `dlopen`/`dlsym`. *Test: quit restores native Dock exactly; re-login auto-launches; imported pins match the native list; initial position and icon size match the native Dock.*
+**F: Native Dock hide/restore + launch at login + import.** Hide/restore part DONE (`NativeDock.swift`, `NativeDockController.swift`); launch at login, native Dock import and a real .app bundle still open.
+NativeDock (autohide-delay trick only, save/restore exact prior values), LaunchAtLogin (`SMAppService`), import of the user's native Dock items by reading `persistent-apps` and `persistent-others` from `com.apple.dock` (never write those keys). On import, also read the native Dock's orientation and tilesize and use them as Portside's initial position and icon size. Private APIs only here, behind `dlopen`/`dlsym`. *Test: quit restores native Dock exactly; re-login auto-launches; imported pins match the native list; initial position and icon size match the native Dock.*
 
 **Live on it (checkpoint).**
 Daily-drive Portside with A through F in place. Collect what hurts before starting the native Dock parity backlog (P1 to P3). Do not start P1 until this checkpoint has real notes.
@@ -223,7 +237,7 @@ Features that make Portside feel like the real Dock. Ordered by daily-driver imp
 
 ### Explicitly out of scope
 - Minimized windows in the Dock (user has "minimize into app icon" on)
-- Attention bouncing from other apps
+- Attention bouncing from other apps (needs private APIs, not wanted for now)
 - Two-finger swipe App Expose gesture
 - Assigning apps to Spaces from the menu
 - The recents section

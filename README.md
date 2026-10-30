@@ -52,8 +52,7 @@ Portside is a personal project for macOS on Apple Silicon. It is not packaged, s
 ## Planned
 
 From `docs/CHECKLIST.md` and `docs/PLAN.md`:
-- Milestone F: launch at login, and import of the native Dock's items, position, and icon size.
-- A real `.app` bundle.
+- Milestone F, what is left: a real `.app` bundle, launch at login, the native Dock's orientation and icon size as initial values, and a manual "Import from macOS Dock" action. Seeding pinned apps from the native Dock on first launch already works.
 - Magnification (the stored setting exists, no UI yet).
 - Update checker: compare AppInfo.version with the latest GitHub release tag (vX.Y.Z), show 'up to date' or a link to the release. The Check for Updates button is a placeholder until then.
 - Native Dock parity: click-and-hold menu, drag icons out to remove, modifier clicks, Trash, folder stacks.

@@ -1,6 +1,6 @@
 # Portside: Checklist
 
-Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (parts 1 and 2), the launch bounce (all edges and group grids), reveal on file drag, drop-to-open on app tiles, spring-loaded groups, the Milestone F native Dock hide/restore, the Settings window redesign and automated versioning are built and waiting on the hand test.
+Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand-tested. Milestone F is partly done (native Dock hide/restore); launch at login, a real .app bundle and the native Dock import are still open. P1 and P2 are partly built, see below.
 
 ## Roadmap
 
@@ -8,15 +8,15 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (p
 - [x] **B:** Pinned apps + running indicators + drag reorder + persistence
 - [x] **C:** Widget protocol and widgets (clock, calendar, weather, system stats, battery)
 - [x] **B.5:** Hover labels with a reusable overlay panel (including the label placement fix)
-- [x] **B.6:** Dock position (bottom/left/right) and separator resize (built, hand test pending)
-- [ ] **D:** App groups (expand/collapse) (built, hand test pending)
-- [ ] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live (part 1: built, hand test pending); part 2 (built, hand test pending): auto-hide toggle with Cmd+Option+D, Portside as a regular app while Settings is open, inline group naming and rename, open groups on hover
-- [ ] **F:** Native Dock hide/restore (autohide-delay trick only; built, hand test pending), launch at login (`SMAppService`), import `persistent-apps` and `persistent-others` from `com.apple.dock`, plus native orientation and tilesize as Portside's initial position and icon size; bounce on attention request (`requestUserAttention`; no public API exposes another app's request, so it needs private APIs, dlopen/dlsym guarded)
+- [x] **B.6:** Dock position (bottom/left/right) and separator resize
+- [x] **D:** App groups (expand/collapse)
+- [x] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live; includes auto-hide toggle with Cmd+Option+D, Portside as a regular app while Settings is open, inline group naming and rename, open groups on hover
+- [ ] **F:** [x] Hide the macOS Dock (autohide-delay trick only, exact save and restore); [ ] launch at login (`SMAppService`); [ ] a real .app bundle; [ ] import native orientation and tilesize as Portside's initial position and icon size; [ ] a manual "Import from macOS Dock" action; [ ] import `persistent-others`. First-launch seeding of pinned apps from `persistent-apps` is already built (`DockModel.seedFromNativeDock`).
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
-- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder; drag icons out to remove; drop files onto app icons to open them (strip tiles and group grid cells built, hand test pending); launch bounce (all three edges plus group grid cells built, hand test pending); reveal when a file is dragged to the edge (built, hand test pending); Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide
-- [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); right-click Trash shows Empty Trash; filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag (app groups built, hand test pending; folder stacks not yet); magnification polish
+- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder (built); drag icons out to remove; drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide (built)
+- [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); right-click Trash shows Empty Trash; filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag (built for app groups; folder stacks not yet); magnification polish
 - [ ] **P3:** Follow the display the cursor hits; fullscreen apps and Spaces; badge counts via the real Dock's accessibility tree (Accessibility permission; private APIs only as fallback); window list in right-click menu with click to focus (Screen Recording for titles); VoiceOver labels and keyboard navigation; do not reveal while dragging a window or holding the mouse button (except file drags headed to the Dock)
-- [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section
+- [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section; bounce on attention request (needs private APIs, not wanted for now)
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
@@ -24,7 +24,7 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to C and B.5 are done. B.6, D, E (p
 
 # Tooling slice: automated versioning
 
-Status: built, verified with `swift build` and a release dry run; waiting on James's hand test. Not committed. New files: `VERSION`, `scripts/gen-version.sh`, `scripts/release.sh`, `Sources/portside/BuildInfo.swift`.
+Status: done, hand-tested by James and committed. New files: `VERSION`, `scripts/gen-version.sh`, `scripts/release.sh`, `Sources/portside/BuildInfo.swift`.
 
 ## Deliverables
 
@@ -65,7 +65,7 @@ Status: built, verified with `swift build` and a release dry run; waiting on Jam
 
 # UX slice: Settings window redesign
 
-Status: built and screenshot-reviewed by the agent (two rounds, dark and light); waiting on James's hand test. Not committed. Visual and layout only: no behavior, settings key, or dock.json changes. New files: `AppInfo.swift`, `UpdateChecker.swift`.
+Status: done, hand-tested by James and committed. Visual and layout only: no behavior, settings key, or dock.json changes. New files: `AppInfo.swift`, `UpdateChecker.swift`.
 
 ## Deliverables
 
@@ -117,7 +117,7 @@ Status: built and screenshot-reviewed by the agent (two rounds, dark and light);
 
 # F slice: hide the macOS Dock (autohide-delay trick)
 
-Status: built and verified on the real Dock by the agent; waiting on James's hand test. Not committed. New files: `NativeDock.swift`, `NativeDockController.swift`.
+Status: done, hand-tested by James and committed. New files: `NativeDock.swift`, `NativeDockController.swift`.
 
 ## Deliverables
 
@@ -178,7 +178,7 @@ Copy of `NativeDock.swift` pointed at `com.james.portside.ndtest`, a temp backup
 
 # P1 slice: spring-loaded groups during file drags
 
-Status: built and verified with synthetic drags; waiting on James's hand test. Not committed. No new files.
+Status: done, hand-tested by James and committed. No new files.
 
 ## Deliverables
 
@@ -238,7 +238,7 @@ Throwaway harness in `/tmp/portside-spring` (real drag session from its own wind
 
 # P1 slice: drop files onto app tiles to open them
 
-Status: built and verified with synthetic drags; waiting on James's hand test. Not committed. New file: `FileDrop.swift`.
+Status: done, hand-tested by James and committed. New file: `FileDrop.swift`.
 
 ## Deliverables
 
@@ -300,7 +300,7 @@ Throwaway app in `/tmp/portside-droptest` that starts a real file drag session f
 
 # P1 slice: reveal on file drag to the edge
 
-Status: built and verified with synthetic drags; waiting on James's hand test. Not committed. No new files.
+Status: done, hand-tested by James and committed. No new files.
 
 ## Deliverables
 
@@ -358,7 +358,7 @@ Throwaway app in `/tmp` that starts a real file drag session from its own window
 
 # P1 slice: launch bounce on side edges and in group grids
 
-Status: built and verified with synthetic events; waiting on James's hand test. Not committed. No new files.
+Status: done, hand-tested by James and committed. No new files.
 
 ## Deliverables
 
@@ -406,7 +406,7 @@ Throwaway test app in `/tmp` that takes 3s to finish launching (run loop kept re
 
 # P1 slice: launch bounce (bottom edge, pinned tiles)
 
-Status: built and verified with synthetic events; waiting on James's hand test. Not committed. New file: `LaunchBounce.swift`.
+Status: done, hand-tested by James and committed. New file: `LaunchBounce.swift`.
 
 ## Deliverables
 
@@ -451,7 +451,7 @@ Used a throwaway test app in `/tmp` that delays finishing launch by a configurab
 
 # Milestone E part 2: auto-hide toggle, real app while in Settings, group naming, hover open
 
-Status: built and verified with synthetic events; waiting on James's hand test. Not committed. New files: `HotKey.swift`, `AppIcon.swift` (plus `SettingsWindow.swift` from part 1).
+Status: done, hand-tested by James and committed. New files: `HotKey.swift`, `AppIcon.swift` (plus `SettingsWindow.swift` from part 1).
 
 ## Deliverables
 
@@ -501,7 +501,7 @@ Status: built and verified with synthetic events; waiting on James's hand test. 
 
 # Milestone E part 1: settings window and model
 
-Status: built and verified with synthetic events; waiting on James's hand test. Not committed.
+Status: done, hand-tested by James and committed.
 
 ## Deliverables
 
@@ -546,7 +546,7 @@ Status: built and verified with synthetic events; waiting on James's hand test. 
 
 # Milestone D: app groups
 
-Status: built and verified with synthetic events; waiting on James's hand test. Not committed.
+Status: done, hand-tested by James and committed.
 
 ## Deliverables
 
@@ -639,7 +639,7 @@ Status: done. Hand-tested by James, including the label placement fix; committed
 
 # Milestone B.6: dock position and separator resize
 
-Status: built, launched with `swift run`, verified with synthetic mouse events, Accessibility reads and logs on all three edges. Waiting on the human hand test before Milestone D.
+Status: done, hand-tested by James and committed. Verified with synthetic mouse events, Accessibility reads and logs on all three edges.
 
 ## Deliverables
 
