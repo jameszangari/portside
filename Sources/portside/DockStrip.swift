@@ -122,6 +122,8 @@ struct DockStrip: View {
     let magnifier: Magnifier
     /// The Trash tile's state and actions. The tile observes it.
     let trash: TrashController
+    /// Notification badges mirrored from the native Dock.
+    @ObservedObject var badges: DockBadges
 
     /// Id of the pinned entry (app or group) or widget being dragged, if any.
     @State private var dragging: String?
@@ -216,7 +218,7 @@ struct DockStrip: View {
                     .magnifiedShift()
                 ForEach(extras, id: \.0.id) { app, running in
                     DockItemView(app: app, running: running, isPinned: false, size: tile, dockModel: dockModel, bouncer: bouncer,
-                                 isDropTarget: dropTargetID == app.id)
+                                 badges: badges, isDropTarget: dropTargetID == app.id)
                 }
                 if showsSelf {
                     PortsideTileView(size: tile) { interactions.onOpenSettings?() }
@@ -331,7 +333,7 @@ struct DockStrip: View {
         switch entry {
         case .app(let app):
             DockItemView(app: app, running: runningApps.runningInstance(of: app), isPinned: true, size: tile, dockModel: dockModel, bouncer: bouncer,
-                         isDropTarget: dropTargetID == app.id)
+                         badges: badges, isDropTarget: dropTargetID == app.id)
         case .group(let group):
             GroupTileView(
                 group: group,
@@ -341,7 +343,8 @@ struct DockStrip: View {
                 onToggle: { interactions.onGroupTapped?(group.id) },
                 onRename: { interactions.onRenameGroup?(group.id) },
                 onRemove: { removeGroupAfterConfirming(group, fromDrag: false) },
-                dockModel: dockModel
+                dockModel: dockModel,
+                badges: badges
             )
         case .spacer(let spacer):
             SpacerTileView(spacer: spacer, tile: tile) {
@@ -750,7 +753,7 @@ struct DockStrip: View {
                 .frame(width: tile, height: tile))
         case .group(let group):
             return AnyView(GroupTileView(group: group, size: tile, isExpanded: false, anyRunning: false,
-                                         onToggle: {}, onRename: {}, onRemove: {}, dockModel: dockModel)
+                                         onToggle: {}, onRename: {}, onRemove: {}, dockModel: dockModel, badges: badges)
                 .environment(\.dockEdge, .left)
                 .frame(height: tile))
         case .spacer(let spacer):

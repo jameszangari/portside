@@ -35,6 +35,7 @@ struct GroupTileView: View {
     /// "Remove from Dock": the strip asks for confirmation first.
     let onRemove: () -> Void
     @ObservedObject var dockModel: DockModel
+    @ObservedObject var badges: DockBadges
     @ObservedObject private var icons = IconCache.shared
     @State private var hold = MenuHold()
     @Environment(\.dockEdge) private var edge
@@ -42,7 +43,7 @@ struct GroupTileView: View {
     var body: some View {
         tile
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(group.name)
+            .accessibilityLabel(accessibilityTitle)
             .accessibilityAddTraits(.isButton)
             .dockHoverTarget(id: DockEntry.group(group).id, title: group.name)
             // AppKit menu like app tiles: right-click and press-and-hold
@@ -93,6 +94,7 @@ struct GroupTileView: View {
                 .padding(inset)
             }
             .frame(width: size, height: size)
+            .dockBadge(dockModel.showBadges ? badges.badge(forGroup: group) : nil, iconSize: size, style: dockModel.badgeStyle)
             .contentShape(Rectangle())
             .menuHold(hold, onTap: onToggle)
             .magnifiedIcon(id: DockEntry.group(group).id)
@@ -103,6 +105,13 @@ struct GroupTileView: View {
             .fill(Color.primary.opacity(anyRunning ? 0.75 : 0))
             .frame(width: 4, height: 4)
             .magnifiedIndicator(id: DockEntry.group(group).id)
+    }
+
+    private var accessibilityTitle: String {
+        if let badge = badges.badge(forGroup: group) {
+            return "\(group.name), \(badge)"
+        }
+        return group.name
     }
 }
 
@@ -115,6 +124,7 @@ struct GroupPopoverView: View {
     @ObservedObject var dockModel: DockModel
     @ObservedObject var runningApps: RunningApps
     @ObservedObject var groups: GroupController
+    @ObservedObject var badges: DockBadges
     let onLaunch: (PinnedApp, ((NSRunningApplication?) -> Void)?) -> Void
     /// A file drop on a member that can open it.
     let onOpenDocuments: ([URL], PinnedApp) -> Void
@@ -229,6 +239,7 @@ struct GroupPopoverView: View {
                                     dockModel: dockModel,
                                     groups: groups,
                                     bouncer: groups.bouncer,
+                                    badges: badges,
                                     isDropTarget: dropTargetID == app.id,
                                     onLaunch: onLaunch
                                 )
@@ -321,6 +332,7 @@ private struct GroupAppCell: View {
     @ObservedObject var dockModel: DockModel
     let groups: GroupController
     @ObservedObject var bouncer: LaunchBouncer
+    @ObservedObject var badges: DockBadges
     var isDropTarget = false
     let onLaunch: (PinnedApp, ((NSRunningApplication?) -> Void)?) -> Void
     @ObservedObject private var icons = IconCache.shared
@@ -331,6 +343,13 @@ private struct GroupAppCell: View {
     @State private var hold = MenuHold()
 
     private var bounceKey: String { LaunchBouncer.gridKey(groupID: groupID, appID: app.id) }
+
+    private var accessibilityTitle: String {
+        if let badge = badges.badge(for: app) {
+            return "\(app.displayName), \(badge)"
+        }
+        return app.displayName
+    }
 
     var body: some View {
         VStack(spacing: 3) {
@@ -346,6 +365,7 @@ private struct GroupAppCell: View {
                         .fill(Color.primary.opacity(isDropTarget ? 0.22 : 0))
                         .padding(-3)
                 )
+                .dockBadge(dockModel.showBadges ? badges.badge(for: app) : nil, iconSize: iconSize, style: dockModel.badgeStyle)
                 // Where the bounce window goes (the hosting view fills the
                 // overlay, so global is overlay content space).
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
@@ -381,7 +401,7 @@ private struct GroupAppCell: View {
         }
         .gesture(dragOutGesture)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(app.displayName)
+        .accessibilityLabel(accessibilityTitle)
         .accessibilityAddTraits(.isButton)
         .appKitContextMenu(hold: hold) {
             AppTileMenu.build(.init(

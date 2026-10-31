@@ -14,6 +14,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let dockModel: DockModel
     private let layout: DockLayout
     private let trash: TrashController
+    private let badges: DockBadges
     private let nativeDock: NativeDockController
     /// Read from the system each time the window opens.
     private let launchAtLogin = LaunchAtLogin()
@@ -24,15 +25,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var previousApp: NSRunningApplication?
     private var activationObserver: NSObjectProtocol?
 
-    /// Fits that land before this time (the first layout passes after
-    /// opening) keep the window centered instead of pinning its top edge.
-    private var centerUntil = Date.distantPast
-
-    init(dockModel: DockModel, layout: DockLayout, nativeDock: NativeDockController, trash: TrashController) {
+    init(dockModel: DockModel, layout: DockLayout, nativeDock: NativeDockController, trash: TrashController, badges: DockBadges) {
         self.dockModel = dockModel
         self.layout = layout
         self.nativeDock = nativeDock
         self.trash = trash
+        self.badges = badges
     }
 
     var isOpen: Bool { window?.isVisible == true || window?.isMiniaturized == true }
@@ -41,7 +39,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let window = self.window ?? makeWindow()
         self.window = window
         if !window.isVisible {
-            centerUntil = Date().addingTimeInterval(0.5)
             center(window)
         }
         launchAtLogin.refresh()
@@ -77,23 +74,23 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private func makeWindow() -> NSWindow {
         let hosting = NSHostingController(rootView: SettingsView(
             dockModel: dockModel, layout: layout, nativeDock: nativeDock,
-            launchAtLogin: launchAtLogin, trash: trash,
-            onContentHeight: { [weak self] in self?.fitContent(height: $0) }
+            launchAtLogin: launchAtLogin, trash: trash, badges: badges
         ))
-        // The window's height follows the selected tab (fitContent), so the
-        // hosting controller must not size the window itself.
+        // Fixed size, like System Settings: panes scroll instead of growing
+        // the window. The toolbar carries the pane title.
         hosting.sizingOptions = []
+        hosting.sceneBridgingOptions = [.toolbars, .title]
         let window = SettingsNSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: SettingsLayout.windowWidth, height: 560),
-            styleMask: [.titled, .closable, .miniaturizable],
+            contentRect: NSRect(origin: .zero, size: SettingsLayout.windowSize),
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.contentViewController = hosting
+        window.setContentSize(SettingsLayout.windowSize)
         window.title = "Portside Settings"
-        // The header sits right under the title bar; one divider (under the
-        // tabs) is enough.
-        window.titlebarSeparatorStyle = .none
+        window.titlebarAppearsTransparent = true
+        window.toolbarStyle = .unified
         window.isReleasedWhenClosed = false
         window.delegate = self
         // Older builds saved the window position; it now always opens centered.
@@ -117,25 +114,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             y: (area.midY - size.height / 2).rounded(),
             width: size.width, height: size.height
         )
-    }
-
-    /// Resizes the window to the selected tab's content, keeping its top
-    /// edge in place (like native Settings windows). Animated when visible.
-    private func fitContent(height: CGFloat) {
-        guard let window else { return }
-        let available = (window.screen ?? NSScreen.main)?.visibleFrame.height ?? 800
-        let maxContent = window.contentRect(forFrameRect: NSRect(x: 0, y: 0, width: 100, height: available)).height
-        let size = NSSize(width: SettingsLayout.windowWidth, height: min(height.rounded(.up), maxContent))
-        let old = window.frame
-        var frame = window.frameRect(forContentRect: NSRect(origin: .zero, size: size))
-        guard abs(frame.height - old.height) > 0.5 || abs(frame.width - old.width) > 0.5 else { return }
-        if Date() < centerUntil, let screen = window.screen ?? NSScreen.screens.first {
-            frame = centered(frame.size, on: screen)
-        } else {
-            frame.origin = NSPoint(x: old.minX, y: old.maxY - frame.height)
-        }
-        let animate = window.isVisible && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        window.setFrame(frame, display: true, animate: animate)
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -174,15 +152,15 @@ private final class SettingsNSWindow: NSWindow {
     }
 }
 
-/// Shared sizes so every tab lines up.
+/// Shared sizes so every pane lines up.
 enum SettingsLayout {
-    static let windowWidth: CGFloat = 520
+    /// Wide and short: a sidebar plus a scrolling pane.
+    static let windowSize = NSSize(width: 760, height: 560)
+    static let sidebarWidth: CGFloat = 200
     /// Label column for slider rows.
     static let labelWidth: CGFloat = 136
     /// Value column for slider rows ("150 ms", "Instant").
     static let valueWidth: CGFloat = 56
-    /// Fallback content height per tab before macOS 15 (no scroll geometry).
-    static let fallbackFormHeight: CGFloat = 470
 }
 
 /// Secondary helper text under a control.
@@ -204,7 +182,7 @@ extension Text {
 // MARK: - Root
 
 private enum SettingsTab: String, CaseIterable, Identifiable {
-    case general, appearance, widgets, groups
+    case general, appearance, widgets, groups, system
 
     var id: String { rawValue }
 
@@ -214,119 +192,112 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .appearance: "Appearance"
         case .widgets: "Widgets"
         case .groups: "Groups"
+        case .system: "System"
         }
     }
 
     var symbol: String {
         switch self {
-        case .general: "gearshape"
+        case .general: "dock.rectangle"
         case .appearance: "paintbrush"
         case .widgets: "square.grid.2x2"
         case .groups: "folder"
+        case .system: "gearshape"
         }
     }
 }
 
+/// System Settings-style layout: a fixed sidebar of panes on the left, the
+/// selected pane's form on the right. React analogy: a layout route with a
+/// nav column and an outlet.
 struct SettingsView: View {
     @ObservedObject var dockModel: DockModel
     @ObservedObject var layout: DockLayout
     let nativeDock: NativeDockController
     let launchAtLogin: LaunchAtLogin
     let trash: TrashController
-    /// Total content height the window should have for the selected tab.
-    let onContentHeight: (CGFloat) -> Void
+    @ObservedObject var badges: DockBadges
 
     @State private var tab: SettingsTab = .general
-    @State private var chromeHeight: CGFloat = 0
-    @State private var formHeight: CGFloat = SettingsLayout.fallbackFormHeight
 
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 0) {
-                SettingsHeader()
-                SettingsTabBar(selection: $tab)
-                Divider()
-            }
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
-                chromeHeight = $0
-                report()
-            }
-
+        NavigationSplitView {
+            SettingsSidebar(selection: $tab)
+                .navigationSplitViewColumnWidth(min: SettingsLayout.sidebarWidth, ideal: SettingsLayout.sidebarWidth, max: SettingsLayout.sidebarWidth)
+                .toolbar(removing: .sidebarToggle)
+        } detail: {
             Group {
                 switch tab {
-                case .general: GeneralSettings(dockModel: dockModel, layout: layout, nativeDock: nativeDock, launchAtLogin: launchAtLogin, trash: trash)
+                case .general: GeneralSettings(dockModel: dockModel, layout: layout, trash: trash, badges: badges)
                 case .appearance: AppearanceSettings(dockModel: dockModel)
                 case .widgets: WidgetSettings(dockModel: dockModel)
                 case .groups: GroupSettings(dockModel: dockModel)
+                case .system: SystemSettings(dockModel: dockModel, layout: layout, nativeDock: nativeDock, launchAtLogin: launchAtLogin)
                 }
             }
             .formStyle(.grouped)
-            .modifier(FormHeightReader { height in
-                formHeight = height
-                report()
-            })
-            .frame(maxHeight: .infinity)
+            .navigationTitle(tab.title)
         }
-        .frame(width: SettingsLayout.windowWidth)
-    }
-
-    private func report() {
-        guard chromeHeight > 0 else { return }
-        onContentHeight(chromeHeight + formHeight)
+        .frame(width: SettingsLayout.windowSize.width, height: SettingsLayout.windowSize.height)
     }
 }
 
-/// Reads the grouped Form's content height so the window can fit it.
-private struct FormHeightReader: ViewModifier {
-    let onChange: (CGFloat) -> Void
+// MARK: - Sidebar
 
-    func body(content: Content) -> some View {
-        if #available(macOS 15, *) {
-            content.onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, height in
-                if height > 0 { onChange(height) }
-            }
-        } else {
-            content
-        }
-    }
-}
-
-// MARK: - Header and tabs
-
-/// App icon, name, version, and the update check. No container: it sits
-/// on the window background above the tabs.
-private struct SettingsHeader: View {
+/// App identity at the top, the panes, and the update check at the bottom.
+private struct SettingsSidebar: View {
+    @Binding var selection: SettingsTab
     @State private var status: String?
     @State private var clearStatus: Task<Void, Never>?
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(nsImage: AppIcon.image(points: 48))
+        List(selection: Binding(get: { selection }, set: { if let tab = $0 { selection = tab } })) {
+            ForEach(SettingsTab.allCases) { tab in
+                Label(tab.title, systemImage: tab.symbol).tag(tab)
+            }
+        }
+        .listStyle(.sidebar)
+        .safeAreaInset(edge: .top, spacing: 0) { identity }
+        .safeAreaInset(edge: .bottom, spacing: 0) { updates }
+    }
+
+    private var identity: some View {
+        HStack(spacing: 10) {
+            Image(nsImage: AppIcon.image(points: 36))
                 .resizable()
                 .interpolation(.high)
-                .frame(width: 48, height: 48)
+                .frame(width: 36, height: 36)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(AppInfo.name)
-                    .font(.title2.weight(.bold))
-                Text(AppInfo.versionLine)
-                    .font(.system(size: 12))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(AppInfo.name).font(.headline)
+                Text("v\(AppInfo.version)")
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                if let status {
-                    Text(status)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .transition(.opacity)
-                }
+                    .lineLimit(1)
             }
-            Spacer(minLength: 12)
-            Button("Check for Updates", action: checkForUpdates)
+            Spacer(minLength: 0)
         }
-        // Tall enough for the status line, so it never resizes the window.
-        .frame(height: 60)
-        .padding(.horizontal, 20)
-        .padding(.top, 12)
-        .padding(.bottom, 4)
+        // Author and build details don't fit the sidebar; hover shows them.
+        .help(AppInfo.versionLine)
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+        .padding(.bottom, 10)
+    }
+
+    private var updates: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button("Check for Updates", action: checkForUpdates)
+                .controlSize(.small)
+            // Fixed height so the message never moves the button.
+            Text(status ?? " ")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .frame(height: 28, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
     }
 
     private func checkForUpdates() {
@@ -341,51 +312,13 @@ private struct SettingsHeader: View {
     }
 }
 
-/// Toolbar-style tabs: an SF Symbol above a label, like native Settings.
-private struct SettingsTabBar: View {
-    @Binding var selection: SettingsTab
-
-    var body: some View {
-        HStack(spacing: 8) {
-            ForEach(SettingsTab.allCases) { tab in
-                let selected = tab == selection
-                Button { selection = tab } label: {
-                    VStack(spacing: 4) {
-                        Image(systemName: tab.symbol)
-                            .font(.system(size: 18, weight: .regular))
-                            .frame(height: 22)
-                        Text(tab.title)
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .frame(width: 72, height: 48)
-                    .foregroundStyle(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(selected ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
-                    )
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(selected ? .isSelected : [])
-            }
-        }
-        .padding(.bottom, 8)
-        .frame(maxWidth: .infinity)
-    }
-}
-
 // MARK: - General
 
 private struct GeneralSettings: View {
     @ObservedObject var dockModel: DockModel
     @ObservedObject var layout: DockLayout
-    let nativeDock: NativeDockController
-    @ObservedObject var launchAtLogin: LaunchAtLogin
     @ObservedObject var trash: TrashController
-
-    @State private var importRequest: ImportRequest?
-    @State private var canUndoImport = DockModel.hasBeforeImport
-    @State private var importStatus: String?
+    @ObservedObject var badges: DockBadges
 
     /// Same limit the separator drag clamps to. Kept one point above the
     /// minimum so the slider range is never empty.
@@ -461,6 +394,19 @@ private struct GeneralSettings: View {
                     }
                 }
 
+                Toggle(isOn: Binding(
+                    get: { dockModel.showBadges },
+                    set: { dockModel.setShowBadges($0) }
+                )) {
+                    Text("Show notification badges")
+                    if badges.isAvailable {
+                        Text("The same badges the macOS Dock shows. An app whose badges are off in Notifications settings may still show one here.").helperStyle()
+                    } else {
+                        Text("Not available on this version of macOS.").helperStyle()
+                    }
+                }
+                .disabled(!badges.isAvailable)
+
                 Toggle("Animate opening applications", isOn: Binding(
                     get: { dockModel.animateOpeningApplications },
                     set: { dockModel.setAnimateOpeningApplications($0) }
@@ -501,7 +447,28 @@ private struct GeneralSettings: View {
                         .font(.system(size: 12))
                 }
             }
+        }
+    }
+}
 
+/// macOS Dock hiding, launch at login, and importing from the macOS Dock.
+private struct SystemSettings: View {
+    @ObservedObject var dockModel: DockModel
+    @ObservedObject var layout: DockLayout
+    let nativeDock: NativeDockController
+    @ObservedObject var launchAtLogin: LaunchAtLogin
+
+    @State private var importRequest: ImportRequest?
+    @State private var canUndoImport = DockModel.hasBeforeImport
+    @State private var importStatus: String?
+
+    /// Import clamps the native icon size to what fits, like the slider.
+    private var maxIconSize: CGFloat {
+        max(layout.fitTileSize, DockModel.iconSizeRange.lowerBound + 1)
+    }
+
+    var body: some View {
+        Form {
             Section("macOS Dock") {
                 Toggle(isOn: Binding(
                     get: { dockModel.hideNativeDock },
@@ -583,6 +550,7 @@ private struct GeneralSettings: View {
         canUndoImport = DockModel.hasBeforeImport
     }
 }
+
 
 private struct ImportRequest: Identifiable, Equatable {
     let id = UUID()
@@ -766,6 +734,36 @@ private struct AppearanceSettings: View {
                 }
             } footer: {
                 Text(backgroundHelp).footerStyle()
+            }
+
+            Section {
+                HStack(spacing: 12) {
+                    Picker("Badge color", selection: Binding(
+                        get: { dockModel.badgeColor },
+                        set: { dockModel.setBadgeColor($0) }
+                    )) {
+                        ForEach(BadgeColor.allCases) { choice in
+                            if choice == .custom { Divider() }
+                            Text(choice.title).tag(choice)
+                        }
+                    }
+                    if dockModel.badgeColor == .custom {
+                        ColorPicker("Custom badge color", selection: Binding(
+                            get: { dockModel.badgeCustomColor.color },
+                            set: { dockModel.setBadgeCustomColor(RGBAColor($0)) }
+                        ), supportsOpacity: false)
+                        .labelsHidden()
+                    }
+                    DockBadgeLabel(text: "3", iconSize: 48, style: dockModel.badgeStyle)
+                    DockBadgeLabel(text: "128", iconSize: 48, style: dockModel.badgeStyle)
+                }
+            } header: {
+                Text("Badges")
+            } footer: {
+                Text(dockModel.badgeColor == .macOS
+                     ? "The same red as the macOS Dock."
+                     : "Text turns black on light colors so counts stay readable.")
+                    .footerStyle()
             }
         }
     }

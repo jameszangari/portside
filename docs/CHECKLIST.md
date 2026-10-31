@@ -15,16 +15,64 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
 - [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu (built on app tiles, group tiles, Portside's own tile and grid cells, hand test pending); divider right-click (built: Turn Hiding On/Off, Turn Magnification On/Off, Position on Screen, Dock Settings); Option turns Quit into Force Quit (built); drag apps in from Finder (built); drag icons out to remove (built, hand test pending); drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder, built); Option-click (hide frontmost) and Cmd+Option-click (hide others) (built); Hide/Show and Force Quit in the app menu (built); Cmd-Option-D show/hide (built)
 - [x] **P2:** Trash; folder stacks (grid-first; fan/list deferred); spacers; system glass + Reduce Transparency; spring-load apps; magnification. Hand-tested.
-- [ ] **P3:** [x] Follow the display the cursor hits; [x] fullscreen apps and Spaces (`canJoinAllSpaces` / `fullScreenAuxiliary` + re-front on Space change); [x] do not reveal while holding the mouse button / dragging a window (file drags still reveal); [ ] badge counts via the real Dock's accessibility tree; [ ] window list in the right-click menu; [ ] VoiceOver labels and keyboard navigation
+- [ ] **P3:** [x] Follow the display the cursor hits; [x] fullscreen apps and Spaces (`canJoinAllSpaces` / `fullScreenAuxiliary` + re-front on Space change); [x] do not reveal while holding the mouse button / dragging a window (file drags still reveal); [x] badge counts from LaunchServices (private API, guarded; no Accessibility); [ ] window list in the right-click menu; [ ] VoiceOver labels and keyboard navigation
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section; bounce on attention request (needs private APIs, not wanted for now)
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
 ---
 
+# P3: Notification badges (2026-10-31)
+
+Status: rebuilt on LaunchServices, installed build verified with synthetic reveals and a screenshot. Hand test pending. Files: `DockBadges.swift`, `LaunchServicesBadges.swift` (new, private API). dock.json: `showBadges` (default true). `badgeAccessHintDismissed` removed (old files ignore it).
+
+## Deliverables
+
+- [x] Read each running app's badge from LaunchServices ("StatusLabel", the same store the Dock draws from) via `_LSASNCreateWithPid` + `_LSCopyApplicationInformationItem`, loaded with dlopen/dlsym. Missing symbols: badges off, Settings says "Not available", no crash.
+- [x] No Accessibility permission. The Accessibility hint and prompt are gone.
+- [x] Reads run off the main thread. One read when the dock starts revealing (deferred a runloop turn, outside the reveal path), then every 1s only while the dock is on screen; app launch and quit also read. Nothing runs while hidden.
+- [x] Chip: system-red circle (capsule for longer text), white bold text, soft shadow, top-trailing corner, sized from the tile (grows with magnification). Overlay only: icons no longer shift when a badge appears; no white ring.
+- [x] Group tiles show the sum of member badges; grid cells show their own.
+- [x] Native style, measured against the real Dock (quit Portside, revealed the native Dock with two test apps, screenshot): height 0.38 of the tile, regular-weight white digits at 0.54 of the height with slightly tight tracking, no ring or shadow, top-trailing corner flush with the icon frame's corner.
+- [x] Native red calibrated on screen: P3 (0.850, 0.281, 0.223), about sRGB #EB372D. Portside's badge pixels now equal the native Dock's (P3 0.826, 0.404, 0.316 in the screenshot). `systemRed` was visibly pinker.
+- [x] Settings > Appearance > Badges: color menu (macOS Red default, Accent Color, Orange, Yellow, Green, Blue, Purple, Pink, Graphite, Custom with a color picker) and a live preview chip. Text turns black on light fills. dock.json: `badgeColor`, `badgeCustomColor`.
+
+## Verification
+
+- `swift build` clean. Installed with `scripts/build-app.sh --install` after a graceful quit (Dock prefs restored to autohide on, no delay, then the hide trick re-applied on launch).
+- Finding: the old Accessibility approach could not work with "Hide the macOS Dock". After `killall Dock` the Dock's tiles report `AXStatusLabel` nil for badges set before the restart, while LaunchServices still has them (test app: AX `[]`, LS `5`). Portside restarts the Dock at every launch. Ad-hoc rebuilds also reset the Accessibility grant.
+- Finding: the Dock posts no AX notifications for badge changes, and LaunchServices delivers none to clients (`lsappinfo listen`), so a visible-only 1s read is the event-free minimum.
+- Logs: launch read `Discord.app=1, Mail.app=460`; a test app badge set while hidden appeared on the next reveal; live changes (1, 2, cleared, 4) landed within 1s while revealed; no reads after hide.
+- Reveal timing after the change: mouseEntered -> panel interactive 1.7 to 3ms warm (14ms first reveal), interactive within 0.06ms of animation start. A first version that listed apps on the main thread added 20ms; fixed.
+- Screenshot of the revealed dock: Discord "1" circle and Mail "460" capsule at the top-right, unclipped.
+- Finding: the badge color mismatch was color management, not Liquid Glass. A plain test window without glass produced the same shifted pixels; icons were unaffected. Fixed by calibrating the input color against the screen.
+- Color setting: `badgeColor` set to `green` in dock.json rendered a systemGreen badge after relaunch; file restored afterwards.
+- Capsule width for "460": 1.32 of its height vs native 1.25 (sub-pixel at normal sizes).
+
+## Hand test
+
+- [ ] Apps with badges (Mail, Discord, Messages) show the same count as their app icon would on the native Dock, on Bottom, Left and Right.
+- [ ] Read a message or change a count with the dock up: the badge updates within about 1s. Hidden then revealed: correct by the end of the slide.
+- [ ] Magnification on: the badge grows with its icon and stays unclipped at both ends of the dock.
+- [ ] Group tile with badged members shows the sum; open grid shows per-app badges.
+- [ ] Toggle Show notification badges off/on live. No Accessibility prompt appears.
+- [ ] Appearance > Badges: each color applies live to the dock and the preview; Custom opens a picker and survives relaunch; Yellow shows black text.
+- [ ] Compare with the native Dock in light mode too (calibration was done in dark mode).
+
+## Known gaps
+
+- An app whose badges are turned off in System Settings > Notifications may still show a badge here. The Dock filters those itself and the setting is not readable (no `com.apple.ncprefs` on macOS 27).
+- Up to 1s lag while the dock is visible (no change events exist).
+
+## Deferred
+
+- Window list in the app menu; VoiceOver / keyboard navigation.
+
+---
+
 # P3: Multi-display, Spaces, button-hold suppress (2026-10-31)
 
-Status: implemented, debug build and launch verified. Hand test pending (James: no second display available right now; multi-display checks deferred). Single-screen items (button-hold suppress, Spaces/fullscreen, file-drag reveal) also still pending confirmation. Badges, window list, and VoiceOver are the next slices.
+Status: implemented, committed (`ea653d8`). Hand test pending (James: no second display available right now; multi-display checks deferred). Single-screen items (button-hold suppress, Spaces/fullscreen, file-drag reveal) also still pending confirmation.
 
 ## Deliverables
 
@@ -48,7 +96,7 @@ Status: implemented, debug build and launch verified. Hand test pending (James: 
 
 ## Deferred (later P3)
 
-- Badge counts (Accessibility / private fallback).
+- Badge counts (done, see the badges section above).
 - Window list in the app menu (Screen Recording for titles).
 - VoiceOver labels and keyboard navigation.
 

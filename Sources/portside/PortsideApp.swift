@@ -187,6 +187,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Menu-bar / edge-only: keep running when no titled windows are open
+        // (otherwise AppKit may terminate a background `swift run` launch).
+        ProcessInfo.processInfo.disableAutomaticTermination("portside dock")
         if Bundle.main.bundleURL.pathExtension != "app" {
             NSApp.applicationIconImage = AppIcon.image
         }
@@ -227,7 +230,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// panel itself stays non-activating.
     func openSettings() {
         guard let dockEngine else { return }
-        let controller = settings ?? SettingsWindowController(dockModel: dockModel, layout: dockEngine.layout, nativeDock: nativeDock, trash: dockEngine.trash)
+        let controller = settings ?? SettingsWindowController(dockModel: dockModel, layout: dockEngine.layout, nativeDock: nativeDock, trash: dockEngine.trash, badges: dockEngine.badges)
         controller.onActivationPolicyChanged = { [weak dockEngine] in dockEngine?.activationPolicyChanged() }
         settings = controller
         controller.show()

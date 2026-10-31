@@ -230,6 +230,9 @@ final class DockModel: Codable, ObservableObject {
     /// used). It is shown once and never again on its own.
     @Published private(set) var trashAccessHintDismissed: Bool = false
 
+    /// Draw notification badges, the same ones the native Dock shows.
+    @Published private(set) var showBadges: Bool = true
+
     func setShowTrash(_ enabled: Bool) {
         guard enabled != showTrash else { return }
         showTrash = enabled
@@ -239,6 +242,33 @@ final class DockModel: Codable, ObservableObject {
     func dismissTrashAccessHint() {
         guard !trashAccessHintDismissed else { return }
         trashAccessHintDismissed = true
+        persist()
+    }
+
+    /// Badge fill (Settings > Appearance > Badges).
+    @Published private(set) var badgeColor: BadgeColor = .macOS
+    /// Used when `badgeColor` is `.custom`. Kept when switching away, so
+    /// switching back restores it.
+    @Published private(set) var badgeCustomColor: RGBAColor = BadgeColor.defaultCustom
+
+    var badgeStyle: BadgeStyle { BadgeStyle(fill: badgeColor.fill(custom: badgeCustomColor)) }
+
+    func setBadgeColor(_ color: BadgeColor) {
+        guard color != badgeColor else { return }
+        badgeColor = color
+        persist()
+    }
+
+    func setBadgeCustomColor(_ color: RGBAColor) {
+        guard color != badgeCustomColor else { return }
+        badgeCustomColor = color
+        if badgeColor != .custom { badgeColor = .custom }
+        persist()
+    }
+
+    func setShowBadges(_ enabled: Bool) {
+        guard enabled != showBadges else { return }
+        showBadges = enabled
         persist()
     }
 
@@ -585,6 +615,7 @@ final class DockModel: Codable, ObservableObject {
         case animateOpeningApplications
         case hideNativeDock, nativeDockExplained
         case showTrash, trashAccessHintDismissed
+        case showBadges, badgeColor, badgeCustomColor
         case stacks
         case iconStyle, backgroundStyle, backgroundFrost, backgroundTint, cornerRadius
         /// Before Milestone D: a flat list of apps. Read only, for migration.
@@ -615,6 +646,9 @@ final class DockModel: Codable, ObservableObject {
         nativeDockExplained = try c.decodeIfPresent(Bool.self, forKey: .nativeDockExplained) ?? false
         showTrash = (try? c.decodeIfPresent(Bool.self, forKey: .showTrash)) ?? true
         trashAccessHintDismissed = (try? c.decodeIfPresent(Bool.self, forKey: .trashAccessHintDismissed)) ?? false
+        showBadges = (try? c.decodeIfPresent(Bool.self, forKey: .showBadges)) ?? true
+        badgeColor = (try? c.decodeIfPresent(BadgeColor.self, forKey: .badgeColor)) ?? .macOS
+        badgeCustomColor = (try? c.decodeIfPresent(RGBAColor.self, forKey: .badgeCustomColor)) ?? BadgeColor.defaultCustom
         stacks = (try? c.decodeIfPresent([FolderStack].self, forKey: .stacks)) ?? []
         openGroupsOnHover = try c.decodeIfPresent(Bool.self, forKey: .openGroupsOnHover) ?? false
         groupHoverDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverDelay) ?? Defaults.groupHoverDelay, to: Self.groupHoverDelayRange)
@@ -646,6 +680,9 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(nativeDockExplained, forKey: .nativeDockExplained)
         try c.encode(showTrash, forKey: .showTrash)
         try c.encode(trashAccessHintDismissed, forKey: .trashAccessHintDismissed)
+        try c.encode(showBadges, forKey: .showBadges)
+        try c.encode(badgeColor, forKey: .badgeColor)
+        try c.encode(badgeCustomColor, forKey: .badgeCustomColor)
         try c.encode(stacks, forKey: .stacks)
         try c.encode(openGroupsOnHover, forKey: .openGroupsOnHover)
         try c.encode(groupHoverDelay, forKey: .groupHoverDelay)
@@ -798,6 +835,7 @@ final class DockModel: Codable, ObservableObject {
         animateOpeningApplications = old.animateOpeningApplications
         autoHide = old.autoHide
         showTrash = old.showTrash
+        showBadges = old.showBadges
         openGroupsOnHover = old.openGroupsOnHover
         groupHoverDelay = old.groupHoverDelay
         groupHoverCloseGrace = old.groupHoverCloseGrace

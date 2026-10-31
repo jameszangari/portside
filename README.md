@@ -31,6 +31,7 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - Timing logs for mouseEntered (or draggingEntered), animation start, and panel-interactive.
 - Auto-hide toggle (menu bar item, separator right-click menu, Settings, or Cmd+Option+D). With hiding off, the dock stays revealed.
 - Multi-display: an edge zone on every screen; the dock follows the display whose edge you hit. Works across Spaces and over fullscreen apps. Does not reveal while you are holding a mouse button (for example dragging a window); file drags to the edge still reveal.
+- Notification badges, the same ones the macOS Dock shows, with no permission needed. They update while the dock is visible. Same size, placement, font and red as the native badge. Badge color is a setting (Appearance > Badges: macOS Red, Accent Color, system colors, or Custom). Toggle in Settings. Group tiles show the sum of member badges.
 
 **Apps**
 - Pinned apps with running indicators, updated from `NSWorkspace` notifications.
@@ -113,7 +114,7 @@ From `docs/CHECKLIST.md` and `docs/PLAN.md`:
 - Update checker: compare AppInfo.version with the latest GitHub release tag (vX.Y.Z), show 'up to date' or a link to the release. The Check for Updates button is a placeholder until then.
 - Native Dock parity: Open at Login in the app menu.
 - Trash: Option-click "Empty Trash without warning" and icon animation.
-- Native Dock parity leftovers: badge counts, window list in the app menu, VoiceOver / keyboard navigation.
+- Native Dock parity leftovers: window list in the app menu, VoiceOver / keyboard navigation; hide badges for apps whose badges are off in Notifications settings (that setting is not readable today).
 - Better widget layout on side docks.
 
 ## Requirements and build
@@ -194,6 +195,7 @@ It is deleted after a verified restore. If it exists when Portside starts, Ports
 The Settings window controls:
 - Position, auto-hide, icon size, "Animate opening applications"
 - Show Trash in dock (`showTrash`, default `true`); dismissed Full Disk Access hint (`trashAccessHintDismissed`, default `false`)
+- Show notification badges (`showBadges`, default `true`); badge color (`badgeColor`: `macOS`, `accent`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `graphite` or `custom`, default `macOS`); custom badge color (`badgeCustomColor`, sRGB `{ red, green, blue, alpha }`, used when `badgeColor` is `custom`)
 - Folder stacks (`stacks`: `{ id, path, itemOrder? }[]`, right section before Trash; `itemOrder` is child filenames for grid placement)
 - Magnification (`magnificationEnabled`) and Magnified size (`magnifiedSize`, points, 16 to 128, default 64)
 - Reveal delay, hide delay, animation duration (with reset to defaults)
@@ -208,7 +210,8 @@ The built app lives at `build/Portside.app` (ignored by git), and at `~/Applicat
 
 ## Notes
 
-- The separator's resize cursor needs a private SkyLight call, because macOS ignores cursor changes from a background app. `BackgroundCursor.swift` loads it with `dlopen`/`dlsym`. If the framework or symbols are missing, the cursor feature is disabled and nothing crashes. No other private APIs are used.
+- The separator's resize cursor needs a private SkyLight call, because macOS ignores cursor changes from a background app. `BackgroundCursor.swift` loads it with `dlopen`/`dlsym`. If the framework or symbols are missing, the cursor feature is disabled and nothing crashes.
+- Notification badges read each app's badge from LaunchServices (`_LSASNCreateWithPid`, `_LSCopyApplicationInformationItem`), the store the Dock itself draws from. `LaunchServicesBadges.swift` loads them with `dlopen`/`dlsym`; if they are missing, badges turn off and Settings says so. No other private APIs are used.
 - The native Dock is modified only while "Hide the macOS Dock" is on: Portside writes `autohide` and `autohide-delay` in `com.apple.dock` (public CFPreferences, then `killall Dock`) and restores every saved value on the way out. With the option off, no `com.apple.dock` settings are touched and both docks can react to the same edge. Portside is separate from the third-party Dockset app.
 - The system's Cmd+Option+D shortcut toggles the native Dock's auto-hide. While Portside hides the native Dock, it makes the native Dock appear until restore.
 - Opening Settings turns Portside into a regular app (visible in Cmd+Tab and the native Dock) until the window closes.
@@ -226,6 +229,8 @@ Sources/portside/
   DockEdge.swift            Bottom/Left/Right enum and DockScreen (active display)
   DockStrip.swift           SwiftUI strip: tiles, widgets, separator, reorder, drops
   DockItem.swift            App tile, icon cache, launch/activate
+  DockBadges.swift          Notification badges: visible-only reads and the badge chip
+  LaunchServicesBadges.swift Private LaunchServices badge reader (dlopen/dlsym guarded)
   TileActions.swift         Modifier clicks (Cmd, Option) and the AppKit right-click menu with Force Quit
   FileDrop.swift            Per-drag state for pin apps/folders, open, deposit, and Trash drops
   AppSpringLoad.swift       File drag resting on a running app brings it forward

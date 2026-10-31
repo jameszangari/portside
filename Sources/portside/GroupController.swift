@@ -56,6 +56,8 @@ final class GroupController: ObservableObject {
     private let runningApps: RunningApps
     private let hover: DockHover
     let bouncer: LaunchBouncer
+    /// Notification badges for grid cells.
+    let badges: DockBadges
     /// Grid cells report their drags here (drag an app out to remove it
     /// from the group).
     let dragOut: DragOutController
@@ -84,12 +86,13 @@ final class GroupController: ObservableObject {
     private var openedByHover = false
     private let logger = Logger(subsystem: "com.james.portside", category: "Groups")
 
-    init(dockModel: DockModel, runningApps: RunningApps, hover: DockHover, bouncer: LaunchBouncer, dragOut: DragOutController) {
+    init(dockModel: DockModel, runningApps: RunningApps, hover: DockHover, bouncer: LaunchBouncer, dragOut: DragOutController, badges: DockBadges) {
         self.dockModel = dockModel
         self.runningApps = runningApps
         self.hover = hover
         self.bouncer = bouncer
         self.dragOut = dragOut
+        self.badges = badges
         overlay.ignoresMouseEvents = false
         overlay.onMouseEntered = { [weak self] in
             guard let self else { return }
@@ -199,6 +202,7 @@ final class GroupController: ObservableObject {
             dockModel: dockModel,
             runningApps: runningApps,
             groups: self,
+            badges: badges,
             onLaunch: { [weak self] app, afterOpen in self?.launch(app, afterOpen: afterOpen) },
             onOpenDocuments: { [weak self] urls, app in self?.launch(app, documents: urls) },
             onAddApps: { [weak self] apps, at in

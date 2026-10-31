@@ -237,6 +237,7 @@ struct DockItemView: View {
     let size: CGFloat
     @ObservedObject var dockModel: DockModel
     @ObservedObject var bouncer: LaunchBouncer
+    @ObservedObject var badges: DockBadges
     /// A file drag is over this tile and the app can open it.
     var isDropTarget = false
     @ObservedObject private var icons = IconCache.shared
@@ -245,11 +246,18 @@ struct DockItemView: View {
 
     var body: some View {
         tile
-            .accessibilityLabel(app.displayName)
+            .accessibilityLabel(accessibilityTitle)
         .dockHoverTarget(id: app.id, title: app.displayName)
         .appKitContextMenu(edge: edge, hold: hold, magnifyID: app.id) {
             AppTileMenu.build(.init(app: app, running: running, isPinned: isPinned, dockModel: dockModel))
         }
+    }
+
+    private var accessibilityTitle: String {
+        if let badge = badges.badge(for: app) {
+            return "\(app.displayName), \(badge)"
+        }
+        return app.displayName
     }
 
     /// Icon plus running dot. The dot sits between the icon and the screen
@@ -279,6 +287,7 @@ struct DockItemView: View {
                     .fill(Color.primary.opacity(isDropTarget ? 0.22 : 0))
                     .padding(-3)
             )
+            .dockBadge(dockModel.showBadges ? badges.badge(for: app) : nil, iconSize: size, style: dockModel.badgeStyle)
             .contentShape(Rectangle())
             .menuHold(hold) {
                 // Modifier state at click time; a tap gesture has no event.

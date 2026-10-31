@@ -32,9 +32,12 @@ final class DockEngine {
     private let magnifier = Magnifier()
     /// The Trash tile's state. Shared with Settings (Full Disk Access hint).
     let trash = TrashController()
+    /// Notification badges from LaunchServices. Shared with Settings.
+    let badges = DockBadges()
     private let flipKeys = MagnifyFlipKeys()
     private var magnifySubscriptions: [AnyCancellable] = []
     private var bounceSettingSubscription: AnyCancellable?
+    private var badgeSettingSubscription: AnyCancellable?
     private let logger = Logger(subsystem: "com.james.portside", category: "DockEngine")
 
     private var pendingHide: DispatchWorkItem?
@@ -85,9 +88,9 @@ final class DockEngine {
         self.layout = DockLayout()
         self.hover = DockHover(overlay: OverlayPanel())
         self.bouncer = LaunchBouncer(dockModel: dockModel, hover: hover)
-        self.groups = GroupController(dockModel: dockModel, runningApps: runningApps, hover: hover, bouncer: bouncer, dragOut: dragOut)
+        self.groups = GroupController(dockModel: dockModel, runningApps: runningApps, hover: hover, bouncer: bouncer, dragOut: dragOut, badges: badges)
         self.stacks = StackController(dockModel: dockModel, hover: hover)
-        let strip = DockStrip(dockModel: dockModel, runningApps: runningApps, widgets: widgets, layout: layout, groups: groups, stacks: stacks, bouncer: bouncer, hover: hover, interactions: interactions, dragOut: dragOut, magnifier: magnifier, trash: trash)
+        let strip = DockStrip(dockModel: dockModel, runningApps: runningApps, widgets: widgets, layout: layout, groups: groups, stacks: stacks, bouncer: bouncer, hover: hover, interactions: interactions, dragOut: dragOut, magnifier: magnifier, trash: trash, badges: badges)
         self.dockPanel = DockPanel(dockModel: dockModel, strip: strip, magnifier: magnifier)
         self.edgeTracker = EdgeTracker(edge: dockModel.edge)
         hover.setEdge(dockModel.edge)
@@ -307,6 +310,11 @@ final class DockEngine {
             .dropFirst()
             .filter { !$0 }
             .sink { [weak self] _ in self?.bouncer.cancel(reason: "setting turned off") }
+        badgeSettingSubscription = dockModel.$showBadges
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] on in self?.badges.setEnabled(on) }
 
         edgeTracker.onMouseEntered = { [weak self] event, screen in
             self?.handleEdgeEnter(event: event, screen: screen)
@@ -341,8 +349,14 @@ final class DockEngine {
             self?.logTiming(label: "animation start")
             // After the timing log: the reveal path itself is unchanged.
             self?.flipKeys.start()
+            // Next runloop turn, so nothing is added to the reveal path. The
+            // read runs off the main thread and lands during the slide.
+            DispatchQueue.main.async { self?.badges.setVisible(true) }
         }
-        dockPanel.onHidden = { [weak self] in self?.flipKeys.stop() }
+        dockPanel.onHidden = { [weak self] in
+            self?.flipKeys.stop()
+            self?.badges.setVisible(false)
+        }
         dockPanel.onPanelInteractive = { [weak self] in
             self?.logTiming(label: "panel interactive")
         }
@@ -363,6 +377,7 @@ final class DockEngine {
     /// the edge window is shown. With it off, the panel is simply up.
     func start() {
         trash.start()
+        badges.start(enabled: dockModel.showBadges)
         configureMagnifier()
         // Seed active screen from the cursor before the first layout.
         if let screen = DockScreen.screen(containing: NSEvent.mouseLocation) {
@@ -432,6 +447,7 @@ final class DockEngine {
         edgeTracker.stop()
         widgets.stopAll()
         trash.stop()
+        badges.stop()
         logger.info("engine stopped")
     }
 
