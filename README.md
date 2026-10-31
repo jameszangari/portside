@@ -87,14 +87,15 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - Empty Trash needs Automation permission for Finder. Denial and file-operation failures appear inline in Settings and in the Trash hover label. Under `swift run`, macOS may attribute permissions to the launching terminal; use the built app for permission testing.
 
 **Settings window**
-- General, Appearance, Widgets, and Groups tabs. Changes apply live.
-- Header with the Portside icon, version, and author. Unreleased or modified builds show the short git hash. The window opens in the center of the screen with the cursor and fits each tab.
+- System Settings-style layout: a sidebar with General, Appearance, Widgets, Groups, and System panes, and the selected pane on the right. Changes apply live.
+- Fixed 760 x 560 window (wide and short); long panes scroll instead of growing the window. Opens in the center of the screen with the cursor.
+- Sidebar shows the Portside icon and version (`v0.2.0`; hover for author and build hash) and a Check for Updates button.
 - Drag widget rows to reorder them.
 
 **Native Dock**
-- "Hide the macOS Dock" (Settings > General): keeps the native Dock from ever appearing while Portside runs, using the autohide-delay trick. Its exact prior settings are saved first and restored when you turn this off, quit, or stop Portside with Ctrl+C or `kill`. After a crash or `kill -9`, the next launch restores them first.
+- "Hide the macOS Dock" (Settings > System): keeps the native Dock from ever appearing while Portside runs, using the autohide-delay trick. Its exact prior settings are saved first and restored when you turn this off, quit, or stop Portside with Ctrl+C or `kill`. After a crash or `kill -9`, the next launch restores them first.
 - First launch (no `dock.json`): pinned apps, folder stacks, position, and icon size are taken from the native Dock (Finder first). If a Hide-the-Dock backup exists, position and size come from it instead of the live values.
-- "Import from macOS Dock..." (Settings > General > Import): a confirmation sheet shows what was found. Add missing apps (appended, nothing reordered) or replace the apps (groups and widgets stay; stacks merge or replace with apps), and optionally take the native position and icon size. Apps no longer on disk, spacers, and non-folder other tiles are skipped; folder stacks from `persistent-others` import. Your dock is copied to `dock.json.before-import` first, and "Undo last import" restores it. Read only: nothing in `com.apple.dock` is written.
+- "Import from macOS Dock..." (Settings > System > Import): a confirmation sheet shows what was found. Add missing apps (appended, nothing reordered) or replace the apps (groups and widgets stay; stacks merge or replace with apps), and optionally take the native position and icon size. Apps no longer on disk, spacers, and non-folder other tiles are skipped; folder stacks from `persistent-others` import. Your dock is copied to `dock.json.before-import` first, and "Undo last import" restores it. Read only: nothing in `com.apple.dock` is written.
 - "Restore macOS Dock" in the menu bar item, and `portside --restore-dock` (restores from the backup and exits, no UI).
 
 **Branding**
@@ -104,7 +105,7 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 
 **App bundle and startup**
 - `scripts/build-app.sh` builds a signed `build/Portside.app` with the brand icon, version from `VERSION`, and the Calendar and Finder Automation usage strings. `--install` copies it to `~/Applications`.
-- "Open Portside at login" (Settings > General > Startup) through `SMAppService`. macOS is the source of truth; the toggle shows its real status, links to Login Items when approval is needed, and is disabled under `swift run`.
+- "Open Portside at login" (Settings > System > Startup) through `SMAppService`. macOS is the source of truth; the toggle shows its real status, links to Login Items when approval is needed, and is disabled under `swift run`.
 
 ## Planned
 
@@ -253,7 +254,7 @@ Sources/portside/
   NativeDockController.swift  "Hide the macOS Dock" toggle, first-time dialog, alerts
   NativeDockImport.swift    Reads the native Dock (apps, position, size) and the import sheet
   LaunchAtLogin.swift       "Open Portside at login" via SMAppService.mainApp
-  SettingsWindow.swift      Settings window: header, tabs (General, Appearance, Widgets, Groups)
+  SettingsWindow.swift      Settings window: sidebar and panes (General, Appearance, Widgets, Groups, System)
   DockAppearance.swift      Icon style and dock background options, background modifier, icon style observer
   HotKey.swift              Global hotkey through Carbon RegisterEventHotKey
   BackgroundCursor.swift    Guarded SkyLight call for the resize cursor

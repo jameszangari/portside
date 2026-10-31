@@ -10,7 +10,7 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [x] **B.5:** Hover labels with a reusable overlay panel (including the label placement fix)
 - [x] **B.6:** Dock position (bottom/left/right) and separator resize
 - [x] **D:** App groups (expand/collapse)
-- [x] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live; includes auto-hide toggle with Cmd+Option+D, Portside as a regular app while Settings is open, inline group naming and rename, open groups on hover
+- [x] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live; now a sidebar layout with a System pane; includes auto-hide toggle with Cmd+Option+D, Portside as a regular app while Settings is open, inline group naming and rename, open groups on hover
 - [ ] **F:** [x] Hide the macOS Dock (autohide-delay trick only, exact save and restore); [x] launch at login (`SMAppService`); [x] a real .app bundle (`scripts/build-app.sh`); [x] import native orientation and tilesize as Portside's initial position and icon size; [x] a manual "Import from macOS Dock" action with undo; [x] import `persistent-others` folders as stacks (file tiles still skipped). First-launch seeding of pinned apps and folder stacks is built.
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
 - [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu (built on app tiles, group tiles, Portside's own tile and grid cells, hand test pending); divider right-click (built: Turn Hiding On/Off, Turn Magnification On/Off, Position on Screen, Dock Settings); Option turns Quit into Force Quit (built); drag apps in from Finder (built); drag icons out to remove (built, hand test pending); drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder, built); Option-click (hide frontmost) and Cmd+Option-click (hide others) (built); Hide/Show and Force Quit in the app menu (built); Cmd-Option-D show/hide (built)
@@ -19,6 +19,35 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section; bounce on attention request (needs private APIs, not wanted for now)
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
+
+---
+
+# Settings: sidebar layout (2026-10-31)
+
+Status: built and agent-checked with screenshots of every pane. Hand test pending. No new files, no dock.json changes.
+
+## Deliverables
+
+- [x] `NavigationSplitView` with a fixed sidebar (no collapse toggle) and the pane title in the toolbar. Panes: General, Appearance, Widgets, Groups, System.
+- [x] Fixed 760 x 560 window with full-size content and a transparent title bar. Panes scroll; the old fit-to-content resize, header and tab bar are gone.
+- [x] General split: General keeps Dock and Timing; the new System pane has macOS Dock, Startup, and Import (with the import sheet and Undo).
+- [x] Sidebar header shows the icon, "Portside" and `v0.2.0` (full version line as a tooltip); Check for Updates sits at the bottom of the sidebar.
+
+## Verification
+
+- `swift build` clean. Installed build opened via reopen; screenshots of all five panes: everything fits the width, General scrolls, others fit without scrolling.
+- Finding: the sidebar renders about 144pt wide, not the 200pt asked for with a single `navigationSplitViewColumnWidth` value. The version line truncated at that width, so it now shows only `v0.2.0`.
+
+## Hand test
+
+- [ ] Open Settings from the menu bar and from the dock separator menu: window opens centered, 760 x 560, General selected.
+- [ ] Click each pane; controls apply live as before. Import sheet still opens from System.
+- [ ] Cmd+W closes; focus returns to the previous app.
+
+## Known gaps
+
+- Sidebar width not pinned to 200pt (fix: min/ideal/max column width), not applied yet.
+- The `v0.2.0` label is not in the installed app until the next install.
 
 ---
 
