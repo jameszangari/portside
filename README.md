@@ -39,7 +39,7 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - Drag an icon out of the dock to remove it, like the native Dock: the icon floats under the cursor for the whole drag (strip leaves a gap), a "Remove" label shows once it is clearly outside, and releasing it there removes it with a short poof (instant under Reduce Motion). Dragging back over the dock reorders as usual, and Escape puts it back. Works for app tiles, group tiles, and widgets (a group with apps in it asks first, see Groups); an app dragged out of an open group grid asks Remove from Group or Remove from Dock.
 - Drop files on an app tile to open them in that app, like the native Dock. Only tiles whose app can open the files highlight and accept the drop (Finder takes folders). A not-running pinned app launches with the bounce.
 - Running apps that are not pinned show after the pinned section.
-- Right-click menu: Keep in Dock or Remove from Dock, Add to Group, Show in Finder, then for running apps Hide (Show if hidden) and Quit. Hold Option and Quit becomes Force Quit.
+- Right-click menu: Keep in Dock or Remove from Dock, Add to Group, Open at Login (checkbox), Show in Finder, then for running apps Hide (Show if hidden) and Quit. Hold Option and Quit becomes Force Quit. Open at Login for other apps uses System Events (may ask for Automation once); Portside's own tile uses the same SMAppService path as Settings.
 - App tiles, group tiles, Portside's own tile and group cells: short click opens (or toggles the group); hold for 0.5s opens its menu (simultaneous with the tap, not exclusive); moving first starts a drag. Hover labels track the magnified icon's spring frames so they stay centered.
 - Dock menus take the keyboard while open (Escape closes them, arrows move through them) without taking focus from the frontmost app.
 - Separator right-click menu: Turn Hiding On/Off, Turn Magnification On/Off, Position on Screen (Left, Bottom, Right, checkmark on the current one), Add Spacer (Regular / Small), Dock Settings, Quit Portside.
@@ -104,7 +104,7 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - "About Portside" in the menu bar item: the standard About panel with the version, author, and repo link.
 
 **App bundle and startup**
-- `scripts/build-app.sh` builds a signed `build/Portside.app` with the brand icon, version from `VERSION`, and the Calendar and Finder Automation usage strings. `--install` copies it to `~/Applications`.
+- `scripts/build-app.sh` builds a signed `build/Portside.app` with the brand icon, version from `VERSION`, and the Calendar / Finder / System Events Automation usage strings. `--install` copies it to `~/Applications`.
 - "Open Portside at login" (Settings > System > Startup) through `SMAppService`. macOS is the source of truth; the toggle shows its real status, links to Login Items when approval is needed, and is disabled under `swift run`.
 
 ## Planned
@@ -113,7 +113,6 @@ From `docs/CHECKLIST.md` and `docs/PLAN.md`:
 - Folder stacks: fan and list views, sort options, show-as-folder vs stack icon.
 - Milestone F leftover: import plain file tiles from `persistent-others` (folders already import).
 - Update checker: compare AppInfo.version with the latest GitHub release tag (vX.Y.Z), show 'up to date' or a link to the release. The Check for Updates button is a placeholder until then.
-- Native Dock parity: Open at Login in the app menu.
 - Trash: Option-click "Empty Trash without warning" and icon animation.
 - Native Dock parity leftovers: window list in the app menu, VoiceOver / keyboard navigation; hide badges for apps whose badges are off in Notifications settings (that setting is not readable today).
 - Better widget layout on side docks.
@@ -233,6 +232,7 @@ Sources/portside/
   DockBadges.swift          Notification badges: visible-only reads and the badge chip
   LaunchServicesBadges.swift Private LaunchServices badge reader (dlopen/dlsym guarded)
   TileActions.swift         Modifier clicks (Cmd, Option) and the AppKit right-click menu with Force Quit
+  AppLoginItem.swift        Open at Login checkbox: SMAppService for Portside, System Events for other apps
   FileDrop.swift            Per-drag state for pin apps/folders, open, deposit, and Trash drops
   AppSpringLoad.swift       File drag resting on a running app brings it forward
   Trash.swift               Native Trash tile, directory watcher, Finder actions
@@ -272,6 +272,7 @@ Sources/portside/
     WeatherWidget.swift     Temperature and conditions (Open-Meteo)
     SystemStatsWidget.swift CPU and memory usage
   Support/                  Bundled resources: AppIcon-<px>.png (actool's flat render of AppIcon.icon) and MenuBarIcon-<px>.png
+Sources/AppLoginItemList/   C helper: read session Open at Login list (LSSharedFileList)
 scripts/
   gen-version.sh            Writes BuildInfo.swift from VERSION and git
   release.sh                Bumps VERSION, commits, and tags a release

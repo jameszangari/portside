@@ -118,6 +118,14 @@ enum AppTileMenu {
         } else if context.isPinned {
             menu.addItem(ClosureMenuItem("Remove from Dock") { model.unpin(app) })
         }
+        let openAtLogin = ClosureMenuItem("Open at Login") {
+            let want = !AppLoginItem.isEnabled(for: app)
+            if let error = AppLoginItem.setEnabled(want, for: app) {
+                AppLoginItem.presentError(error)
+            }
+        }
+        openAtLogin.state = AppLoginItem.isEnabled(for: app) ? .on : .off
+        menu.addItem(openAtLogin)
         menu.addItem(ClosureMenuItem("Show in Finder") {
             NSWorkspace.shared.activateFileViewerSelecting([app.url])
         })
@@ -175,14 +183,16 @@ extension View {
         overlay(RightClickMenuHost(edge: edge, hold: hold, menu: menu).magnifiedHitArea(id: magnifyID))
     }
 
-    /// Keep taps independent of long presses. An exclusive hold/tap sequence
-    /// can swallow short clicks in the non-activating dock hosting view.
+    /// Press-and-hold opens the same menu as right-click, like the native Dock.
+    /// Simultaneous with the tap, not exclusive: an exclusive LongPress/Tap
+    /// sequence can swallow short clicks in this non-activating hosting view.
+    /// Moving more than 4pt fails the long press so reorder / drag-out wins.
     func menuHold(_ hold: MenuHold, onTap: @escaping () -> Void) -> some View {
         onTapGesture {
             if !hold.fired { onTap() }
         }
         .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.5, maximumDistance: 4)
+            LongPressGesture(minimumDuration: MenuHold.delay, maximumDistance: MenuHold.maxDistance)
                 .onChanged { _ in hold.fired = false }
                 .onEnded { completed in
                     if completed { hold.fire() }
@@ -193,6 +203,9 @@ extension View {
 
 /// Connects a tile's press-and-hold to its right-click menu host.
 final class MenuHold {
+    static let delay: TimeInterval = 0.5
+    static let maxDistance: CGFloat = 4
+
     fileprivate var show: (() -> Void)?
     fileprivate var fired = false
 

@@ -13,7 +13,7 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [x] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live; now a sidebar layout with a System pane; includes auto-hide toggle with Cmd+Option+D, Portside as a regular app while Settings is open, inline group naming and rename, open groups on hover
 - [ ] **F:** [x] Hide the macOS Dock (autohide-delay trick only, exact save and restore); [x] launch at login (`SMAppService`); [x] a real .app bundle (`scripts/build-app.sh`); [x] import native orientation and tilesize as Portside's initial position and icon size; [x] a manual "Import from macOS Dock" action with undo; [x] import `persistent-others` folders as stacks (file tiles still skipped). First-launch seeding of pinned apps and folder stacks is built.
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
-- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu (built on app tiles, group tiles, Portside's own tile and grid cells, hand test pending); divider right-click (built: Turn Hiding On/Off, Turn Magnification On/Off, Position on Screen, Dock Settings); Option turns Quit into Force Quit (built); drag apps in from Finder (built); drag icons out to remove (built, hand test pending); drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder, built); Option-click (hide frontmost) and Cmd+Option-click (hide others) (built); Hide/Show and Force Quit in the app menu (built); Cmd-Option-D show/hide (built)
+- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu (built on app tiles, group tiles, Portside's own tile and grid cells, hand test pending); divider right-click (built: Turn Hiding On/Off, Turn Magnification On/Off, Position on Screen, Dock Settings); Option turns Quit into Force Quit (built); drag apps in from Finder (built); drag icons out to remove (built, hand test pending); drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder, built); Option-click (hide frontmost) and Cmd+Option-click (hide others) (built); Hide/Show and Force Quit in the app menu (built); Cmd-Option-D show/hide (built); Open at Login checkbox on app tiles (built, hand test pending)
 - [x] **P2:** Trash; folder stacks (grid-first; fan/list deferred); spacers; system glass + Reduce Transparency; spring-load apps; magnification. Hand-tested.
 - [ ] **P3:** [x] Follow the display the cursor hits; [x] fullscreen apps and Spaces (`canJoinAllSpaces` / `fullScreenAuxiliary` + re-front on Space change); [x] do not reveal while holding the mouse button / dragging a window (file drags still reveal); [x] badge counts from LaunchServices (private API, guarded; no Accessibility); [ ] window list in the right-click menu; [ ] VoiceOver labels and keyboard navigation
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section; bounce on attention request (needs private APIs, not wanted for now)
@@ -48,6 +48,36 @@ Status: built and agent-checked with screenshots of every pane. Hand test pendin
 
 - Sidebar width not pinned to 200pt (fix: min/ideal/max column width), not applied yet.
 - The `v0.2.0` label is not in the installed app until the next install.
+
+---
+
+# P1 leftover: Open at Login on app tiles (2026-10-31)
+
+Status: built, `swift build` clean (no warnings), `swift run` launches. Hand test pending. New files: `Sources/portside/AppLoginItem.swift`, `Sources/AppLoginItemList/` (C helper). Log category `AppLoginItem`. No dock.json changes. `Info.plist` `NSAppleEventsUsageDescription` now mentions System Events.
+
+## Deliverables
+
+- [x] App tile menu (strip, unpinned running, group grid cells): checkbox "Open at Login" after Keep/Remove (and Add to Group when shown), before Show in Finder.
+- [x] State reads from the session login-items list (`LSSharedFileList` via `AppLoginItemListContainsPath`), same list as System Settings > Open at Login. No Automation needed to show the checkmark.
+- [x] Toggle for other apps writes through System Events (`make login item` / `delete`). First toggle may ask for Automation permission for System Events. Denial shows an alert with an Open Settings link.
+- [x] Portside's own tile (when running as `Portside.app`) uses `SMAppService.mainApp`, same as Settings > Open Portside at login.
+- [x] Path match is standardized; bundle-id fallback covers the same app at another install path.
+- [x] Verified: C helper matches System Events for Raycast/Bitwarden on and Calculator off; System Events add/remove of Calculator round-trips and restores the prior 10-item list.
+
+## Known gaps
+
+- `LSSharedFileListInsertItemURL` still compiles but does not persist on this macOS (returns a pointer, item never appears). Writes stay on System Events.
+- Under `swift run`, Portside's own tile uses System Events (no `.app` bundle for `SMAppService`), same as any other app. Prefer the built app for Portside's own checkbox.
+- Ad-hoc rebuilds may re-prompt for System Events Automation (same as Finder Automation for Empty Trash).
+
+## Hand test
+
+- [ ] Right-click an app that is already under Open at Login (Raycast, Bitwarden, …): checkbox is on. Toggle off; confirm it disappears from System Settings > General > Login Items. Toggle back on.
+- [ ] Right-click Calculator (or another app not in Login Items): checkbox off. Toggle on; it appears in Login Items. Toggle off again.
+- [ ] First toggle on a fresh build: Automation prompt for System Events. Deny once and confirm the alert; Allow and confirm the toggle works.
+- [ ] Group grid cell and an unpinned running app: same checkbox behavior.
+- [ ] Portside's own tile in `~/Applications/Portside.app`: checkbox tracks Settings > Open Portside at login.
+- [ ] Frontmost app is unchanged after a successful toggle (no focus steal). Reveal/hide timing unchanged.
 
 ---
 
@@ -372,25 +402,24 @@ Status: built and agent-tested with synthetic input on the bottom edge, waiting 
 
 # P1 slice: click-and-hold menu and divider menu
 
-Status: built, `swift build` clean, waiting for James's hand test. No new files, no dock.json changes. Log category `TileActions` ("press and hold: opening menu").
+Status: built; agent re-verified 2026-10-31 with `scripts/check-tile-input.swift` (mag off, bottom: PASS). Waiting for James's hand test. No new files, no dock.json changes. Log category `TileActions` ("press and hold: opening menu").
 
 ## Deliverables
 
-- [x] Click-and-hold on an app tile (strip tiles, unpinned running apps, group grid cells) opens the right-click menu at the tile. `menuHold(_:onTap:)` combines a SwiftUI long press (0.5s, 4pt) exclusively with a tap: a one-shot recognizer, no timer of ours. Moving more than 4pt first cancels it and the reorder or drag-out gesture takes over. A short click is unchanged (no added delay).
-- [x] The release after a hold is not a click: the exclusive gesture resolves to only one action, with no persistent suppression flag.
+- [x] Click-and-hold on an app tile (strip tiles, unpinned running apps, group tiles, Portside's own tile, group grid cells, Trash, folder stacks) opens the right-click menu at the tile. `menuHold(_:onTap:)` uses `onTapGesture` plus a simultaneous SwiftUI long press (0.5s, 4pt), not an exclusive sequence (exclusive swallowed short clicks in the non-activating hosting view). Moving more than 4pt first cancels it and the reorder or drag-out gesture takes over. A short click is unchanged (no added delay).
+- [x] The release after a hold is not a click: `MenuHold.fired` suppresses the tap that would otherwise fire on release.
 - [x] Same `RightClickView` popup as right-click, so placement per edge, hover label hiding and the grid-close-on-menu rules are shared. Panel untouched (still non-activating).
 - [x] Divider right-click is now an AppKit menu: Turn Hiding On/Off, Position on Screen (Left, Bottom, Right, checkmark on the current, `setEdge`, live), Dock Settings... (opens Settings), Quit Portside. The old "Settings..." SwiftUI item is gone.
 - [x] Magnification: the divider menu has Turn Magnification On/Off (built with magnification, 2026-10-31).
 
 ## Verification (agent)
 
-- `swift build` clean.
-- Not run: `swift run`. Another Portside (pid 80096, started before this session) was running and had the native Dock hidden; a second instance risked touching the Dock backup, so it was killed with SIGKILL straight away and the Dock state was left alone. Nothing hold-related was exercised at runtime. Restart Portside to get this build.
+- `swift build` clean; `scripts/build-app.sh` installed to `~/Applications/Portside.app`.
+- `scripts/check-tile-input.swift` mag off bottom: PASS (2 short clicks launch Finder, 1 hold opens menu, no launch on hold release, Portside stays inactive). Mag-on AX hover was flaky in this session (Finder tile not in the tree); prior mag-on runs had PASS.
 
 ## Known gaps
 
-- Group tiles (the folder tile in the strip) still use SwiftUI `.contextMenu`, so no hold there. Their tap toggles the grid.
-- Exclusive hold/tap dispatch passes the synthetic event harness; real mouse and menu tracking still need verification.
+- Real trackpad/mouse hand confirmation still needed (synthetic CGEvents only here).
 - Releasing the button with the cursor over a menu item may pick it (native behavior); the menu opens 4pt off the tile so the cursor starts outside it.
 - If drag-reorder, drag-out, file drops or spring-loading regress, suspect the long-press gesture on the tile first.
 
@@ -470,7 +499,7 @@ Status: built, `swift build` clean, waiting for James's hand test. New file: `So
 
 - Hover label "Messages" stayed visible on top of the open menu (screenshot). Check if it was like this before.
 - Option-click when the clicked app is already frontmost hides nothing.
-- Deferred: "Open at Login" for other apps. No clean public API to manage another app's login item without an Automation permission (System Events).
+- [x] "Open at Login" for other apps: built (see P1 leftover section above). Reads via LSSharedFileList; writes via System Events Automation.
 - Cmd-click in a grid leaves the grid open.
 - Hover label restyled to match the native Dock, measured from James's native screenshot (2x, scale checked against the text width): 14pt text, 25pt body, 14pt side padding, 11pt corner radius, 7pt tail with a flared base, thin light rim, tail tip 2.5pt past the dock edge. Our capture at the same scale matches within about 1pt. Synthetic CGEvents do not reveal the native Dock, so the agent could not capture it directly. Side-dock tails not seen.
 - Hover label and drag-out "Remove" label now use the dock's own background (`dockBackground(_:in:)` with the bubble shape): same style (Liquid Glass, Frosted, Solid), frost, tint and rim as the strip. Seen with Frosted at 0.65 (screenshot); Liquid Glass and Solid only by code.

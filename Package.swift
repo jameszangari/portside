@@ -13,8 +13,17 @@ let package = Package(
         .macOS(.v14)
     ],
     targets: [
+        .target(
+            name: "AppLoginItemList",
+            path: "Sources/AppLoginItemList",
+            publicHeadersPath: "include",
+            linkerSettings: [
+                .linkedFramework("CoreServices")
+            ]
+        ),
         .executableTarget(
             name: "portside",
+            dependencies: ["AppLoginItemList"],
             path: "Sources/portside",
             resources: [
                 .process("Support")
