@@ -37,9 +37,19 @@ enum DockEdge: String, Codable, CaseIterable, Identifiable {
         }
     }
 
-    /// Point that stays fixed when a tile grows (drag lift now, magnification
-    /// later), so tiles grow away from the screen edge.
+    /// Point that stays fixed when a tile grows (drag lift, magnification),
+    /// so tiles grow away from the screen edge.
     var growthAnchor: UnitPoint {
+        switch self {
+        case .bottom: .bottom
+        case .left: .leading
+        case .right: .trailing
+        }
+    }
+
+    /// Where the strip sits in a hosting view larger than itself: against
+    /// the screen edge, centered along it.
+    var stripAlignment: Alignment {
         switch self {
         case .bottom: .bottom
         case .left: .leading

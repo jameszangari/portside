@@ -40,7 +40,7 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - Running apps that are not pinned show after the pinned section.
 - Right-click menu: Keep in Dock or Remove from Dock, Add to Group, Show in Finder, then for running apps Hide (Show if hidden) and Quit. Hold Option and Quit becomes Force Quit.
 - Click and hold an app tile (strip or group grid) for 0.5s to open the same menu; releasing does not launch. Moving first starts a drag instead.
-- Separator right-click menu: Turn Hiding On/Off, Position on Screen (Left, Bottom, Right, checkmark on the current one), Dock Settings.
+- Separator right-click menu: Turn Hiding On/Off, Turn Magnification On/Off, Position on Screen (Left, Bottom, Right, checkmark on the current one), Dock Settings.
 - The app menu opens above the icon (beside it on the side docks), like the native Dock.
 - Native Dock modifier clicks on app tiles and group grid cells: Cmd-click reveals the app in Finder (no launch), Option-click switches to the app and hides the one that was frontmost, Cmd+Option-click switches and hides all other apps. Portside itself is never hidden.
 - Native-style launch bounce for pinned apps on any edge (sideways on the side docks) and for apps opened from a group grid (optional, off under Reduce Motion).
@@ -50,6 +50,7 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 **Layout**
 - Bottom, Left, or Right position, switchable live.
 - Drag the separator to resize icons live (clamped to what fits, persisted).
+- Magnification (bottom position): app and group tiles grow under the cursor with a smooth falloff to their neighbors, rising above a shelf that keeps its height while it widens. Widgets and separators keep their size. Magnified size 16 to 128pt, set live in Settings. Off during drags, while a group grid, menu or launch bounce is up. Under Reduce Motion the size follows the cursor without the spring.
 
 **Widgets**
 - Clock, Battery, Calendar, Weather, System Stats.
@@ -90,9 +91,9 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 
 From `docs/CHECKLIST.md` and `docs/PLAN.md`:
 - Milestone F, what is left: importing the native Dock's folders and files (`persistent-others`), once folder stacks exist.
-- Magnification (the stored setting exists, no UI yet).
+- Magnification on the Left and Right positions, plus polish: launch bounce at the magnified size, labels and grids anchored to magnified tiles, right-click on the raised part of group tiles.
 - Update checker: compare AppInfo.version with the latest GitHub release tag (vX.Y.Z), show 'up to date' or a link to the release. The Check for Updates button is a placeholder until then.
-- Native Dock parity: click-and-hold on group tiles, Magnification in the separator menu once magnification exists, Open at Login in the app menu, Trash, folder stacks.
+- Native Dock parity: click-and-hold on group tiles, Open at Login in the app menu, Trash, folder stacks.
 - Multi-display, fullscreen and Spaces behavior, badges.
 - Better widget layout on side docks.
 
@@ -173,6 +174,7 @@ It is deleted after a verified restore. If it exists when Portside starts, Ports
 
 The Settings window controls:
 - Position, auto-hide, icon size, "Animate opening applications"
+- Magnification (`magnificationEnabled`) and Magnified size (`magnifiedSize`, points, 16 to 128, default 64)
 - Reveal delay, hide delay, animation duration (with reset to defaults)
 - Widgets: on/off and order
 - Groups: rename, ungroup, delete, open on hover, open delay, close grace
@@ -207,6 +209,7 @@ Sources/portside/
   FileDrop.swift            Per-drag state for file drops: pin vs open, can-open checks
   DragOut.swift             Drag an item out to remove it: "Remove" label, poof, Escape
   DockHover.swift           Hover target frames and label placement
+  Magnifier.swift           Dock magnification: per-tile scale and shift from the cursor, shelf widening, panel room
   FolderGroup.swift         Group and entry models
   GroupController.swift     Group open/close state and every close path
   GroupRemoval.swift        "Remove group?" confirmation alert and focus hand-back

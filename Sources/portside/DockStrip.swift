@@ -44,8 +44,18 @@ final class DockInteractions {
     /// True while the separator is being dragged to resize the icons.
     var onResizingChanged: ((Bool) -> Void)?
     /// The strip's measured size, after every change (icon size, items,
-    /// widgets, edge). The panel sizes its window from this.
-    var onContentSizeChanged: ((CGSize) -> Void)?
+    /// widgets, edge). The panel sizes its window from this. The first
+    /// report comes while the panel is being built, before anyone listens,
+    /// so the last one is kept and replayed when this is set.
+    var onContentSizeChanged: ((CGSize) -> Void)? {
+        didSet { if let lastContentSize { onContentSizeChanged?(lastContentSize) } }
+    }
+    private(set) var lastContentSize: CGSize?
+
+    func contentSizeChanged(_ size: CGSize) {
+        lastContentSize = size
+        onContentSizeChanged?(size)
+    }
     /// A group tile was clicked (expand or collapse it).
     var onGroupTapped: ((String) -> Void)?
     /// "Rename" from a group tile's context menu.
@@ -91,6 +101,9 @@ struct DockStrip: View {
     let interactions: DockInteractions
     /// Drag-out-to-remove: the "Remove" label, poof and Escape.
     let dragOut: DragOutController
+    /// Not observed here either: only small per-tile modifiers read it, so
+    /// a mouse move never re-renders the strip.
+    let magnifier: Magnifier
 
     /// Id of the pinned entry (app or group) or widget being dragged, if any.
     @State private var dragging: String?
@@ -160,6 +173,7 @@ struct DockStrip: View {
 
             if !extras.isEmpty || showsSelf {
                 separator(tile: tile, maxTile: maxTile, edge: edge)
+                    .magnifiedShift()
                 ForEach(extras, id: \.0.id) { app, running in
                     DockItemView(app: app, running: running, isPinned: false, size: tile, dockModel: dockModel, bouncer: bouncer,
                                  isDropTarget: dropTargetID == app.id)
@@ -171,8 +185,10 @@ struct DockStrip: View {
 
             if !widgets.hosts.isEmpty {
                 separator(tile: tile, maxTile: maxTile, edge: edge)
+                    .magnifiedShift()
                 ForEach(widgets.hosts) { host in
                     host.view
+                        .magnifiedShift()
                         .opacity(dragging == host.id ? (dragOutside ? 0.25 : 0.5) : 1)
                         .gesture(widgetDragGesture(for: host, tile: tile))
                         .contextMenu {
@@ -187,7 +203,7 @@ struct DockStrip: View {
         .padding(edge.isVertical ? .vertical : .horizontal, alongPadding)
         .padding(edge.farSide, 6)
         .padding(edge.nearSide, 3)
-        .dockBackground(dockModel.look)
+        .magnifiedShelf(dockModel.look)
         .onDrop(of: [.fileURL], delegate: FileDropDelegate(
             dockModel: dockModel, interactions: interactions, session: fileDrop, targetID: $dropTargetID,
             tileFrames: tileFrames, apps: dropApps(extras: extras), runningApps: runningApps, bouncer: bouncer,
@@ -198,15 +214,21 @@ struct DockStrip: View {
         // NSHostingView does not report intrinsic size changes to AppKit
         // here, so the strip reports its own size.
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
-            interactions.onContentSizeChanged?(size)
+            interactions.contentSizeChanged(size)
         }
         // Root space = the hosting view's bounds, so DockPanel can convert
         // hover target frames to screen coordinates.
         .coordinateSpace(name: DockHover.space)
         .onPreferenceChange(HoverTargetsKey.self) { targets in
+            magnifier.updateTiles(targets)
             hover.updateTargets(targets)
             tileFrames = targets
         }
+        // Fills the hosting view, which is bigger than the strip only while
+        // magnified tiles need room. The strip stays against the screen edge
+        // and centered along it, so adding room never moves it.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: edge.stripAlignment)
+        .environment(\.magnifier, magnifier)
     }
 
     /// App tiles that take file drops, by hover id: pinned apps and running
@@ -257,13 +279,15 @@ struct DockStrip: View {
             .accessibilityLabel("Dock separator")
     }
 
-    /// Divider right-click, in the native Dock's order. A Magnification item
-    /// joins it once magnification is built.
+    /// Divider right-click, in the native Dock's order.
     private func dividerMenu() -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.addItem(ClosureMenuItem(dockModel.autoHide ? "Turn Hiding Off" : "Turn Hiding On") {
             dockModel.setAutoHide(!dockModel.autoHide)
+        })
+        menu.addItem(ClosureMenuItem(dockModel.magnificationEnabled ? "Turn Magnification Off" : "Turn Magnification On") {
+            dockModel.setMagnificationEnabled(!dockModel.magnificationEnabled)
         })
         let position = NSMenuItem(title: "Position on Screen", action: nil, keyEquivalent: "")
         let positions = NSMenu()

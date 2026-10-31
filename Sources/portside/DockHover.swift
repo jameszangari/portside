@@ -50,6 +50,12 @@ final class DockHover {
     private var targets: [HoverTarget] = []
     private var cursor: CGPoint?
     private var current: HoverTarget?
+    /// Where the current label points (screen), to follow a magnified tile.
+    private var currentAnchor: NSRect?
+
+    /// Where a target is drawn right now: its magnified frame while
+    /// magnifying, else its own frame. Used for hit-testing and labels.
+    var displayFrame: ((HoverTarget) -> CGRect)?
     private let logger = Logger(subsystem: "com.james.portside", category: "DockHover")
 
     /// Gap between the label and the icon's far edge (top on the bottom
@@ -133,22 +139,36 @@ final class DockHover {
             // half of it along the dock means sweeping across icons swaps the
             // label without a flicker through "nothing hovered".
             targets.first {
-                $0.frame.insetBy(dx: edge.isVertical ? 0 : slop, dy: edge.isVertical ? slop : 0).contains(point)
+                frame(of: $0).insetBy(dx: edge.isVertical ? 0 : slop, dy: edge.isVertical ? slop : 0).contains(point)
             }
         }
         if hit?.id != hoveredID {
             hoveredID = hit?.id
             onHoveredTargetChanged?(hoveredID)
         }
-        guard !isSuppressed, hit != current else { return }
+        guard !isSuppressed else { return }
+        if hit == current {
+            // Same tile; with magnification it may have grown or shifted.
+            if let hit, let anchor = stripToScreen?(frame(of: hit)), anchor != currentAnchor {
+                currentAnchor = anchor
+                overlay.reanchor(anchor)
+            }
+            return
+        }
         current = hit
 
-        guard let hit, let anchor = stripToScreen?(hit.frame) else {
+        guard let hit, let anchor = stripToScreen?(frame(of: hit)) else {
+            currentAnchor = nil
             overlay.dismiss()
             return
         }
+        currentAnchor = anchor
         overlay.present(AnyView(DockLabel(title: hit.title, pointing: edge, look: look?())), anchor: anchor, edge: edge, gap: Self.bubbleGap)
         logger.debug("label: \(hit.title, privacy: .public)")
+    }
+
+    private func frame(of target: HoverTarget) -> CGRect {
+        displayFrame?(target) ?? target.frame
     }
 }
 

@@ -89,12 +89,14 @@ struct GroupTileView: View {
             .frame(width: size, height: size)
             .contentShape(Rectangle())
             .onTapGesture(perform: onToggle)
+            .magnifiedIcon(id: DockEntry.group(group).id)
     }
 
     private var indicator: some View {
         Circle()
             .fill(Color.primary.opacity(anyRunning ? 0.75 : 0))
             .frame(width: 4, height: 4)
+            .magnifiedIndicator(id: DockEntry.group(group).id)
     }
 }
 

@@ -208,12 +208,14 @@ struct PortsideTileView: View {
             .frame(width: size, height: size)
             .contentShape(Rectangle())
             .onTapGesture(perform: onOpenSettings)
+            .magnifiedIcon(id: Self.hoverID)
     }
 
     private var indicator: some View {
         Circle()
             .fill(Color.primary.opacity(0.75))
             .frame(width: 4, height: 4)
+            .magnifiedIndicator(id: Self.hoverID)
     }
 }
 
@@ -235,7 +237,7 @@ struct DockItemView: View {
         tile
             .accessibilityLabel(app.displayName)
         .dockHoverTarget(id: app.id, title: app.displayName)
-        .appKitContextMenu(edge: edge, hold: hold) {
+        .appKitContextMenu(edge: edge, hold: hold, magnifyID: app.id) {
             AppTileMenu.build(.init(app: app, running: running, isPinned: isPinned, dockModel: dockModel))
         }
     }
@@ -283,11 +285,14 @@ struct DockItemView: View {
                     }
                 }
             }
+            // Outside the gestures, so clicks follow the magnified icon.
+            .magnifiedIcon(id: app.id)
     }
 
     private var indicator: some View {
         Circle()
             .fill(Color.primary.opacity(running == nil ? 0 : 0.75))
             .frame(width: 4, height: 4)
+            .magnifiedIndicator(id: app.id)
     }
 }

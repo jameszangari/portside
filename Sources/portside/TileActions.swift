@@ -168,8 +168,11 @@ extension View {
     /// The menu opens beside the tile on the side away from the screen edge
     /// (above it on the bottom dock), centered on it, like the native Dock.
     /// With a `hold`, the same menu can be opened by `menuHold(_:)` on the tile.
-    func appKitContextMenu(edge: DockEdge = .bottom, hold: MenuHold? = nil, _ menu: @escaping () -> NSMenu) -> some View {
-        overlay(RightClickMenuHost(edge: edge, hold: hold, menu: menu))
+    /// With a `magnifyID`, the right-click area and the menu's anchor follow
+    /// the magnified tile.
+    func appKitContextMenu(edge: DockEdge = .bottom, hold: MenuHold? = nil, magnifyID: String? = nil,
+                           _ menu: @escaping () -> NSMenu) -> some View {
+        overlay(RightClickMenuHost(edge: edge, hold: hold, menu: menu).magnifiedHitArea(id: magnifyID))
     }
 
     /// Click-and-hold opens the tile's context menu, like the native Dock.

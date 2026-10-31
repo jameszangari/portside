@@ -409,6 +409,26 @@ private struct GeneralSettings: View {
                 )
 
                 Toggle(isOn: Binding(
+                    get: { dockModel.magnificationEnabled },
+                    set: { dockModel.setMagnificationEnabled($0) }
+                )) {
+                    Text("Magnification")
+                    if dockModel.magnificationEnabled && dockModel.edge.isVertical {
+                        Text("Works on the bottom position for now.").helperStyle()
+                    }
+                }
+
+                SettingsSlider(
+                    title: "Magnified size",
+                    value: Double(dockModel.magnifiedSize),
+                    range: Double(DockModel.magnifiedSizeRange.lowerBound)...Double(DockModel.magnifiedSizeRange.upperBound),
+                    snap: 1,
+                    format: { "\(Int($0)) pt" },
+                    set: { dockModel.setMagnifiedSize(CGFloat($0), persist: $1) }
+                )
+                .disabled(!dockModel.magnificationEnabled)
+
+                Toggle(isOn: Binding(
                     get: { dockModel.autoHide },
                     set: { dockModel.setAutoHide($0) }
                 )) {

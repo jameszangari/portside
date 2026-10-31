@@ -28,6 +28,8 @@ final class DockEngine {
     private let hover: DockHover
     private let groups: GroupController
     private let bouncer: LaunchBouncer
+    private let magnifier = Magnifier()
+    private var magnifySubscriptions: [AnyCancellable] = []
     private var bounceSettingSubscription: AnyCancellable?
     private let logger = Logger(subsystem: "com.james.portside", category: "DockEngine")
 
@@ -73,8 +75,8 @@ final class DockEngine {
         self.hover = DockHover(overlay: OverlayPanel())
         self.bouncer = LaunchBouncer(dockModel: dockModel, hover: hover)
         self.groups = GroupController(dockModel: dockModel, runningApps: runningApps, hover: hover, bouncer: bouncer, dragOut: dragOut)
-        let strip = DockStrip(dockModel: dockModel, runningApps: runningApps, widgets: widgets, layout: layout, groups: groups, bouncer: bouncer, hover: hover, interactions: interactions, dragOut: dragOut)
-        self.dockPanel = DockPanel(dockModel: dockModel, strip: strip)
+        let strip = DockStrip(dockModel: dockModel, runningApps: runningApps, widgets: widgets, layout: layout, groups: groups, bouncer: bouncer, hover: hover, interactions: interactions, dragOut: dragOut, magnifier: magnifier)
+        self.dockPanel = DockPanel(dockModel: dockModel, strip: strip, magnifier: magnifier)
         self.edgeTracker = EdgeTracker(edge: dockModel.edge)
         hover.setEdge(dockModel.edge)
         hover.look = { [weak dockModel] in dockModel?.look }
@@ -82,6 +84,7 @@ final class DockEngine {
         interactions.onResizingChanged = { [weak self] resizing in
             guard let self else { return }
             self.isResizing = resizing
+            self.updateMagnifierSuspension()
             if !resizing {
                 self.rearmHideIfCursorOutside(source: "resize ended")
             }
@@ -99,6 +102,7 @@ final class DockEngine {
         dragOut.onDraggingChanged = { [weak self] dragging in
             guard let self else { return }
             self.groups.itemDragChanged(dragging, fromStrip: self.dragOut.isFromStrip)
+            self.updateMagnifierSuspension()
             if dragging {
                 self.hover.clear()
                 if let pendingHide = self.pendingHide {
@@ -114,8 +118,15 @@ final class DockEngine {
         }
 
         hover.stripToScreen = { [weak dockPanel] rect in dockPanel?.screenRect(forStripRect: rect) }
+        hover.displayFrame = { [weak magnifier] target in
+            magnifier?.displayFrame(id: target.id, base: target.frame) ?? target.frame
+        }
+        magnifier.onRoomChanged = { [weak dockPanel] room in dockPanel?.setMagnifyRoom(room) }
+        magnifier.contentSizeProvider = { [weak dockPanel] in dockPanel?.stripSize ?? .zero }
         dockPanel.onStripMouseMoved = { [weak self] point in
             guard let self, self.dockPanel.isRevealed else { return }
+            // Magnify first, so the label hit-tests the new layout.
+            self.magnifier.cursorMoved(to: point)
             self.hover.cursorMoved(to: point)
         }
         dockPanel.onMouseDown = { [weak self] in
@@ -128,10 +139,12 @@ final class DockEngine {
         interactions.confirmRemoveGroup = { [weak self] group in
             guard let self else { return .cancel }
             self.isConfirmingRemoval = true
+            self.updateMagnifierSuspension()
             self.pendingHide?.cancel()
             self.pendingHide = nil
             let choice = GroupRemoval.confirm(group)
             self.isConfirmingRemoval = false
+            self.updateMagnifierSuspension()
             self.rearmHideIfCursorOutside(source: "group removal alert closed")
             return choice
         }
@@ -163,6 +176,7 @@ final class DockEngine {
         menuObservers.append(center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
             self.menuIsOpen = true
+            self.updateMagnifierSuspension()
             // The menu opens where the hover label is; the native Dock hides it.
             self.hover.isSuppressed = true
             let location = NSEvent.mouseLocation
@@ -173,6 +187,7 @@ final class DockEngine {
         menuObservers.append(center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
             self.menuIsOpen = false
+            self.updateMagnifierSuspension()
             // Forget the cursor first: it is stale after menu tracking (a
             // press-and-hold menu starts with the button down), so no label
             // appears until the next real mouse move reports a fresh point.
@@ -206,6 +221,21 @@ final class DockEngine {
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { IconCache.shared.setStyle($0) }
+        // Settings apply live. Next main loop turn: @Published emits from
+        // willSet, and the magnifier reads the model's current values.
+        magnifySubscriptions = [
+            dockModel.$magnificationEnabled.map { _ in () }.eraseToAnyPublisher(),
+            dockModel.$magnifiedSize.map { _ in () }.eraseToAnyPublisher(),
+            dockModel.$edge.map { _ in () }.eraseToAnyPublisher(),
+        ].map {
+            $0.receive(on: DispatchQueue.main).sink { [weak self] in self?.configureMagnifier() }
+        }
+        // An open group grid, or a launch bounce (it draws the unmagnified
+        // tile for now), turns magnification off until it ends.
+        magnifySubscriptions.append(groups.$expandedID.removeDuplicates().receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateMagnifierSuspension() })
+        magnifySubscriptions.append(bouncer.$bouncingID.removeDuplicates().receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateMagnifierSuspension() })
         bounceSettingSubscription = dockModel.$animateOpeningApplications
             .removeDuplicates()
             .dropFirst()
@@ -223,6 +253,7 @@ final class DockEngine {
         }
         dockPanel.onMouseExited = { [weak self] in
             self?.hover.clear()
+            self?.magnifier.cursorExited()
             self?.handleExit(source: "panel")
         }
         edgeTracker.onDragEntered = { [weak self] in self?.handleDragEntered("edge") }
@@ -249,6 +280,7 @@ final class DockEngine {
             // mouseMoved will arrive. Check the cursor once.
             if let point = self.dockPanel.stripPoint(forScreenPoint: NSEvent.mouseLocation),
                self.dockPanel.containsScreenPoint(NSEvent.mouseLocation) {
+                self.magnifier.cursorMoved(to: point)
                 self.hover.cursorMoved(to: point)
             }
         }
@@ -257,6 +289,7 @@ final class DockEngine {
     /// Start the engine. With auto-hide on, the panel starts hidden and only
     /// the edge window is shown. With it off, the panel is simply up.
     func start() {
+        configureMagnifier()
         dockPanel.prepareHidden()
         if dockModel.autoHide {
             edgeTracker.start()
@@ -301,6 +334,7 @@ final class DockEngine {
         pendingReveal?.cancel()
         pendingReveal = nil
         hover.clear()
+        magnifier.reset()
         bouncer.cancel(reason: "engine stopped")
         dockPanel.hide(animated: false)
         groups.collapse(reason: "engine stopped", animated: false)
@@ -314,6 +348,7 @@ final class DockEngine {
     private func applyEdge(_ edge: DockEdge) {
         groups.collapse(reason: "dock moved", animated: false)
         bouncer.cancel(reason: "dock moved")
+        magnifier.reset()
         pendingHide?.cancel()
         pendingHide = nil
         pendingReveal?.cancel()
@@ -325,6 +360,27 @@ final class DockEngine {
             dockPanel.show(animated: true)
         }
         logger.info("dock moved to the \(edge.rawValue, privacy: .public) edge")
+    }
+
+    // MARK: - Magnification
+
+    private func configureMagnifier() {
+        magnifier.configure(enabled: dockModel.magnificationEnabled, size: dockModel.magnifiedSize, edge: dockModel.edge)
+    }
+
+    /// Off during any drag (reorder, drag-out, file drag, separator resize),
+    /// while a group grid, menu or the remove-group alert is open, and while
+    /// a launch bounce plays. Back on with the next mouse move after.
+    private func updateMagnifierSuspension() {
+        var reasons: [String] = []
+        if menuIsOpen { reasons.append("menu") }
+        if isResizing { reasons.append("resize") }
+        if dragOut.isDragging { reasons.append("item drag") }
+        if !dragTargets.isEmpty { reasons.append("file drag") }
+        if groups.expandedID != nil { reasons.append("group open") }
+        if isConfirmingRemoval { reasons.append("alert") }
+        if bouncer.bouncingID != nil { reasons.append("bounce") }
+        magnifier.setSuspended(!reasons.isEmpty, reason: reasons.isEmpty ? "clear" : reasons.joined(separator: ", "))
     }
 
     private func rearmHideIfCursorOutside(source: String) {
@@ -361,6 +417,7 @@ final class DockEngine {
 
     private func handleDragEntered(_ target: String) {
         dragTargets.insert(target)
+        updateMagnifierSuspension()
         if dockPanel.isRevealedOrRevealing {
             logger.info("\(target, privacy: .public) draggingEntered (dock already up)")
         }
@@ -376,6 +433,7 @@ final class DockEngine {
         if NSEvent.pressedMouseButtons & 1 == 0 {
             dragTargets.removeAll()
         }
+        updateMagnifierSuspension()
         handleExit(source: target, trigger: "drag \(reason)")
     }
 
@@ -476,6 +534,7 @@ final class DockEngine {
             }
             self.logger.info("hide timer fired, hiding")
             self.hover.clear()
+            self.magnifier.reset()
             self.bouncer.cancel(reason: "dock hiding")
             self.dockPanel.hide(animated: true)
             // After hide() so the collapse's re-check sees the dock hiding.

@@ -61,6 +61,7 @@ final class DockModel: Codable, ObservableObject {
         static let groupHoverCloseGrace: TimeInterval = 0.05
         static let backgroundFrost: Double = 0.5
         static let cornerRadius: CGFloat = 16
+        static let magnifiedSize: CGFloat = 64
     }
 
     static let revealDelayRange: ClosedRange<TimeInterval> = 0...1
@@ -114,14 +115,26 @@ final class DockModel: Codable, ObservableObject {
     /// Same range as the native Dock's `tilesize`.
     static let iconSizeRange: ClosedRange<CGFloat> = 16...128
 
-    /// Whether magnification is enabled on hover. Stored only: magnification
-    /// itself is not built yet.
+    /// Native-style magnification: tiles grow under the cursor (bottom
+    /// edge for now).
     @Published private(set) var magnificationEnabled: Bool = false
 
     func setMagnificationEnabled(_ enabled: Bool) {
         guard enabled != magnificationEnabled else { return }
         magnificationEnabled = enabled
         persist()
+    }
+
+    /// Size (points) of the tile right under the cursor while magnifying.
+    /// Same range as the native Dock's `largesize`. At or below the icon
+    /// size nothing grows.
+    @Published private(set) var magnifiedSize: CGFloat = Defaults.magnifiedSize
+    static let magnifiedSizeRange: ClosedRange<CGFloat> = 16...128
+
+    func setMagnifiedSize(_ size: CGFloat, persist shouldPersist: Bool = true) {
+        let clamped = min(max(size.rounded(), Self.magnifiedSizeRange.lowerBound), Self.magnifiedSizeRange.upperBound)
+        if clamped != magnifiedSize { magnifiedSize = clamped }
+        if shouldPersist { persist() }
     }
 
     /// Native "Animate opening applications": a pinned tile bounces while
@@ -458,7 +471,7 @@ final class DockModel: Codable, ObservableObject {
     // MARK: - Codable
 
     private enum CodingKeys: String, CodingKey {
-        case revealDelay, hideDelay, animationDuration, iconSize, magnificationEnabled, edge, entries, widgetKinds
+        case revealDelay, hideDelay, animationDuration, iconSize, magnificationEnabled, magnifiedSize, edge, entries, widgetKinds
         case autoHide, openGroupsOnHover, groupHoverDelay, groupHoverCloseGrace
         case animateOpeningApplications
         case hideNativeDock, nativeDockExplained
@@ -474,6 +487,8 @@ final class DockModel: Codable, ObservableObject {
         animationDuration = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .animationDuration) ?? Defaults.animationDuration, to: Self.animationDurationRange)
         iconSize = try c.decodeIfPresent(CGFloat.self, forKey: .iconSize) ?? 48.0
         magnificationEnabled = try c.decodeIfPresent(Bool.self, forKey: .magnificationEnabled) ?? false
+        let magnified = (try? c.decodeIfPresent(CGFloat.self, forKey: .magnifiedSize)) ?? Defaults.magnifiedSize
+        magnifiedSize = min(max(magnified, Self.magnifiedSizeRange.lowerBound), Self.magnifiedSizeRange.upperBound)
         edge = (try? c.decodeIfPresent(DockEdge.self, forKey: .edge)) ?? .bottom
         if let saved = try c.decodeIfPresent([DockEntry].self, forKey: .entries) {
             entries = saved
@@ -507,6 +522,7 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(animationDuration, forKey: .animationDuration)
         try c.encode(iconSize, forKey: .iconSize)
         try c.encode(magnificationEnabled, forKey: .magnificationEnabled)
+        try c.encode(magnifiedSize, forKey: .magnifiedSize)
         try c.encode(edge, forKey: .edge)
         try c.encode(entries, forKey: .entries)
         try c.encode(widgetKinds, forKey: .widgetKinds)
@@ -647,6 +663,7 @@ final class DockModel: Codable, ObservableObject {
         animationDuration = old.animationDuration
         iconSize = old.iconSize
         magnificationEnabled = old.magnificationEnabled
+        magnifiedSize = old.magnifiedSize
         animateOpeningApplications = old.animateOpeningApplications
         autoHide = old.autoHide
         openGroupsOnHover = old.openGroupsOnHover

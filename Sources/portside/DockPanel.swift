@@ -39,6 +39,7 @@ final class DockPanel {
     private let contentView: PanelContentView
     private let hostingView: NSHostingView<DockStrip>
     private let dockModel: DockModel
+    private let magnifier: Magnifier
     private let logger = Logger(subsystem: "com.james.portside", category: "DockPanel")
 
     private var state: State = .hidden
@@ -47,6 +48,22 @@ final class DockPanel {
     private var screenObserver: NSObjectProtocol?
     /// Last size the strip reported. Nil until its first layout.
     private var measuredContentSize: CGSize?
+
+    /// Extra window room for magnified tiles (see `Magnifier`). Zero unless
+    /// tiles are magnified or settling, so the area above an unmagnified
+    /// dock never blocks clicks.
+    private var room = MagnifyRoom.zero
+    /// Cursor is over the dock's active region (the whole panel without
+    /// room; the shelf plus the magnified band with it).
+    private var cursorInside = false
+    /// An exit was already reported since the last enter, so the window's
+    /// own mouseExited (after the room is removed) is not a second one.
+    private var exitReported = false
+    /// Room the current frame was laid out with.
+    private var laidOutRoom = MagnifyRoom.zero
+    /// When the window last grew or shrank for room. AppKit answers a shrink
+    /// under a still cursor with an exit and an enter about 8ms apart.
+    private var roomResizedAt: CFTimeInterval = 0
 
     /// Screen edge the panel is attached to.
     private(set) var edge: DockEdge
@@ -68,8 +85,9 @@ final class DockPanel {
 
     // MARK: - Init
 
-    init(dockModel: DockModel, strip: DockStrip) {
+    init(dockModel: DockModel, strip: DockStrip, magnifier: Magnifier) {
         self.dockModel = dockModel
+        self.magnifier = magnifier
         self.edge = dockModel.edge
 
         let hosting = FirstMouseHostingView(rootView: strip)
@@ -101,14 +119,11 @@ final class DockPanel {
         panel.hidesOnDeactivate = false
         panel.contentView = contentView
 
-        contentView.onMouseEntered = { [weak self] event in self?.onMouseEntered?(event) }
-        contentView.onMouseExited = { [weak self] in self?.onMouseExited?() }
+        contentView.onMouseEntered = { [weak self] event in self?.windowMouseEntered(event) }
+        contentView.onMouseExited = { [weak self] in self?.windowMouseExited() }
         contentView.onDragEntered = { [weak self] in self?.onDragEntered?() }
         contentView.onDragExited = { [weak self] reason in self?.onDragExited?(reason) }
-        contentView.onMouseMoved = { [weak self] event in
-            guard let self else { return }
-            self.onStripMouseMoved?(self.stripPoint(fromWindowPoint: event.locationInWindow))
-        }
+        contentView.onMouseMoved = { [weak self] event in self?.windowMouseMoved(event) }
         hosting.onMouseDown = { [weak self] in self?.onMouseDown?() }
 
         layout()
@@ -143,7 +158,15 @@ final class DockPanel {
         }
     }
 
-    private var panelSize: NSSize {
+    /// The strip's own (unmagnified) size.
+    var stripSize: CGSize {
+        let i = insets
+        let base = basePanelSize
+        return CGSize(width: base.width - i.left - i.right, height: base.height - i.top - i.bottom)
+    }
+
+    /// Panel size without the magnification room.
+    private var basePanelSize: NSSize {
         var content = measuredContentSize ?? hostingView.intrinsicContentSize
         if content.width <= 0 || content.height <= 0 {
             content = hostingView.fittingSize
@@ -152,8 +175,29 @@ final class DockPanel {
         return NSSize(width: content.width + i.left + i.right, height: content.height + i.top + i.bottom)
     }
 
+    private var panelSize: NSSize { revealedFrame.size }
+
+    /// The revealed frame plus the magnification room. The base frame is
+    /// placed (and clamped to the screen) first, so the shelf never moves
+    /// when room is added; the room may run past the screen's sides.
     private var revealedFrame: NSRect {
-        let size = panelSize
+        let base = baseRevealedFrame
+        guard room != .zero else { return base }
+        switch edge {
+        case .bottom:
+            return NSRect(x: base.minX - room.side, y: base.minY,
+                          width: base.width + room.side * 2, height: base.height + room.far)
+        case .left:
+            return NSRect(x: base.minX, y: base.minY - room.side,
+                          width: base.width + room.far, height: base.height + room.side * 2)
+        case .right:
+            return NSRect(x: base.minX - room.far, y: base.minY - room.side,
+                          width: base.width + room.far, height: base.height + room.side * 2)
+        }
+    }
+
+    private var baseRevealedFrame: NSRect {
+        let size = basePanelSize
         let screen = DockScreen.frame
         let visible = DockScreen.visibleFrame.insetBy(dx: screenMargin, dy: screenMargin)
         func centered(_ length: CGFloat, in lower: CGFloat, _ upper: CGFloat) -> CGFloat {
@@ -192,7 +236,7 @@ final class DockPanel {
     }
 
     /// Size the hosting view and put the panel at the frame matching its state.
-    private func layout() {
+    private func layout(display: Bool = false) {
         // Size the window first, then fit the hosting view inside the
         // content view's real bounds. Setting the subview frame before the
         // window has a size would get skewed by autoresizing.
@@ -200,7 +244,7 @@ final class DockPanel {
         case .hidden, .hiding:
             panel.setFrame(hiddenFrame, display: false)
         case .revealed, .revealing:
-            panel.setFrame(revealedFrame, display: false)
+            panel.setFrame(revealedFrame, display: display)
         }
         let bounds = contentView.bounds
         let i = insets
@@ -215,6 +259,15 @@ final class DockPanel {
         hostingView.autoresizingMask = [.width, .height]
     }
 
+    /// Add or remove the room magnified tiles draw into. Applied at once
+    /// while revealed; during a slide the slide's completion catches up.
+    func setMagnifyRoom(_ newRoom: MagnifyRoom) {
+        guard newRoom != room else { return }
+        room = newRoom
+        if room == .zero { panel.ignoresMouseEvents = false }
+        layoutIfSizeChanged()
+    }
+
     /// The strip reported a new size (icon size, items, widgets, edge).
     func contentSizeChanged(_ size: CGSize) {
         measuredContentSize = size
@@ -226,18 +279,42 @@ final class DockPanel {
     private func layoutIfSizeChanged() {
         guard state == .revealed || state == .hidden else { return }
         guard panelSize != panel.frame.size else { return }
-        layout()
+        let roomChanged = room != laidOutRoom
+        // A resized window only redraws what SwiftUI marks dirty, and
+        // undrawn pixels are fully transparent, which the window server
+        // treats as click-through: the cursor would "leave" the dock. Room
+        // changes redraw the whole window with the resize.
+        layout(display: roomChanged)
+        if roomChanged {
+            roomResizedAt = CACurrentMediaTime()
+            if state == .revealed { panel.display() }
+            // Room comes and goes once per hover; keep it out of the info log.
+            laidOutRoom = room
+            logger.debug("panel room \(self.room.far, format: .fixed(precision: 0))/\(self.room.side, format: .fixed(precision: 0))pt")
+            return
+        }
         logger.info("panel resized to \(self.panel.frame.width, format: .fixed(precision: 0))x\(self.panel.frame.height, format: .fixed(precision: 0)) at icon \(self.dockModel.iconSize, format: .fixed(precision: 0))pt")
     }
 
     // MARK: - Strip coordinates (for hover labels and overlays)
     //
-    // The strip's root SwiftUI coordinate space fills the hosting view and
-    // has a top-left origin.
+    // The strip's content coordinate space (`DockHover.space`) has a
+    // top-left origin. It fills the hosting view except for the
+    // magnification room, which sits on its far side and both ends.
+
+    /// Top-left of the strip content inside the hosting view.
+    private var contentOrigin: CGPoint {
+        switch edge {
+        case .bottom: CGPoint(x: room.side, y: room.far)
+        case .left: CGPoint(x: 0, y: room.side)
+        case .right: CGPoint(x: room.far, y: room.side)
+        }
+    }
 
     private func stripPoint(fromWindowPoint windowPoint: NSPoint) -> CGPoint {
         let p = hostingView.convert(windowPoint, from: nil)
-        return CGPoint(x: p.x, y: hostingView.isFlipped ? p.y : hostingView.bounds.height - p.y)
+        let origin = contentOrigin
+        return CGPoint(x: p.x - origin.x, y: (hostingView.isFlipped ? p.y : hostingView.bounds.height - p.y) - origin.y)
     }
 
     /// Screen point -> strip root coordinates, or nil if the panel is not on screen.
@@ -249,27 +326,108 @@ final class DockPanel {
     /// Strip root rect -> screen rect, or nil if the panel is not on screen.
     func screenRect(forStripRect rect: CGRect) -> NSRect? {
         guard panel.isVisible else { return nil }
-        var local = rect
+        let origin = contentOrigin
+        var local = rect.offsetBy(dx: origin.x, dy: origin.y)
         if !hostingView.isFlipped {
-            local.origin.y = hostingView.bounds.height - rect.maxY
+            local.origin.y = hostingView.bounds.height - local.maxY
         }
         return panel.convertToScreen(hostingView.convert(local, to: nil))
     }
 
-    /// The panel's frame on screen, nil while it is ordered out.
+    /// The panel's frame on screen without the magnification room, nil
+    /// while it is ordered out.
     var screenFrame: NSRect? {
-        panel.isVisible ? panel.frame : nil
+        panel.isVisible ? baseScreenFrame : nil
     }
 
-    /// Whether a point in screen coordinates is over the visible panel.
+    private var baseScreenFrame: NSRect {
+        let frame = panel.frame
+        switch edge {
+        case .bottom:
+            return NSRect(x: frame.minX + room.side, y: frame.minY,
+                          width: frame.width - room.side * 2, height: frame.height - room.far)
+        case .left:
+            return NSRect(x: frame.minX, y: frame.minY + room.side,
+                          width: frame.width - room.far, height: frame.height - room.side * 2)
+        case .right:
+            return NSRect(x: frame.minX + room.far, y: frame.minY + room.side,
+                          width: frame.width - room.far, height: frame.height - room.side * 2)
+        }
+    }
+
+    /// Whether a point in screen coordinates is over the visible dock: the
+    /// panel, or with magnification room only the shelf and the band the
+    /// magnified tiles cover (the rest of the room does not count).
     func containsScreenPoint(_ point: NSPoint) -> Bool {
-        panel.isVisible && panel.frame.contains(point)
+        guard panel.isVisible else { return false }
+        guard room != .zero else { return panel.frame.contains(point) }
+        return isInActiveRegion(windowPoint: panel.convertPoint(fromScreen: point))
+    }
+
+    private func isInActiveRegion(windowPoint: NSPoint) -> Bool {
+        guard room != .zero else { return true }
+        let base = panel.convertFromScreen(baseScreenFrame)
+        return base.contains(windowPoint) || magnifier.bandContains(stripPoint(fromWindowPoint: windowPoint))
+    }
+
+    // MARK: - Cursor tracking
+    //
+    // Without magnification room this is the window's own enter/exit/move,
+    // unchanged. With room, enter and exit follow the active region, so the
+    // transparent room never keeps the dock up or magnified.
+
+    private func windowMouseEntered(_ event: NSEvent) {
+        guard room == .zero || isInActiveRegion(windowPoint: event.locationInWindow) else { return }
+        reportEnter(event)
+    }
+
+    private func windowMouseExited() {
+        // The stray exit after a room resize: the cursor never left.
+        if CACurrentMediaTime() - roomResizedAt < 0.05, containsScreenPoint(NSEvent.mouseLocation) {
+            logger.debug("ignored exit after a room resize, cursor still over the dock")
+            return
+        }
+        cursorInside = false
+        // While the tiles settle back the room is still there; let clicks
+        // above the dock through right away instead of after the settle.
+        // Mouse events come back when the room goes (`setMagnifyRoom`).
+        if room != .zero { panel.ignoresMouseEvents = true }
+        guard !exitReported else { return }
+        exitReported = true
+        onMouseExited?()
+    }
+
+    private func windowMouseMoved(_ event: NSEvent) {
+        let point = stripPoint(fromWindowPoint: event.locationInWindow)
+        guard room != .zero else {
+            // Back over the panel after an exit we reported, but AppKit sent
+            // no mouseEntered (the room went away under the cursor).
+            if !cursorInside && exitReported { reportEnter(event) }
+            onStripMouseMoved?(point)
+            return
+        }
+        let inside = isInActiveRegion(windowPoint: event.locationInWindow)
+        if inside != cursorInside {
+            if inside {
+                reportEnter(event)
+            } else {
+                windowMouseExited()
+            }
+        }
+        if inside { onStripMouseMoved?(point) }
+    }
+
+    private func reportEnter(_ event: NSEvent) {
+        cursorInside = true
+        exitReported = false
+        onMouseEntered?(event)
     }
 
     // MARK: - Show / Hide
 
     /// Put the panel in its hidden state without animation and keep it off screen.
     func prepareHidden() {
+        panel.ignoresMouseEvents = false
         generation += 1
         state = .hidden
         panel.setFrame(hiddenFrame, display: false)
@@ -287,6 +445,7 @@ final class DockPanel {
         if !panel.isVisible {
             panel.setFrame(hiddenFrame, display: false)
         }
+        panel.ignoresMouseEvents = false
         panel.orderFrontRegardless()
 
         let target = revealedFrame
@@ -348,6 +507,7 @@ final class DockPanel {
         guard generation == self.generation else { return }
         state = .hidden
         panel.orderOut(nil)
+        cursorInside = false
         layoutIfSizeChanged()
         logger.info("panel hidden")
     }
@@ -404,9 +564,10 @@ private final class PanelContentView: NSView {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let trackingArea {
-            removeTrackingArea(trackingArea)
-        }
+        // Created once: `.inVisibleRect` follows the view's bounds by itself.
+        // Replacing the area on every resize (magnification room coming and
+        // going) made AppKit send a stray exit and enter under a still cursor.
+        guard trackingArea == nil else { return }
         // .mouseMoved drives hover labels. Events only arrive while the
         // cursor is inside this view, so there is no cost when it is not.
         let area = NSTrackingArea(
