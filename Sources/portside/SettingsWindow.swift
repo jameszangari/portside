@@ -557,7 +557,12 @@ private struct GeneralSettings: View {
             if replace { parts.append("removed \(r.removed)") }
             if r.inGroups > 0 { parts.append("\(r.inGroups) already in groups") }
             if snapshot.missingApps > 0 { parts.append("skipped \(snapshot.missingApps) missing") }
-            if snapshot.others > 0 { parts.append("skipped \(snapshot.others) folder or file \(snapshot.others == 1 ? "tile" : "tiles")") }
+            if !snapshot.folderStacks.isEmpty {
+                parts.append("\(snapshot.folderStacks.count) folder \(snapshot.folderStacks.count == 1 ? "stack" : "stacks")")
+            }
+            if snapshot.othersSkipped > 0 {
+                parts.append("skipped \(snapshot.othersSkipped) file or missing \(snapshot.othersSkipped == 1 ? "tile" : "tiles")")
+            }
             if r.appliedLook { parts.append("set position and size") }
             importStatus = parts.joined(separator: ", ") + "."
         } catch {

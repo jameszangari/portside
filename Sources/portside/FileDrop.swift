@@ -6,32 +6,28 @@ private let dropLogger = Logger(subsystem: "com.james.portside", category: "File
 /// What a file drag over the strip can do, decided once per drag from the
 /// dragged URLs.
 ///
-/// - `.pin`: every item is an `.app` bundle. Dropping anywhere on the strip
-///   (empty space, between tiles, or on a tile) pins them at the slot under
-///   the cursor, like before. App tiles never highlight.
-/// - `.open`: anything else. Only an app tile whose app can open every item
-///   highlights and accepts the drop; everything else rejects it.
+/// - `.pinApps`: every item is an `.app` bundle. Dropping on the strip pins
+///   them among entries (insertion gap). Dropping on a folder stack (or its
+///   open grid) deposits into that folder instead.
+/// - `.pinFolders`: every item is a folder (not an app). Dropping pins them
+///   as folder stacks in the right section.
+/// - `.open`: anything else. App tiles that can open the items highlight;
+///   folder stacks accept a deposit into the folder.
 ///
-/// In either mode the Trash tile takes the drop instead when every item
-/// can be moved to the Trash (`canTrash(using:)`).
-///
-/// React analogy: a ref holding per-drag state (no re-render on change).
-/// The highlighted tile id lives in the strip's @State instead.
+/// In any mode the Trash tile takes the drop instead when every item can
+/// be moved to the Trash (`canTrash(using:)`).
 final class FileDropSession {
-    enum Mode { case pin, open }
+    enum Mode { case pinApps, pinFolders, open }
 
     private(set) var urls: [URL] = []
     private(set) var mode: Mode = .open
-    /// Per drag: app id -> can open every dragged item. Launch Services is
-    /// asked once per tile per drag, not on every dropUpdated.
+    /// Per drag: app id -> can open every dragged item.
     private var verdicts: [String: Bool] = [:]
     /// Per drag: every item can go to the Trash. Nil until asked.
     private var trashVerdict: Bool?
+    /// Per drag: every item can be deposited into a folder stack.
+    private var depositVerdict: Bool?
 
-    /// Reads the dragged file URLs from the drag pasteboard. DropInfo's item
-    /// providers only load asynchronously, but the pasteboard is readable
-    /// synchronously while the drag is over us, so the highlight can follow
-    /// the cursor without waiting.
     func begin() {
         let objects = NSPasteboard(name: .drag).readObjects(
             forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]
@@ -39,21 +35,33 @@ final class FileDropSession {
         urls = objects
         verdicts = [:]
         trashVerdict = nil
-        // Empty means the pasteboard could not be read. Fall back to pin
-        // mode (the providers load later), so dropping apps still works.
-        mode = urls.allSatisfy({ PinnedApp(appURL: $0) != nil }) ? .pin : .open
-        dropLogger.info("drag over strip: \(self.urls.count) item(s), mode \(self.mode == .pin ? "pin" : "open", privacy: .public)")
+        depositVerdict = nil
+        if urls.isEmpty {
+            mode = .pinApps
+        } else if urls.allSatisfy({ PinnedApp(appURL: $0) != nil }) {
+            mode = .pinApps
+        } else if urls.allSatisfy(Self.isPinableFolder) {
+            mode = .pinFolders
+        } else {
+            mode = .open
+        }
+        let label: String
+        switch mode {
+        case .pinApps: label = "pin apps"
+        case .pinFolders: label = "pin folders"
+        case .open: label = "open"
+        }
+        dropLogger.info("drag over strip: \(self.urls.count) item(s), mode \(label, privacy: .public)")
     }
 
     func end() {
         urls = []
         verdicts = [:]
         trashVerdict = nil
+        depositVerdict = nil
         mode = .open
     }
 
-    /// True if `app` can open every dragged item. Finder always takes
-    /// folders (it opens them in a window).
     func canOpen(with app: PinnedApp) -> Bool {
         if let cached = verdicts[app.id] { return cached }
         let started = CACurrentMediaTime()
@@ -64,7 +72,6 @@ final class FileDropSession {
             if candidates.contains(where: { $0.resolvingSymlinksInPath().standardizedFileURL.path == appURL.path }) {
                 return true
             }
-            // Same app at another path (a copy, or a stale saved path).
             guard let id = app.bundleIdentifier else { return false }
             return candidates.contains { Bundle(url: $0)?.bundleIdentifier == id }
         }
@@ -74,13 +81,26 @@ final class FileDropSession {
         return verdict
     }
 
-    /// True if every dragged item can be moved to the Trash.
     func canTrash(using trash: TrashController) -> Bool {
         if let trashVerdict { return trashVerdict }
         let verdict = !urls.isEmpty && urls.allSatisfy(trash.canTrash)
         trashVerdict = verdict
         dropLogger.info("can move to Trash: \(verdict)")
         return verdict
+    }
+
+    /// True if every dragged item can be moved or copied into a folder.
+    func canDeposit() -> Bool {
+        if let depositVerdict { return depositVerdict }
+        let verdict = !urls.isEmpty && urls.allSatisfy { url in
+            url.isFileURL && FileManager.default.fileExists(atPath: url.path)
+        }
+        depositVerdict = verdict
+        return verdict
+    }
+
+    static func isPinableFolder(_ url: URL) -> Bool {
+        FolderStack(folderURL: url) != nil
     }
 
     private static func isDirectory(_ url: URL) -> Bool {

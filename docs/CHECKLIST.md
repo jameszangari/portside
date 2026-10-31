@@ -1,6 +1,6 @@
 # Portside: Checklist
 
-Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand-tested. Milestone F is done and hand-tested except `persistent-others` import (deferred until folder stacks exist). P1 and P2 are partly built, see below.
+Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand-tested. Milestone F is done and hand-tested (folder stacks from `persistent-others` import with the P2 grid-first slice; plain file tiles still skipped). P1 and P2 are partly built, see below.
 
 ## Roadmap
 
@@ -11,14 +11,51 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [x] **B.6:** Dock position (bottom/left/right) and separator resize
 - [x] **D:** App groups (expand/collapse)
 - [x] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live; includes auto-hide toggle with Cmd+Option+D, Portside as a regular app while Settings is open, inline group naming and rename, open groups on hover
-- [ ] **F:** [x] Hide the macOS Dock (autohide-delay trick only, exact save and restore); [x] launch at login (`SMAppService`); [x] a real .app bundle (`scripts/build-app.sh`); [x] import native orientation and tilesize as Portside's initial position and icon size; [x] a manual "Import from macOS Dock" action with undo; [ ] import `persistent-others` (deferred until folder stacks exist). First-launch seeding of pinned apps from `persistent-apps` is built.
+- [ ] **F:** [x] Hide the macOS Dock (autohide-delay trick only, exact save and restore); [x] launch at login (`SMAppService`); [x] a real .app bundle (`scripts/build-app.sh`); [x] import native orientation and tilesize as Portside's initial position and icon size; [x] a manual "Import from macOS Dock" action with undo; [x] import `persistent-others` folders as stacks (file tiles still skipped). First-launch seeding of pinned apps and folder stacks is built.
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
 - [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu (built on app tiles, group tiles, Portside's own tile and grid cells, hand test pending); divider right-click (built: Turn Hiding On/Off, Turn Magnification On/Off, Position on Screen, Dock Settings); Option turns Quit into Force Quit (built); drag apps in from Finder (built); drag icons out to remove (built, hand test pending); drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder, built); Option-click (hide frontmost) and Cmd+Option-click (hide others) (built); Hide/Show and Force Quit in the app menu (built); Cmd-Option-D show/hide (built)
-- [ ] **P2:** Trash (built, hand test pending: full/empty, drag-to-trash, Full Disk Access hint, Open/Empty Trash menus); filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag (built for app groups; folder stacks not yet); magnification (built on all three edges, see the part 2 section)
+- [ ] **P2:** Trash (built and hand-tested); filesystem folder stacks (grid-first slice in progress; fan/list later); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag (built for app groups; folder stacks in progress); magnification (built on all three edges, see the part 2 section)
 - [ ] **P3:** Follow the display the cursor hits; fullscreen apps and Spaces; badge counts via the real Dock's accessibility tree (Accessibility permission; private APIs only as fallback); window list in right-click menu with click to focus (Screen Recording for titles); VoiceOver labels and keyboard navigation; do not reveal while dragging a window or holding the mouse button (except file drags headed to the Dock)
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section; bounce on attention request (needs private APIs, not wanted for now)
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
+
+---
+
+# P2: Folder stacks, grid-first (2026-10-31)
+
+Status: implemented, debug build and launch verified (Downloads stack listed 90 items). Hand test pending. Fan/list/sort deferred. No commits yet for this slice unless asked.
+
+## Deliverables
+
+- [x] `FolderStack` model + `stacks` in dock.json; right section after widgets, before Trash.
+- [x] Tile mini-grid of contents (folder icon when empty); magnify + hover label; not mixed with pinned apps.
+- [x] Click opens grid popover (reuse group motion/placement). Click item opens it. Menu: Open, Show in Finder, Remove.
+- [x] Drag folder from Finder to pin; reorder stacks; drag out to remove. Insertion gap opens at the drop slot while dragging (native Dock style). Same dashed tile gap for pinning apps from Finder among entries.
+- [x] Drag-out "Remove" label no longer clipped (label is laid out above the floating preview inside the overlay size, not offset outside a fixed frame).
+- [x] Drop files/apps onto stack tile or open grid deposits into the folder (move, else copy). Open grid shows an insertion gap at the drop slot; `itemOrder` in dock.json keeps placement. Dragging over a stack tile opens the grid immediately (no 600ms delay).
+- [x] App groups: Finder drag (including `.app`) over a group tile opens the grid immediately; open grid shows the same dashed tile-sized insertion gap; drop adds at that slot (no pin-gap beside the group on the strip).
+- [x] Drag a member out of an open group grid: alert with Remove from Group, Remove from Dock, or Cancel (focus returned to the previous app).
+- [x] Pinning an app from Finder: gap clears and tile appears in one unanimated layout pass (no drop jitter).
+- [x] FSEvents content updates, no polling.
+- [x] Import / first-launch seed from native `persistent-others` directories; file tiles skipped.
+- [x] README Features, Planned, layout, dock.json keys updated.
+
+## Hand test: Bottom, Left, Right
+
+- [ ] Drag a folder from Finder onto the dock: stack appears before Trash; mini icons match contents.
+- [ ] Click opens grid; click a file/app opens it; Portside stays inactive. Right-click Open / Show in Finder / Remove.
+- [ ] Drop a file onto the closed stack and into the open grid: it lands in the folder; tile/grid update.
+- [ ] Open a stack grid, drag an app from Applications into a chosen slot (gap follows); it stays in that place after drop.
+- [ ] Drop an app from Finder onto the strip (not a stack): pins with no visible jitter when the gap becomes the icon.
+- [ ] Drag a file or app onto a stack tile: grid opens immediately; leave closes after grace via hide rules.
+- [ ] Reorder stacks; drag one out to remove. Import from macOS Dock adds native folders. Mag + labels OK.
+- [ ] Reveal/hide still within a frame; app groups still work alongside stacks.
+
+## Deferred
+
+- Fan and list views; sort-by; show as folder vs stack of icons.
+- Importing plain file tiles from `persistent-others`.
 
 ---
 
@@ -35,7 +72,8 @@ Status: implemented, debug build and launch verified. Click/label regressions fr
 - [x] One dismissible Full Disk Access hint next to the setting (also notes Finder Automation), with a System Settings link. `trashAccessHintDismissed` persists dismissal/link use so it does not nag again.
 - [x] Open through NSWorkspace. Empty Trash uses NSAppleScript with a Finder-hosted confirmation before Finder's empty command. Cancel is harmless; Automation denial and failures show inline in Settings and in the hover label.
 - [x] `NSAppleEventsUsageDescription` embedded in the SPM binary and copied into the app bundle by build-app.sh.
-- [x] File/folder drops reuse FileDrop session highlighting and hide suppression, preflight deletability and use FileManager.trashItem off the main thread. Failures report briefly; internal app drags over Trash restore their starting slot.
+- [x] File/folder drops reuse FileDrop session highlighting and hide suppression, preflight deletability and use FileManager.trashItem off the main thread. Failures report briefly.
+- [x] Dock tile dropped on Trash asks first (Remove from Dock / Move to Trash / Cancel). No silent delete. Move to Trash is for apps and folder stacks only (groups/widgets unpin only).
 - [x] README Features, Planned, project layout and data keys updated.
 - [x] Regression fix (James): short clicks open apps again. `menuHold` uses `onTapGesture` plus a simultaneous long-press, not an exclusive LongPress/Tap sequence that could swallow taps in the non-activating hosting view.
 - [x] Regression fix (James): magnified hover labels stay centered. The hovered icon reports spring-interpolated scale/shift via a `GeometryEffect`; the label overlay reanchors immediately to that frame (no second window animation).
@@ -53,12 +91,14 @@ Status: implemented, debug build and launch verified. Click/label regressions fr
 
 ## Hand test: repeat on Bottom, Left and Right
 
-- [ ] Trash is last, native icon and label align with apps; magnification works. Dragging Trash itself cannot reorder or remove it.
-- [ ] Drag a disposable file/folder to the edge and onto Trash: dock stays up, target highlights, file moves; full icon updates with Full Disk Access. Drag away and re-enter during hide delay. Invalid drops reject; internal app tiles remain in their original order.
-- [ ] Click once while another app is active: Finder opens Trash, Portside stays inactive. Check ordinary app tile clicks too.
-- [ ] Right-click and hold both show Open/Empty Trash. Empty and unreadable state disable Empty Trash. With access and disposable contents, Cancel preserves them; confirm deletes via Finder and icon empties. Test Automation denial without a crash.
-- [ ] Without Full Disk Access: empty icon, one Settings hint and working Open/drop actions. Dismiss or follow its link, reopen Settings/relaunch: no repeated hint.
-- [ ] Show Trash off/on updates live and survives relaunch. Repeat with auto-hide off and magnification both off/on. Check reveal logs stay within a frame.
+- [x] Trash is last, native icon and label align with apps; magnification works. Dragging Trash itself cannot reorder or remove it.
+- [x] Drag a disposable file/folder to the edge and onto Trash: dock stays up, target highlights, file moves; full icon updates with Full Disk Access. Drag away and re-enter during hide delay. Invalid drops reject; internal app tiles remain in their original order.
+- [x] Click once while another app is active: Finder opens Trash, Portside stays inactive. Check ordinary app tile clicks too.
+- [x] Right-click and hold both show Open/Empty Trash. Empty and unreadable state disable Empty Trash. With access and disposable contents, Cancel preserves them; confirm deletes via Finder and icon empties. Test Automation denial without a crash.
+- [x] Without Full Disk Access: empty icon, one Settings hint and working Open/drop actions. Dismiss or follow its link, reopen Settings/relaunch: no repeated hint.
+- [x] Show Trash off/on updates live and survives relaunch. Repeat with auto-hide off and magnification both off/on. Check reveal logs stay within a frame.
+
+James confirmed Trash hand tests good (2026-10-31).
 
 ## Known gaps and deferred work
 
@@ -208,7 +248,7 @@ Status: built, `swift build` clean, waiting for James's hand test. No new files,
 - [x] Click-and-hold on an app tile (strip tiles, unpinned running apps, group grid cells) opens the right-click menu at the tile. `menuHold(_:onTap:)` combines a SwiftUI long press (0.5s, 4pt) exclusively with a tap: a one-shot recognizer, no timer of ours. Moving more than 4pt first cancels it and the reorder or drag-out gesture takes over. A short click is unchanged (no added delay).
 - [x] The release after a hold is not a click: the exclusive gesture resolves to only one action, with no persistent suppression flag.
 - [x] Same `RightClickView` popup as right-click, so placement per edge, hover label hiding and the grid-close-on-menu rules are shared. Panel untouched (still non-activating).
-- [x] Divider right-click is now an AppKit menu: Turn Hiding On/Off, Position on Screen (Left, Bottom, Right, checkmark on the current, `setEdge`, live), Dock Settings... (opens Settings). The old "Settings..." SwiftUI item is gone.
+- [x] Divider right-click is now an AppKit menu: Turn Hiding On/Off, Position on Screen (Left, Bottom, Right, checkmark on the current, `setEdge`, live), Dock Settings... (opens Settings), Quit Portside. The old "Settings..." SwiftUI item is gone.
 - [x] Magnification: the divider menu has Turn Magnification On/Off (built with magnification, 2026-10-31).
 
 ## Verification (agent)
@@ -322,13 +362,13 @@ Status: built and agent-verified, waiting for James's hand test. New file: `Sour
 ## Deliverables
 
 - [x] Pinned app tile dragged clearly out and released: removed, same as "Remove from Dock" (`unpin`). A running app stays as an unpinned running app.
-- [x] "Clearly out": the cursor is 24pt or more outside the dock panel's frame in any direction (`DragOutController.threshold`), so past the far side or past either end, on all three edges. The "Remove" label and the floating icon show in an `OverlayPanel` (same non-activating, click-through class as the hover labels; its own instance so a hover label never replaces it). The cursor turns into the system "disappearing item" cursor while outside.
-- [x] While outside, the tile goes back to its starting slot (dimmed to 25%), so a removal never reorders the rest. Back over the dock: label hides and the normal live reorder resumes.
+- [x] "Clearly out": the cursor is 24pt or more outside the dock panel's frame in any direction (`DragOutController.threshold`), so past the far side or past either end, on all three edges. The floating icon follows the cursor for the whole drag; the "Remove" label shows once outside. Overlay is an `OverlayPanel` (same non-activating, click-through class as the hover labels; its own instance so a hover label never replaces it). The cursor turns into the system "disappearing item" cursor while outside.
+- [x] While outside, the tile goes back to its starting slot (strip gap stays empty), so a removal never reorders the rest. Back over the dock: label hides and the normal live reorder resumes.
 - [x] Poof on removal: the icon scales up 1.5x and fades while eight soft puffs drift out (SwiftUI, 300ms, no private APIs). Reduce Motion: no poof, removal is instant.
 - [x] Escape during the drag cancels: the item snaps back to where it started and nothing is saved. Portside is never active, so for the length of a drag the drag overlay takes key focus without activating Portside (same trick as inline group rename) and gives it back at the end or on Escape.
 - [x] Group tiles: same as their "Remove from Dock", now behind a confirmation (see the safety slice above); running members stay as unpinned running apps.
 - [x] Widgets: they already have "Remove Widget", so a widget dragged out and released is turned off the same way (`setWidget(_, enabled: false)`). Widgets still do not reorder in the strip; released over the dock nothing changes.
-- [x] Open group grid: an app dragged clearly out of the grid card and released is taken out of the group, same as "Remove from Group" (`removeFromGroup`): it lands right after the group tile; a group left with one app becomes that app. Label reads "Remove from Group". Released inside the grid, nothing changes (members are not reordered).
+- [x] Open group grid: an app dragged clearly out and released asks Remove from Group (lands after the group tile; a one-app group becomes that app) or Remove from Dock (`unpin`), or Cancel. Label reads "Remove". Released inside the grid, nothing changes (members are not reordered).
 - [x] Hide path: the drag start cancels a pending hide; exits during a drag do not arm it ("item drag in progress, hide not armed"); the hide timer also refuses while an item drag is on (button still held). After the drop the hide is re-armed with the normal delay if the cursor is outside. A hover-opened grid does not grace-close mid-drag.
 - [x] No polling: everything runs from the gesture's changes plus a local key and mouse-up monitor installed only for the drag. The only timer is the one-shot that removes the poof overlay.
 - [x] Clicks, file drops (`FileDrop.swift`), and in-dock reorder unchanged.
@@ -350,7 +390,7 @@ Scratch dock.json (Finder, TextEdit, Calculator, Chess, two groups, Dictionary; 
 
 - A drag-out removal of a group tile is destructive with no undo; now asks first (safety slice above).
 - The drag needs key focus for Escape, so for the length of a drag the frontmost app's window is briefly not key (keys typed mid-drag go nowhere). Focus comes back at the end (verified with TextEdit).
-- The floating icon only appears once the item is outside; inside the dock the tile itself moves between slots, as before.
+- Floating preview used to stay hidden while the cursor was over the dock (`DragOutView` opacity 0 on `.inside`), so reorder felt locked to the strip. Fixed: preview always follows the cursor; strip/grid tile opacity is 0 for the dragged id (gap + neighbor shift). "Remove" label still only when clearly outside.
 
 ## Known gaps
 
@@ -476,7 +516,7 @@ Status: done and hand-tested by James (first launch and the Settings sheet). New
 - [x] Before applying, dock.json is saved and copied to `dock.json.before-import` (overwritten each time). "Undo last import" shows only while that file exists, restores it live and deletes it.
 - [x] Native order, Finder first. Missing paths skipped and counted. Spacer tiles skipped, `persistent-others` counted and skipped. Counts logged.
 - [x] Add missing: appends new apps after the existing entries, never removes or reorders. Replace: top level apps replaced by the native list; groups keep their slots; apps already inside a group are not duplicated. Widgets, separators, other settings untouched. Applies live.
-- [ ] `persistent-others` (folders and files): deferred until folder stacks exist.
+- [x] `persistent-others` folders import as stacks (grid-first P2 slice). Plain file tiles still skipped.
 
 ## Verification (agent)
 

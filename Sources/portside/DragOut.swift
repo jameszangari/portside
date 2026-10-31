@@ -209,9 +209,14 @@ final class DragOutController {
     }
 
     /// A zero-size anchor under the cursor such that the overlay content,
-    /// placed above it, has its preview centered on the cursor.
+    /// placed above it (`edge: .bottom`), has its preview centered on the cursor.
+    /// The "Remove" label sits above the preview inside the laid-out size (not
+    /// clipped by the hosting view), so measuring from the bottom keeps the
+    /// icon under the cursor whether or not the label is showing.
     private func anchor(at point: NSPoint) -> NSRect {
-        NSRect(x: point.x, y: point.y - state.size / 2 - DragOutView.padding(for: state.size), width: 0, height: 0)
+        let pad = DragOutView.padding(for: state.size)
+        let half = state.size / 2 + pad
+        return NSRect(x: point.x, y: point.y - half, width: 0, height: 0)
     }
 }
 
@@ -225,8 +230,10 @@ final class DragOutState: ObservableObject {
     var look: DockLook?
 }
 
-/// The floating item with its label above. Invisible while the cursor is
-/// over the dock (the strip shows the item there).
+/// The floating item under the cursor for the whole drag. While over the
+/// dock the strip leaves a gap (tile opacity 0); when clearly outside, a
+/// "Remove" label sits above the icon. React analogy: a drag portal that
+/// stays mounted for the gesture, not only for the "outside" phase.
 struct DragOutView: View {
     @ObservedObject var state: DragOutState
 
@@ -235,22 +242,23 @@ struct DragOutView: View {
 
     var body: some View {
         let pad = Self.padding(for: state.size)
-        VStack(spacing: 0) {
-            DockLabel(title: state.label, look: state.look)
-                .opacity(state.phase == .outside ? 1 : 0)
+        // Label is in the layout (not offset outside a fixed frame) so the
+        // overlay panel grows to fit and AppKit does not clip the text.
+        VStack(spacing: 4) {
+            if state.phase == .outside {
+                DockLabel(title: state.label, look: state.look)
+            }
             ZStack {
                 if state.phase == .poof {
                     PoofView(preview: state.preview, size: state.size)
                 } else {
                     state.preview
+                        .scaleEffect(1.06)
                 }
             }
-            .frame(height: state.size)
-            .padding(.horizontal, pad)
-            .padding(.bottom, pad)
-            .padding(.top, 4)
+            .frame(width: state.size, height: state.size)
         }
-        .opacity(state.phase == .inside ? 0 : 1)
+        .padding(pad)
     }
 }
 

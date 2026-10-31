@@ -118,6 +118,8 @@ struct GroupPopoverView: View {
     let onLaunch: (PinnedApp, ((NSRunningApplication?) -> Void)?) -> Void
     /// A file drop on a member that can open it.
     let onOpenDocuments: ([URL], PinnedApp) -> Void
+    /// `.app` drops into the open grid are added at the given member index.
+    let onAddApps: ([PinnedApp], Int) -> Void
     /// A file drag entered (true) or left (false, with a reason) the grid.
     let onDragOverGrid: (Bool, String) -> Void
 
@@ -126,6 +128,8 @@ struct GroupPopoverView: View {
     @State private var fileDrop = FileDropSession()
     /// Member a file drag is over that can open the dragged items.
     @State private var dropTargetID: String?
+    /// Slot where a pinApps drop would land (dashed gap).
+    @State private var insertIndex: Int?
     /// Member cell frames in the grid's space, for hit-testing drops.
     @State private var cellFrames: [String: CGRect] = [:]
 
@@ -161,9 +165,10 @@ struct GroupPopoverView: View {
                 .coordinateSpace(name: Self.dropSpace)
                 .onPreferenceChange(GroupCellFramesKey.self) { cellFrames = $0 }
                 .onDrop(of: [.fileURL], delegate: GroupFileDropDelegate(
-                    session: fileDrop, targetID: $dropTargetID, cellFrames: cellFrames,
+                    session: fileDrop, targetID: $dropTargetID, insertIndex: $insertIndex,
+                    cellFrames: cellFrames, itemCount: group.apps.count,
                     apps: Dictionary(group.apps.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }),
-                    onOpen: onOpenDocuments, onDragOverGrid: onDragOverGrid))
+                    onOpen: onOpenDocuments, onAddApps: onAddApps, onDragOverGrid: onDragOverGrid))
                 .padding(Edge.Set.all.subtracting(edge.nearSide), Self.shadowPadding)
                 .onAppear { setAppeared(true, animation: GroupPopoverMotion.present) }
                 .onChange(of: groups.isClosing) { _, closing in
@@ -180,10 +185,22 @@ struct GroupPopoverView: View {
         }
     }
 
+    private enum GridSlot: Identifiable {
+        case app(PinnedApp)
+        case gap(String)
+        var id: String {
+            switch self {
+            case .app(let app): app.id
+            case .gap(let id): id
+            }
+        }
+    }
+
     private func content(_ group: FolderGroup) -> some View {
-        let columns = Self.columns(for: group.apps.count)
-        let rows = stride(from: 0, to: group.apps.count, by: columns).map {
-            Array(group.apps[$0..<min($0 + columns, group.apps.count)])
+        let slots = gridSlots(apps: group.apps, insertAt: insertIndex)
+        let columns = Self.columns(for: max(slots.count, 1))
+        let rows = stride(from: 0, to: slots.count, by: columns).map {
+            Array(slots[$0..<min($0 + columns, slots.count)])
         }
         return VStack(spacing: 10) {
             if groups.editingID == group.id {
@@ -200,26 +217,62 @@ struct GroupPopoverView: View {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(rows.indices, id: \.self) { row in
                     HStack(spacing: 4) {
-                        ForEach(rows[row]) { app in
-                            GroupAppCell(
-                                app: app,
-                                groupID: group.id,
-                                running: runningApps.runningInstance(of: app),
-                                iconSize: Self.iconSize,
-                                width: Self.cellWidth,
-                                dockModel: dockModel,
-                                groups: groups,
-                                bouncer: groups.bouncer,
-                                isDropTarget: dropTargetID == app.id,
-                                onLaunch: onLaunch
-                            )
+                        ForEach(rows[row]) { slot in
+                            switch slot {
+                            case .app(let app):
+                                GroupAppCell(
+                                    app: app,
+                                    groupID: group.id,
+                                    running: runningApps.runningInstance(of: app),
+                                    iconSize: Self.iconSize,
+                                    width: Self.cellWidth,
+                                    dockModel: dockModel,
+                                    groups: groups,
+                                    bouncer: groups.bouncer,
+                                    isDropTarget: dropTargetID == app.id,
+                                    onLaunch: onLaunch
+                                )
+                            case .gap(let id):
+                                groupGridInsertionGap(id: id)
+                            }
                         }
                     }
                 }
             }
         }
         .padding(12)
+        .overlay {
+            if insertIndex != nil {
+                RoundedRectangle(cornerRadius: dockModel.cornerRadius, style: .continuous)
+                    .strokeBorder(Color.accentColor.opacity(0.8), lineWidth: 2)
+            }
+        }
         .dockBackground(dockModel.look, shadow: true)
+    }
+
+    private func gridSlots(apps: [PinnedApp], insertAt: Int?) -> [GridSlot] {
+        var slots = apps.map { GridSlot.app($0) }
+        if let insertAt {
+            slots.insert(.gap("group-insert-gap"), at: min(max(insertAt, 0), slots.count))
+        }
+        return slots
+    }
+
+    private func groupGridInsertionGap(id: String) -> some View {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .strokeBorder(Color.primary.opacity(0.4), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.primary.opacity(0.08))
+            )
+            .frame(width: Self.cellWidth, height: Self.iconSize + 28)
+            .accessibilityHidden(true)
+            .background(GeometryReader { proxy in
+                Color.clear.preference(
+                    key: GroupCellFramesKey.self,
+                    value: [id: proxy.frame(in: .named(Self.dropSpace))]
+                )
+            })
     }
 
     /// Roughly square grid, at most five wide.
@@ -320,7 +373,7 @@ private struct GroupAppCell: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.primary.opacity(hovered ? 0.12 : 0))
         )
-        .opacity(dragging ? 0.5 : 1)
+        .opacity(dragging ? 0 : 1)
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .menuHold(hold) {
@@ -340,9 +393,8 @@ private struct GroupAppCell: View {
 }
 
 extension GroupAppCell {
-    /// Dragging a member clearly out of the grid and releasing it does what
-    /// "Remove from Group" does. Released inside the grid, nothing changes
-    /// (members are not reordered here).
+    /// Dragging a member clearly out of the grid asks: remove from group, or
+    /// remove from the dock. Released inside the grid, nothing changes.
     private var dragOutGesture: some Gesture {
         DragGesture(minimumDistance: 4, coordinateSpace: .global)
             .onChanged { _ in
@@ -351,7 +403,7 @@ extension GroupAppCell {
                     dragging = true
                     let icon = icons.icon(for: app.url)
                     dragToken = dragOut.begin(
-                        itemID: app.id, source: .grid, label: "Remove from Group",
+                        itemID: app.id, source: .grid, label: "Remove",
                         preview: AnyView(Image(nsImage: icon).resizable().interpolation(.high).frame(width: iconSize, height: iconSize)),
                         size: iconSize
                     ) { dragging = false }
@@ -362,11 +414,30 @@ extension GroupAppCell {
                 guard let token = dragToken else { return }
                 dragToken = nil
                 dragging = false
-                guard groups.dragOut.end(token) else { return }
-                withAnimation(GroupPopoverMotion.shouldAnimate ? .easeOut(duration: 0.15) : nil) {
-                    dockModel.removeFromGroup(app, groupID: groupID)
-                }
+                // Keep the overlay up until the alert returns (poof or cancel).
+                guard groups.dragOut.end(token, deferResolution: true) else { return }
+                DispatchQueue.main.async { finishMemberDragOut() }
             }
+    }
+
+    private func finishMemberDragOut() {
+        let choice = GroupRemoval.confirmMember(app)
+        let remove: Bool
+        switch choice {
+        case .removeFromGroup:
+            withAnimation(GroupPopoverMotion.shouldAnimate ? .easeOut(duration: 0.15) : nil) {
+                dockModel.removeFromGroup(app, groupID: groupID)
+            }
+            remove = true
+        case .removeFromDock:
+            withAnimation(GroupPopoverMotion.shouldAnimate ? .easeOut(duration: 0.15) : nil) {
+                dockModel.unpin(app)
+            }
+            remove = true
+        case .cancel:
+            remove = false
+        }
+        groups.dragOut.resolve(remove: remove)
     }
 }
 
@@ -378,16 +449,17 @@ private struct GroupCellFramesKey: PreferenceKey {
     }
 }
 
-/// File drops on an open group grid. Same rules as the strip's delegate
-/// (`FileDropSession`): a member that can open every dragged item
-/// highlights and takes the drop; anything else is rejected. `.app` drags
-/// are rejected here too, as before (pinning happens on the strip).
+/// File drops on an open group grid. `.app` drags show an insertion gap and
+/// add at that slot; other files open with a member that can handle them.
 private struct GroupFileDropDelegate: DropDelegate {
     let session: FileDropSession
     @Binding var targetID: String?
+    @Binding var insertIndex: Int?
     let cellFrames: [String: CGRect]
+    let itemCount: Int
     let apps: [String: PinnedApp]
     let onOpen: ([URL], PinnedApp) -> Void
+    let onAddApps: ([PinnedApp], Int) -> Void
     let onDragOverGrid: (Bool, String) -> Void
 
     func validateDrop(info: DropInfo) -> Bool {
@@ -397,25 +469,47 @@ private struct GroupFileDropDelegate: DropDelegate {
     func dropEntered(info: DropInfo) {
         session.begin()
         onDragOverGrid(true, "entered")
-        updateTarget(info)
+        _ = dropUpdated(info: info)
     }
 
     func dropExited(info: DropInfo) {
         setTarget(nil)
+        clearInsert()
         session.end()
         onDragOverGrid(false, "exited")
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: updateTarget(info) == nil ? .forbidden : .copy)
+        if session.mode == .pinApps {
+            setTarget(nil)
+            let index = slotIndex(at: info.location)
+            if insertIndex != index {
+                withAnimation(.easeOut(duration: 0.12)) { insertIndex = index }
+            }
+            return DropProposal(operation: .copy)
+        }
+        clearInsert()
+        return DropProposal(operation: updateTarget(info) == nil ? .forbidden : .copy)
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        let id = updateTarget(info)
         let urls = session.urls
+        let mode = session.mode
+        let at = insertIndex ?? itemCount
+        let id = mode == .pinApps ? nil : updateTarget(info)
         setTarget(nil)
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) { insertIndex = nil }
         session.end()
         onDragOverGrid(false, "dropped")
+        if mode == .pinApps {
+            let apps = urls.compactMap { PinnedApp(appURL: $0) }
+            guard !apps.isEmpty else { return false }
+            onAddApps(apps, at)
+            gridDropLogger.info("grid app drop: added \(apps.count) app(s) at \(at)")
+            return true
+        }
         guard let id, let app = apps[id] else {
             gridDropLogger.info("grid file drop rejected: no member here can open it")
             return false
@@ -423,6 +517,30 @@ private struct GroupFileDropDelegate: DropDelegate {
         gridDropLogger.info("grid file drop: opening \(urls.count) item(s) with \(app.displayName, privacy: .public)")
         onOpen(urls, app)
         return true
+    }
+
+    private func clearInsert() {
+        guard insertIndex != nil else { return }
+        withAnimation(.easeOut(duration: 0.12)) { insertIndex = nil }
+    }
+
+    /// Reading-order index 0...itemCount from cell midpoints.
+    private func slotIndex(at point: CGPoint) -> Int {
+        let ordered = cellFrames
+            .filter { !$0.key.hasPrefix("group-insert") }
+            .map(\.value)
+            .sorted { a, b in
+                if abs(a.minY - b.minY) < 4 { return a.minX < b.minX }
+                return a.minY < b.minY
+            }
+        if ordered.isEmpty { return 0 }
+        for (i, frame) in ordered.enumerated() {
+            if point.y < frame.midY - frame.height * 0.45 { return i }
+            if abs(point.y - frame.midY) <= frame.height * 0.55, point.x < frame.midX {
+                return i
+            }
+        }
+        return ordered.count
     }
 
     @discardableResult

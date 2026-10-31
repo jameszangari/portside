@@ -232,6 +232,62 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    // MARK: - Folder stacks
+
+    /// Filesystem folder stacks in the right section (before Trash), in order.
+    @Published private(set) var stacks: [FolderStack] = []
+
+    /// Pins a folder as a stack. No-ops if the path is already pinned or not a folder.
+    /// `index` is clamped into the stacks list (nil appends).
+    @discardableResult
+    func addStack(folderURL: URL, at index: Int? = nil) -> FolderStack? {
+        guard let stack = FolderStack(folderURL: folderURL) else { return nil }
+        if stacks.contains(where: { $0.path == stack.path }) { return nil }
+        var list = stacks
+        let at = min(max(index ?? list.count, 0), list.count)
+        list.insert(stack, at: at)
+        stacks = list
+        persist()
+        return stack
+    }
+
+    func removeStack(id: String) {
+        let before = stacks.count
+        stacks.removeAll { $0.id == id }
+        guard stacks.count != before else { return }
+        persist()
+    }
+
+    func moveStack(id: String, toIndex index: Int, persist shouldPersist: Bool = true) {
+        guard let from = stacks.firstIndex(where: { $0.id == id }) else { return }
+        var list = stacks
+        let item = list.remove(at: from)
+        list.insert(item, at: min(max(index, 0), list.count))
+        guard list != stacks else { return }
+        stacks = list
+        if shouldPersist { persist() }
+    }
+
+    func replaceStacks(_ newStacks: [FolderStack]) {
+        stacks = newStacks
+        persist()
+    }
+
+    /// Inserts `names` (child `lastPathComponent`s) into a stack's display
+    /// order at `index`. Seeds from `seed` when the stack had no custom order.
+    func insertStackItemOrder(stackID: String, names: [String], at index: Int, seed: [String]) {
+        guard let i = stacks.firstIndex(where: { $0.id == stackID }) else { return }
+        var stack = stacks[i]
+        var order = stack.itemOrder.isEmpty ? seed : stack.itemOrder
+        // Drop names already listed so a re-drop moves them.
+        order.removeAll { names.contains($0) }
+        let at = min(max(index, 0), order.count)
+        order.insert(contentsOf: names, at: at)
+        stack.itemOrder = order
+        stacks[i] = stack
+        persist()
+    }
+
     // MARK: - Native Dock
 
     /// "Hide the macOS Dock". Written only by `NativeDockController`, after
@@ -411,14 +467,15 @@ final class DockModel: Codable, ObservableObject {
     /// prompt for its name.
     let groupCreated = PassthroughSubject<String, Never>()
 
-    /// Move an app into a group (appended). Works for top level apps, apps in
-    /// another group, and running apps that are not pinned yet.
-    func addToGroup(_ app: PinnedApp, groupID: String) {
+    /// Move an app into a group. `at` is the member index (nil appends).
+    /// Works for top level apps, apps in another group, and unpinned apps.
+    func addToGroup(_ app: PinnedApp, groupID: String, at index: Int? = nil) {
         var list = Self.removing(app, from: entries)
-        guard let index = list.firstIndex(where: { $0.group?.id == groupID }),
-              var group = list[index].group else { return }
-        group.apps.append(app)
-        list[index] = .group(group)
+        guard let gi = list.firstIndex(where: { $0.group?.id == groupID }),
+              var group = list[gi].group else { return }
+        let at = min(max(index ?? group.apps.count, 0), group.apps.count)
+        group.apps.insert(app, at: at)
+        list[gi] = .group(group)
         entries = list
         persist()
     }
@@ -497,6 +554,7 @@ final class DockModel: Codable, ObservableObject {
         case animateOpeningApplications
         case hideNativeDock, nativeDockExplained
         case showTrash, trashAccessHintDismissed
+        case stacks
         case iconStyle, backgroundStyle, backgroundFrost, backgroundTint, cornerRadius
         /// Before Milestone D: a flat list of apps. Read only, for migration.
         case pinnedApps
@@ -526,6 +584,7 @@ final class DockModel: Codable, ObservableObject {
         nativeDockExplained = try c.decodeIfPresent(Bool.self, forKey: .nativeDockExplained) ?? false
         showTrash = (try? c.decodeIfPresent(Bool.self, forKey: .showTrash)) ?? true
         trashAccessHintDismissed = (try? c.decodeIfPresent(Bool.self, forKey: .trashAccessHintDismissed)) ?? false
+        stacks = (try? c.decodeIfPresent([FolderStack].self, forKey: .stacks)) ?? []
         openGroupsOnHover = try c.decodeIfPresent(Bool.self, forKey: .openGroupsOnHover) ?? false
         groupHoverDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverDelay) ?? Defaults.groupHoverDelay, to: Self.groupHoverDelayRange)
         groupHoverCloseGrace = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverCloseGrace) ?? Defaults.groupHoverCloseGrace, to: Self.groupHoverCloseGraceRange)
@@ -556,6 +615,7 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(nativeDockExplained, forKey: .nativeDockExplained)
         try c.encode(showTrash, forKey: .showTrash)
         try c.encode(trashAccessHintDismissed, forKey: .trashAccessHintDismissed)
+        try c.encode(stacks, forKey: .stacks)
         try c.encode(openGroupsOnHover, forKey: .openGroupsOnHover)
         try c.encode(groupHoverDelay, forKey: .groupHoverDelay)
         try c.encode(groupHoverCloseGrace, forKey: .groupHoverCloseGrace)
@@ -585,7 +645,7 @@ final class DockModel: Codable, ObservableObject {
     private func persist() {
         do {
             try save()
-            DockModel.logger.info("saved \(self.entries.count) entries (\(self.allPinnedApps.count) apps, \(self.groups.count) groups)")
+            DockModel.logger.info("saved \(self.entries.count) entries (\(self.allPinnedApps.count) apps, \(self.groups.count) groups, \(self.stacks.count) stacks)")
         } catch {
             DockModel.logger.error("save failed: \(error.localizedDescription, privacy: .public)")
         }
@@ -602,12 +662,15 @@ final class DockModel: Codable, ObservableObject {
         let model = DockModel()
         let native = NativeDockImport.readSnapshot()
         model.entries = native.apps.map(DockEntry.app)
+        model.stacks = native.folderStacks
         model.edge = native.edge
         model.iconSize = NativeDockImport.clampedIconSize(
-            native.tileSize, edge: native.edge, itemCount: model.entries.count, widgetKinds: model.widgetKinds.count
+            native.tileSize, edge: native.edge,
+            itemCount: model.entries.count + model.stacks.count,
+            widgetKinds: model.widgetKinds.count
         )
         model.persist()
-        logger.info("first launch: seeded \(model.entries.count) pinned apps, edge \(native.edge.rawValue, privacy: .public), icon size \(Double(model.iconSize), format: .fixed(precision: 0)) from the native Dock")
+        logger.info("first launch: seeded \(model.entries.count) pinned apps, \(model.stacks.count) stacks, edge \(native.edge.rawValue, privacy: .public), icon size \(Double(model.iconSize), format: .fixed(precision: 0)) from the native Dock")
         return model
     }
 
@@ -638,7 +701,8 @@ final class DockModel: Codable, ObservableObject {
 
     /// Copy dock.json to dock.json.before-import (overwriting the last one),
     /// then apply. Nothing changes if the copy fails. Groups, widgets,
-    /// separators and all other settings are never touched.
+    /// separators and all other settings are never touched except stacks,
+    /// which merge (or replace when replacing apps).
     func importFromNativeDock(_ native: NativeDockSnapshot, replace: Bool, applyLook: Bool, fitTileSize: CGFloat?) throws -> ImportResult {
         try save() // the file must match memory (slider drags persist late)
         let backup = Self.beforeImportURL
@@ -659,23 +723,30 @@ final class DockModel: Codable, ObservableObject {
                 merged.insert(entry, at: min(index, merged.count))
             }
             list = merged
+            stacks = native.folderStacks
         } else {
             let have = Set(allPinnedApps.map(\.id))
             let new = native.apps.filter { !have.contains($0.id) }
             list.append(contentsOf: new.map(DockEntry.app))
             result.added = new.count
+            let havePaths = Set(stacks.map(\.path))
+            for stack in native.folderStacks where !havePaths.contains(stack.path) {
+                stacks.append(stack)
+            }
         }
         entries = list
 
         if applyLook {
             edge = native.edge
             iconSize = NativeDockImport.clampedIconSize(
-                native.tileSize, edge: native.edge, itemCount: entries.count, widgetKinds: widgetKinds.count, fit: fitTileSize
+                native.tileSize, edge: native.edge,
+                itemCount: entries.count + stacks.count,
+                widgetKinds: widgetKinds.count, fit: fitTileSize
             )
             result.appliedLook = true
         }
         persist()
-        importLogger.info("import: \(replace ? "replace" : "add missing", privacy: .public), added \(result.added), removed \(result.removed), left in groups \(result.inGroups), look \(result.appliedLook)")
+        importLogger.info("import: \(replace ? "replace" : "add missing", privacy: .public), added \(result.added), removed \(result.removed), left in groups \(result.inGroups), stacks \(self.stacks.count), look \(result.appliedLook)")
         return result
     }
 
@@ -698,9 +769,10 @@ final class DockModel: Codable, ObservableObject {
         groupHoverCloseGrace = old.groupHoverCloseGrace
         edge = old.edge
         entries = old.entries
+        stacks = old.stacks
         widgetKinds = old.widgetKinds
         persist()
         try? FileManager.default.removeItem(at: Self.beforeImportURL)
-        importLogger.info("import: undone, restored \(old.entries.count) entries from dock.json.before-import")
+        importLogger.info("import: undone, restored \(old.entries.count) entries, \(old.stacks.count) stacks from dock.json.before-import")
     }
 }

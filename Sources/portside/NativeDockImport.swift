@@ -12,8 +12,10 @@ struct NativeDockSnapshot {
     var missingApps = 0
     /// Spacer tiles in `persistent-apps`.
     var spacers = 0
-    /// Folder and file tiles in `persistent-others` (folder stacks are not built).
-    var others = 0
+    /// Folder tiles from `persistent-others` that exist on disk.
+    var folderStacks: [FolderStack] = []
+    /// File tiles and missing paths in `persistent-others` (skipped).
+    var othersSkipped = 0
     var edge: DockEdge
     /// Native `tilesize`, unclamped.
     var tileSize: CGFloat
@@ -60,7 +62,24 @@ enum NativeDockImport {
                 break
             }
         }
-        snapshot.others = tiles("persistent-others").count
+        for tile in tiles("persistent-others") {
+            let type = tile["tile-type"] as? String
+            guard type == "directory-tile" || type == "file-tile" || type == nil,
+                  let data = tile["tile-data"] as? [String: Any],
+                  let fileData = data["file-data"] as? [String: Any],
+                  let urlString = fileData["_CFURLString"] as? String,
+                  let url = URL(string: urlString), url.isFileURL else {
+                snapshot.othersSkipped += 1
+                continue
+            }
+            if let stack = FolderStack(folderURL: url),
+               !snapshot.folderStacks.contains(where: { $0.path == stack.path }) {
+                snapshot.folderStacks.append(stack)
+            } else {
+                snapshot.othersSkipped += 1
+                importLogger.info("skipped non-folder other \(url.path, privacy: .public)")
+            }
+        }
 
         var orientation: String?
         var tileSize: Double?
@@ -84,7 +103,8 @@ enum NativeDockImport {
 
         importLogger.info("""
             read native Dock: \(snapshot.apps.count) apps, \(snapshot.missingApps) missing, \
-            \(snapshot.spacers) spacers skipped, \(snapshot.others) folder/file tiles skipped, \
+            \(snapshot.spacers) spacers skipped, \(snapshot.folderStacks.count) folder stacks, \
+            \(snapshot.othersSkipped) other tiles skipped, \
             edge \(snapshot.edge.rawValue, privacy: .public), tilesize \(Double(snapshot.tileSize), format: .fixed(precision: 1)) \
             (\(snapshot.fromBackup ? "from backup" : "live", privacy: .public))
             """)
@@ -137,11 +157,11 @@ struct ImportSheet: View {
             Text("Import from macOS Dock").font(.headline)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Found \(snapshot.apps.count) \(snapshot.apps.count == 1 ? "app" : "apps"), native position \(snapshot.edgeTitle), native icon size \(snapshot.sizeTitle).")
+                Text("Found \(snapshot.apps.count) \(snapshot.apps.count == 1 ? "app" : "apps")\(snapshot.folderStacks.isEmpty ? "" : ", \(snapshot.folderStacks.count) folder \(snapshot.folderStacks.count == 1 ? "stack" : "stacks")"), native position \(snapshot.edgeTitle), native icon size \(snapshot.sizeTitle).")
                 if snapshot.fromBackup {
                     Text("Position and size come from the saved settings of the hidden macOS Dock.").helperStyle()
                 }
-                if skippedTotal > 0 {
+                if skippedTotal > 0 || !snapshot.folderStacks.isEmpty {
                     Text(skippedLine).helperStyle()
                 }
             }
@@ -170,12 +190,15 @@ struct ImportSheet: View {
         .frame(width: 440)
     }
 
-    private var skippedTotal: Int { snapshot.others + snapshot.missingApps }
+    private var skippedTotal: Int { snapshot.othersSkipped + snapshot.missingApps }
 
     private var skippedLine: String {
         var parts: [String] = []
-        if snapshot.others > 0 {
-            parts.append("\(snapshot.others) folder or file \(snapshot.others == 1 ? "tile" : "tiles") will be skipped (folder stacks are not built yet)")
+        if snapshot.folderStacks.count > 0 {
+            parts.append("\(snapshot.folderStacks.count) folder \(snapshot.folderStacks.count == 1 ? "stack" : "stacks") will be imported")
+        }
+        if snapshot.othersSkipped > 0 {
+            parts.append("\(snapshot.othersSkipped) file or missing \(snapshot.othersSkipped == 1 ? "tile" : "tiles") will be skipped")
         }
         if snapshot.missingApps > 0 {
             parts.append("\(snapshot.missingApps) \(snapshot.missingApps == 1 ? "app" : "apps") no longer on disk will be skipped")

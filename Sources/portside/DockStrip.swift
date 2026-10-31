@@ -58,18 +58,24 @@ final class DockInteractions {
     }
     /// A group tile was clicked (expand or collapse it).
     var onGroupTapped: ((String) -> Void)?
+    /// A folder stack tile was clicked.
+    var onStackTapped: ((String) -> Void)?
     /// "Rename" from a group tile's context menu.
     var onRenameGroup: ((String) -> Void)?
     /// "Settings..." from the separator's context menu.
     var onOpenSettings: (() -> Void)?
     /// Asks whether to remove a group tile (alert, hide held off meanwhile).
     var confirmRemoveGroup: ((FolderGroup) -> GroupRemovalChoice)?
+    /// Dropped a dock tile on the Trash: Remove / Move to Trash / Cancel.
+    var confirmTrashDrop: ((DockTrashDropTarget) -> DockTrashDropChoice)?
     /// A file drag entered the strip (true) or left it, dropped or not
     /// (false, with a reason for the log).
     var onDragOverStrip: ((Bool, String) -> Void)?
     /// The group tile under a file drag that would open files (nil: none,
     /// or the drag left or dropped). Drives spring-loading.
     var onDragOverGroupTile: ((String?) -> Void)?
+    /// Folder stack tile under a file drag (opens grid immediately / deposit).
+    var onDragOverStackTile: ((String?) -> Void)?
 }
 
 /// SwiftUI view that renders the dock strip: pinned apps, a separator,
@@ -93,6 +99,7 @@ struct DockStrip: View {
     @ObservedObject var layout: DockLayout
     /// Which group is expanded, so its tile can show it.
     @ObservedObject var groups: GroupController
+    @ObservedObject var stacks: StackController
     /// Not observed here: only the tiles care which one is bouncing.
     let bouncer: LaunchBouncer
     /// Receives item frames for hover labels. Not observed: it never
@@ -119,6 +126,13 @@ struct DockStrip: View {
     @State private var resizeStart: (mouse: CGPoint, tile: CGFloat)?
     /// App tile a file drag is over that can open the dragged items.
     @State private var dropTargetID: String?
+    /// While pinning folders from Finder: index in `stacks` where the drop
+    /// would land (a gap opens there, like the native Dock).
+    @State private var stackInsertIndex: Int?
+    /// While pinning apps from Finder: index in `entries` for the gap.
+    @State private var entryInsertIndex: Int?
+    /// An internal tile drag is over the Trash right now.
+    @State private var dragOverTrash = false
     /// The file drag over the strip right now (URLs and per-app verdicts).
     @State private var fileDrop = FileDropSession()
     /// Tile frames in the strip's root space, for hit-testing drops.
@@ -131,9 +145,10 @@ struct DockStrip: View {
     private static let space = "strip"
 
     /// Largest tile that still fits everything on screen, ignoring `iconSize`.
-    private func maxTileSize(extrasCount: Int, showsTrash: Bool, edge: DockEdge) -> CGFloat {
-        let apps = dockModel.entries.count + extrasCount + (showsTrash ? 1 : 0)
-        let separators = (extrasCount > 0 ? 1 : 0) + (widgets.hosts.isEmpty && !showsTrash ? 0 : 1)
+    private func maxTileSize(extrasCount: Int, showsTrash: Bool, stackCount: Int, edge: DockEdge) -> CGFloat {
+        let apps = dockModel.entries.count + extrasCount + (showsTrash ? 1 : 0) + stackCount
+        let rightSection = !widgets.hosts.isEmpty || showsTrash || stackCount > 0
+        let separators = (extrasCount > 0 ? 1 : 0) + (rightSection ? 1 : 0)
         let items = apps + widgets.hosts.count + separators
         // Horizontal: widgets are N tiles wide with gaps inside them.
         // Vertical: every item is one tile tall.
@@ -159,7 +174,15 @@ struct DockStrip: View {
         let extras = unpinnedRunning
         let showsSelf = runningApps.includesSelf
         let showsTrash = dockModel.showTrash
-        let maxTile = maxTileSize(extrasCount: extras.count + (showsSelf ? 1 : 0), showsTrash: showsTrash, edge: edge)
+        let folderStacks = dockModel.stacks
+        let insertingStack = stackInsertIndex != nil
+        let insertingEntry = entryInsertIndex != nil
+        let maxTile = maxTileSize(
+            extrasCount: extras.count + (showsSelf ? 1 : 0) + (insertingEntry ? 1 : 0),
+            showsTrash: showsTrash,
+            stackCount: folderStacks.count + (insertingStack ? 1 : 0),
+            edge: edge
+        )
         let tile = min(dockModel.iconSize, maxTile)
         // Items align to the far side so icons line up with widgets.
         let stack = edge.isVertical
@@ -167,11 +190,18 @@ struct DockStrip: View {
             : AnyLayout(HStackLayout(alignment: .top, spacing: spacing))
 
         stack {
-            ForEach(dockModel.entries) { entry in
+            ForEach(Array(dockModel.entries.enumerated()), id: \.element.id) { index, entry in
+                if entryInsertIndex == index {
+                    insertionGap(tile: tile)
+                }
                 entryView(entry, tile: tile)
-                    .opacity(dragging == entry.id ? (dragOutside ? 0.25 : 0.5) : 1)
-                    .scaleEffect(dragging == entry.id ? 1.08 : 1, anchor: edge.growthAnchor)
+                    // Gap while dragging: the floating DragOut preview follows
+                    // the cursor; the strip slot stays empty so neighbors shift.
+                    .opacity(dragging == entry.id ? 0 : 1)
                     .gesture(reorderGesture(for: entry, tile: tile, vertical: edge.isVertical))
+            }
+            if entryInsertIndex == dockModel.entries.count {
+                insertionGap(tile: tile)
             }
 
             if !extras.isEmpty || showsSelf {
@@ -186,22 +216,46 @@ struct DockStrip: View {
                 }
             }
 
-            // Widgets, then the Trash at the far end, like the native Dock's
-            // stacks and Trash section.
-            if !widgets.hosts.isEmpty || showsTrash {
+            // Widgets, folder stacks, then Trash at the far end (native order
+            // for stacks and Trash; widgets are Portside-only before them).
+            if !widgets.hosts.isEmpty || !folderStacks.isEmpty || showsTrash || insertingStack {
                 separator(tile: tile, maxTile: maxTile, edge: edge)
                     .magnifiedShift()
                 ForEach(widgets.hosts) { host in
                     host.view
                         .magnifiedShift()
-                        .opacity(dragging == host.id ? (dragOutside ? 0.25 : 0.5) : 1)
+                        .opacity(dragging == host.id ? 0 : 1)
                         .gesture(widgetDragGesture(for: host, tile: tile))
                         .contextMenu {
                             Button("Remove Widget") { dockModel.setWidget(host.id, enabled: false) }
                         }
                 }
+                ForEach(Array(folderStacks.enumerated()), id: \.element.id) { index, folder in
+                    if stackInsertIndex == index {
+                        insertionGap(tile: tile)
+                    }
+                    StackTileView(
+                        stack: folder,
+                        size: tile,
+                        isExpanded: stacks.expandedID == folder.id,
+                        isDropTarget: dropTargetID == folder.hoverID,
+                        onToggle: { interactions.onStackTapped?(folder.id) },
+                        onOpen: { stacks.openFolder(folder.id) },
+                        onRemove: { dockModel.removeStack(id: folder.id) },
+                        contents: stacks.contents
+                    )
+                    .opacity(dragging == folder.hoverID ? 0 : 1)
+                    .gesture(stackDragGesture(for: folder, tile: tile, vertical: edge.isVertical))
+                }
+                if stackInsertIndex == folderStacks.count {
+                    insertionGap(tile: tile)
+                }
                 if showsTrash {
-                    TrashTileView(trash: trash, size: tile, isDropTarget: dropTargetID == TrashController.hoverID)
+                    TrashTileView(
+                        trash: trash,
+                        size: tile,
+                        isDropTarget: dropTargetID == TrashController.hoverID || dragOverTrash
+                    )
                 }
             }
         }
@@ -214,9 +268,11 @@ struct DockStrip: View {
         .magnifiedShelf(dockModel.look)
         .onDrop(of: [.fileURL], delegate: FileDropDelegate(
             dockModel: dockModel, interactions: interactions, session: fileDrop, targetID: $dropTargetID,
+            stackInsertIndex: $stackInsertIndex, entryInsertIndex: $entryInsertIndex,
             tileFrames: tileFrames, apps: dropApps(extras: extras), trash: showsTrash ? trash : nil,
+            stackController: stacks,
             runningApps: runningApps, bouncer: bouncer,
-            tile: tile, slotLength: tile + spacing, leadingInset: alongPadding, vertical: edge.isVertical))
+            tile: tile, vertical: edge.isVertical))
         .onChange(of: maxTile, initial: true) { _, fit in layout.reportFitTileSize(fit) }
         .onChange(of: tile) { _, size in bouncer.tileSizeChanged(size) }
         .fixedSize()
@@ -288,6 +344,20 @@ struct DockStrip: View {
             .accessibilityLabel("Dock separator")
     }
 
+    /// Empty tile-sized gap that opens where a Finder pin drop would land
+    /// (apps among entries, folders among stacks).
+    private func insertionGap(tile: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: tile * 0.22, style: .continuous)
+            .strokeBorder(Color.primary.opacity(0.4), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+            .background(
+                RoundedRectangle(cornerRadius: tile * 0.22, style: .continuous)
+                    .fill(Color.primary.opacity(0.08))
+            )
+            .frame(width: tile, height: tile)
+            .accessibilityHidden(true)
+            .transition(.opacity.combined(with: .scale(scale: 0.85, anchor: dockModel.edge.growthAnchor)))
+    }
+
     /// Divider right-click, in the native Dock's order.
     private func dividerMenu() -> NSMenu {
         let menu = NSMenu()
@@ -309,6 +379,8 @@ struct DockStrip: View {
         position.submenu = positions
         menu.addItem(position)
         menu.addItem(ClosureMenuItem("Dock Settings...") { interactions.onOpenSettings?() })
+        menu.addItem(.separator())
+        menu.addItem(ClosureMenuItem("Quit Portside") { NSApp.terminate(nil) })
         return menu
     }
 
@@ -369,11 +441,11 @@ struct DockStrip: View {
                 guard let token = dragToken, !dragOut.isCanceled(token) else { return }
                 let outside = dragOut.update(token)
                 if outside != dragOutside { dragOutside = outside }
+                let overTrash = isPointOverTrash(value.location)
+                if overTrash != dragOverTrash { dragOverTrash = overTrash }
                 let slot: Int
-                if outside || tileFrames.contains(where: {
-                    $0.id == TrashController.hoverID && $0.frame.contains(value.location)
-                }) {
-                    // Internal tile drags onto Trash cancel the reorder.
+                if outside || overTrash {
+                    // Outside or over Trash: hold the starting slot until release.
                     slot = dragStartIndex
                 } else {
                     let position = vertical ? value.location.y : value.location.x
@@ -387,6 +459,22 @@ struct DockStrip: View {
                 guard let token = dragToken else { return }
                 dragToken = nil
                 let canceled = dragOut.isCanceled(token)
+                let overTrash = dragOverTrash
+                dragOverTrash = false
+                // Drop on Trash always asks; never remove or trash silently.
+                if overTrash {
+                    _ = dragOut.end(token, deferResolution: false)
+                    dragging = nil
+                    dragOutside = false
+                    let target: DockTrashDropTarget = {
+                        switch entry {
+                        case .app(let app): return .app(app)
+                        case .group(let group): return .group(group)
+                        }
+                    }()
+                    DispatchQueue.main.async { finishTrashDrop(target) }
+                    return
+                }
                 var deferred = false
                 if case .group(let group) = entry, GroupRemoval.needsConfirmation(group) { deferred = true }
                 let remove = dragOut.end(token, deferResolution: deferred)
@@ -441,18 +529,149 @@ struct DockStrip: View {
                 guard let token = dragToken, !dragOut.isCanceled(token) else { return }
                 let outside = dragOut.update(token)
                 if outside != dragOutside { dragOutside = outside }
+                let overTrash = isScreenPointOverTrash(NSEvent.mouseLocation)
+                if overTrash != dragOverTrash { dragOverTrash = overTrash }
             }
             .onEnded { _ in
                 guard let token = dragToken else { return }
                 dragToken = nil
+                let overTrash = dragOverTrash
+                dragOverTrash = false
                 dragging = nil
                 dragOutside = false
+                if overTrash {
+                    _ = dragOut.end(token)
+                    DispatchQueue.main.async {
+                        finishTrashDrop(.widget(id: host.id, title: host.widget.name))
+                    }
+                    return
+                }
                 guard dragOut.end(token) else { return }
                 withAnimation(removalAnimation) {
                     dockModel.setWidget(host.id, enabled: false)
                 }
                 stripLogger.info("widget removed by dragging out: \(host.id, privacy: .public)")
             }
+    }
+
+    /// Reorder folder stacks among themselves, or drag out to remove.
+    private func stackDragGesture(for stack: FolderStack, tile: CGFloat, vertical: Bool) -> some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .named(DockStrip.space))
+            .onChanged { value in
+                if dragToken == nil {
+                    let start = dockModel.stacks.firstIndex { $0.id == stack.id } ?? 0
+                    dragging = stack.hoverID
+                    dragStartIndex = start
+                    dragOutside = false
+                    let preview = StackTileView(
+                        stack: stack, size: tile, isExpanded: false,
+                        onToggle: {}, onOpen: {}, onRemove: {}, contents: stacks.contents
+                    )
+                    .environment(\.dockEdge, .bottom)
+                    dragToken = dragOut.begin(itemID: stack.hoverID, source: .strip, label: "Remove",
+                                              preview: AnyView(preview), size: tile) {
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            dockModel.moveStack(id: stack.id, toIndex: start, persist: false)
+                        }
+                        dragging = nil
+                        dragOutside = false
+                    }
+                }
+                guard let token = dragToken, !dragOut.isCanceled(token) else { return }
+                let outside = dragOut.update(token)
+                if outside != dragOutside { dragOutside = outside }
+                let overTrash = isPointOverTrash(value.location)
+                if overTrash != dragOverTrash { dragOverTrash = overTrash }
+                if outside || overTrash {
+                    dockModel.moveStack(id: stack.id, toIndex: dragStartIndex, persist: false)
+                    return
+                }
+                let hits = tileFrames.filter { $0.id.hasPrefix("stack:") }
+                let position = vertical ? value.location.y : value.location.x
+                let slot: Int
+                if let hit = hits.enumerated().first(where: {
+                    $0.element.frame.contains(value.location)
+                }) {
+                    slot = hit.offset
+                } else if let first = hits.first, (vertical ? position < first.frame.minY : position < first.frame.minX) {
+                    slot = 0
+                } else {
+                    slot = max(hits.count - 1, 0)
+                }
+                dockModel.moveStack(id: stack.id, toIndex: slot, persist: false)
+            }
+            .onEnded { _ in
+                guard let token = dragToken else { return }
+                dragToken = nil
+                let overTrash = dragOverTrash
+                dragOverTrash = false
+                dragging = nil
+                dragOutside = false
+                if overTrash {
+                    _ = dragOut.end(token)
+                    DispatchQueue.main.async { finishTrashDrop(.stack(stack)) }
+                    return
+                }
+                let remove = dragOut.end(token)
+                if remove {
+                    withAnimation(removalAnimation) {
+                        dockModel.removeStack(id: stack.id)
+                    }
+                    stripLogger.info("stack removed by dragging out: \(stack.displayName, privacy: .public)")
+                } else {
+                    dockModel.moveStack(id: stack.id, toIndex: dockModel.stacks.firstIndex { $0.id == stack.id } ?? 0, persist: true)
+                }
+            }
+    }
+
+    private func isPointOverTrash(_ point: CGPoint) -> Bool {
+        tileFrames.contains {
+            $0.id == TrashController.hoverID && $0.frame.contains(point)
+        }
+    }
+
+    /// Widget drag tracks the cursor in screen space via DragOut.
+    private func isScreenPointOverTrash(_ screen: NSPoint) -> Bool {
+        hover.screenFrame(forTargetID: TrashController.hoverID)?.contains(screen) ?? false
+    }
+
+    private func finishTrashDrop(_ target: DockTrashDropTarget) {
+        let choice = interactions.confirmTrashDrop?(target) ?? DockTrashDrop.confirm(target)
+        switch choice {
+        case .cancel:
+            stripLogger.info("trash drop canceled: \(target.displayName, privacy: .public)")
+        case .removeFromDock:
+            withAnimation(removalAnimation) { applyRemoveFromDock(target) }
+            stripLogger.info("trash drop removed from dock: \(target.displayName, privacy: .public)")
+        case .moveToTrash:
+            if let error = applyMoveToTrash(target) {
+                trash.reportNotice(error)
+                stripLogger.error("trash drop move failed: \(error, privacy: .public)")
+                return
+            }
+            withAnimation(removalAnimation) { applyRemoveFromDock(target) }
+            stripLogger.info("trash drop moved to Trash: \(target.displayName, privacy: .public)")
+        }
+    }
+
+    private func applyRemoveFromDock(_ target: DockTrashDropTarget) {
+        switch target {
+        case .app(let app): dockModel.unpin(app)
+        case .group(let group): dockModel.removeGroup(groupID: group.id)
+        case .stack(let stack): dockModel.removeStack(id: stack.id)
+        case .widget(let id, _): dockModel.setWidget(id, enabled: false)
+        }
+    }
+
+    private func applyMoveToTrash(_ target: DockTrashDropTarget) -> String? {
+        switch target {
+        case .app(let app):
+            return DockTrashDrop.moveToTrash(app.url)
+        case .stack(let stack):
+            return DockTrashDrop.moveToTrash(stack.url)
+        case .group, .widget:
+            return nil
+        }
     }
 
     /// Both group removal paths. Non-empty groups ask first; empty ones go
@@ -534,25 +753,22 @@ enum ResizeCursor {
     }
 }
 
-/// File drops on the strip (see `FileDropSession` for the rules):
-/// `.app` bundles pin at the slot under the cursor; other files open in the
-/// app tile under the cursor if that app can open them, else the drop is
-/// rejected (no plus cursor, nothing happens). Anything over the Trash tile
-/// goes to the Trash if every item can, else it is rejected.
+/// File drops on the strip (see `FileDropSession` for the rules).
 private struct FileDropDelegate: DropDelegate {
     let dockModel: DockModel
     let interactions: DockInteractions
     let session: FileDropSession
     @Binding var targetID: String?
+    @Binding var stackInsertIndex: Int?
+    @Binding var entryInsertIndex: Int?
     let tileFrames: [HoverTarget]
     let apps: [String: (app: PinnedApp, isPinned: Bool)]
     /// Nil while the Trash tile is hidden.
     let trash: TrashController?
+    let stackController: StackController
     let runningApps: RunningApps
     let bouncer: LaunchBouncer
     let tile: CGFloat
-    let slotLength: CGFloat
-    let leadingInset: CGFloat
     let vertical: Bool
 
     func validateDrop(info: DropInfo) -> Bool {
@@ -567,33 +783,82 @@ private struct FileDropDelegate: DropDelegate {
 
     func dropExited(info: DropInfo) {
         setTarget(nil)
+        setStackInsert(nil)
+        setEntryInsert(nil)
         session.end()
         interactions.onDragOverGroupTile?(nil)
+        interactions.onDragOverStackTile?(nil)
         interactions.onDragOverStrip?(false, "exited")
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
+        // Trash wins when the cursor is on it (folders can be trashed too).
         if let trash, isOverTrash(info) {
             interactions.onDragOverGroupTile?(nil)
+            interactions.onDragOverStackTile?(nil)
+            setStackInsert(nil)
+            setEntryInsert(nil)
             let ok = session.canTrash(using: trash)
             setTarget(ok ? TrashController.hoverID : nil)
             return DropProposal(operation: ok ? .move : .forbidden)
         }
         switch session.mode {
-        case .pin:
+        case .pinApps:
+            setStackInsert(nil)
+            // Folder stack or app group under the cursor: open immediately
+            // and deposit/add instead of showing a pin gap beside it.
+            if let stackID = stackUnderCursor(info), session.canDeposit() {
+                setEntryInsert(nil)
+                setTarget("stack:" + stackID)
+                interactions.onDragOverGroupTile?(nil)
+                interactions.onDragOverStackTile?(stackID)
+                return DropProposal(operation: .copy)
+            }
+            if let groupID = groupUnderCursor(info) {
+                setEntryInsert(nil)
+                setTarget("group:" + groupID)
+                interactions.onDragOverStackTile?(nil)
+                interactions.onDragOverGroupTile?(groupID)
+                return DropProposal(operation: .copy)
+            }
             setTarget(nil)
+            interactions.onDragOverStackTile?(nil)
+            interactions.onDragOverGroupTile?(nil)
+            setEntryInsert(appInsertIndex(info))
+            return DropProposal(operation: .copy)
+        case .pinFolders:
+            setTarget(nil)
+            setEntryInsert(nil)
+            interactions.onDragOverGroupTile?(nil)
+            interactions.onDragOverStackTile?(nil)
+            setStackInsert(folderInsertIndex(info))
             return DropProposal(operation: .copy)
         case .open:
-            return DropProposal(operation: updateTarget(info) == nil ? .forbidden : .copy)
+            setStackInsert(nil)
+            setEntryInsert(nil)
+            return DropProposal(operation: updateOpenTarget(info) == nil ? .forbidden : .copy)
         }
     }
 
     func performDrop(info: DropInfo) -> Bool {
         interactions.onDragOverStrip?(false, "dropped")
+        let stackAt = stackInsertIndex
+        let entryAt = entryInsertIndex
+        let depositStackID = stackUnderCursor(info)
+        let dropGroupID = groupUnderCursor(info)
+        // Clear the insertion gap without animation, then pin in the same
+        // turn so the real tile replaces the gap (no scale-out jitter).
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) {
+            targetID = nil
+            stackInsertIndex = nil
+            entryInsertIndex = nil
+        }
         defer {
-            setTarget(nil)
             session.end()
             interactions.onDragOverGroupTile?(nil)
+            interactions.onDragOverStackTile?(nil)
         }
         if let trash, isOverTrash(info) {
             guard session.canTrash(using: trash) else {
@@ -604,11 +869,32 @@ private struct FileDropDelegate: DropDelegate {
             return true
         }
         switch session.mode {
-        case .pin:
-            return pin(info)
+        case .pinApps:
+            if let stackID = depositStackID, session.canDeposit() {
+                stackController.deposit(session.urls, into: stackID)
+                return true
+            }
+            if let groupID = dropGroupID {
+                return addAppsToGroup(groupID)
+            }
+            var pinTx = Transaction()
+            pinTx.disablesAnimations = true
+            return withTransaction(pinTx) {
+                pinApps(at: entryAt ?? dockModel.entries.count)
+            }
+        case .pinFolders:
+            var pinTx = Transaction()
+            pinTx.disablesAnimations = true
+            return withTransaction(pinTx) {
+                pinFolders(at: stackAt ?? dockModel.stacks.count)
+            }
         case .open:
-            guard let id = updateTarget(info), let entry = apps[id] else {
-                stripLogger.info("file drop rejected: no app here can open it")
+            if let stackID = depositStackID, session.canDeposit() {
+                stackController.deposit(session.urls, into: stackID)
+                return true
+            }
+            guard let id = updateOpenTarget(info), let entry = apps[id] else {
+                stripLogger.info("file drop rejected: no app or stack here can take it")
                 return false
             }
             open(session.urls, with: entry.app, isPinned: entry.isPinned)
@@ -616,7 +902,6 @@ private struct FileDropDelegate: DropDelegate {
         }
     }
 
-    /// The cursor is over the Trash tile (same slop as hover labels).
     private func isOverTrash(_ info: DropInfo) -> Bool {
         let slop = -DockMetrics.spacing / 2
         return tileFrames.contains {
@@ -625,23 +910,51 @@ private struct FileDropDelegate: DropDelegate {
         }
     }
 
-    /// The app tile under the cursor that can open the dragged items, now
-    /// also the highlighted one.
-    @discardableResult
-    private func updateTarget(_ info: DropInfo) -> String? {
-        guard session.mode == .open else {
-            setTarget(nil)
-            interactions.onDragOverGroupTile?(nil)
-            return nil
+    private func stackUnderCursor(_ info: DropInfo) -> String? {
+        guard let id = tileUnderCursor(info), id.hasPrefix("stack:") else { return nil }
+        return String(id.dropFirst("stack:".count))
+    }
+
+    private func groupUnderCursor(_ info: DropInfo) -> String? {
+        guard let id = tileUnderCursor(info), id.hasPrefix("group:") else { return nil }
+        return String(id.dropFirst("group:".count))
+    }
+
+    private func tileUnderCursor(_ info: DropInfo) -> String? {
+        let slop = -DockMetrics.spacing / 2
+        return tileFrames.first {
+            $0.frame.insetBy(dx: vertical ? 0 : slop, dy: vertical ? slop : 0).contains(info.location)
+        }?.id
+    }
+
+    private func addAppsToGroup(_ groupID: String) -> Bool {
+        var added = 0
+        for url in session.urls {
+            guard let app = PinnedApp(appURL: url) else { continue }
+            dockModel.addToGroup(app, groupID: groupID)
+            added += 1
+            stripLogger.info("added to group from Finder drop: \(app.displayName, privacy: .public)")
         }
-        // Same slop as hover labels: no gap between neighbors.
+        return added > 0
+    }
+
+    @discardableResult
+    private func updateOpenTarget(_ info: DropInfo) -> String? {
         let slop = -DockMetrics.spacing / 2
         let hit = tileFrames.first {
             $0.frame.insetBy(dx: vertical ? 0 : slop, dy: vertical ? slop : 0).contains(info.location)
         }
-        // Group tiles never take the drop, but resting on one springs it open.
-        let groupPrefix = "group:"
-        interactions.onDragOverGroupTile?(hit.flatMap { $0.id.hasPrefix(groupPrefix) ? String($0.id.dropFirst(groupPrefix.count)) : nil })
+        interactions.onDragOverGroupTile?(hit.flatMap {
+            $0.id.hasPrefix("group:") ? String($0.id.dropFirst("group:".count)) : nil
+        })
+        let stackID = hit.flatMap {
+            $0.id.hasPrefix("stack:") ? String($0.id.dropFirst("stack:".count)) : nil
+        }
+        interactions.onDragOverStackTile?(stackID)
+        if let stackID, session.canDeposit() {
+            setTarget("stack:" + stackID)
+            return "stack:" + stackID
+        }
         let id = hit.flatMap { hit in apps[hit.id].flatMap { session.canOpen(with: $0.app) ? hit.id : nil } }
         setTarget(id)
         return id
@@ -663,20 +976,69 @@ private struct FileDropDelegate: DropDelegate {
         }
     }
 
-    private func pin(_ info: DropInfo) -> Bool {
-        let position = vertical ? info.location.y : info.location.x
-        let slot = Int(((position - leadingInset) / slotLength).rounded())
-        let index = min(max(slot, 0), dockModel.entries.count)
-        let providers = info.itemProviders(for: [.fileURL])
-        for provider in providers {
-            _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                guard let url, let app = PinnedApp(appURL: url) else { return }
-                DispatchQueue.main.async {
-                    dockModel.pin(app, at: index)
-                    stripLogger.info("pinned from Finder drop: \(app.displayName, privacy: .public)")
-                }
+    private func pinApps(at index: Int) -> Bool {
+        var at = index
+        var pinned = 0
+        for url in session.urls {
+            guard let app = PinnedApp(appURL: url) else { continue }
+            dockModel.pin(app, at: at)
+            pinned += 1
+            at += 1
+            stripLogger.info("pinned from Finder drop: \(app.displayName, privacy: .public) at \(at - 1)")
+        }
+        return pinned > 0
+    }
+
+    private func pinFolders(at index: Int) -> Bool {
+        var pinned = 0
+        var at = index
+        for url in session.urls {
+            if dockModel.addStack(folderURL: url, at: at) != nil {
+                pinned += 1
+                at += 1
+                stripLogger.info("pinned folder stack: \(url.lastPathComponent, privacy: .public) at \(at - 1)")
             }
         }
-        return !providers.isEmpty
+        return pinned > 0
+    }
+
+    /// Slot in the stacks list under the cursor (0...count), using stack tile
+    /// midpoints so the gap jumps like the native Dock. Falls back to append
+    /// when there are no stack tiles yet.
+    private func folderInsertIndex(_ info: DropInfo) -> Int {
+        insertIndex(info, among: tileFrames.filter { $0.id.hasPrefix("stack:") })
+    }
+
+    /// Slot in the pinned entries list (0...count) under the cursor.
+    private func appInsertIndex(_ info: DropInfo) -> Int {
+        let ids = Set(dockModel.entries.map(\.id))
+        return insertIndex(info, among: tileFrames.filter { ids.contains($0.id) })
+    }
+
+    private func insertIndex(_ info: DropInfo, among hits: [HoverTarget]) -> Int {
+        let position = vertical ? info.location.y : info.location.x
+        let ordered = hits.sorted {
+            vertical ? $0.frame.minY < $1.frame.minY : $0.frame.minX < $1.frame.minX
+        }
+        if ordered.isEmpty { return 0 }
+        for (i, hit) in ordered.enumerated() {
+            let mid = vertical ? hit.frame.midY : hit.frame.midX
+            if position < mid { return i }
+        }
+        return ordered.count
+    }
+
+    private func setStackInsert(_ index: Int?) {
+        guard stackInsertIndex != index else { return }
+        withAnimation(.easeOut(duration: 0.12)) {
+            stackInsertIndex = index
+        }
+    }
+
+    private func setEntryInsert(_ index: Int?) {
+        guard entryInsertIndex != index else { return }
+        withAnimation(.easeOut(duration: 0.12)) {
+            entryInsertIndex = index
+        }
     }
 }

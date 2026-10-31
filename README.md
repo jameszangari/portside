@@ -33,15 +33,14 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 
 **Apps**
 - Pinned apps with running indicators, updated from `NSWorkspace` notifications.
-- Drag to reorder.
-- Drag an icon out of the dock to remove it, like the native Dock: a "Remove" label shows once it is clearly outside, and releasing it there removes it with a short poof (instant under Reduce Motion). Dragging back over the dock reorders as usual, and Escape puts it back. Works for app tiles, group tiles, and widgets (a group with apps in it asks first, see Groups); an app dragged out of an open group grid leaves the group instead.
-- Drag an .app from Finder onto the strip to pin it.
+- Drag to reorder. Drag an .app from Finder onto the strip to pin it (a tile-sized insertion gap opens at the drop slot, same as folders).
+- Drag an icon out of the dock to remove it, like the native Dock: the icon floats under the cursor for the whole drag (strip leaves a gap), a "Remove" label shows once it is clearly outside, and releasing it there removes it with a short poof (instant under Reduce Motion). Dragging back over the dock reorders as usual, and Escape puts it back. Works for app tiles, group tiles, and widgets (a group with apps in it asks first, see Groups); an app dragged out of an open group grid asks Remove from Group or Remove from Dock.
 - Drop files on an app tile to open them in that app, like the native Dock. Only tiles whose app can open the files highlight and accept the drop (Finder takes folders). A not-running pinned app launches with the bounce.
 - Running apps that are not pinned show after the pinned section.
 - Right-click menu: Keep in Dock or Remove from Dock, Add to Group, Show in Finder, then for running apps Hide (Show if hidden) and Quit. Hold Option and Quit becomes Force Quit.
 - App tiles, group tiles, Portside's own tile and group cells: short click opens (or toggles the group); hold for 0.5s opens its menu (simultaneous with the tap, not exclusive); moving first starts a drag. Hover labels track the magnified icon's spring frames so they stay centered.
 - Dock menus take the keyboard while open (Escape closes them, arrows move through them) without taking focus from the frontmost app.
-- Separator right-click menu: Turn Hiding On/Off, Turn Magnification On/Off, Position on Screen (Left, Bottom, Right, checkmark on the current one), Dock Settings.
+- Separator right-click menu: Turn Hiding On/Off, Turn Magnification On/Off, Position on Screen (Left, Bottom, Right, checkmark on the current one), Dock Settings, Quit Portside.
 - The app menu opens above the icon (beside it on the side docks), like the native Dock.
 - Native Dock modifier clicks on app tiles and group grid cells: Cmd-click reveals the app in Finder (no launch), Option-click switches to the app and hides the one that was frontmost, Cmd+Option-click switches and hides all other apps. Portside itself is never hidden.
 - Native-style launch bounce for pinned apps on any edge (sideways on the side docks) and for apps opened from a group grid (optional, off under Reduce Motion).
@@ -62,16 +61,24 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - Inline naming on creation, rename, ungroup, and remove-from-group from context menus.
 - Removing a group that has apps ("Remove from Dock", or dragging its tile out) asks first: Ungroup Instead (default, apps return as normal tiles), Remove Group, or Cancel. Empty groups go without asking. The alert gives focus back to the previous app.
 - Optional open on hover, with configurable open delay and close grace.
-- Spring-loading: resting a file drag on a group tile for about 600ms opens its grid. Drop on a member that can open the file (it highlights) to open it there. The grid closes when the drag leaves both the tile and the grid.
+- Dragging a file or app over a group tile opens its grid immediately. Drop an app on the tile or into the grid to add it (a dashed tile-sized gap follows the cursor so you choose the slot). Drop a file on a member that can open it (it highlights) to open it there. The grid closes when the drag leaves both the tile and the grid.
+- Dragging a member out of the open grid asks Remove from Group (stays on the dock next to the group) or Remove from Dock, or Cancel.
 
 **Appearance**
 - Icons match the macOS icon style (Default, Dark, Clear, Tinted) like the native Dock, and refresh when you change it in System Settings. Or pick "Original" to show each app's own artwork.
 - Dock background: Liquid Glass (macOS 26 and later, the default), Frosted, or Solid, with a Frost (or Opacity) slider, an optional tint color, and corner radius. Open group grids use the same look. Widgets keep their own frosted card whatever the Frost setting.
 
+**Folder stacks**
+- Filesystem folders pin in the right section (after widgets, before Trash), separate from app groups. Drag a folder from Finder onto the dock to add one (an insertion gap opens at the drop slot, like the native Dock); reorder among stacks; drag out or Remove from Dock to unpin.
+- Tile shows a mini grid of the folder's contents (folder icon when empty). Click opens a grid popover; click an item to open it. Menu: Open, Show in Finder, Remove from Dock.
+- Drop files or apps onto a stack (or into its open grid) to move them into the folder (copy if move fails). Dragging over a stack tile opens its grid immediately. In the open grid, an insertion gap follows the cursor so you choose the slot; order is kept in dock.json. Contents update via FSEvents (no polling).
+- Grid view only for now. Fan, list, and sort options come later.
+- Native Dock folder tiles from `persistent-others` import on first launch and via Import from macOS Dock. Plain file tiles are still skipped.
+
 **Trash**
 - Trash stays at the far end on Bottom, Left, and Right, with native empty/full icons, magnification, and a hover label. "Show Trash in dock" (General > Dock) applies live and defaults on.
 - Click opens Finder's Trash. Right-click or hold for Open and Empty Trash. Emptying asks for confirmation in Finder; empty or unreadable Trash disables the command.
-- Drop files and folders to move them to the Trash. Internal app tiles are rejected. State updates use directory events, with no polling.
+- Drop files and folders from Finder to move them to the Trash. Dragging a dock tile onto Trash asks first: Remove from Dock, Move to Trash (apps and folder stacks), or Cancel. State updates use directory events, with no polling.
 - Empty/full icon: prefers listing `~/.Trash` (Full Disk Access). If that is denied, uses Finder's trash count when Automation is already allowed. FSEvents watches the Trash folder (works without Full Disk Access). If neither read path works, the icon stays empty and a dismissible Settings hint links to Full Disk Access. Drops optimistically flip to full; Empty Trash flips to empty, then the watcher confirms.
 - Empty Trash needs Automation permission for Finder. Denial and file-operation failures appear inline in Settings and in the Trash hover label. Under `swift run`, macOS may attribute permissions to the launching terminal; use the built app for permission testing.
 
@@ -82,8 +89,8 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 
 **Native Dock**
 - "Hide the macOS Dock" (Settings > General): keeps the native Dock from ever appearing while Portside runs, using the autohide-delay trick. Its exact prior settings are saved first and restored when you turn this off, quit, or stop Portside with Ctrl+C or `kill`. After a crash or `kill -9`, the next launch restores them first.
-- First launch (no `dock.json`): pinned apps, position, and icon size are taken from the native Dock (Finder first). If a Hide-the-Dock backup exists, position and size come from it instead of the live values.
-- "Import from macOS Dock..." (Settings > General > Import): a confirmation sheet shows what was found. Add missing apps (appended, nothing reordered) or replace the apps (groups and widgets stay), and optionally take the native position and icon size. Apps no longer on disk, spacers, and folder/file tiles are skipped. Your dock is copied to `dock.json.before-import` first, and "Undo last import" restores it. Read only: nothing in `com.apple.dock` is written.
+- First launch (no `dock.json`): pinned apps, folder stacks, position, and icon size are taken from the native Dock (Finder first). If a Hide-the-Dock backup exists, position and size come from it instead of the live values.
+- "Import from macOS Dock..." (Settings > General > Import): a confirmation sheet shows what was found. Add missing apps (appended, nothing reordered) or replace the apps (groups and widgets stay; stacks merge or replace with apps), and optionally take the native position and icon size. Apps no longer on disk, spacers, and non-folder other tiles are skipped; folder stacks from `persistent-others` import. Your dock is copied to `dock.json.before-import` first, and "Undo last import" restores it. Read only: nothing in `com.apple.dock` is written.
 - "Restore macOS Dock" in the menu bar item, and `portside --restore-dock` (restores from the backup and exits, no UI).
 
 **Branding**
@@ -98,13 +105,14 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 ## Planned
 
 From `docs/CHECKLIST.md` and `docs/PLAN.md`:
-- Milestone F, what is left: importing the native Dock's folders and files (`persistent-others`), once folder stacks exist.
+- Folder stacks: fan and list views, sort options, show-as-folder vs stack icon.
+- Milestone F leftover: import plain file tiles from `persistent-others` (folders already import).
 - Update checker: compare AppInfo.version with the latest GitHub release tag (vX.Y.Z), show 'up to date' or a link to the release. The Check for Updates button is a placeholder until then.
-- Native Dock parity: Open at Login in the app menu, folder stacks.
+- Native Dock parity: Open at Login in the app menu.
 - Trash: Option-click "Empty Trash without warning" and icon animation.
-- Trash hand verification on all three edges, including Full Disk Access and Automation permission flows.
 - Multi-display, fullscreen and Spaces behavior, badges.
 - Better widget layout on side docks.
+- Section divider; system glass matching the native Dock.
 
 ## Requirements and build
 
@@ -184,6 +192,7 @@ It is deleted after a verified restore. If it exists when Portside starts, Ports
 The Settings window controls:
 - Position, auto-hide, icon size, "Animate opening applications"
 - Show Trash in dock (`showTrash`, default `true`); dismissed Full Disk Access hint (`trashAccessHintDismissed`, default `false`)
+- Folder stacks (`stacks`: `{ id, path, itemOrder? }[]`, right section before Trash; `itemOrder` is child filenames for grid placement)
 - Magnification (`magnificationEnabled`) and Magnified size (`magnifiedSize`, points, 16 to 128, default 64)
 - Reveal delay, hide delay, animation duration (with reset to defaults)
 - Widgets: on/off and order
@@ -216,8 +225,12 @@ Sources/portside/
   DockStrip.swift           SwiftUI strip: tiles, widgets, separator, reorder, drops
   DockItem.swift            App tile, icon cache, launch/activate
   TileActions.swift         Modifier clicks (Cmd, Option) and the AppKit right-click menu with Force Quit
-  FileDrop.swift            Per-drag state for pin, open, and Trash drops
+  FileDrop.swift            Per-drag state for pin apps/folders, open, deposit, and Trash drops
   Trash.swift               Native Trash tile, directory watcher, Finder actions
+  TrashDrop.swift           Confirm when a dock tile is dropped on Trash
+  FolderStack.swift         Folder stack model and FSEvents contents
+  StackController.swift     Stack open/close, drag-open, deposit into folder
+  StackViews.swift          Stack tile and grid popover
   DragOut.swift             Drag an item out to remove it: "Remove" label, poof, Escape
   DockHover.swift           Hover target frames and label placement
   Magnifier.swift           Dock magnification: per-tile scale and shift from the cursor, shelf widening, panel room

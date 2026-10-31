@@ -18,11 +18,10 @@ import os.log
 /// closes. Any close (or switching groups) stops the bounce first, so
 /// nothing is left floating or hidden.
 ///
-/// Spring-loading: a file drag resting on a group tile opens its grid after
-/// `springLoadDelay` (one-shot, cancelable). The grid opens as if hovered
-/// (transient), counts as part of the drag region while the drag is over
-/// it, and closes after the hover grace delay once the drag has left both
-/// the tile and the grid.
+/// Drag-open: a Finder drag over a group tile opens its grid immediately
+/// (apps and files). The grid opens as if hovered (transient), counts as
+/// part of the drag region while the drag is over it, and closes after the
+/// hover grace delay once the drag has left both the tile and the grid.
 ///
 /// Inline rename: the grid's title becomes a text field and the overlay
 /// panel takes key focus only while it is being edited.
@@ -52,9 +51,6 @@ final class GroupController: ObservableObject {
     /// (false, with a reason for the log). Feeds the engine's drag region.
     var onDragOverGrid: ((Bool, String) -> Void)?
 
-    /// How long a file drag rests on a group tile before its grid opens.
-    static let springLoadDelay: TimeInterval = 0.6
-
     private let overlay = OverlayPanel()
     private let dockModel: DockModel
     private let runningApps: RunningApps
@@ -79,7 +75,6 @@ final class GroupController: ObservableObject {
     private var pendingHoverOpen: DispatchWorkItem?
     private var pendingHoverClose: DispatchWorkItem?
     private var pendingDismiss: DispatchWorkItem?
-    private var pendingSpringOpen: DispatchWorkItem?
     /// Group tile a file drag is over right now (nil: none, or no drag).
     private var dragTileGroupID: String?
     /// A file drag is over the open grid right now.
@@ -174,7 +169,6 @@ final class GroupController: ObservableObject {
     func expand(_ groupID: String, byHover: Bool = false) {
         pendingHoverOpen?.cancel()
         pendingHoverOpen = nil
-        cancelSpringOpen()
         cancelHoverClose()
         pendingDismiss?.cancel()
         pendingDismiss = nil
@@ -207,6 +201,11 @@ final class GroupController: ObservableObject {
             groups: self,
             onLaunch: { [weak self] app, afterOpen in self?.launch(app, afterOpen: afterOpen) },
             onOpenDocuments: { [weak self] urls, app in self?.launch(app, documents: urls) },
+            onAddApps: { [weak self] apps, at in
+                for (offset, app) in apps.enumerated() {
+                    self?.dockModel.addToGroup(app, groupID: groupID, at: at + offset)
+                }
+            },
             onDragOverGrid: { [weak self] inside, reason in self?.dragOverGridChanged(inside, reason: reason) }
         )
         .id(groupID)
@@ -221,7 +220,6 @@ final class GroupController: ObservableObject {
     func collapse(reason: String, animated: Bool = true) {
         pendingHoverOpen?.cancel()
         pendingHoverOpen = nil
-        cancelSpringOpen()
         cancelHoverClose()
         guard expandedID != nil else { return }
         if isClosing {
@@ -413,18 +411,16 @@ final class GroupController: ObservableObject {
         pendingHoverClose = nil
     }
 
-    // MARK: - Spring-loading (file drags)
+    // MARK: - Drag open (file / app drags)
 
-    /// The group tile under a file drag over the strip changed (nil: not on
-    /// a group tile, or the drag left the strip or dropped). Called from the
-    /// strip's drop delegate only for drags that would open files, never
-    /// for `.app` drags (those pin).
+    /// The group tile under a Finder drag over the strip changed (nil: not
+    /// on a group tile, or the drag left the strip or dropped). Opens the
+    /// grid immediately, including for `.app` drags that can be dropped in.
     func dragOverGroupTileChanged(_ groupID: String?) {
         guard groupID != dragTileGroupID else { return }
         dragTileGroupID = groupID
-        cancelSpringOpen()
         guard let groupID else {
-            // Left the tile: a spring-loaded grid stays only while the drag
+            // Left the tile: a drag-opened grid stays only while the drag
             // goes on into it. The grid's own enter cancels this close.
             scheduleHoverCloseIfHoverOpened()
             return
@@ -432,34 +428,11 @@ final class GroupController: ObservableObject {
         guard !isEditing else { return }
         if expandedID == groupID {
             cancelHoverClose()
-            // Back on the tile while its transient grid fades out.
             if isClosing, openedByHover { expand(groupID, byHover: true) }
             return
         }
-        if expandedID != nil {
-            // Another group is open: switch at once, like hovering.
-            logger.info("spring-load: switching to group \(groupID, privacy: .public) at once")
-            expand(groupID, byHover: true)
-            return
-        }
-        let armed = CACurrentMediaTime()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.pendingSpringOpen = nil
-            let ms = (CACurrentMediaTime() - armed) * 1000
-            self.logger.info("spring-load: opening after \(ms, format: .fixed(precision: 0))ms on the tile")
-            self.expand(groupID, byHover: true)
-        }
-        pendingSpringOpen = work
-        logger.info("spring-load: armed for group \(groupID, privacy: .public)")
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.springLoadDelay, execute: work)
-    }
-
-    private func cancelSpringOpen() {
-        guard let pendingSpringOpen else { return }
-        pendingSpringOpen.cancel()
-        self.pendingSpringOpen = nil
-        logger.info("spring-load: canceled")
+        logger.info("drag-open: expanding group \(groupID, privacy: .public)")
+        expand(groupID, byHover: true)
     }
 
     /// A file drag entered or left the open grid (from the grid's drop

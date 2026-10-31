@@ -27,6 +27,7 @@ final class DockEngine {
     private let edgeTracker: EdgeTracker
     private let hover: DockHover
     private let groups: GroupController
+    private let stacks: StackController
     private let bouncer: LaunchBouncer
     private let magnifier = Magnifier()
     /// The Trash tile's state. Shared with Settings (Full Disk Access hint).
@@ -65,9 +66,9 @@ final class DockEngine {
     /// Event that started the current reveal (mouseEntered or draggingEntered).
     private var revealTrigger = "mouseEntered"
 
-    /// Drag destinations ("edge", "panel", "strip", "group") a file drag is over.
-    /// While any is set and the button is held, exits do not arm the hide
-    /// and the hide timer will not hide.
+    /// Drag destinations ("edge", "panel", "strip", "group", "stack") a file
+    /// drag is over. While any is set and the button is held, exits do not
+    /// arm the hide and the hide timer will not hide.
     private var dragTargets: Set<String> = []
 
     init(dockModel: DockModel = DockModel.load()) {
@@ -78,7 +79,8 @@ final class DockEngine {
         self.hover = DockHover(overlay: OverlayPanel())
         self.bouncer = LaunchBouncer(dockModel: dockModel, hover: hover)
         self.groups = GroupController(dockModel: dockModel, runningApps: runningApps, hover: hover, bouncer: bouncer, dragOut: dragOut)
-        let strip = DockStrip(dockModel: dockModel, runningApps: runningApps, widgets: widgets, layout: layout, groups: groups, bouncer: bouncer, hover: hover, interactions: interactions, dragOut: dragOut, magnifier: magnifier, trash: trash)
+        self.stacks = StackController(dockModel: dockModel, hover: hover)
+        let strip = DockStrip(dockModel: dockModel, runningApps: runningApps, widgets: widgets, layout: layout, groups: groups, stacks: stacks, bouncer: bouncer, hover: hover, interactions: interactions, dragOut: dragOut, magnifier: magnifier, trash: trash)
         self.dockPanel = DockPanel(dockModel: dockModel, strip: strip, magnifier: magnifier)
         self.edgeTracker = EdgeTracker(edge: dockModel.edge)
         hover.setEdge(dockModel.edge)
@@ -100,11 +102,12 @@ final class DockEngine {
         }
 
         dragOut.stripRegion = { [weak dockPanel] in dockPanel?.screenFrame }
-        dragOut.gridRegion = { [weak groups] in groups?.gridScreenFrame }
+        dragOut.gridRegion = { [weak groups, weak stacks] in groups?.gridScreenFrame ?? stacks?.gridScreenFrame }
         dragOut.look = { [weak dockModel] in dockModel?.look }
         dragOut.onDraggingChanged = { [weak self] dragging in
             guard let self else { return }
             self.groups.itemDragChanged(dragging, fromStrip: self.dragOut.isFromStrip)
+            self.stacks.itemDragChanged(dragging, fromStrip: self.dragOut.isFromStrip)
             self.updateMagnifierSuspension()
             if dragging {
                 self.hover.clear()
@@ -149,6 +152,7 @@ final class DockEngine {
         dockPanel.onMouseDown = { [weak self] in
             self?.hover.clear()
             self?.groups.stripMouseDown(at: NSEvent.mouseLocation)
+            self?.stacks.stripMouseDown(at: NSEvent.mouseLocation)
         }
 
         // The open group's panel is part of "inside the dock": entering it
@@ -165,9 +169,29 @@ final class DockEngine {
             self.rearmHideIfCursorOutside(source: "group removal alert closed")
             return choice
         }
-        interactions.onGroupTapped = { [weak self] id in self?.groups.toggle(id) }
+        interactions.confirmTrashDrop = { [weak self] target in
+            guard let self else { return .cancel }
+            self.isConfirmingRemoval = true
+            self.updateMagnifierSuspension()
+            self.pendingHide?.cancel()
+            self.pendingHide = nil
+            let choice = DockTrashDrop.confirm(target)
+            self.isConfirmingRemoval = false
+            self.updateMagnifierSuspension()
+            self.rearmHideIfCursorOutside(source: "trash drop alert closed")
+            return choice
+        }
+        interactions.onGroupTapped = { [weak self] id in
+            self?.stacks.collapse(reason: "group opened", animated: false)
+            self?.groups.toggle(id)
+        }
+        interactions.onStackTapped = { [weak self] id in
+            self?.groups.collapse(reason: "stack opened", animated: false)
+            self?.stacks.toggle(id)
+        }
         hover.onTargetsChanged = { [weak self] in
             self?.groups.targetsChanged()
+            self?.stacks.targetsChanged()
             self?.bouncer.tilesChanged()
         }
         groups.onMouseEntered = { [weak self] in self?.handleEnter(source: "group", event: nil) }
@@ -176,20 +200,30 @@ final class DockEngine {
         groups.onEditingChanged = { [weak self] editing in
             if !editing { self?.rearmHideIfCursorOutside(source: "rename ended") }
         }
+        stacks.onMouseEntered = { [weak self] in self?.handleEnter(source: "stack", event: nil) }
+        stacks.onMouseExited = { [weak self] in self?.handleExit(source: "stack") }
+        stacks.onCollapsed = { [weak self] in self?.rearmHideIfCursorOutside(source: "stack closed") }
         interactions.onRenameGroup = { [weak self] id in self?.groups.beginRename(id, reason: "tile menu") }
         hover.onHoveredTargetChanged = { [weak self] id in
             self?.groups.hoveredTargetChanged(id)
             self?.trash.hoveredTargetChanged(id)
             self?.magnifier.labelTargetID = id
         }
-        // Spring-loading: a file drag resting on a group tile opens it, and
-        // the open grid is part of the drag region like the strip.
+        // File/app drag over a group or stack tile opens its grid immediately.
         interactions.onDragOverGroupTile = { [weak self] id in self?.groups.dragOverGroupTileChanged(id) }
+        interactions.onDragOverStackTile = { [weak self] id in self?.stacks.dragOverStackTileChanged(id) }
         groups.onDragOverGrid = { [weak self] inside, reason in
             if inside {
                 self?.handleDragEntered("group")
             } else {
                 self?.handleDragExited("group", reason: reason)
+            }
+        }
+        stacks.onDragOverGrid = { [weak self] inside, reason in
+            if inside {
+                self?.handleDragEntered("stack")
+            } else {
+                self?.handleDragExited("stack", reason: reason)
             }
         }
 
@@ -201,8 +235,11 @@ final class DockEngine {
             // The menu opens where the hover label is; the native Dock hides it.
             self.hover.isSuppressed = true
             let location = NSEvent.mouseLocation
-            if self.dockPanel.containsScreenPoint(location), !self.groups.containsScreenPoint(location) {
+            if self.dockPanel.containsScreenPoint(location),
+               !self.groups.containsScreenPoint(location),
+               !self.stacks.containsScreenPoint(location) {
                 self.groups.stripMenuOpened()
+                self.stacks.stripMenuOpened()
             }
         })
         menuObservers.append(center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { [weak self] _ in
@@ -213,8 +250,10 @@ final class DockEngine {
             // press-and-hold menu starts with the button down), so no label
             // appears until the next real mouse move reports a fresh point.
             self.hover.clear()
-            // An open group grid keeps its own suppression.
-            if self.groups.expandedID == nil { self.hover.isSuppressed = false }
+            // An open group or stack grid keeps its own suppression.
+            if self.groups.expandedID == nil, self.stacks.expandedID == nil {
+                self.hover.isSuppressed = false
+            }
             // The hide timer skipped while the menu was up; re-arm it if the
             // cursor ended up outside the dock.
             self.rearmHideIfCursorOutside(source: "menu closed")
@@ -251,8 +290,10 @@ final class DockEngine {
         ].map {
             $0.receive(on: DispatchQueue.main).sink { [weak self] in self?.configureMagnifier() }
         }
-        // An open group grid turns magnification off until it closes.
+        // An open group or stack grid turns magnification off until it closes.
         magnifySubscriptions.append(groups.$expandedID.removeDuplicates().receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateMagnifierSuspension() })
+        magnifySubscriptions.append(stacks.$expandedID.removeDuplicates().receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.updateMagnifierSuspension() })
         bounceSettingSubscription = dockModel.$animateOpeningApplications
             .removeDuplicates()
@@ -360,6 +401,7 @@ final class DockEngine {
         bouncer.cancel(reason: "engine stopped")
         dockPanel.hide(animated: false)
         groups.collapse(reason: "engine stopped", animated: false)
+        stacks.collapse(reason: "engine stopped", animated: false)
         edgeTracker.stop()
         widgets.stopAll()
         trash.stop()
@@ -370,6 +412,7 @@ final class DockEngine {
     /// the new edge; the next edge touch reveals it from there.
     private func applyEdge(_ edge: DockEdge) {
         groups.collapse(reason: "dock moved", animated: false)
+        stacks.collapse(reason: "dock moved", animated: false)
         bouncer.cancel(reason: "dock moved")
         magnifier.reset()
         pendingHide?.cancel()
@@ -413,6 +456,7 @@ final class DockEngine {
         if dragOut.isDragging { reasons.append("item drag") }
         if !dragTargets.isEmpty { reasons.append("file drag") }
         if groups.expandedID != nil { reasons.append("group open") }
+        if stacks.expandedID != nil { reasons.append("stack open") }
         if isConfirmingRemoval { reasons.append("alert") }
         magnifier.setSuspended(!reasons.isEmpty, reason: reasons.isEmpty ? "clear" : reasons.joined(separator: ", "))
     }
@@ -423,11 +467,12 @@ final class DockEngine {
         }
     }
 
-    /// Over the panel, the edge zone, or an open group.
+    /// Over the panel, the edge zone, or an open group/stack.
     private func isCursorInsideDock(_ location: NSPoint) -> Bool {
         dockPanel.containsScreenPoint(location)
             || edgeTracker.containsScreenPoint(location)
             || groups.containsScreenPoint(location)
+            || stacks.containsScreenPoint(location)
     }
 
     // MARK: - Drag handling
@@ -573,6 +618,7 @@ final class DockEngine {
             self.dockPanel.hide(animated: true)
             // After hide() so the collapse's re-check sees the dock hiding.
             self.groups.collapse(reason: "dock hiding", animated: false)
+            self.stacks.collapse(reason: "dock hiding", animated: false)
         }
         pendingHide = work
         let delayMs = dockModel.hideDelay * 1000

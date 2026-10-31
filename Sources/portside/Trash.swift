@@ -217,6 +217,11 @@ final class TrashController: ObservableObject {
         noticeSeen = false
     }
 
+    /// Brief failure text on the Trash hover label (dock-tile drop, etc.).
+    func reportNotice(_ text: String) {
+        show(notice: text)
+    }
+
     /// From `DockHover`: the item under the cursor changed.
     func hoveredTargetChanged(_ id: String?) {
         guard notice != nil else { return }
