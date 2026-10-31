@@ -167,25 +167,62 @@ extension View {
     /// pass through to the SwiftUI view underneath.
     /// The menu opens beside the tile on the side away from the screen edge
     /// (above it on the bottom dock), centered on it, like the native Dock.
-    func appKitContextMenu(edge: DockEdge = .bottom, _ menu: @escaping () -> NSMenu) -> some View {
-        overlay(RightClickMenuHost(edge: edge, menu: menu))
+    /// With a `hold`, the same menu can be opened by `menuHold(_:)` on the tile.
+    func appKitContextMenu(edge: DockEdge = .bottom, hold: MenuHold? = nil, _ menu: @escaping () -> NSMenu) -> some View {
+        overlay(RightClickMenuHost(edge: edge, hold: hold, menu: menu))
+    }
+
+    /// Click-and-hold opens the tile's context menu, like the native Dock.
+    /// A one-shot press recognizer (no timer of ours): it fires after 0.5s if
+    /// the cursor stays within 4pt, and fails on earlier movement so the
+    /// reorder drag takes over. A short click is untouched. Put this next to
+    /// the tile's tap gesture, and have the tap call `hold.consumeFired()`.
+    func menuHold(_ hold: MenuHold) -> some View {
+        onLongPressGesture(minimumDuration: 0.5, maximumDistance: 4, perform: {
+            hold.fire()
+        }, onPressingChanged: { pressing in
+            if pressing { hold.reset() }
+        })
+    }
+}
+
+/// Connects a tile's press-and-hold to its right-click menu host.
+final class MenuHold {
+    fileprivate var show: (() -> Void)?
+    private var fired = false
+
+    fileprivate func fire() {
+        fired = true
+        actionsLogger.info("press and hold: opening menu")
+        show?()
+    }
+
+    fileprivate func reset() { fired = false }
+
+    /// True once after a hold opened the menu, so the release is not a click.
+    func consumeFired() -> Bool {
+        defer { fired = false }
+        return fired
     }
 }
 
 private struct RightClickMenuHost: NSViewRepresentable {
     let edge: DockEdge
+    let hold: MenuHold?
     let menu: () -> NSMenu
 
     func makeNSView(context: Context) -> RightClickView {
         let view = RightClickView()
-        view.menuProvider = menu
-        view.edge = edge
+        update(view)
         return view
     }
 
-    func updateNSView(_ view: RightClickView, context: Context) {
+    func updateNSView(_ view: RightClickView, context: Context) { update(view) }
+
+    private func update(_ view: RightClickView) {
         view.menuProvider = menu
         view.edge = edge
+        hold?.show = { [weak view] in view?.show() }
     }
 }
 
@@ -201,13 +238,13 @@ private final class RightClickView: NSView {
         return wantsMenu ? super.hitTest(point) : nil
     }
 
-    override func rightMouseDown(with event: NSEvent) { show(event) }
+    override func rightMouseDown(with event: NSEvent) { show() }
 
     override func mouseDown(with event: NSEvent) {
-        if event.modifierFlags.contains(.control) { show(event) } else { super.mouseDown(with: event) }
+        if event.modifierFlags.contains(.control) { show() } else { super.mouseDown(with: event) }
     }
 
-    private func show(_ event: NSEvent) {
+    func show() {
         guard let menu = menuProvider?() else { return }
         // popUp puts the menu's top-left corner at the point. Screen
         // coordinates (y up) avoid any view flipping; AppKit nudges the menu

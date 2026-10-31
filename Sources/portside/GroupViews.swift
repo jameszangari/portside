@@ -267,6 +267,7 @@ private struct GroupAppCell: View {
     /// Token of this cell's drag (see `DragOutController`), nil when idle.
     @State private var dragToken: Int?
     @State private var dragging = false
+    @State private var hold = MenuHold()
 
     private var bounceKey: String { LaunchBouncer.gridKey(groupID: groupID, appID: app.id) }
 
@@ -314,14 +315,16 @@ private struct GroupAppCell: View {
         .opacity(dragging ? 0.5 : 1)
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
+        .menuHold(hold)
         .onTapGesture {
+            if hold.consumeFired() { return }
             TileClick.perform(app, running: running, flags: NSEvent.modifierFlags) { afterOpen in onLaunch(app, afterOpen) }
         }
         .gesture(dragOutGesture)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(app.displayName)
         .accessibilityAddTraits(.isButton)
-        .appKitContextMenu {
+        .appKitContextMenu(hold: hold) {
             AppTileMenu.build(.init(
                 app: app, running: running, isPinned: true, dockModel: dockModel,
                 leading: [("Remove from Group", { dockModel.removeFromGroup(app, groupID: groupID) })],

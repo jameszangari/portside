@@ -173,6 +173,10 @@ final class DockEngine {
         menuObservers.append(center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
             self.menuIsOpen = false
+            // Forget the cursor first: it is stale after menu tracking (a
+            // press-and-hold menu starts with the button down), so no label
+            // appears until the next real mouse move reports a fresh point.
+            self.hover.clear()
             // An open group grid keeps its own suppression.
             if self.groups.expandedID == nil { self.hover.isSuppressed = false }
             // The hide timer skipped while the menu was up; re-arm it if the

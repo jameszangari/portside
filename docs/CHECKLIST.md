@@ -13,12 +13,48 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [x] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live; includes auto-hide toggle with Cmd+Option+D, Portside as a regular app while Settings is open, inline group naming and rename, open groups on hover
 - [ ] **F:** [x] Hide the macOS Dock (autohide-delay trick only, exact save and restore); [x] launch at login (`SMAppService`); [x] a real .app bundle (`scripts/build-app.sh`); [x] import native orientation and tilesize as Portside's initial position and icon size; [x] a manual "Import from macOS Dock" action with undo; [ ] import `persistent-others` (deferred until folder stacks exist). First-launch seeding of pinned apps from `persistent-apps` is built.
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
-- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit (built); drag apps in from Finder (built); drag icons out to remove (built, hand test pending); drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder, built); Option-click (hide frontmost) and Cmd+Option-click (hide others) (built); Hide/Show and Force Quit in the app menu (built); Cmd-Option-D show/hide (built)
+- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu (built on app tiles and grid cells, hand test pending; group tiles still use right-click only); divider right-click (built: Turn Hiding On/Off, Position on Screen, Dock Settings; Magnification joins when magnification is built); Option turns Quit into Force Quit (built); drag apps in from Finder (built); drag icons out to remove (built, hand test pending); drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder, built); Option-click (hide frontmost) and Cmd+Option-click (hide others) (built); Hide/Show and Force Quit in the app menu (built); Cmd-Option-D show/hide (built)
 - [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); right-click Trash shows Empty Trash; filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag (built for app groups; folder stacks not yet); magnification polish
 - [ ] **P3:** Follow the display the cursor hits; fullscreen apps and Spaces; badge counts via the real Dock's accessibility tree (Accessibility permission; private APIs only as fallback); window list in right-click menu with click to focus (Screen Recording for titles); VoiceOver labels and keyboard navigation; do not reveal while dragging a window or holding the mouse button (except file drags headed to the Dock)
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section; bounce on attention request (needs private APIs, not wanted for now)
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
+
+---
+
+# P1 slice: click-and-hold menu and divider menu
+
+Status: built, `swift build` clean, waiting for James's hand test. No new files, no dock.json changes. Log category `TileActions` ("press and hold: opening menu").
+
+## Deliverables
+
+- [x] Click-and-hold on an app tile (strip tiles, unpinned running apps, group grid cells) opens the right-click menu at the tile. `menuHold(_:)` is a SwiftUI `onLongPressGesture` (0.5s, 4pt): a one-shot recognizer, no timer of ours. Moving more than 4pt first cancels it and the reorder or drag-out gesture takes over. A short click is unchanged (no added delay).
+- [x] The release after a hold is not a click: `MenuHold.consumeFired()` at the top of each tap handler (the flag resets at the next press).
+- [x] Same `RightClickView` popup as right-click, so placement per edge, hover label hiding and the grid-close-on-menu rules are shared. Panel untouched (still non-activating).
+- [x] Divider right-click is now an AppKit menu: Turn Hiding On/Off, Position on Screen (Left, Bottom, Right, checkmark on the current, `setEdge`, live), Dock Settings... (opens Settings). The old "Settings..." SwiftUI item is gone.
+- [ ] Magnification: the divider menu gets a Magnification item when magnification is built.
+
+## Verification (agent)
+
+- `swift build` clean.
+- Not run: `swift run`. Another Portside (pid 80096, started before this session) was running and had the native Dock hidden; a second instance risked touching the Dock backup, so it was killed with SIGKILL straight away and the Dock state was left alone. Nothing hold-related was exercised at runtime. Restart Portside to get this build.
+
+## Known gaps
+
+- Group tiles (the folder tile in the strip) still use SwiftUI `.contextMenu`, so no hold there. Their tap toggles the grid.
+- Whether SwiftUI delivers the tap after a completed long press is unverified; the flag guards it either way.
+- Releasing the button with the cursor over a menu item may pick it (native behavior); the menu opens 4pt off the tile so the cursor starts outside it.
+- If drag-reorder, drag-out, file drops or spring-loading regress, suspect the long-press gesture on the tile first.
+
+## Hand test (each edge: Bottom, Left, Right)
+
+- [ ] Short click on an app launches or activates instantly; bounce unchanged; no focus stolen
+- [ ] Press and hold still 0.5s: menu opens at the tile; release does not launch; menu items work; Escape closes
+- [ ] Press and move before 0.5s: normal reorder; drag out still removes
+- [ ] Same in an open group grid cell
+- [ ] File drop on a tile and spring-loading a group still work
+- [ ] Divider right-click: Turn Hiding, Position on Screen (checkmark, applies live), Dock Settings opens Settings
+- [ ] Reveal timing in the log unchanged (mouseEntered to animation start about 1 to 2ms)
 
 ---
 

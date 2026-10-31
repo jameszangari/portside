@@ -228,13 +228,14 @@ struct DockItemView: View {
     /// A file drag is over this tile and the app can open it.
     var isDropTarget = false
     @ObservedObject private var icons = IconCache.shared
+    @State private var hold = MenuHold()
     @Environment(\.dockEdge) private var edge
 
     var body: some View {
         tile
             .accessibilityLabel(app.displayName)
         .dockHoverTarget(id: app.id, title: app.displayName)
-        .appKitContextMenu(edge: edge) {
+        .appKitContextMenu(edge: edge, hold: hold) {
             AppTileMenu.build(.init(app: app, running: running, isPinned: isPinned, dockModel: dockModel))
         }
     }
@@ -267,7 +268,10 @@ struct DockItemView: View {
                     .padding(-3)
             )
             .contentShape(Rectangle())
+            .menuHold(hold)
             .onTapGesture {
+                // The release after a press-and-hold is not a click.
+                if hold.consumeFired() { return }
                 // Modifier state at click time; a tap gesture has no event.
                 TileClick.perform(app, running: running, flags: NSEvent.modifierFlags) { afterOpen in
                     if running == nil && isPinned {

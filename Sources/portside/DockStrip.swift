@@ -253,14 +253,30 @@ struct DockStrip: View {
             .contentShape(Rectangle())
             .modifier(ResizePointer(edge: edge, isResizing: resizeStart != nil))
             .gesture(resizeGesture(maxTile: maxTile, tile: tile, edge: edge))
-            .contextMenu {
-                Button(dockModel.autoHide ? "Turn Hiding Off" : "Turn Hiding On") {
-                    dockModel.setAutoHide(!dockModel.autoHide)
-                }
-                Divider()
-                Button("Settings...") { interactions.onOpenSettings?() }
-            }
+            .appKitContextMenu(edge: edge) { dividerMenu() }
             .accessibilityLabel("Dock separator")
+    }
+
+    /// Divider right-click, in the native Dock's order. A Magnification item
+    /// joins it once magnification is built.
+    private func dividerMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.addItem(ClosureMenuItem(dockModel.autoHide ? "Turn Hiding Off" : "Turn Hiding On") {
+            dockModel.setAutoHide(!dockModel.autoHide)
+        })
+        let position = NSMenuItem(title: "Position on Screen", action: nil, keyEquivalent: "")
+        let positions = NSMenu()
+        positions.autoenablesItems = false
+        for choice in DockEdge.allCases {
+            let item = ClosureMenuItem(choice.title) { dockModel.setEdge(choice) }
+            item.state = choice == dockModel.edge ? .on : .off
+            positions.addItem(item)
+        }
+        position.submenu = positions
+        menu.addItem(position)
+        menu.addItem(ClosureMenuItem("Dock Settings...") { interactions.onOpenSettings?() })
+        return menu
     }
 
     private func resizeGesture(maxTile: CGFloat, tile: CGFloat, edge: DockEdge) -> some Gesture {
