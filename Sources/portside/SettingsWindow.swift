@@ -13,6 +13,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     private let dockModel: DockModel
     private let layout: DockLayout
+    private let trash: TrashController
     private let nativeDock: NativeDockController
     /// Read from the system each time the window opens.
     private let launchAtLogin = LaunchAtLogin()
@@ -27,10 +28,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// opening) keep the window centered instead of pinning its top edge.
     private var centerUntil = Date.distantPast
 
-    init(dockModel: DockModel, layout: DockLayout, nativeDock: NativeDockController) {
+    init(dockModel: DockModel, layout: DockLayout, nativeDock: NativeDockController, trash: TrashController) {
         self.dockModel = dockModel
         self.layout = layout
         self.nativeDock = nativeDock
+        self.trash = trash
     }
 
     var isOpen: Bool { window?.isVisible == true || window?.isMiniaturized == true }
@@ -43,6 +45,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             center(window)
         }
         launchAtLogin.refresh()
+        trash.refresh(reason: "Settings opened")
         if let front = NSWorkspace.shared.frontmostApplication, front != .current {
             previousApp = front
         }
@@ -74,7 +77,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private func makeWindow() -> NSWindow {
         let hosting = NSHostingController(rootView: SettingsView(
             dockModel: dockModel, layout: layout, nativeDock: nativeDock,
-            launchAtLogin: launchAtLogin,
+            launchAtLogin: launchAtLogin, trash: trash,
             onContentHeight: { [weak self] in self?.fitContent(height: $0) }
         ))
         // The window's height follows the selected tab (fitContent), so the
@@ -229,6 +232,7 @@ struct SettingsView: View {
     @ObservedObject var layout: DockLayout
     let nativeDock: NativeDockController
     let launchAtLogin: LaunchAtLogin
+    let trash: TrashController
     /// Total content height the window should have for the selected tab.
     let onContentHeight: (CGFloat) -> Void
 
@@ -250,7 +254,7 @@ struct SettingsView: View {
 
             Group {
                 switch tab {
-                case .general: GeneralSettings(dockModel: dockModel, layout: layout, nativeDock: nativeDock, launchAtLogin: launchAtLogin)
+                case .general: GeneralSettings(dockModel: dockModel, layout: layout, nativeDock: nativeDock, launchAtLogin: launchAtLogin, trash: trash)
                 case .appearance: AppearanceSettings(dockModel: dockModel)
                 case .widgets: WidgetSettings(dockModel: dockModel)
                 case .groups: GroupSettings(dockModel: dockModel)
@@ -377,6 +381,7 @@ private struct GeneralSettings: View {
     @ObservedObject var layout: DockLayout
     let nativeDock: NativeDockController
     @ObservedObject var launchAtLogin: LaunchAtLogin
+    @ObservedObject var trash: TrashController
 
     @State private var importRequest: ImportRequest?
     @State private var canUndoImport = DockModel.hasBeforeImport
@@ -433,6 +438,26 @@ private struct GeneralSettings: View {
                     Text("Hide dock automatically")
                     if !dockModel.autoHide {
                         Text("Windows can extend under the dock while it stays visible.").helperStyle()
+                    }
+                }
+
+                Toggle("Show Trash in dock", isOn: Binding(
+                    get: { dockModel.showTrash },
+                    set: { dockModel.setShowTrash($0) }
+                ))
+                if let notice = trash.notice {
+                    Text(notice).helperStyle()
+                }
+                if trash.accessDenied && !dockModel.trashAccessHintDismissed {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Portside needs Full Disk Access (or Finder Automation) to show whether the Trash is full").helperStyle()
+                        HStack {
+                            Button("Open Full Disk Access") {
+                                dockModel.dismissTrashAccessHint()
+                                TrashController.openFullDiskAccessSettings()
+                            }
+                            Button("Dismiss") { dockModel.dismissTrashAccessHint() }
+                        }
                     }
                 }
 

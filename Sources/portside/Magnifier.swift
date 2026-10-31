@@ -195,6 +195,11 @@ final class Magnifier: ObservableObject {
         settle(animated: false)
     }
 
+    /// Only the hovered icon reports its rendered spring position. This is
+    /// driven by SwiftUI animation frames, never a timer or mouse poll.
+    @Published var labelTargetID: String?
+    var onIconPresented: ((String, CGFloat, CGFloat) -> Void)?
+
     // MARK: - Queries (panel and hover)
 
     /// Whether a content-space point is over the magnified dock: the widened
@@ -222,8 +227,10 @@ final class Magnifier: ObservableObject {
     /// content space. Unmagnified frames pass through unchanged.
     func displayFrame(id: String, base: CGRect) -> CGRect {
         guard layout.focus != nil else { return base }
-        let scale = layout.scales[id] ?? 1
-        let shift = layout.shifts[id] ?? 0
+        return presentedFrame(base: base, scale: layout.scales[id] ?? 1, shift: layout.shifts[id] ?? 0)
+    }
+
+    func presentedFrame(base: CGRect, scale: CGFloat, shift: CGFloat) -> CGRect {
         var frame = base
         if edge.isVertical {
             // Side docks: the icon is as tall as the tile and grows sideways.
@@ -557,7 +564,15 @@ private struct ObservedMagnifyEffect: ViewModifier {
         let moved = content
             .scaleEffect(scale, anchor: edge.growthAnchor)
             .offset(x: edge.isVertical ? 0 : shift, y: edge.isVertical ? shift : 0)
-        if case .hitArea(let id) = target {
+        if case .icon(let id) = target {
+            content.modifier(PresentedIconTransform(scale: scale, shift: shift, edge: edge) { scale, shift in
+                guard magnifier.labelTargetID == id else { return }
+                DispatchQueue.main.async {
+                    guard magnifier.labelTargetID == id else { return }
+                    magnifier.onIconPresented?(id, scale, shift)
+                }
+            })
+        } else if case .hitArea(let id) = target {
             // Real frame changes (not a render transform): AppKit hit-tests
             // and anchors the menu with the view's frame.
             let grow = magnifier.layout.growths[id] ?? 0
@@ -588,6 +603,28 @@ private struct ObservedMagnifyEffect: ViewModifier {
         case .hitArea: (1, 0)
         case .fixed: (1, layout.shift(atCenter: center))
         }
+    }
+}
+
+/// The icon and its label share the same interpolated spring values.
+/// A separate window animation drifts when the cursor changes targets.
+private struct PresentedIconTransform: GeometryEffect {
+    var scale: CGFloat
+    var shift: CGFloat
+    let edge: DockEdge
+    let report: (CGFloat, CGFloat) -> Void
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(scale, shift) }
+        set { scale = newValue.first; shift = newValue.second }
+    }
+
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        report(scale, shift)
+        let anchor = edge.growthAnchor
+        let x = size.width * anchor.x * (1 - scale) + (edge.isVertical ? 0 : shift)
+        let y = size.height * anchor.y * (1 - scale) + (edge.isVertical ? shift : 0)
+        return ProjectionTransform(CGAffineTransform(a: scale, b: 0, c: 0, d: scale, tx: x, ty: y))
     }
 }
 

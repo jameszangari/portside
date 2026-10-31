@@ -39,7 +39,7 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - Drop files on an app tile to open them in that app, like the native Dock. Only tiles whose app can open the files highlight and accept the drop (Finder takes folders). A not-running pinned app launches with the bounce.
 - Running apps that are not pinned show after the pinned section.
 - Right-click menu: Keep in Dock or Remove from Dock, Add to Group, Show in Finder, then for running apps Hide (Show if hidden) and Quit. Hold Option and Quit becomes Force Quit.
-- App tiles, group tiles, Portside's own tile and group cells share one exclusive short-click/hold gesture: short click opens (or toggles the group); hold for 0.5s opens its menu; moving first starts a drag. Real-input verification of the click regression fix is pending.
+- App tiles, group tiles, Portside's own tile and group cells: short click opens (or toggles the group); hold for 0.5s opens its menu (simultaneous with the tap, not exclusive); moving first starts a drag. Hover labels track the magnified icon's spring frames so they stay centered.
 - Dock menus take the keyboard while open (Escape closes them, arrows move through them) without taking focus from the frontmost app.
 - Separator right-click menu: Turn Hiding On/Off, Turn Magnification On/Off, Position on Screen (Left, Bottom, Right, checkmark on the current one), Dock Settings.
 - The app menu opens above the icon (beside it on the side docks), like the native Dock.
@@ -68,6 +68,13 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - Icons match the macOS icon style (Default, Dark, Clear, Tinted) like the native Dock, and refresh when you change it in System Settings. Or pick "Original" to show each app's own artwork.
 - Dock background: Liquid Glass (macOS 26 and later, the default), Frosted, or Solid, with a Frost (or Opacity) slider, an optional tint color, and corner radius. Open group grids use the same look. Widgets keep their own frosted card whatever the Frost setting.
 
+**Trash**
+- Trash stays at the far end on Bottom, Left, and Right, with native empty/full icons, magnification, and a hover label. "Show Trash in dock" (General > Dock) applies live and defaults on.
+- Click opens Finder's Trash. Right-click or hold for Open and Empty Trash. Emptying asks for confirmation in Finder; empty or unreadable Trash disables the command.
+- Drop files and folders to move them to the Trash. Internal app tiles are rejected. State updates use directory events, with no polling.
+- Empty/full icon: prefers listing `~/.Trash` (Full Disk Access). If that is denied, uses Finder's trash count when Automation is already allowed. FSEvents watches the Trash folder (works without Full Disk Access). If neither read path works, the icon stays empty and a dismissible Settings hint links to Full Disk Access. Drops optimistically flip to full; Empty Trash flips to empty, then the watcher confirms.
+- Empty Trash needs Automation permission for Finder. Denial and file-operation failures appear inline in Settings and in the Trash hover label. Under `swift run`, macOS may attribute permissions to the launching terminal; use the built app for permission testing.
+
 **Settings window**
 - General, Appearance, Widgets, and Groups tabs. Changes apply live.
 - Header with the Portside icon, version, and author. Unreleased or modified builds show the short git hash. The window opens in the center of the screen with the cursor and fits each tab.
@@ -85,16 +92,17 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - "About Portside" in the menu bar item: the standard About panel with the version, author, and repo link.
 
 **App bundle and startup**
-- `scripts/build-app.sh` builds a signed `build/Portside.app` with the brand icon, version from `VERSION`, and the Calendar usage strings. `--install` copies it to `~/Applications`.
+- `scripts/build-app.sh` builds a signed `build/Portside.app` with the brand icon, version from `VERSION`, and the Calendar and Finder Automation usage strings. `--install` copies it to `~/Applications`.
 - "Open Portside at login" (Settings > General > Startup) through `SMAppService`. macOS is the source of truth; the toggle shows its real status, links to Login Items when approval is needed, and is disabled under `swift run`.
 
 ## Planned
 
 From `docs/CHECKLIST.md` and `docs/PLAN.md`:
-- Verify the app-click regression fix with real mouse/trackpad input, including hold menus and dragging.
 - Milestone F, what is left: importing the native Dock's folders and files (`persistent-others`), once folder stacks exist.
 - Update checker: compare AppInfo.version with the latest GitHub release tag (vX.Y.Z), show 'up to date' or a link to the release. The Check for Updates button is a placeholder until then.
-- Native Dock parity: Open at Login in the app menu, Trash, folder stacks.
+- Native Dock parity: Open at Login in the app menu, folder stacks.
+- Trash: Option-click "Empty Trash without warning" and icon animation.
+- Trash hand verification on all three edges, including Full Disk Access and Automation permission flows.
 - Multi-display, fullscreen and Spaces behavior, badges.
 - Better widget layout on side docks.
 
@@ -175,6 +183,7 @@ It is deleted after a verified restore. If it exists when Portside starts, Ports
 
 The Settings window controls:
 - Position, auto-hide, icon size, "Animate opening applications"
+- Show Trash in dock (`showTrash`, default `true`); dismissed Full Disk Access hint (`trashAccessHintDismissed`, default `false`)
 - Magnification (`magnificationEnabled`) and Magnified size (`magnifiedSize`, points, 16 to 128, default 64)
 - Reveal delay, hide delay, animation duration (with reset to defaults)
 - Widgets: on/off and order
@@ -207,7 +216,8 @@ Sources/portside/
   DockStrip.swift           SwiftUI strip: tiles, widgets, separator, reorder, drops
   DockItem.swift            App tile, icon cache, launch/activate
   TileActions.swift         Modifier clicks (Cmd, Option) and the AppKit right-click menu with Force Quit
-  FileDrop.swift            Per-drag state for file drops: pin vs open, can-open checks
+  FileDrop.swift            Per-drag state for pin, open, and Trash drops
+  Trash.swift               Native Trash tile, directory watcher, Finder actions
   DragOut.swift             Drag an item out to remove it: "Remove" label, poof, Escape
   DockHover.swift           Hover target frames and label placement
   Magnifier.swift           Dock magnification: per-tile scale and shift from the cursor, shelf widening, panel room
@@ -244,5 +254,6 @@ scripts/
   gen-version.sh            Writes BuildInfo.swift from VERSION and git
   release.sh                Bumps VERSION, commits, and tags a release
   build-app.sh              Builds and signs build/Portside.app (--install to ~/Applications)
+  check-tile-input.swift    Synthetic Accessibility check: clicks, hold menu, label centering
 design/brand/               Approved Portside sail icon, wordmarks, menu bar assets, and tokens; see its README
 ```

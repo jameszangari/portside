@@ -10,6 +10,8 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Portside asks Finder to empty the Trash when you choose Empty Trash.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Portside shows your next event in the dock's Calendar widget.</string>
 	<key>NSCalendarsUsageDescription</key>

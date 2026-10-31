@@ -104,6 +104,8 @@ struct DockStrip: View {
     /// Not observed here either: only small per-tile modifiers read it, so
     /// a mouse move never re-renders the strip.
     let magnifier: Magnifier
+    /// The Trash tile's state and actions. The tile observes it.
+    let trash: TrashController
 
     /// Id of the pinned entry (app or group) or widget being dragged, if any.
     @State private var dragging: String?
@@ -129,9 +131,9 @@ struct DockStrip: View {
     private static let space = "strip"
 
     /// Largest tile that still fits everything on screen, ignoring `iconSize`.
-    private func maxTileSize(extrasCount: Int, edge: DockEdge) -> CGFloat {
-        let apps = dockModel.entries.count + extrasCount
-        let separators = (extrasCount > 0 ? 1 : 0) + (widgets.hosts.isEmpty ? 0 : 1)
+    private func maxTileSize(extrasCount: Int, showsTrash: Bool, edge: DockEdge) -> CGFloat {
+        let apps = dockModel.entries.count + extrasCount + (showsTrash ? 1 : 0)
+        let separators = (extrasCount > 0 ? 1 : 0) + (widgets.hosts.isEmpty && !showsTrash ? 0 : 1)
         let items = apps + widgets.hosts.count + separators
         // Horizontal: widgets are N tiles wide with gaps inside them.
         // Vertical: every item is one tile tall.
@@ -156,7 +158,8 @@ struct DockStrip: View {
         let edge = dockModel.edge
         let extras = unpinnedRunning
         let showsSelf = runningApps.includesSelf
-        let maxTile = maxTileSize(extrasCount: extras.count + (showsSelf ? 1 : 0), edge: edge)
+        let showsTrash = dockModel.showTrash
+        let maxTile = maxTileSize(extrasCount: extras.count + (showsSelf ? 1 : 0), showsTrash: showsTrash, edge: edge)
         let tile = min(dockModel.iconSize, maxTile)
         // Items align to the far side so icons line up with widgets.
         let stack = edge.isVertical
@@ -183,7 +186,9 @@ struct DockStrip: View {
                 }
             }
 
-            if !widgets.hosts.isEmpty {
+            // Widgets, then the Trash at the far end, like the native Dock's
+            // stacks and Trash section.
+            if !widgets.hosts.isEmpty || showsTrash {
                 separator(tile: tile, maxTile: maxTile, edge: edge)
                     .magnifiedShift()
                 ForEach(widgets.hosts) { host in
@@ -194,6 +199,9 @@ struct DockStrip: View {
                         .contextMenu {
                             Button("Remove Widget") { dockModel.setWidget(host.id, enabled: false) }
                         }
+                }
+                if showsTrash {
+                    TrashTileView(trash: trash, size: tile, isDropTarget: dropTargetID == TrashController.hoverID)
                 }
             }
         }
@@ -206,7 +214,8 @@ struct DockStrip: View {
         .magnifiedShelf(dockModel.look)
         .onDrop(of: [.fileURL], delegate: FileDropDelegate(
             dockModel: dockModel, interactions: interactions, session: fileDrop, targetID: $dropTargetID,
-            tileFrames: tileFrames, apps: dropApps(extras: extras), runningApps: runningApps, bouncer: bouncer,
+            tileFrames: tileFrames, apps: dropApps(extras: extras), trash: showsTrash ? trash : nil,
+            runningApps: runningApps, bouncer: bouncer,
             tile: tile, slotLength: tile + spacing, leadingInset: alongPadding, vertical: edge.isVertical))
         .onChange(of: maxTile, initial: true) { _, fit in layout.reportFitTileSize(fit) }
         .onChange(of: tile) { _, size in bouncer.tileSizeChanged(size) }
@@ -361,7 +370,10 @@ struct DockStrip: View {
                 let outside = dragOut.update(token)
                 if outside != dragOutside { dragOutside = outside }
                 let slot: Int
-                if outside {
+                if outside || tileFrames.contains(where: {
+                    $0.id == TrashController.hoverID && $0.frame.contains(value.location)
+                }) {
+                    // Internal tile drags onto Trash cancel the reorder.
                     slot = dragStartIndex
                 } else {
                     let position = vertical ? value.location.y : value.location.x
@@ -525,7 +537,8 @@ enum ResizeCursor {
 /// File drops on the strip (see `FileDropSession` for the rules):
 /// `.app` bundles pin at the slot under the cursor; other files open in the
 /// app tile under the cursor if that app can open them, else the drop is
-/// rejected (no plus cursor, nothing happens).
+/// rejected (no plus cursor, nothing happens). Anything over the Trash tile
+/// goes to the Trash if every item can, else it is rejected.
 private struct FileDropDelegate: DropDelegate {
     let dockModel: DockModel
     let interactions: DockInteractions
@@ -533,6 +546,8 @@ private struct FileDropDelegate: DropDelegate {
     @Binding var targetID: String?
     let tileFrames: [HoverTarget]
     let apps: [String: (app: PinnedApp, isPinned: Bool)]
+    /// Nil while the Trash tile is hidden.
+    let trash: TrashController?
     let runningApps: RunningApps
     let bouncer: LaunchBouncer
     let tile: CGFloat
@@ -547,7 +562,7 @@ private struct FileDropDelegate: DropDelegate {
     func dropEntered(info: DropInfo) {
         session.begin()
         interactions.onDragOverStrip?(true, "entered")
-        updateTarget(info)
+        _ = dropUpdated(info: info)
     }
 
     func dropExited(info: DropInfo) {
@@ -558,8 +573,15 @@ private struct FileDropDelegate: DropDelegate {
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
+        if let trash, isOverTrash(info) {
+            interactions.onDragOverGroupTile?(nil)
+            let ok = session.canTrash(using: trash)
+            setTarget(ok ? TrashController.hoverID : nil)
+            return DropProposal(operation: ok ? .move : .forbidden)
+        }
         switch session.mode {
         case .pin:
+            setTarget(nil)
             return DropProposal(operation: .copy)
         case .open:
             return DropProposal(operation: updateTarget(info) == nil ? .forbidden : .copy)
@@ -573,6 +595,14 @@ private struct FileDropDelegate: DropDelegate {
             session.end()
             interactions.onDragOverGroupTile?(nil)
         }
+        if let trash, isOverTrash(info) {
+            guard session.canTrash(using: trash) else {
+                stripLogger.info("file drop rejected: can't move it to the Trash")
+                return false
+            }
+            trash.moveToTrash(session.urls)
+            return true
+        }
         switch session.mode {
         case .pin:
             return pin(info)
@@ -583,6 +613,15 @@ private struct FileDropDelegate: DropDelegate {
             }
             open(session.urls, with: entry.app, isPinned: entry.isPinned)
             return true
+        }
+    }
+
+    /// The cursor is over the Trash tile (same slop as hover labels).
+    private func isOverTrash(_ info: DropInfo) -> Bool {
+        let slop = -DockMetrics.spacing / 2
+        return tileFrames.contains {
+            $0.id == TrashController.hoverID
+                && $0.frame.insetBy(dx: vertical ? 0 : slop, dy: vertical ? slop : 0).contains(info.location)
         }
     }
 

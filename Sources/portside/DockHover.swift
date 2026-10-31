@@ -56,10 +56,6 @@ final class DockHover {
     /// Where a target is drawn right now: its magnified frame while
     /// magnifying, else its own frame. Used for hit-testing and labels.
     var displayFrame: ((HoverTarget) -> CGRect)?
-    /// How the tiles are moving right now: the label slides with them for
-    /// `duration` (0: snap), and `fromNormal` means they are just starting
-    /// to grow, so a new label starts at the tile's normal frame.
-    var tileMotion: (() -> (duration: TimeInterval, fromNormal: Bool))?
     private let logger = Logger(subsystem: "com.james.portside", category: "DockHover")
 
     /// Gap between the label and the icon's far edge (top on the bottom
@@ -143,6 +139,19 @@ final class DockHover {
         evaluate()
     }
 
+    /// Follow the hovered icon's actual rendered position, including every
+    /// spring frame. Moving the label immediately avoids a second animation.
+    func iconPresented(id: String, frame: CGRect) {
+        guard !isSuppressed, current?.id == id,
+              let anchor = stripToScreen?(frame), anchor != currentAnchor else { return }
+        currentAnchor = anchor
+        overlay.reanchor(anchor)
+    }
+
+    func baseFrame(for id: String) -> CGRect? {
+        targets.first { $0.id == id }?.frame
+    }
+
     private func evaluate() {
         let slop = -DockMetrics.spacing / 2
         let hit = cursor.flatMap { point in
@@ -158,17 +167,7 @@ final class DockHover {
             onHoveredTargetChanged?(hoveredID)
         }
         guard !isSuppressed else { return }
-        let motion = tileMotion?() ?? (duration: 0, fromNormal: false)
-        if hit == current {
-            // Same tile; with magnification it may have grown or shifted.
-            // The label slides with the tile's spring instead of jumping
-            // to where the tile is headed.
-            if let hit, let anchor = stripToScreen?(frame(of: hit)), anchor != currentAnchor {
-                currentAnchor = anchor
-                overlay.reanchor(anchor, duration: motion.duration)
-            }
-            return
-        }
+        if hit == current { return }
         current = hit
 
         guard let hit, let anchor = stripToScreen?(frame(of: hit)) else {
@@ -178,14 +177,7 @@ final class DockHover {
         }
         currentAnchor = anchor
         let label = AnyView(DockLabel(title: hit.title, pointing: edge, look: look?()))
-        if motion.fromNormal, motion.duration > 0, let start = stripToScreen?(hit.frame), start != anchor {
-            // The tiles only start growing now: open the label at the
-            // tile's normal frame and let it rise with the icon.
-            overlay.present(label, anchor: start, edge: edge, gap: Self.bubbleGap)
-            overlay.reanchor(anchor, duration: motion.duration)
-        } else {
-            overlay.present(label, anchor: anchor, edge: edge, gap: Self.bubbleGap)
-        }
+        overlay.present(label, anchor: anchor, edge: edge, gap: Self.bubbleGap)
         logger.debug("label: \(hit.title, privacy: .public)")
     }
 

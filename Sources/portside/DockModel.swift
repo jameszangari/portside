@@ -211,6 +211,27 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    // MARK: - Trash
+
+    /// "Show Trash in dock": the Trash tile at the far end of the dock.
+    @Published private(set) var showTrash: Bool = true
+
+    /// The Full Disk Access hint in Settings was dismissed (or its button
+    /// used). It is shown once and never again on its own.
+    @Published private(set) var trashAccessHintDismissed: Bool = false
+
+    func setShowTrash(_ enabled: Bool) {
+        guard enabled != showTrash else { return }
+        showTrash = enabled
+        persist()
+    }
+
+    func dismissTrashAccessHint() {
+        guard !trashAccessHintDismissed else { return }
+        trashAccessHintDismissed = true
+        persist()
+    }
+
     // MARK: - Native Dock
 
     /// "Hide the macOS Dock". Written only by `NativeDockController`, after
@@ -475,6 +496,7 @@ final class DockModel: Codable, ObservableObject {
         case autoHide, openGroupsOnHover, groupHoverDelay, groupHoverCloseGrace
         case animateOpeningApplications
         case hideNativeDock, nativeDockExplained
+        case showTrash, trashAccessHintDismissed
         case iconStyle, backgroundStyle, backgroundFrost, backgroundTint, cornerRadius
         /// Before Milestone D: a flat list of apps. Read only, for migration.
         case pinnedApps
@@ -502,6 +524,8 @@ final class DockModel: Codable, ObservableObject {
         animateOpeningApplications = try c.decodeIfPresent(Bool.self, forKey: .animateOpeningApplications) ?? true
         hideNativeDock = try c.decodeIfPresent(Bool.self, forKey: .hideNativeDock) ?? false
         nativeDockExplained = try c.decodeIfPresent(Bool.self, forKey: .nativeDockExplained) ?? false
+        showTrash = (try? c.decodeIfPresent(Bool.self, forKey: .showTrash)) ?? true
+        trashAccessHintDismissed = (try? c.decodeIfPresent(Bool.self, forKey: .trashAccessHintDismissed)) ?? false
         openGroupsOnHover = try c.decodeIfPresent(Bool.self, forKey: .openGroupsOnHover) ?? false
         groupHoverDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverDelay) ?? Defaults.groupHoverDelay, to: Self.groupHoverDelayRange)
         groupHoverCloseGrace = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverCloseGrace) ?? Defaults.groupHoverCloseGrace, to: Self.groupHoverCloseGraceRange)
@@ -530,6 +554,8 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(animateOpeningApplications, forKey: .animateOpeningApplications)
         try c.encode(hideNativeDock, forKey: .hideNativeDock)
         try c.encode(nativeDockExplained, forKey: .nativeDockExplained)
+        try c.encode(showTrash, forKey: .showTrash)
+        try c.encode(trashAccessHintDismissed, forKey: .trashAccessHintDismissed)
         try c.encode(openGroupsOnHover, forKey: .openGroupsOnHover)
         try c.encode(groupHoverDelay, forKey: .groupHoverDelay)
         try c.encode(groupHoverCloseGrace, forKey: .groupHoverCloseGrace)
@@ -666,6 +692,7 @@ final class DockModel: Codable, ObservableObject {
         magnifiedSize = old.magnifiedSize
         animateOpeningApplications = old.animateOpeningApplications
         autoHide = old.autoHide
+        showTrash = old.showTrash
         openGroupsOnHover = old.openGroupsOnHover
         groupHoverDelay = old.groupHoverDelay
         groupHoverCloseGrace = old.groupHoverCloseGrace

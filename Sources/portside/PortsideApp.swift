@@ -227,7 +227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// panel itself stays non-activating.
     func openSettings() {
         guard let dockEngine else { return }
-        let controller = settings ?? SettingsWindowController(dockModel: dockModel, layout: dockEngine.layout, nativeDock: nativeDock)
+        let controller = settings ?? SettingsWindowController(dockModel: dockModel, layout: dockEngine.layout, nativeDock: nativeDock, trash: dockEngine.trash)
         controller.onActivationPolicyChanged = { [weak dockEngine] in dockEngine?.activationPolicyChanged() }
         settings = controller
         controller.show()

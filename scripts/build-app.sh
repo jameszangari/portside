@@ -49,7 +49,7 @@ for bundle in "$bin_dir"/*.bundle; do
 done
 
 # Info.plist: start from the repo's Info.plist (one source for the
-# Calendar usage strings), then set the bundle keys.
+# Calendar and Finder Automation usage strings), then set the bundle keys.
 plist="$contents/Info.plist"
 cp "$root/Info.plist" "$plist"
 set_key() { plutil -replace "$1" "-$2" "$3" "$plist"; }

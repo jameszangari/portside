@@ -29,6 +29,8 @@ final class DockEngine {
     private let groups: GroupController
     private let bouncer: LaunchBouncer
     private let magnifier = Magnifier()
+    /// The Trash tile's state. Shared with Settings (Full Disk Access hint).
+    let trash = TrashController()
     private let flipKeys = MagnifyFlipKeys()
     private var magnifySubscriptions: [AnyCancellable] = []
     private var bounceSettingSubscription: AnyCancellable?
@@ -76,7 +78,7 @@ final class DockEngine {
         self.hover = DockHover(overlay: OverlayPanel())
         self.bouncer = LaunchBouncer(dockModel: dockModel, hover: hover)
         self.groups = GroupController(dockModel: dockModel, runningApps: runningApps, hover: hover, bouncer: bouncer, dragOut: dragOut)
-        let strip = DockStrip(dockModel: dockModel, runningApps: runningApps, widgets: widgets, layout: layout, groups: groups, bouncer: bouncer, hover: hover, interactions: interactions, dragOut: dragOut, magnifier: magnifier)
+        let strip = DockStrip(dockModel: dockModel, runningApps: runningApps, widgets: widgets, layout: layout, groups: groups, bouncer: bouncer, hover: hover, interactions: interactions, dragOut: dragOut, magnifier: magnifier, trash: trash)
         self.dockPanel = DockPanel(dockModel: dockModel, strip: strip, magnifier: magnifier)
         self.edgeTracker = EdgeTracker(edge: dockModel.edge)
         hover.setEdge(dockModel.edge)
@@ -122,10 +124,9 @@ final class DockEngine {
         hover.displayFrame = { [weak magnifier] target in
             magnifier?.displayFrame(id: target.id, base: target.frame) ?? target.frame
         }
-        hover.tileMotion = { [weak magnifier] in
-            guard let magnifier, let motion = magnifier.lastMotion else { return (0, false) }
-            // An ease-out of about the spring's response tracks it closely.
-            return (motion.response * 1.1, magnifier.lastChangeEngaged)
+        magnifier.onIconPresented = { [weak hover, weak magnifier] id, scale, shift in
+            guard let hover, let magnifier, let base = hover.baseFrame(for: id) else { return }
+            hover.iconPresented(id: id, frame: magnifier.presentedFrame(base: base, scale: scale, shift: shift))
         }
         magnifier.onRoomChanged = { [weak dockPanel] room in dockPanel?.setMagnifyRoom(room) }
         magnifier.contentSizeProvider = { [weak dockPanel] in dockPanel?.stripSize ?? .zero }
@@ -176,7 +177,11 @@ final class DockEngine {
             if !editing { self?.rearmHideIfCursorOutside(source: "rename ended") }
         }
         interactions.onRenameGroup = { [weak self] id in self?.groups.beginRename(id, reason: "tile menu") }
-        hover.onHoveredTargetChanged = { [weak self] id in self?.groups.hoveredTargetChanged(id) }
+        hover.onHoveredTargetChanged = { [weak self] id in
+            self?.groups.hoveredTargetChanged(id)
+            self?.trash.hoveredTargetChanged(id)
+            self?.magnifier.labelTargetID = id
+        }
         // Spring-loading: a file drag resting on a group tile opens it, and
         // the open grid is part of the drag region like the strip.
         interactions.onDragOverGroupTile = { [weak self] id in self?.groups.dragOverGroupTileChanged(id) }
@@ -305,6 +310,7 @@ final class DockEngine {
     /// Start the engine. With auto-hide on, the panel starts hidden and only
     /// the edge window is shown. With it off, the panel is simply up.
     func start() {
+        trash.start()
         configureMagnifier()
         dockPanel.prepareHidden()
         if dockModel.autoHide {
@@ -356,6 +362,7 @@ final class DockEngine {
         groups.collapse(reason: "engine stopped", animated: false)
         edgeTracker.stop()
         widgets.stopAll()
+        trash.stop()
         logger.info("engine stopped")
     }
 

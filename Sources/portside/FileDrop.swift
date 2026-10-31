@@ -12,6 +12,9 @@ private let dropLogger = Logger(subsystem: "com.james.portside", category: "File
 /// - `.open`: anything else. Only an app tile whose app can open every item
 ///   highlights and accepts the drop; everything else rejects it.
 ///
+/// In either mode the Trash tile takes the drop instead when every item
+/// can be moved to the Trash (`canTrash(using:)`).
+///
 /// React analogy: a ref holding per-drag state (no re-render on change).
 /// The highlighted tile id lives in the strip's @State instead.
 final class FileDropSession {
@@ -22,6 +25,8 @@ final class FileDropSession {
     /// Per drag: app id -> can open every dragged item. Launch Services is
     /// asked once per tile per drag, not on every dropUpdated.
     private var verdicts: [String: Bool] = [:]
+    /// Per drag: every item can go to the Trash. Nil until asked.
+    private var trashVerdict: Bool?
 
     /// Reads the dragged file URLs from the drag pasteboard. DropInfo's item
     /// providers only load asynchronously, but the pasteboard is readable
@@ -33,6 +38,7 @@ final class FileDropSession {
         ) as? [URL] ?? []
         urls = objects
         verdicts = [:]
+        trashVerdict = nil
         // Empty means the pasteboard could not be read. Fall back to pin
         // mode (the providers load later), so dropping apps still works.
         mode = urls.allSatisfy({ PinnedApp(appURL: $0) != nil }) ? .pin : .open
@@ -42,6 +48,7 @@ final class FileDropSession {
     func end() {
         urls = []
         verdicts = [:]
+        trashVerdict = nil
         mode = .open
     }
 
@@ -64,6 +71,15 @@ final class FileDropSession {
         verdicts[app.id] = verdict
         let ms = (CACurrentMediaTime() - started) * 1000
         dropLogger.info("\(app.displayName, privacy: .public) can open: \(verdict) (\(ms, format: .fixed(precision: 2))ms)")
+        return verdict
+    }
+
+    /// True if every dragged item can be moved to the Trash.
+    func canTrash(using trash: TrashController) -> Bool {
+        if let trashVerdict { return trashVerdict }
+        let verdict = !urls.isEmpty && urls.allSatisfy(trash.canTrash)
+        trashVerdict = verdict
+        dropLogger.info("can move to Trash: \(verdict)")
         return verdict
     }
 

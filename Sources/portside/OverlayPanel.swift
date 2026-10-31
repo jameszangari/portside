@@ -27,9 +27,6 @@ final class OverlayPanel {
     private var placement: (anchor: NSRect, edge: DockEdge, gap: CGFloat)?
     /// Transparent margin (a shadow) that does not count as the panel.
     private var hitInsets = NSEdgeInsetsZero
-    /// Where a `reanchor(_:duration:)` slide is headed, nil when still.
-    private var slideTarget: NSRect?
-    private var slideGeneration = 0
 
     init() {
         hostingView = OverlayHostingView(rootView: AnyView(EmptyView()))
@@ -100,39 +97,18 @@ final class OverlayPanel {
         }
     }
 
-    /// Keep the current content but move it next to a new anchor (the tile
-    /// moved because the strip changed, or a magnified tile grew). With a
-    /// `duration` the panel slides there (ease out), restarting from where
-    /// it is if it was already sliding.
-    func reanchor(_ anchor: NSRect, duration: TimeInterval = 0) {
+    /// Move beside the supplied rendered anchor. The caller owns any
+    /// animation, so the window cannot lag behind an independently moving tile.
+    func reanchor(_ anchor: NSRect) {
         guard panel.isVisible, var current = placement, current.anchor != anchor else { return }
         current.anchor = anchor
         placement = current
-        let size = slideTarget?.size ?? panel.frame.size
-        guard duration > 0 else {
-            slideTarget = nil
-            place(size: size)
-            return
-        }
-        let frame = OverlayPanel.frame(size: size, anchor: anchor, edge: current.edge, gap: current.gap)
-        guard frame != (slideTarget ?? panel.frame) else { return }
-        slideTarget = frame
-        slideGeneration += 1
-        let generation = slideGeneration
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = duration
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            panel.animator().setFrame(frame, display: true)
-        }, completionHandler: { [weak self] in
-            guard let self, self.slideGeneration == generation else { return }
-            self.slideTarget = nil
-        })
+        place(size: panel.frame.size)
     }
 
     func dismiss() {
         endKeyFocus()
         placement = nil
-        slideTarget = nil
         panel.hasShadow = false
         guard panel.isVisible else { return }
         panel.orderOut(nil)
@@ -171,9 +147,6 @@ final class OverlayPanel {
     private func place(size: NSSize) {
         guard let placement, size.width > 0, size.height > 0 else { return }
         let frame = OverlayPanel.frame(size: size, anchor: placement.anchor, edge: placement.edge, gap: placement.gap)
-        // Already sliding there: let the slide finish.
-        if frame == slideTarget { return }
-        slideTarget = nil
         guard frame != panel.frame else { return }
         panel.setFrame(frame, display: true)
         hostingView.frame = container.bounds

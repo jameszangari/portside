@@ -14,11 +14,61 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **F:** [x] Hide the macOS Dock (autohide-delay trick only, exact save and restore); [x] launch at login (`SMAppService`); [x] a real .app bundle (`scripts/build-app.sh`); [x] import native orientation and tilesize as Portside's initial position and icon size; [x] a manual "Import from macOS Dock" action with undo; [ ] import `persistent-others` (deferred until folder stacks exist). First-launch seeding of pinned apps from `persistent-apps` is built.
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
 - [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu (built on app tiles, group tiles, Portside's own tile and grid cells, hand test pending); divider right-click (built: Turn Hiding On/Off, Turn Magnification On/Off, Position on Screen, Dock Settings); Option turns Quit into Force Quit (built); drag apps in from Finder (built); drag icons out to remove (built, hand test pending); drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder, built); Option-click (hide frontmost) and Cmd+Option-click (hide others) (built); Hide/Show and Force Quit in the app menu (built); Cmd-Option-D show/hide (built)
-- [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); right-click Trash shows Empty Trash; filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag (built for app groups; folder stacks not yet); magnification (built on all three edges, see the part 2 section)
+- [ ] **P2:** Trash (built, hand test pending: full/empty, drag-to-trash, Full Disk Access hint, Open/Empty Trash menus); filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag (built for app groups; folder stacks not yet); magnification (built on all three edges, see the part 2 section)
 - [ ] **P3:** Follow the display the cursor hits; fullscreen apps and Spaces; badge counts via the real Dock's accessibility tree (Accessibility permission; private APIs only as fallback); window list in right-click menu with click to focus (Screen Recording for titles); VoiceOver labels and keyboard navigation; do not reveal while dragging a window or holding the mouse button (except file drags headed to the Dock)
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section; bounce on attention request (needs private APIs, not wanted for now)
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
+
+---
+
+# P2: Trash (2026-10-31)
+
+Status: implemented, debug build and launch verified. Click/label regressions from this slice fixed and agent-tested with synthetic input. Hand test pending. No commits or pushes.
+
+## Deliverables
+
+- [x] Native empty/full Trash tile at the far end on every edge; same icon size, magnification, hover label and AppKit right-click/hold menu; no tile drag or drag-out removal.
+- [x] General > Dock: Show Trash in dock, live and default on; `showTrash` persisted in dock.json, older files default on.
+- [x] FSEvents watcher for `~/.Trash` (works without Full Disk Access; DispatchSource+O_EVTONLY does not). Background reads, no polling. Unknown state looks empty and disables Empty Trash.
+- [x] Fullness: list `~/.Trash` when allowed; else Finder `count of items of the trash` when Automation is already allowed (no watcher prompt). Hint only if both fail. Drops/Empty Trash update the icon optimistically.
+- [x] One dismissible Full Disk Access hint next to the setting (also notes Finder Automation), with a System Settings link. `trashAccessHintDismissed` persists dismissal/link use so it does not nag again.
+- [x] Open through NSWorkspace. Empty Trash uses NSAppleScript with a Finder-hosted confirmation before Finder's empty command. Cancel is harmless; Automation denial and failures show inline in Settings and in the hover label.
+- [x] `NSAppleEventsUsageDescription` embedded in the SPM binary and copied into the app bundle by build-app.sh.
+- [x] File/folder drops reuse FileDrop session highlighting and hide suppression, preflight deletability and use FileManager.trashItem off the main thread. Failures report briefly; internal app drags over Trash restore their starting slot.
+- [x] README Features, Planned, project layout and data keys updated.
+- [x] Regression fix (James): short clicks open apps again. `menuHold` uses `onTapGesture` plus a simultaneous long-press, not an exclusive LongPress/Tap sequence that could swallow taps in the non-activating hosting view.
+- [x] Regression fix (James): magnified hover labels stay centered. The hovered icon reports spring-interpolated scale/shift via a `GeometryEffect`; the label overlay reanchors immediately to that frame (no second window animation).
+
+## Verification
+
+- Swift 6.4.2, Xcode 27.2, macOS 27.0.1, arm64. The inherited implementation initially failed to compile because its `open()` method shadowed Darwin.open; fixed and every subsequent code batch built successfully.
+- `swift run portside` launched and stayed alive. Real permission denial produced one Trash log and the empty fallback, with no crash.
+- Synthetic bottom-edge reveal: animation start 1.71ms, panel interactive 2.66ms, animation finished 155.48ms. Panel entry canceled the 300ms pending hide; exit hid normally.
+- Public NSTrashEmpty/NSTrashFull images resolve with representations through 1024pt. NSWorkspace opening `~/.Trash` succeeded with Finder even without Full Disk Access.
+- Finder confirmation script syntax compiled with osacompile without executing it. No existing Trash contents were deleted.
+- Final `swift build`, `swift run portside`, and `scripts/build-app.sh` passed. The release bundle passed strict code-signature verification and contains NSAppleEventsUsageDescription. SIGTERM stopped the smoke-test app and the existing native Dock restore path ran.
+- `scripts/check-tile-input.swift` (Accessibility): mag off bottom, and mag on bottom/left/right. Each PASS: 2 short clicks, 1 hold menu, no launch on hold release, settled label center error under 0.5pt, Portside stays inactive.
+- Click/label regression rebuild: `swift build` and `scripts/build-app.sh` passed after the fixes.
+
+## Hand test: repeat on Bottom, Left and Right
+
+- [ ] Trash is last, native icon and label align with apps; magnification works. Dragging Trash itself cannot reorder or remove it.
+- [ ] Drag a disposable file/folder to the edge and onto Trash: dock stays up, target highlights, file moves; full icon updates with Full Disk Access. Drag away and re-enter during hide delay. Invalid drops reject; internal app tiles remain in their original order.
+- [ ] Click once while another app is active: Finder opens Trash, Portside stays inactive. Check ordinary app tile clicks too.
+- [ ] Right-click and hold both show Open/Empty Trash. Empty and unreadable state disable Empty Trash. With access and disposable contents, Cancel preserves them; confirm deletes via Finder and icon empties. Test Automation denial without a crash.
+- [ ] Without Full Disk Access: empty icon, one Settings hint and working Open/drop actions. Dismiss or follow its link, reopen Settings/relaunch: no repeated hint.
+- [ ] Show Trash off/on updates live and survives relaunch. Repeat with auto-hide off and magnification both off/on. Check reveal logs stay within a frame.
+
+## Known gaps and deferred work
+
+- Full Disk Access is unavailable in this launch context, so actual full-state watcher updates, file drops, confirmation, and Automation allow/deny paths still need the hand test. No claim of destructive-flow verification.
+- The watcher covers the requested `~/.Trash`, not per-volume Trash directories on external disks.
+- Filesystem permissions can change after preflight; a multi-file drop can partially succeed. Failures are reported, successful moves stay in the Trash.
+- Deferred: Option-click "Empty Trash without warning" and Trash icon animation.
+- Synthetic Accessibility clicks pass; trackpad/mouse hand confirmation of short-click launch and magnified label centering still needed.
+- 2026-10-31: James reported hide-after-hover broken. Cause was agent test prefs left `autoHide: false` in dock.json (hide path correctly no-ops when off). Restored to true; synth edge enter/exit logged hide armed 300ms then "hide timer fired, hiding".
+- 2026-10-31: James reported Trash stayed empty with items present. Listing `~/.Trash` is TCC-blocked without FDA; O_EVTONLY watch also fails. Switched to FSEvents + Finder count fallback. Launch log: watching (FSEvents), "using Finder for empty/full", Trash full (11 items).
 
 ---
 

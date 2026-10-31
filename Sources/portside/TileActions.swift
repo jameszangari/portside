@@ -175,19 +175,17 @@ extension View {
         overlay(RightClickMenuHost(edge: edge, hold: hold, menu: menu).magnifiedHitArea(id: magnifyID))
     }
 
-    /// Resolve a press as either a hold or a tap in one gesture. Separate
-    /// gesture modifiers can compete with each other and the tile's drag.
-    /// Movement beyond 4pt fails the hold so the drag can take over.
+    /// Keep taps independent of long presses. An exclusive hold/tap sequence
+    /// can swallow short clicks in the non-activating dock hosting view.
     func menuHold(_ hold: MenuHold, onTap: @escaping () -> Void) -> some View {
-        gesture(
+        onTapGesture {
+            if !hold.fired { onTap() }
+        }
+        .simultaneousGesture(
             LongPressGesture(minimumDuration: 0.5, maximumDistance: 4)
-                .exclusively(before: TapGesture())
-                .onEnded { result in
-                    switch result {
-                    case .first(true): hold.fire()
-                    case .second: onTap()
-                    default: break
-                    }
+                .onChanged { _ in hold.fired = false }
+                .onEnded { completed in
+                    if completed { hold.fire() }
                 }
         )
     }
@@ -196,8 +194,10 @@ extension View {
 /// Connects a tile's press-and-hold to its right-click menu host.
 final class MenuHold {
     fileprivate var show: (() -> Void)?
+    fileprivate var fired = false
 
     fileprivate func fire() {
+        fired = true
         actionsLogger.info("press and hold: opening menu")
         show?()
     }
