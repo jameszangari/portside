@@ -23,7 +23,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var previousApp: NSRunningApplication?
     private var activationObserver: NSObjectProtocol?
 
-    private static let frameName = "PortsideSettings"
+    /// Fits that land before this time (the first layout passes after
+    /// opening) keep the window centered instead of pinning its top edge.
+    private var centerUntil = Date.distantPast
 
     init(dockModel: DockModel, layout: DockLayout, nativeDock: NativeDockController) {
         self.dockModel = dockModel
@@ -36,6 +38,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     func show() {
         let window = self.window ?? makeWindow()
         self.window = window
+        if !window.isVisible {
+            centerUntil = Date().addingTimeInterval(0.5)
+            center(window)
+        }
         launchAtLogin.refresh()
         if let front = NSWorkspace.shared.frontmostApplication, front != .current {
             previousApp = front
@@ -87,11 +93,27 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.titlebarSeparatorStyle = .none
         window.isReleasedWhenClosed = false
         window.delegate = self
-        if !window.setFrameUsingName(Self.frameName) {
-            window.center()
-        }
-        window.setFrameAutosaveName(Self.frameName)
+        // Older builds saved the window position; it now always opens centered.
+        UserDefaults.standard.removeObject(forKey: "NSWindow Frame PortsideSettings")
         return window
+    }
+
+    /// Dead center of the visible area (menu bar excluded) of the screen
+    /// with the cursor, or the primary screen. NSWindow.center() sits
+    /// higher than center on purpose, so it is not used.
+    private func center(_ window: NSWindow) {
+        let mouse = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) ?? NSScreen.screens.first else { return }
+        window.setFrame(centered(window.frame.size, on: screen), display: false)
+    }
+
+    private func centered(_ size: NSSize, on screen: NSScreen) -> NSRect {
+        let area = screen.visibleFrame
+        return NSRect(
+            x: (area.midX - size.width / 2).rounded(),
+            y: (area.midY - size.height / 2).rounded(),
+            width: size.width, height: size.height
+        )
     }
 
     /// Resizes the window to the selected tab's content, keeping its top
@@ -104,7 +126,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let old = window.frame
         var frame = window.frameRect(forContentRect: NSRect(origin: .zero, size: size))
         guard abs(frame.height - old.height) > 0.5 || abs(frame.width - old.width) > 0.5 else { return }
-        frame.origin = NSPoint(x: old.minX, y: old.maxY - frame.height)
+        if Date() < centerUntil, let screen = window.screen ?? NSScreen.screens.first {
+            frame = centered(frame.size, on: screen)
+        } else {
+            frame.origin = NSPoint(x: old.minX, y: old.maxY - frame.height)
+        }
         let animate = window.isVisible && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         window.setFrame(frame, display: true, animate: animate)
     }
@@ -166,6 +192,7 @@ extension Text {
     /// (grouped Forms align footers trailing by default).
     func footerStyle() -> some View {
         helperStyle()
+            .multilineTextAlignment(.leading)
             .padding(.horizontal, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -174,13 +201,14 @@ extension Text {
 // MARK: - Root
 
 private enum SettingsTab: String, CaseIterable, Identifiable {
-    case general, widgets, groups
+    case general, appearance, widgets, groups
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .general: "General"
+        case .appearance: "Appearance"
         case .widgets: "Widgets"
         case .groups: "Groups"
         }
@@ -189,6 +217,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .general: "gearshape"
+        case .appearance: "paintbrush"
         case .widgets: "square.grid.2x2"
         case .groups: "folder"
         }
@@ -222,6 +251,7 @@ struct SettingsView: View {
             Group {
                 switch tab {
                 case .general: GeneralSettings(dockModel: dockModel, layout: layout, nativeDock: nativeDock, launchAtLogin: launchAtLogin)
+                case .appearance: AppearanceSettings(dockModel: dockModel)
                 case .widgets: WidgetSettings(dockModel: dockModel)
                 case .groups: GroupSettings(dockModel: dockModel)
                 }
@@ -267,7 +297,7 @@ private struct SettingsHeader: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(nsImage: AppIcon.bitmap)
+            Image(nsImage: AppIcon.image(points: 48))
                 .resizable()
                 .interpolation(.high)
                 .frame(width: 48, height: 48)
@@ -602,6 +632,102 @@ private struct SettingsSlider: View {
 
     private func snapped(_ raw: Double) -> Double {
         min(max((raw / snap).rounded() * snap, range.lowerBound), range.upperBound)
+    }
+}
+
+// MARK: - Appearance
+
+private struct AppearanceSettings: View {
+    @ObservedObject var dockModel: DockModel
+
+    /// Brand navy (design/brand tokens) at low strength, the starting
+    /// color when the tint is turned on.
+    private static let defaultTint = RGBAColor(red: 0x10 / 255, green: 0x28 / 255, blue: 0x3F / 255, alpha: 0.35)
+
+    private var styles: [DockBackgroundStyle] {
+        DockBackgroundStyle.allCases.filter { $0 != .glass || DockBackgroundStyle.isGlassAvailable }
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Icon style", selection: Binding(
+                    get: { dockModel.iconStyle },
+                    set: { dockModel.setIconStyle($0) }
+                )) {
+                    ForEach(IconStyle.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text("Icons")
+            } footer: {
+                Text(dockModel.iconStyle == .matchSystem
+                     ? "Uses the icon style from System Settings > Appearance (Default, Dark, Clear, or Tinted), like the macOS Dock, and updates when you change it."
+                     : "Shows each app's own icon artwork and ignores the system icon style.")
+                    .footerStyle()
+            }
+
+            Section {
+                Picker("Background", selection: Binding(
+                    get: { dockModel.backgroundStyle.effective },
+                    set: { dockModel.setBackgroundStyle($0) }
+                )) {
+                    ForEach(styles) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+
+                SettingsSlider(
+                    title: dockModel.backgroundStyle.effective == .solid ? "Opacity" : "Frost",
+                    value: dockModel.backgroundFrost,
+                    range: 0...1,
+                    snap: 0.01,
+                    format: { "\(Int(($0 * 100).rounded()))%" },
+                    set: { dockModel.setBackgroundFrost($0, persist: $1) }
+                )
+
+                HStack(spacing: 12) {
+                    Toggle("Tint", isOn: Binding(
+                        get: { dockModel.backgroundTint != nil },
+                        set: { dockModel.setBackgroundTint($0 ? Self.defaultTint : nil) }
+                    ))
+                    if let tint = dockModel.backgroundTint {
+                        Spacer()
+                        ColorPicker("Tint color", selection: Binding(
+                            get: { tint.color },
+                            set: { dockModel.setBackgroundTint(RGBAColor($0)) }
+                        ), supportsOpacity: true)
+                        .labelsHidden()
+                    }
+                }
+
+                SettingsSlider(
+                    title: "Corner radius",
+                    value: Double(dockModel.cornerRadius),
+                    range: Double(DockModel.cornerRadiusRange.lowerBound)...Double(DockModel.cornerRadiusRange.upperBound),
+                    snap: 1,
+                    format: { "\(Int($0)) pt" },
+                    set: { dockModel.setCornerRadius(CGFloat($0), persist: $1) }
+                )
+            } header: {
+                HStack {
+                    Text("Dock")
+                    Spacer()
+                    Button("Reset to Defaults") { dockModel.resetAppearanceToDefaults() }
+                        .buttonStyle(.link)
+                        .font(.system(size: 12))
+                }
+            } footer: {
+                Text(backgroundHelp).footerStyle()
+            }
+        }
+    }
+
+    private var backgroundHelp: String {
+        switch dockModel.backgroundStyle.effective {
+        case .glass: "Liquid Glass like the macOS Dock. Frost 0% is clear glass; higher values blur and soften what is behind it."
+        case .frosted: "The translucent material from earlier macOS versions. Frost sets how strong it is."
+        case .solid: "A dark fill. Opacity sets how much shows through."
+        }
     }
 }
 

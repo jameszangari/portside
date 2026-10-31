@@ -173,11 +173,7 @@ struct DockStrip: View {
         .padding(edge.isVertical ? .vertical : .horizontal, alongPadding)
         .padding(edge.farSide, 6)
         .padding(edge.nearSide, 3)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(.white.opacity(0.15), lineWidth: 1)
-        )
+        .dockBackground(dockModel.look)
         .onDrop(of: [.fileURL], delegate: FileDropDelegate(
             dockModel: dockModel, interactions: interactions, session: fileDrop, targetID: $dropTargetID,
             tileFrames: tileFrames, apps: dropApps(extras: extras), runningApps: runningApps, bouncer: bouncer,

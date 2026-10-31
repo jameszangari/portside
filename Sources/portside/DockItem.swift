@@ -16,6 +16,14 @@ final class IconCache: ObservableObject {
     /// redraw when it changes.
     @Published private(set) var scale: CGFloat
 
+    /// Bumped when every icon was dropped (icon style setting or the system
+    /// icon style changed). Published so tiles redraw.
+    @Published private(set) var generation = 0
+
+    /// Set from `DockModel.iconStyle`.
+    private(set) var style: IconStyle = .matchSystem
+    private var themeObserver: IconThemeObserver?
+
     private struct Entry {
         let image: NSImage
         let stamp: Date?
@@ -33,6 +41,26 @@ final class IconCache: ObservableObject {
         observer = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in self?.screenChanged() }
+    }
+
+    /// Starts following the system icon style. Needs NSApp, so it is called
+    /// at launch rather than from `init`.
+    func startObservingTheme() {
+        guard themeObserver == nil else { return }
+        themeObserver = IconThemeObserver { [weak self] in self?.dropAll(reason: "system icon style changed") }
+    }
+
+    func setStyle(_ newStyle: IconStyle) {
+        guard newStyle != style else { return }
+        style = newStyle
+        dropAll(reason: "icon style \(newStyle.rawValue)")
+    }
+
+    private func dropAll(reason: String) {
+        itemLogger.info("\(reason, privacy: .public), dropping \(self.cache.count) icons")
+        cache.removeAll()
+        AppIcon.invalidateSystemIcon()
+        generation += 1
     }
 
     func icon(for url: URL) -> NSImage {
@@ -63,7 +91,7 @@ final class IconCache: ObservableObject {
     /// high resolution representation, and keeps only that bitmap.
     private func render(_ url: URL) -> NSImage {
         let started = CACurrentMediaTime()
-        let source = NSWorkspace.shared.icon(forFile: url.path)
+        let source = (style == .original ? Self.originalIcon(url) : nil) ?? NSWorkspace.shared.icon(forFile: url.path)
         let points = DockModel.iconSizeRange.upperBound
         let pixels = Int((points * scale).rounded())
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
@@ -82,6 +110,16 @@ final class IconCache: ObservableObject {
         let ms = (CACurrentMediaTime() - started) * 1000
         itemLogger.debug("icon rendered \(url.lastPathComponent, privacy: .public) \(pixels)px in \(ms, format: .fixed(precision: 2))ms")
         return NSImage(cgImage: bitmap, size: NSSize(width: points, height: points))
+    }
+
+    /// The app's own icon file, which the system style does not touch.
+    /// Nil when the app only has a compiled asset catalog icon.
+    private static func originalIcon(_ url: URL) -> NSImage? {
+        guard let bundle = Bundle(url: url),
+              var name = bundle.object(forInfoDictionaryKey: "CFBundleIconFile") as? String, !name.isEmpty else { return nil }
+        if (name as NSString).pathExtension.isEmpty { name += ".icns" }
+        guard let file = bundle.resourceURL?.appendingPathComponent(name) else { return nil }
+        return NSImage(contentsOf: file)
     }
 
     /// Changes when the app is updated or replaced.
@@ -135,6 +173,8 @@ enum AppLauncher {
 /// (Portside is a regular app then). Clicking it brings Settings forward.
 struct PortsideTileView: View {
     let size: CGFloat
+    /// Redraws when the icon style or the system icon style changes.
+    @ObservedObject private var icons = IconCache.shared
     let onOpenSettings: () -> Void
     @Environment(\.dockEdge) private var edge
 
@@ -162,7 +202,7 @@ struct PortsideTileView: View {
     }
 
     private var icon: some View {
-        Image(nsImage: AppIcon.image)
+        Image(nsImage: AppIcon.image(points: size, matchSystem: icons.style == .matchSystem))
             .resizable()
             .interpolation(.high)
             .frame(width: size, height: size)

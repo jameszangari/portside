@@ -40,7 +40,9 @@ rm -rf "$app"
 mkdir -p "$contents/MacOS" "$contents/Resources"
 cp "$binary" "$contents/MacOS/portside"
 
-# SPM resource bundles, if a target ever gains real resources.
+# SPM resource bundle (brand PNGs from Sources/portside/Support). It goes
+# in Contents/Resources so the code signature covers it; BrandAssets.swift
+# looks there.
 for bundle in "$bin_dir"/*.bundle; do
     [ -e "$bundle" ] || continue
     cp -R "$bundle" "$contents/Resources/"
@@ -65,20 +67,54 @@ set_key LSUIElement bool true
 set_key NSHighResolutionCapable bool true
 plutil -lint "$plist"
 
-# App icon, drawn by the app itself (AppIcon.swift).
-echo "==> AppIcon.icns"
+# App icon, best first:
+# 1. design/brand/icon-composer/AppIcon.icon compiled by actool: Assets.car
+#    (Liquid Glass on macOS 26 and later, CFBundleIconName) plus a flat
+#    AppIcon.icns for older macOS.
+# 2. The approved brand .icns, copied as is.
+# 3. An icon rendered with the hidden `portside --export-icon` flag.
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-master="$work/icon_1024.png"
-"$contents/MacOS/portside" --export-icon "$master" >/dev/null
-iconset="$work/AppIcon.iconset"
-mkdir "$iconset"
-for size in 16 32 128 256 512; do
-    sips -z "$size" "$size" "$master" --out "$iconset/icon_${size}x${size}.png" >/dev/null
-    double=$((size * 2))
-    sips -z "$double" "$double" "$master" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
-done
-iconutil -c icns "$iconset" -o "$contents/Resources/AppIcon.icns"
+icon_doc="$root/design/brand/icon-composer/AppIcon.icon"
+brand_icns="$root/design/brand/approved-icon/icns/portside-approved-original.icns"
+compiled=false
+if [ -d "$icon_doc" ]; then
+    echo "==> actool AppIcon.icon"
+    mkdir "$work/actool"
+    if xcrun actool "$icon_doc" --compile "$work/actool" \
+            --platform macosx --minimum-deployment-target 14.0 \
+            --app-icon AppIcon --include-all-app-icons \
+            --output-partial-info-plist "$work/actool.plist" \
+            --output-format human-readable-text --errors --warnings >"$work/actool.log" 2>&1 \
+        && ! grep -q "error:" "$work/actool.log" \
+        && [ -f "$work/actool/Assets.car" ] && [ -f "$work/actool/AppIcon.icns" ]; then
+        cp "$work/actool/Assets.car" "$work/actool/AppIcon.icns" "$contents/Resources/"
+        set_key CFBundleIconName string AppIcon
+        compiled=true
+    else
+        echo "build-app: actool could not compile AppIcon.icon, using the .icns instead:" >&2
+        cat "$work/actool.log" >&2
+    fi
+fi
+if [ "$compiled" = true ]; then
+    :
+elif [ -f "$brand_icns" ]; then
+    echo "==> AppIcon.icns (design/brand)"
+    cp "$brand_icns" "$contents/Resources/AppIcon.icns"
+else
+    echo "==> AppIcon.icns (brand icons missing, generating with --export-icon)" >&2
+    master="$work/icon_1024.png"
+    "$contents/MacOS/portside" --export-icon "$master" >/dev/null
+    iconset="$work/AppIcon.iconset"
+    mkdir "$iconset"
+    for size in 16 32 128 256 512; do
+        sips -z "$size" "$size" "$master" --out "$iconset/icon_${size}x${size}.png" >/dev/null
+        double=$((size * 2))
+        sips -z "$double" "$double" "$master" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+    done
+    iconutil -c icns "$iconset" -o "$contents/Resources/AppIcon.icns"
+fi
+plutil -lint "$plist" >/dev/null
 
 identity="${SIGN_IDENTITY:--}"
 if [ "$identity" = "-" ]; then

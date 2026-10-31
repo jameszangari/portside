@@ -83,6 +83,9 @@ struct PortsideApp: App {
         MenuBarExtra {
             Text("Portside")
             Divider()
+            Button("About Portside") {
+                appDelegate.showAbout()
+            }
             Button("Settings...") {
                 appDelegate.openSettings()
             }
@@ -106,7 +109,9 @@ struct PortsideApp: App {
             // Temporary: icon plus text so the item is easy to spot and to
             // find in Bartender's item list. Back to icon only before release.
             HStack(spacing: 4) {
-                Image(systemName: "sailboat.fill")
+                // Template image (brand mark, black with alpha): macOS tints
+                // it for light, dark, and tinted menu bars.
+                Image(nsImage: BrandAssets.menuBarIcon)
                 Text("Portside")
             }
             .accessibilityLabel("Portside")
@@ -182,7 +187,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.applicationIconImage = AppIcon.image
+        if Bundle.main.bundleURL.pathExtension != "app" {
+            NSApp.applicationIconImage = AppIcon.image
+        }
         nativeDock.applyAtLaunch()
         BackgroundCursor.enable()
         let engine = DockEngine(dockModel: dockModel)
@@ -224,6 +231,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onActivationPolicyChanged = { [weak dockEngine] in dockEngine?.activationPolicyChanged() }
         settings = controller
         controller.show()
+    }
+
+    /// The standard About panel with the brand icon, the version from
+    /// BuildInfo (plus the short hash on unreleased builds), and credits.
+    /// Activates Portside so the panel comes forward, like Settings.
+    func showAbout() {
+        let credits = NSMutableAttributedString(
+            string: "by \(AppInfo.author)\n",
+            attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.labelColor]
+        )
+        credits.append(NSAttributedString(
+            string: AppInfo.repoURL.absoluteString,
+            attributes: [.font: NSFont.systemFont(ofSize: 11), .link: AppInfo.repoURL]
+        ))
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        credits.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: credits.length))
+        NSApp.activate()
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationName: AppInfo.name,
+            .applicationIcon: AppIcon.image,
+            .applicationVersion: AppInfo.version,
+            .version: AppInfo.buildSuffix ?? "",
+            .credits: credits,
+        ])
     }
 
     /// Pick one or more apps to pin. This is an explicit user action, so it

@@ -59,6 +59,8 @@ final class DockModel: Codable, ObservableObject {
         static let animationDuration: TimeInterval = 0.15
         static let groupHoverDelay: TimeInterval = 0.05
         static let groupHoverCloseGrace: TimeInterval = 0.05
+        static let backgroundFrost: Double = 0.5
+        static let cornerRadius: CGFloat = 16
     }
 
     static let revealDelayRange: ClosedRange<TimeInterval> = 0...1
@@ -129,6 +131,58 @@ final class DockModel: Codable, ObservableObject {
     func setAnimateOpeningApplications(_ enabled: Bool) {
         guard enabled != animateOpeningApplications else { return }
         animateOpeningApplications = enabled
+        persist()
+    }
+
+    // MARK: - Appearance
+
+    @Published private(set) var iconStyle: IconStyle = .matchSystem
+    @Published private(set) var backgroundStyle: DockBackgroundStyle = DockBackgroundStyle.systemDefault
+    @Published private(set) var backgroundFrost: Double = Defaults.backgroundFrost
+    @Published private(set) var backgroundTint: RGBAColor?
+    @Published private(set) var cornerRadius: CGFloat = Defaults.cornerRadius
+
+    static let cornerRadiusRange: ClosedRange<CGFloat> = 4...28
+
+    /// The strip and group grid background, in one value.
+    var look: DockLook {
+        DockLook(style: backgroundStyle, frost: backgroundFrost, tint: backgroundTint, cornerRadius: cornerRadius)
+    }
+
+    func setIconStyle(_ style: IconStyle) {
+        guard style != iconStyle else { return }
+        iconStyle = style
+        persist()
+    }
+
+    func setBackgroundStyle(_ style: DockBackgroundStyle) {
+        guard style != backgroundStyle else { return }
+        backgroundStyle = style
+        persist()
+    }
+
+    func setBackgroundFrost(_ value: Double, persist shouldPersist: Bool = true) {
+        backgroundFrost = min(max(value, 0), 1)
+        if shouldPersist { persist() }
+    }
+
+    func setBackgroundTint(_ tint: RGBAColor?, persist shouldPersist: Bool = true) {
+        guard tint != backgroundTint else { return }
+        backgroundTint = tint
+        if shouldPersist { persist() }
+    }
+
+    func setCornerRadius(_ value: CGFloat, persist shouldPersist: Bool = true) {
+        cornerRadius = min(max(value, Self.cornerRadiusRange.lowerBound), Self.cornerRadiusRange.upperBound)
+        if shouldPersist { persist() }
+    }
+
+    func resetAppearanceToDefaults() {
+        iconStyle = .matchSystem
+        backgroundStyle = DockBackgroundStyle.systemDefault
+        backgroundFrost = Defaults.backgroundFrost
+        backgroundTint = nil
+        cornerRadius = Defaults.cornerRadius
         persist()
     }
 
@@ -408,6 +462,7 @@ final class DockModel: Codable, ObservableObject {
         case autoHide, openGroupsOnHover, groupHoverDelay, groupHoverCloseGrace
         case animateOpeningApplications
         case hideNativeDock, nativeDockExplained
+        case iconStyle, backgroundStyle, backgroundFrost, backgroundTint, cornerRadius
         /// Before Milestone D: a flat list of apps. Read only, for migration.
         case pinnedApps
     }
@@ -435,6 +490,14 @@ final class DockModel: Codable, ObservableObject {
         openGroupsOnHover = try c.decodeIfPresent(Bool.self, forKey: .openGroupsOnHover) ?? false
         groupHoverDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverDelay) ?? Defaults.groupHoverDelay, to: Self.groupHoverDelayRange)
         groupHoverCloseGrace = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverCloseGrace) ?? Defaults.groupHoverCloseGrace, to: Self.groupHoverCloseGraceRange)
+        // try? per key: an unknown enum value (from a newer build) falls back
+        // to the default instead of failing the whole file.
+        iconStyle = (try? c.decodeIfPresent(IconStyle.self, forKey: .iconStyle)) ?? .matchSystem
+        backgroundStyle = (try? c.decodeIfPresent(DockBackgroundStyle.self, forKey: .backgroundStyle)) ?? DockBackgroundStyle.systemDefault
+        backgroundFrost = min(max((try? c.decodeIfPresent(Double.self, forKey: .backgroundFrost)) ?? Defaults.backgroundFrost, 0), 1)
+        backgroundTint = (try? c.decodeIfPresent(RGBAColor.self, forKey: .backgroundTint)) ?? nil
+        let radius = (try? c.decodeIfPresent(CGFloat.self, forKey: .cornerRadius)) ?? Defaults.cornerRadius
+        cornerRadius = min(max(radius, Self.cornerRadiusRange.lowerBound), Self.cornerRadiusRange.upperBound)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -454,6 +517,11 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(openGroupsOnHover, forKey: .openGroupsOnHover)
         try c.encode(groupHoverDelay, forKey: .groupHoverDelay)
         try c.encode(groupHoverCloseGrace, forKey: .groupHoverCloseGrace)
+        try c.encode(iconStyle, forKey: .iconStyle)
+        try c.encode(backgroundStyle, forKey: .backgroundStyle)
+        try c.encode(backgroundFrost, forKey: .backgroundFrost)
+        try c.encodeIfPresent(backgroundTint, forKey: .backgroundTint)
+        try c.encode(cornerRadius, forKey: .cornerRadius)
     }
 
     // MARK: - Persistence

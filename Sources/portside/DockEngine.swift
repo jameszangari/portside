@@ -45,6 +45,7 @@ final class DockEngine {
     private var isResizing = false
     private let interactions = DockInteractions()
     private var edgeSubscription: AnyCancellable?
+    private var iconStyleSubscription: AnyCancellable?
     private var autoHideSubscription: AnyCancellable?
 
     /// Timestamp (CACurrentMediaTime) of the mouseEntered that started the
@@ -147,6 +148,14 @@ final class DockEngine {
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] on in self?.applyAutoHide(on) }
+        IconCache.shared.setStyle(dockModel.iconStyle)
+        IconCache.shared.startObservingTheme()
+        // Next main loop turn, like the edge: @Published emits from willSet.
+        iconStyleSubscription = dockModel.$iconStyle
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { IconCache.shared.setStyle($0) }
         bounceSettingSubscription = dockModel.$animateOpeningApplications
             .removeDuplicates()
             .dropFirst()

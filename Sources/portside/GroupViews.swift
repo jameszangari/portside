@@ -209,15 +209,7 @@ struct GroupPopoverView: View {
             }
         }
         .padding(12)
-        .background {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .shadow(color: .black.opacity(0.3), radius: 12, y: 5)
-        }
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(.white.opacity(0.15), lineWidth: 1)
-        )
+        .dockBackground(dockModel.look, shadow: true)
     }
 
     /// Roughly square grid, at most five wide.

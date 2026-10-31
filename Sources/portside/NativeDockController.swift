@@ -94,7 +94,7 @@ final class NativeDockController {
             To undo it by hand, choose Restore macOS Dock from the Portside menu bar item, or run: portside --restore-dock
             """
         // Without a bundle the default icon is a generic alias-folder.
-        alert.icon = AppIcon.bitmap
+        alert.icon = AppIcon.image(points: 64)
         alert.addButton(withTitle: "Hide Dock")
         alert.addButton(withTitle: "Cancel")
         NSApp.activate()
@@ -109,7 +109,7 @@ final class NativeDockController {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
-        alert.icon = AppIcon.bitmap
+        alert.icon = AppIcon.image(points: 64)
         NSApp.activate()
         alert.runModal()
     }

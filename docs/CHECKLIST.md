@@ -22,6 +22,98 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 
 ---
 
+# Appearance slice: icon style and dock background
+
+Status: built and agent-verified, waiting for James's hand test. New file: `Sources/portside/DockAppearance.swift`. Log category `Appearance`. New dock.json keys: `iconStyle`, `backgroundStyle`, `backgroundFrost`, `backgroundTint`, `cornerRadius` (all optional on load; unknown values fall back to defaults).
+
+## Deliverables
+
+- [x] Icon style "Match macOS" (default): icons come from `NSWorkspace.icon(forFile:)`, which already used the system icon style (Dark here), but the cache never refreshed. Now `IconThemeObserver` watches the global `AppleIconAppearanceTheme` default (KVO) and light/dark mode (`NSApp.effectiveAppearance`, for the automatic styles) and drops every cached icon, Portside's own included.
+- [x] Icon style "Original": each app's own `CFBundleIconFile` (.icns), so the system style is ignored. Apps with only a compiled asset catalog fall back to the system rendering. Portside's tile uses its flat PNGs.
+- [x] Dock background: Liquid Glass (SwiftUI `glassEffect`, macOS 26+, default there), Frosted (the old `ultraThinMaterial` look, default before 26), Solid. Glass is clear glass with a `regularMaterial` layer blended in by the Frost slider (0% clear, 100% frosted). Frost doubles as material strength (Frosted) and fill opacity (Solid).
+- [x] Tint toggle plus color picker with opacity (starts at brand navy, 35%); glass tints the glass itself, the others overlay the color.
+- [x] Corner radius 4 to 28 pt (default 16).
+- [x] Settings > Appearance tab with Reset to Defaults; changes apply live. Group grids use the same background.
+- [x] Settings footers now left-align when they wrap.
+
+## Verification (agent)
+
+- `swift build` and `scripts/build-app.sh`: no warnings; bundle verifies.
+- Prototype window compared clear glass at frost 0, 0.5, 1, regular glass, frosted, and solid over real windows: frost gives a smooth clear-to-frosted range.
+- Cross-process KVO on the global domain: a test process saw `defaults write -g` changes of a scratch key (deleted afterwards). The real `AppleIconAppearanceTheme` was not changed by the agent.
+- Drawing an icon under `.aqua` vs `.darkAqua` does not change it: the icon style is a system setting, so there is no public way to show a style other than the system's. Hence only Match macOS and Original.
+- Ran the debug build: Appearance tab renders (screenshot), the strip draws with glass.
+
+## Known gaps
+
+- Not seen by the agent: a real system icon style change refreshing the dock (needs James to switch it), and glass over a bright or busy desktop.
+- Glass needs macOS 26; older systems show Frosted and hide the Liquid Glass option.
+- The macOS "Liquid Glass: Clear / Tinted" preference (`NSGlassTintAmount`) is applied by the system glass itself; Portside does not read it.
+- Hover labels keep their own style.
+
+## Hand test must also check
+
+- [ ] System Settings > Appearance > Icon and widget style: switch Default, Dark, Clear, Tinted; the dock's icons follow within a moment, without a relaunch
+- [ ] Icon style Original: colorful app artwork regardless of the system style
+- [ ] Background Liquid Glass, Frost 0% / 50% / 100% over a colorful window; compare with the native Dock
+- [ ] Frosted and Solid, tint on/off, corner radius; group grid matches
+- [ ] Reset to Defaults; relaunch keeps the settings
+
+---
+
+# Branding slice: approved sail identity
+
+Status: built and agent-verified, waiting for James's hand test. New files: `Sources/portside/BrandAssets.swift`, `Sources/portside/Support/AppIcon-{16,32,128,256}.png` (actool's flat render of `AppIcon.icon`), `Sources/portside/Support/MenuBarIcon-{22,44}.png` (copies of `design/brand/menu-bar/portside-menu-bar-black-*`). Log category `Brand`.
+
+## Deliverables
+
+- [x] Bundle icon: `scripts/build-app.sh` compiles `design/brand/icon-composer/AppIcon.icon` with `xcrun actool` into `Assets.car` plus a flat `AppIcon.icns`, and sets `CFBundleIconName`. If actool fails it prints the log and copies the approved .icns; if that is missing, `--export-icon` renders one.
+- [x] Runtime icon (`AppIcon.swift`): the hand-drawn bird is gone. In Portside.app (with `CFBundleIconName`) the icon is `NSWorkspace.icon(forFile:)` of the bundle, so it is the system's Liquid Glass rendering in the current icon style, at the same size as other apps; the native Dock tile is left to macOS. Under `swift run`, the bundled PNGs, one representation per size. Used by the Settings header, Portside's own dock tile, the unbundled native Dock tile, both alerts, and About.
+- [x] Menu bar: brand mark as a template image (22pt, 1x and 2x). The supplied black PNGs are already pure black with alpha, so no new template was generated. Title and accessibility label stay "Portside".
+- [x] Resources: `BrandAssets` finds `portside_portside.bundle` in `Contents/Resources` (app) or next to the executable (`swift run`) without `Bundle.module`. Missing bundle or file: logged, generic app icon and `sailboat.fill` fallback, no crash.
+- [x] "About Portside" in the menu bar item: standard About panel, brand icon, version, short hash on unreleased builds, "by James Cliff" and the repo link.
+- [x] README branded header (wordmark `<picture>`, tagline, macOS and Swift badges, brand guide link); features and layout updated.
+- [x] Colors: unchanged. The tokens define navy, sailcloth, and safety orange but no accent, and the Settings window keeps the system accent.
+- [x] `swift run` icon: borrows the system rendering from a Portside.app that LaunchServices knows (bundle id `com.james.portside`, must have `CFBundleIconName`), so the dev build looks like the real one. The flat PNGs are only the last fallback; they have a lighter rim and no dark style, which made the icon stand out (James's screenshot was the `swift run` build).
+- [x] Settings window opens dead center of the visible area of the screen with the cursor, every time it opens (not `NSWindow.center()`, which sits high). Layout fits in the first 0.5s keep it centered; later tab switches keep the top edge. Saved position removed (`NSWindow Frame PortsideSettings` deleted from defaults).
+- [x] Icon Composer `.icon` via `actool`: James re-saved it in Icon Composer (navy fill, one SVG layer); compiles with no errors or warnings. Layer file renamed to `portside-sail-master.svg` (icon.json updated).
+
+## Verification (agent)
+
+- `swift build` and `scripts/build-app.sh`: no warnings. `codesign --verify --deep --strict`: valid with `Assets.car`; the resource bundle's PNGs are sealed (appending a byte to one fails verification).
+- actool failure path: build pointed at a broken `.icon` printed the actool errors, fell back to the approved .icns (no `Assets.car`, no `CFBundleIconName`), and still verified.
+- Portside's own dock: the Portside tile is the same size as its neighbors and uses the system dark icon style, like the other apps (screenshot).
+- `swift run` log: "unbundled: using the system icon of .../build/Portside.app"; Settings header shows the system rendering.
+- Settings frame (window server coordinates) 604,111 520x927 on a 1728x1117 screen with a 33pt menu bar: centered on the visible area to the half point.
+- `open build/Portside.app` (cwd `/`): log shows the resource bundle in `Contents/Resources`. `swift run portside`: bundle found in `.build/out/Products/Debug`.
+- App copy with the resource bundle deleted and re-signed: launches, logs three fallback errors, no crash. `--export-icon` still writes a PNG in both cases (1024px brand PNG when present).
+- Screenshots: Settings header, Portside's own dock tile, About panel. Finder icon checked through `NSWorkspace.icon(forFile:)` (LaunchServices).
+- Menu bar template checked offscreen only (light and dark appearances); the real item is in Bartender's hidden section.
+
+## Findings
+
+- The approved PNG/.icns artwork is full bleed (fills the 1024 canvas, no macOS icon grid margin), so it looked about 24% larger than other apps and had no Liquid Glass. Fixed by building from the Icon Composer document instead; the flat .icns is now only the fallback.
+- The first `.icon` (one PNG layer, `"fill": "none"`) was rejected by actool ("The data couldn't be read because it isn't in the correct format"). The version re-saved from Icon Composer compiles.
+- actool's flat `AppIcon.icns` only holds 16, 32, 128, and 256 px; the larger sizes live in `Assets.car`.
+- SwiftPM's `Bundle.module` looks for the resource bundle beside `Portside.app`, not in `Contents/Resources`, and would `fatalError` in the packaged app.
+- The v2 package has no app mockups or screenshots, so the README shows no app imagery.
+
+## Known gaps
+
+- Real menu bar appearance (light, dark, tinted) and the native Dock tile not seen by the agent.
+- `Sources/portside/Support/` holds copies of the brand PNGs; re-copy them if the brand files change (AppIcon PNGs: `iconutil -c iconset` on actool's `AppIcon.icns`).
+- Under `swift run` without any built Portside.app, the icon is the flat light render (no glass, does not follow the icon style).
+- The system icon is read once per launch; changing the icon style while Portside runs updates Finder and the native Dock but not Portside's own tile until relaunch.
+
+## Hand test must also check
+
+- [ ] Menu bar item in light mode, dark mode, and over a tinted wallpaper
+- [ ] Icon in Finder (`build/Portside.app`) and in the native Dock while Settings is open, both bundled and `swift run`
+- [ ] About Portside: comes forward, link opens the repo
+- [ ] Alert icon (Settings > Hide the macOS Dock first-time dialog)
+
+---
+
 # Milestone F part 3: import from the native Dock
 
 Status: built and agent-verified for first launch; the Settings sheet awaits James's hand test. New file: `NativeDockImport.swift`. Reads `com.apple.dock` through CFPreferences only, never writes it. Log category `Import`.
@@ -164,7 +256,7 @@ Status: done, hand-tested by James and committed. Visual and layout only: no beh
 - [x] One container level: a grouped `Form` per tab, no bordered tab pane.
 - [x] Branding header above the tabs: app icon, "Portside", "Version 0.1.0 by James", Check for Updates. Name, author, version, and repo URL live in `AppInfo.swift`.
 - [x] Toolbar-style tabs (SF Symbol above label): General, Widgets, Groups. Title stays "Portside Settings".
-- [x] Window 520pt wide; height fits the selected tab (animated, top edge fixed, off under Reduce Motion). Position is remembered (`NSWindow Frame PortsideSettings` in the `com.james.portside` defaults). Cmd+W closes.
+- [x] Window 520pt wide; height fits the selected tab (animated, top edge fixed, off under Reduce Motion). Opens dead center (see Branding slice); the old saved position key is deleted. Cmd+W closes.
 - [x] Continuous sliders (no ticks), values snapped in the binding (delays and animation to 10ms, icon size to 1pt), fixed label column, right-aligned monospaced value.
 - [x] Helper text 12pt secondary, directly under its control; unneeded helper text removed.
 - [x] General: Dock (Position, Icon size, Hide dock automatically, Animate opening applications), Timing (with Reset to Defaults in the header), macOS Dock (toggle plus two helper lines incl. the Cmd+Option+D note). Fits without scrolling (686pt content), so Timing stays on General.

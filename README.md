@@ -1,6 +1,22 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="design/brand/wordmarks/portside-horizontal-dark.png">
+    <img src="design/brand/wordmarks/portside-horizontal-light.png" alt="Portside" width="440">
+  </picture>
+</p>
+
+<p align="center"><b>A dock that's already there when you reach for it.</b></p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/macOS-14%2B-10283F?logo=apple&logoColor=white" alt="macOS 14 or later">
+  <img src="https://img.shields.io/badge/Swift-5.10%2B-F06A42?logo=swift&logoColor=white" alt="Swift 5.10 or later">
+</p>
+
 # Portside
 
-A fast, event-driven dock replacement for macOS, written in Swift (SwiftUI and AppKit) and built with SwiftPM.
+A fast, event-driven dock replacement for macOS, written in Swift (SwiftUI and AppKit) and built with SwiftPM. Touch the edge and it starts sliding in within a frame. Move away and it gets out of the way. No polling, no focus stealing, no lag.
+
+Brand: the approved sail identity lives in [`design/brand/`](design/brand/README.md), with a two-page [brand guide](design/brand/presentation/portside-approved-identity-v2.pdf).
 
 Portside is a personal project for macOS on Apple Silicon. It builds into a locally signed .app but is not notarized or meant for general distribution.
 
@@ -40,9 +56,13 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - Optional open on hover, with configurable open delay and close grace.
 - Spring-loading: resting a file drag on a group tile for about 600ms opens its grid. Drop on a member that can open the file (it highlights) to open it there. The grid closes when the drag leaves both the tile and the grid.
 
+**Appearance**
+- Icons match the macOS icon style (Default, Dark, Clear, Tinted) like the native Dock, and refresh when you change it in System Settings. Or pick "Original" to show each app's own artwork.
+- Dock background: Liquid Glass (macOS 26 and later, the default), Frosted, or Solid, with a Frost (or Opacity) slider, an optional tint color, and corner radius. Open group grids use the same look.
+
 **Settings window**
-- General, Widgets, and Groups tabs. Changes apply live.
-- Header with the app icon, version, and author. Unreleased or modified builds show the short git hash. The window fits each tab and remembers its position.
+- General, Appearance, Widgets, and Groups tabs. Changes apply live.
+- Header with the Portside icon, version, and author. Unreleased or modified builds show the short git hash. The window opens in the center of the screen with the cursor and fits each tab.
 - Drag widget rows to reorder them.
 
 **Native Dock**
@@ -51,8 +71,13 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - "Import from macOS Dock..." (Settings > General > Import): a confirmation sheet shows what was found. Add missing apps (appended, nothing reordered) or replace the apps (groups and widgets stay), and optionally take the native position and icon size. Apps no longer on disk, spacers, and folder/file tiles are skipped. Your dock is copied to `dock.json.before-import` first, and "Undo last import" restores it. Read only: nothing in `com.apple.dock` is written.
 - "Restore macOS Dock" in the menu bar item, and `portside --restore-dock` (restores from the backup and exits, no UI).
 
+**Branding**
+- Liquid Glass app icon compiled from the Icon Composer document (`design/brand/icon-composer/AppIcon.icon`). It follows the system icon style (light, dark, tinted) in Finder and the native Dock, and Portside's own dock tile, Settings header, alerts, and About panel use the same system-rendered icon, so it matches the size and look of every other app. Under `swift run` the icon is borrowed from a built `Portside.app` when one exists.
+- Menu bar item uses the sail mark as a template image, so it follows light, dark, and tinted menu bars.
+- "About Portside" in the menu bar item: the standard About panel with the version, author, and repo link.
+
 **App bundle and startup**
-- `scripts/build-app.sh` builds a signed `build/Portside.app` with its own icon, version from `VERSION`, and the Calendar usage strings. `--install` copies it to `~/Applications`.
+- `scripts/build-app.sh` builds a signed `build/Portside.app` with the brand icon, version from `VERSION`, and the Calendar usage strings. `--install` copies it to `~/Applications`.
 - "Open Portside at login" (Settings > General > Startup) through `SMAppService`. macOS is the source of truth; the toggle shows its real status, links to Login Items when approval is needed, and is disabled under `swift run`.
 
 ## Planned
@@ -95,7 +120,7 @@ scripts/build-app.sh --install  # also copies it to ~/Applications/Portside.app
 open build/Portside.app
 ```
 
-- Runs `swift build -c release`, then assembles `Contents/MacOS/portside`, `Contents/Info.plist` (from the repo's `Info.plist` plus bundle keys and the version from `VERSION`), and `Contents/Resources/AppIcon.icns` (drawn by the app via the hidden `portside --export-icon <path.png>` flag). No network.
+- Runs `swift build -c release`, then assembles `Contents/MacOS/portside`, `Contents/Info.plist` (from the repo's `Info.plist` plus bundle keys and the version from `VERSION`), the app icon, and the SwiftPM resource bundle with the brand PNGs (in `Contents/Resources`, covered by the signature). The icon is `design/brand/icon-composer/AppIcon.icon` compiled by `xcrun actool` into `Assets.car` (Liquid Glass, `CFBundleIconName`) plus a flat `AppIcon.icns` for older macOS. If actool fails it prints why and copies `design/brand/approved-icon/icns/` instead; if that is missing too, the hidden `portside --export-icon <path.png>` flag renders one. No network.
 - `--install` copies to `~/Applications/Portside.app`, never `/Applications`. It refuses while that copy is running; quit Portside first. Without the flag nothing is installed.
 - Signing is ad-hoc by default. Ad-hoc signatures change on every build, so macOS may ask for Calendar permission again after each rebuild, and may treat each build as a new login item. To avoid that, create a self-signed code signing certificate in Keychain Access (Certificate Assistant > Create a Certificate, type Code Signing) and build with `SIGN_IDENTITY="Your Cert Name" scripts/build-app.sh`.
 - Turn on "Open Portside at login" from the copy you keep (normally `~/Applications/Portside.app`). macOS remembers the path it was registered from.
@@ -140,13 +165,12 @@ While "Hide the macOS Dock" is on, the native Dock's prior settings are backed u
 
 It is deleted after a verified restore. If it exists when Portside starts, Portside restores from it first.
 
-The Settings window's position is kept in the app's defaults (`defaults read com.james.portside`, key `NSWindow Frame PortsideSettings`).
-
 The Settings window controls:
 - Position, auto-hide, icon size, "Animate opening applications"
 - Reveal delay, hide delay, animation duration (with reset to defaults)
 - Widgets: on/off and order
 - Groups: rename, ungroup, delete, open on hover, open delay, close grace
+- Appearance: icon style (`iconStyle`: `matchSystem` or `original`), background (`backgroundStyle`: `glass`, `frosted`, or `solid`), `backgroundFrost` (0 to 1), `backgroundTint` (sRGB `red`, `green`, `blue`, `alpha`; absent when off), `cornerRadius` (points)
 - Hide the macOS Dock (`hideNativeDock`, plus `nativeDockExplained` once the first-time dialog was confirmed)
 - Import from macOS Dock and Undo last import (nothing new stored in `dock.json`; imported apps, position, and icon size land in `entries`, `edge`, and `iconSize`)
 - Open Portside at login: not stored by Portside. macOS keeps it (System Settings > General > Login Items).
@@ -165,7 +189,7 @@ The built app lives at `build/Portside.app` (ignored by git), and at `~/Applicat
 
 ```
 Sources/portside/
-  PortsideApp.swift         Entry point (--restore-dock, --export-icon, crash recovery, signals), menu bar, app delegate
+  PortsideApp.swift         Entry point (--restore-dock, --export-icon, crash recovery, signals), menu bar, About panel, app delegate
   DockEngine.swift          Coordinator for tracker, panel, hide timer, and model
   EdgeTracker.swift         Edge window with NSTrackingArea (event-driven reveal)
   DockPanel.swift           Non-activating NSPanel, slide animation, panel tracking
@@ -185,10 +209,12 @@ Sources/portside/
   NativeDockController.swift  "Hide the macOS Dock" toggle, first-time dialog, alerts
   NativeDockImport.swift    Reads the native Dock (apps, position, size) and the import sheet
   LaunchAtLogin.swift       "Open Portside at login" via SMAppService.mainApp
-  SettingsWindow.swift      Settings window: header, tabs (General, Widgets, Groups)
+  SettingsWindow.swift      Settings window: header, tabs (General, Appearance, Widgets, Groups)
+  DockAppearance.swift      Icon style and dock background options, background modifier, icon style observer
   HotKey.swift              Global hotkey through Carbon RegisterEventHotKey
   BackgroundCursor.swift    Guarded SkyLight call for the resize cursor
-  AppIcon.swift             Runtime-drawn app icon, PNG export for the .icns
+  AppIcon.swift             App icon: system-rendered in Portside.app, bundled PNGs under swift run, PNG export
+  BrandAssets.swift         Safe resource bundle lookup (no Bundle.module), menu bar template icon
   AppInfo.swift             App name, author, version line, and repo URL
   BuildInfo.swift           Generated by scripts/gen-version.sh: version, git hash, dirty flag
   UpdateChecker.swift       Update check (stub until GitHub releases are wired up)
@@ -200,7 +226,7 @@ Sources/portside/
     CalendarWidget.swift    Date and next event
     WeatherWidget.swift     Temperature and conditions (Open-Meteo)
     SystemStatsWidget.swift CPU and memory usage
-  Support/                  Resources folder (empty placeholder)
+  Support/                  Bundled resources: AppIcon-<px>.png (actool's flat render of AppIcon.icon) and MenuBarIcon-<px>.png
 scripts/
   gen-version.sh            Writes BuildInfo.swift from VERSION and git
   release.sh                Bumps VERSION, commits, and tags a release
