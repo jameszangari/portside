@@ -13,12 +13,51 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [x] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live; includes auto-hide toggle with Cmd+Option+D, Portside as a regular app while Settings is open, inline group naming and rename, open groups on hover
 - [ ] **F:** [x] Hide the macOS Dock (autohide-delay trick only, exact save and restore); [x] launch at login (`SMAppService`); [x] a real .app bundle (`scripts/build-app.sh`); [x] import native orientation and tilesize as Portside's initial position and icon size; [x] a manual "Import from macOS Dock" action with undo; [ ] import `persistent-others` (deferred until folder stacks exist). First-launch seeding of pinned apps from `persistent-apps` is built.
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
-- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder (built); drag icons out to remove (built, hand test pending); drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide (built)
+- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit (built); drag apps in from Finder (built); drag icons out to remove (built, hand test pending); drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder, built); Option-click (hide frontmost) and Cmd+Option-click (hide others) (built); Hide/Show and Force Quit in the app menu (built); Cmd-Option-D show/hide (built)
 - [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); right-click Trash shows Empty Trash; filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag (built for app groups; folder stacks not yet); magnification polish
 - [ ] **P3:** Follow the display the cursor hits; fullscreen apps and Spaces; badge counts via the real Dock's accessibility tree (Accessibility permission; private APIs only as fallback); window list in right-click menu with click to focus (Screen Recording for titles); VoiceOver labels and keyboard navigation; do not reveal while dragging a window or holding the mouse button (except file drags headed to the Dock)
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section; bounce on attention request (needs private APIs, not wanted for now)
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
+
+---
+
+# P1 slice: modifier clicks and app menu (Hide, Force Quit)
+
+Status: built, `swift build` clean, waiting for James's hand test. New file: `Sources/portside/TileActions.swift`. Log category `TileActions`. No dock.json changes.
+
+## Deliverables
+
+- [x] Cmd-click on an app tile (strip, unpinned running, group grid cell): `activateFileViewerSelecting`, no launch, no bounce.
+- [x] Option-click: opens or activates the app (bounce if not running) and hides the app that was frontmost. Cmd+Option-click: hides every other regular app. Computed at click time, hidden once the app is up (`afterOpen`). Never hides Portside or the clicked app.
+- [x] Right-click menu is now an AppKit `NSMenu` (SwiftUI `.contextMenu` has no alternate items), shown by a right-click-only overlay (`appKitContextMenu`). Order: Keep/Remove from Dock, Add to Group, Show in Finder, separator, Hide or Show (`isHidden`), Quit. Group cells: Remove from Group first, no Add to Group.
+- [x] Option swaps Quit for Force Quit (`isAlternate`, Option mask, `forceTerminate()`).
+- [x] The menu opens above the tile, centered on it, like the native Dock (beside it on the side docks); the hover label hides while any menu is open. Verified on the bottom dock by screenshot; left and right not seen. Group grid cells use the bottom placement whatever the dock edge. `menu.size` counts the hidden Force Quit alternate, so it is measured without it.
+- [x] Panel untouched: still non-activating; plain clicks take the old path.
+
+## Verification (agent)
+
+- `swift build` clean; `swift run` stays up; SIGTERM restores the Dock (`autohide-delay` unset).
+- Synthetic right-click on the Messages tile showed the new menu (screenshot): Remove from Dock, Add to Group, Show in Finder, Hide, Quit.
+- Not seen: modifier clicks, Force Quit swap with Option held, Show label, grid cells, left/right edges. Native Dock was not compared; behavior follows Apple's documented Dock shortcuts.
+
+## Findings and gaps
+
+- Hover label "Messages" stayed visible on top of the open menu (screenshot). Check if it was like this before.
+- Option-click when the clicked app is already frontmost hides nothing.
+- Deferred: "Open at Login" for other apps. No clean public API to manage another app's login item without an Automation permission (System Events).
+- Cmd-click in a grid leaves the grid open.
+- Hover label restyled to match the native Dock, measured from James's native screenshot (2x, scale checked against the text width): 14pt text, 25pt body, 14pt side padding, 11pt corner radius, 7pt tail with a flared base, thin light rim, tail tip 2.5pt past the dock edge. Our capture at the same scale matches within about 1pt. Synthetic CGEvents do not reveal the native Dock, so the agent could not capture it directly. Side-dock tails not seen.
+- Hover label and drag-out "Remove" label now use the dock's own background (`dockBackground(_:in:)` with the bubble shape): same style (Liquid Glass, Frosted, Solid), frost, tint and rim as the strip. Seen with Frosted at 0.65 (screenshot); Liquid Glass and Solid only by code.
+
+## Hand test
+
+- [ ] Cmd-click an app: Finder reveals it, nothing launches or bounces (also in a grid cell)
+- [ ] Option-click with a few apps open: clicked app comes forward, previous frontmost hides
+- [ ] Cmd+Option-click: all others hide; not-running app launches with bounce, then others hide
+- [ ] Right-click a running app: Hide, then again: Show
+- [ ] Hold Option with the menu open: Quit becomes Force Quit; force quit a throwaway app
+- [ ] Bottom, Left, Right; plain clicks and bounce unchanged, no focus stolen
 
 ---
 

@@ -234,26 +234,8 @@ struct DockItemView: View {
         tile
             .accessibilityLabel(app.displayName)
         .dockHoverTarget(id: app.id, title: app.displayName)
-        .contextMenu {
-            if isPinned {
-                Button("Remove from Dock") { dockModel.unpin(app) }
-            } else {
-                Button("Keep in Dock") { dockModel.pin(app) }
-            }
-            Menu("Add to Group") {
-                ForEach(dockModel.groups) { group in
-                    Button(group.name) { dockModel.addToGroup(app, groupID: group.id) }
-                }
-                if !dockModel.groups.isEmpty { Divider() }
-                Button("New Group") { dockModel.createGroup(with: app) }
-            }
-            Button("Show in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([app.url])
-            }
-            if let running {
-                Divider()
-                Button("Quit") { running.terminate() }
-            }
+        .appKitContextMenu(edge: edge) {
+            AppTileMenu.build(.init(app: app, running: running, isPinned: isPinned, dockModel: dockModel))
         }
     }
 
@@ -286,10 +268,15 @@ struct DockItemView: View {
             )
             .contentShape(Rectangle())
             .onTapGesture {
-                if running == nil && isPinned {
-                    bouncer.launch(app, size: size)
-                } else {
-                    AppLauncher.open(app, running: running)
+                // Modifier state at click time; a tap gesture has no event.
+                TileClick.perform(app, running: running, flags: NSEvent.modifierFlags) { afterOpen in
+                    if running == nil && isPinned {
+                        bouncer.launch(app, size: size, afterOpen: afterOpen)
+                    } else {
+                        AppLauncher.open(app, running: running) { result, error in
+                            if error == nil { afterOpen?(result) }
+                        }
+                    }
                 }
             }
     }

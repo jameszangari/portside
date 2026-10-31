@@ -105,7 +105,7 @@ struct GroupPopoverView: View {
     @ObservedObject var dockModel: DockModel
     @ObservedObject var runningApps: RunningApps
     @ObservedObject var groups: GroupController
-    let onLaunch: (PinnedApp) -> Void
+    let onLaunch: (PinnedApp, ((NSRunningApplication?) -> Void)?) -> Void
     /// A file drop on a member that can open it.
     let onOpenDocuments: ([URL], PinnedApp) -> Void
     /// A file drag entered (true) or left (false, with a reason) the grid.
@@ -259,7 +259,7 @@ private struct GroupAppCell: View {
     let groups: GroupController
     @ObservedObject var bouncer: LaunchBouncer
     var isDropTarget = false
-    let onLaunch: (PinnedApp) -> Void
+    let onLaunch: (PinnedApp, ((NSRunningApplication?) -> Void)?) -> Void
     @ObservedObject private var icons = IconCache.shared
     @State private var hovered = false
     /// Token of this cell's drag (see `DragOutController`), nil when idle.
@@ -312,19 +312,18 @@ private struct GroupAppCell: View {
         .opacity(dragging ? 0.5 : 1)
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
-        .onTapGesture { onLaunch(app) }
+        .onTapGesture {
+            TileClick.perform(app, running: running, flags: NSEvent.modifierFlags) { afterOpen in onLaunch(app, afterOpen) }
+        }
         .gesture(dragOutGesture)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(app.displayName)
         .accessibilityAddTraits(.isButton)
-        .contextMenu {
-            Button("Remove from Group") { dockModel.removeFromGroup(app, groupID: groupID) }
-            Button("Remove from Dock") { dockModel.unpin(app) }
-            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([app.url]) }
-            if let running {
-                Divider()
-                Button("Quit") { running.terminate() }
-            }
+        .appKitContextMenu {
+            AppTileMenu.build(.init(
+                app: app, running: running, isPinned: true, dockModel: dockModel,
+                leading: [("Remove from Group", { dockModel.removeFromGroup(app, groupID: groupID) })],
+                offersDockItems: false))
         }
     }
 }

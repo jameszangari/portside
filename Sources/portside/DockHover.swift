@@ -58,6 +58,14 @@ final class DockHover {
     /// The group popover uses the same gap.
     static let labelGap: CGFloat = 10
 
+    /// Gap for the hover bubble, measured from the native Dock: its tail tip
+    /// sits 2.5pt past the dock's outer edge.
+    static let bubbleGap: CGFloat = 7.5
+
+    /// The dock's current background, so labels use the same glass or
+    /// frost. Read each time a label opens.
+    var look: (() -> DockLook?)?
+
     /// Labels stay hidden while true (a group popover is open in the spot
     /// where the label would appear).
     var isSuppressed = false {
@@ -139,33 +147,98 @@ final class DockHover {
             overlay.dismiss()
             return
         }
-        overlay.present(AnyView(DockLabel(title: hit.title)), anchor: anchor, edge: edge, gap: Self.labelGap)
+        overlay.present(AnyView(DockLabel(title: hit.title, pointing: edge, look: look?())), anchor: anchor, edge: edge, gap: Self.bubbleGap)
         logger.debug("label: \(hit.title, privacy: .public)")
     }
 }
 
-/// Native-Dock-style name label: a small dark rounded pill.
+/// Native-Dock-style name label: a speech bubble whose small tail points at
+/// the icon. Its background is the dock's own (Liquid Glass, Frosted or
+/// Solid, with the same frost and tint); without a look (the drag-out label)
+/// it uses the default glass. Without `pointing` it has no tail.
 struct DockLabel: View {
     let title: String
+    /// The dock's edge. The tail sits on the side facing the dock.
+    var pointing: DockEdge?
+    var look: DockLook?
+
+    private static let tail: CGFloat = 7
+
+    private static var defaultLook: DockLook {
+        DockLook(style: DockBackgroundStyle.systemDefault, frost: 0.5, tint: nil, cornerRadius: 0)
+    }
 
     var body: some View {
         Text(title)
-            .font(.system(size: 13))
-            .foregroundStyle(.white.opacity(0.92))
+            .font(.system(size: 14))
+            .foregroundStyle(.primary)
             .lineLimit(1)
             .truncationMode(.middle)
             .frame(maxWidth: 320)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color(white: 0.12, opacity: 0.78))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.1), lineWidth: 0.5)
-            )
+            .padding(.horizontal, 14)
+            .padding(.vertical, 4)
+            .padding(tailSide, pointing == nil ? 0 : Self.tail)
             .fixedSize()
-            .environment(\.colorScheme, .dark)
+            .dockBackground(look ?? Self.defaultLook, in: LabelBubble(edge: pointing, tail: Self.tail))
+    }
+
+    private var tailSide: Edge.Set {
+        switch pointing {
+        case .bottom: .bottom
+        case .left: .leading
+        case .right: .trailing
+        case nil: []
+        }
+    }
+}
+
+/// Rounded rectangle with a small rounded tail on the side facing the dock.
+/// Drawn once for a tail at the bottom, then rotated for the side docks.
+private struct LabelBubble: InsettableShape {
+    let edge: DockEdge?
+    let tail: CGFloat
+    var inset: CGFloat = 0
+    private let radius: CGFloat = 11
+    private let tailHalfWidth: CGFloat = 12
+
+    func inset(by amount: CGFloat) -> LabelBubble {
+        var copy = self
+        copy.inset += amount
+        return copy
+    }
+
+    func path(in fullRect: CGRect) -> Path {
+        let rect = fullRect.insetBy(dx: inset, dy: inset)
+        let radius = max(0, self.radius - inset)
+        guard let edge else {
+            return Path(roundedRect: rect, cornerRadius: radius, style: .continuous)
+        }
+        let vertical = edge.isVertical
+        let width = vertical ? rect.height : rect.width
+        let height = vertical ? rect.width : rect.height
+        let body = height - max(0, tail - inset)
+        let mid = width / 2
+        let r = min(radius, body / 2)
+
+        var p = Path()
+        p.move(to: CGPoint(x: r, y: 0))
+        p.addArc(tangent1End: CGPoint(x: width, y: 0), tangent2End: CGPoint(x: width, y: r), radius: r)
+        p.addArc(tangent1End: CGPoint(x: width, y: body), tangent2End: CGPoint(x: width - r, y: body), radius: r)
+        p.addLine(to: CGPoint(x: mid + tailHalfWidth, y: body))
+        p.addQuadCurve(to: CGPoint(x: mid + 1.5, y: height - 0.8), control: CGPoint(x: mid + tailHalfWidth * 0.35, y: body))
+        p.addQuadCurve(to: CGPoint(x: mid - 1.5, y: height - 0.8), control: CGPoint(x: mid, y: height + 0.6))
+        p.addQuadCurve(to: CGPoint(x: mid - tailHalfWidth, y: body), control: CGPoint(x: mid - tailHalfWidth * 0.35, y: body))
+        p.addArc(tangent1End: CGPoint(x: 0, y: body), tangent2End: CGPoint(x: 0, y: body - r), radius: r)
+        p.addArc(tangent1End: CGPoint(x: 0, y: 0), tangent2End: CGPoint(x: r, y: 0), radius: r)
+        p.closeSubpath()
+
+        switch edge {
+        case .bottom:
+            return p.offsetBy(dx: rect.minX, dy: rect.minY)
+        case .left:   // tail on the left: local y runs from the right edge to the left
+            return p.applying(CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: height + rect.minX, ty: rect.minY))
+        case .right:
+            return p.applying(CGAffineTransform(a: 0, b: 1, c: 1, d: 0, tx: rect.minX, ty: rect.minY))
+        }
     }
 }

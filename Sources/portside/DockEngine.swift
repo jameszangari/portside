@@ -74,6 +74,7 @@ final class DockEngine {
         self.dockPanel = DockPanel(dockModel: dockModel, strip: strip)
         self.edgeTracker = EdgeTracker(edge: dockModel.edge)
         hover.setEdge(dockModel.edge)
+        hover.look = { [weak dockModel] in dockModel?.look }
 
         interactions.onResizingChanged = { [weak self] resizing in
             guard let self else { return }
@@ -91,6 +92,7 @@ final class DockEngine {
 
         dragOut.stripRegion = { [weak dockPanel] in dockPanel?.screenFrame }
         dragOut.gridRegion = { [weak groups] in groups?.gridScreenFrame }
+        dragOut.look = { [weak dockModel] in dockModel?.look }
         dragOut.onDraggingChanged = { [weak self] dragging in
             guard let self else { return }
             self.groups.itemDragChanged(dragging)
@@ -146,11 +148,16 @@ final class DockEngine {
 
         let center = NotificationCenter.default
         menuObservers.append(center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.menuIsOpen = true
+            guard let self else { return }
+            self.menuIsOpen = true
+            // The menu opens where the hover label is; the native Dock hides it.
+            self.hover.isSuppressed = true
         })
         menuObservers.append(center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
             self.menuIsOpen = false
+            // An open group grid keeps its own suppression.
+            if self.groups.expandedID == nil { self.hover.isSuppressed = false }
             // The hide timer skipped while the menu was up; re-arm it if the
             // cursor ended up outside the dock.
             self.rearmHideIfCursorOutside(source: "menu closed")

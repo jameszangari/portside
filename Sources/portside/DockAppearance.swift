@@ -93,16 +93,22 @@ extension View {
     /// The dock background in `look`, clipped to its rounded rectangle.
     /// `shadow` is for floating surfaces (group grids); glass draws its own.
     func dockBackground(_ look: DockLook, shadow: Bool = false) -> some View {
-        modifier(DockBackgroundModifier(look: look, shadow: shadow))
+        dockBackground(look, in: RoundedRectangle(cornerRadius: look.cornerRadius, style: .continuous), shadow: shadow)
+    }
+
+    /// The same background in another shape (the hover label's bubble), so
+    /// it always matches the dock.
+    func dockBackground<S: InsettableShape>(_ look: DockLook, in shape: S, shadow: Bool = false) -> some View {
+        modifier(DockBackgroundModifier(look: look, shape: shape, shadow: shadow))
     }
 }
 
-private struct DockBackgroundModifier: ViewModifier {
+private struct DockBackgroundModifier<S: InsettableShape>: ViewModifier {
     let look: DockLook
+    let shape: S
     let shadow: Bool
 
     func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: look.cornerRadius, style: .continuous)
         switch look.style.effective {
         case .glass:
             if #available(macOS 26, *) {
@@ -128,7 +134,7 @@ private struct DockBackgroundModifier: ViewModifier {
         }
     }
 
-    private func frosted(_ content: Content, shape: RoundedRectangle) -> some View {
+    private func frosted(_ content: Content, shape: S) -> some View {
         content
             .background {
                 shape.fill(.ultraThinMaterial).opacity(0.3 + 0.7 * look.frost)

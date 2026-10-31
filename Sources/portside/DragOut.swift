@@ -33,6 +33,8 @@ final class DragOutController {
     var gridRegion: (() -> NSRect?)?
     /// A drag began (true) or finished, dropped or canceled (false).
     var onDraggingChanged: ((Bool) -> Void)?
+    /// The dock's background, so the "Remove" label matches it.
+    var look: (() -> DockLook?)?
 
     private(set) var isDragging = false
     private var token = 0
@@ -69,6 +71,7 @@ final class DragOutController {
         self.itemID = itemID
         self.onCancel = onCancel
         state.label = label
+        state.look = look?()
         state.preview = preview
         state.size = size
         state.phase = .inside
@@ -192,6 +195,7 @@ final class DragOutState: ObservableObject {
     var label = "Remove"
     var preview = AnyView(EmptyView())
     var size: CGFloat = 48
+    var look: DockLook?
 }
 
 /// The floating item with its label above. Invisible while the cursor is
@@ -205,7 +209,7 @@ struct DragOutView: View {
     var body: some View {
         let pad = Self.padding(for: state.size)
         VStack(spacing: 0) {
-            DockLabel(title: state.label)
+            DockLabel(title: state.label, look: state.look)
                 .opacity(state.phase == .outside ? 1 : 0)
             ZStack {
                 if state.phase == .poof {

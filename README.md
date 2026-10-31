@@ -38,9 +38,11 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - Drag an .app from Finder onto the strip to pin it.
 - Drop files on an app tile to open them in that app, like the native Dock. Only tiles whose app can open the files highlight and accept the drop (Finder takes folders). A not-running pinned app launches with the bounce.
 - Running apps that are not pinned show after the pinned section.
-- Right-click menu: Keep in Dock or Remove from Dock, Add to Group, Show in Finder, Quit.
+- Right-click menu: Keep in Dock or Remove from Dock, Add to Group, Show in Finder, then for running apps Hide (Show if hidden) and Quit. Hold Option and Quit becomes Force Quit.
+- The app menu opens above the icon (beside it on the side docks), like the native Dock.
+- Native Dock modifier clicks on app tiles and group grid cells: Cmd-click reveals the app in Finder (no launch), Option-click switches to the app and hides the one that was frontmost, Cmd+Option-click switches and hides all other apps. Portside itself is never hidden.
 - Native-style launch bounce for pinned apps on any edge (sideways on the side docks) and for apps opened from a group grid (optional, off under Reduce Motion).
-- Hover labels in a reusable non-activating overlay panel.
+- Hover labels in a reusable non-activating overlay panel, styled as a speech bubble with a tail pointing at the icon, like the native Dock, using the dock's own background (style, frost and tint).
 - "Add App to Dock..." from the menu bar item.
 
 **Layout**
@@ -87,7 +89,7 @@ From `docs/CHECKLIST.md` and `docs/PLAN.md`:
 - Milestone F, what is left: importing the native Dock's folders and files (`persistent-others`), once folder stacks exist.
 - Magnification (the stored setting exists, no UI yet).
 - Update checker: compare AppInfo.version with the latest GitHub release tag (vX.Y.Z), show 'up to date' or a link to the release. The Check for Updates button is a placeholder until then.
-- Native Dock parity: click-and-hold menu, modifier clicks, Trash, folder stacks.
+- Native Dock parity: click-and-hold menu, Open at Login in the app menu, Trash, folder stacks.
 - Multi-display, fullscreen and Spaces behavior, badges.
 - Better widget layout on side docks.
 
@@ -197,7 +199,8 @@ Sources/portside/
   DockModel.swift           Codable settings and entries, persistence to dock.json
   DockEdge.swift            Bottom/Left/Right enum and screen selection
   DockStrip.swift           SwiftUI strip: tiles, widgets, separator, reorder, drops
-  DockItem.swift            App tile, icon cache, launch/activate, context menu
+  DockItem.swift            App tile, icon cache, launch/activate
+  TileActions.swift         Modifier clicks (Cmd, Option) and the AppKit right-click menu with Force Quit
   FileDrop.swift            Per-drag state for file drops: pin vs open, can-open checks
   DragOut.swift             Drag an item out to remove it: "Remove" label, poof, Escape
   DockHover.swift           Hover target frames and label placement

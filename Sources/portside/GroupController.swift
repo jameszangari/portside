@@ -198,7 +198,7 @@ final class GroupController: ObservableObject {
             dockModel: dockModel,
             runningApps: runningApps,
             groups: self,
-            onLaunch: { [weak self] app in self?.launch(app) },
+            onLaunch: { [weak self] app, afterOpen in self?.launch(app, afterOpen: afterOpen) },
             onOpenDocuments: { [weak self] urls, app in self?.launch(app, documents: urls) },
             onDragOverGrid: { [weak self] inside, reason in self?.dragOverGridChanged(inside, reason: reason) }
         )
@@ -464,7 +464,7 @@ final class GroupController: ObservableObject {
         onDragOverGrid?(inside, reason)
     }
 
-    private func launch(_ app: PinnedApp, documents: [URL] = []) {
+    private func launch(_ app: PinnedApp, documents: [URL] = [], afterOpen: ((NSRunningApplication?) -> Void)? = nil) {
         let running = runningApps.runningInstance(of: app)
         if running == nil, let groupID = expandedID, !isClosing, bouncer.isEnabled {
             let target = LaunchBouncer.BounceTarget(
@@ -472,7 +472,7 @@ final class GroupController: ObservableObject {
                 // Above the grid overlay (and its labels' level).
                 level: NSWindow.Level(rawValue: OverlayPanel.windowLevel.rawValue + 1)
             ) { [weak self] _ in self?.cellIconScreenFrame(appID: app.id, groupID: groupID) }
-            let bouncing = bouncer.launch(app, size: GroupPopoverView.iconSize, target: target, documents: documents) { [weak self] landed in
+            let bouncing = bouncer.launch(app, size: GroupPopoverView.iconSize, target: target, documents: documents, afterOpen: afterOpen) { [weak self] landed in
                 // Landed: the app is up, so close the grid like any launch.
                 // Cut short: the grid closed, the dock hid or moved, or the
                 // launch failed; leave the grid as it is.
@@ -483,7 +483,9 @@ final class GroupController: ObservableObject {
             collapse(reason: "opened \(app.displayName)")
             return
         }
-        AppLauncher.open(app, running: running, documents: documents)
+        AppLauncher.open(app, running: running, documents: documents) { result, error in
+            if error == nil { afterOpen?(result) }
+        }
         collapse(reason: "opened \(app.displayName)")
     }
 
