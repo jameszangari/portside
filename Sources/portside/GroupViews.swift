@@ -247,7 +247,8 @@ private struct GroupNameField: View {
     }
 }
 
-/// One app in the expanded group: click to open, right-click for actions.
+/// One app in the expanded group: click to open, right-click for actions,
+/// drag it out of the grid to take it out of the group.
 private struct GroupAppCell: View {
     let app: PinnedApp
     let groupID: String
@@ -261,6 +262,9 @@ private struct GroupAppCell: View {
     let onLaunch: (PinnedApp) -> Void
     @ObservedObject private var icons = IconCache.shared
     @State private var hovered = false
+    /// Token of this cell's drag (see `DragOutController`), nil when idle.
+    @State private var dragToken: Int?
+    @State private var dragging = false
 
     private var bounceKey: String { LaunchBouncer.gridKey(groupID: groupID, appID: app.id) }
 
@@ -305,9 +309,11 @@ private struct GroupAppCell: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.primary.opacity(hovered ? 0.12 : 0))
         )
+        .opacity(dragging ? 0.5 : 1)
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture { onLaunch(app) }
+        .gesture(dragOutGesture)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(app.displayName)
         .accessibilityAddTraits(.isButton)
@@ -320,6 +326,37 @@ private struct GroupAppCell: View {
                 Button("Quit") { running.terminate() }
             }
         }
+    }
+}
+
+extension GroupAppCell {
+    /// Dragging a member clearly out of the grid and releasing it does what
+    /// "Remove from Group" does. Released inside the grid, nothing changes
+    /// (members are not reordered here).
+    private var dragOutGesture: some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .global)
+            .onChanged { _ in
+                let dragOut = groups.dragOut
+                if dragToken == nil {
+                    dragging = true
+                    let icon = icons.icon(for: app.url)
+                    dragToken = dragOut.begin(
+                        itemID: app.id, source: .grid, label: "Remove from Group",
+                        preview: AnyView(Image(nsImage: icon).resizable().interpolation(.high).frame(width: iconSize, height: iconSize)),
+                        size: iconSize
+                    ) { dragging = false }
+                }
+                if let dragToken { dragOut.update(dragToken) }
+            }
+            .onEnded { _ in
+                guard let token = dragToken else { return }
+                dragToken = nil
+                dragging = false
+                guard groups.dragOut.end(token) else { return }
+                withAnimation(GroupPopoverMotion.shouldAnimate ? .easeOut(duration: 0.15) : nil) {
+                    dockModel.removeFromGroup(app, groupID: groupID)
+                }
+            }
     }
 }
 

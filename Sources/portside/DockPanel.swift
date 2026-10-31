@@ -256,6 +256,11 @@ final class DockPanel {
         return panel.convertToScreen(hostingView.convert(local, to: nil))
     }
 
+    /// The panel's frame on screen, nil while it is ordered out.
+    var screenFrame: NSRect? {
+        panel.isVisible ? panel.frame : nil
+    }
+
     /// Whether a point in screen coordinates is over the visible panel.
     func containsScreenPoint(_ point: NSPoint) -> Bool {
         panel.isVisible && panel.frame.contains(point)

@@ -64,7 +64,12 @@ final class OverlayPanel {
     var isVisible: Bool { panel.isVisible }
 
     func containsScreenPoint(_ point: NSPoint) -> Bool {
-        panel.isVisible && OverlayPanel.inset(panel.frame, by: hitInsets).contains(point)
+        hitFrame?.contains(point) ?? false
+    }
+
+    /// The panel's frame minus its hit insets, nil while hidden.
+    var hitFrame: NSRect? {
+        panel.isVisible ? OverlayPanel.inset(panel.frame, by: hitInsets) : nil
     }
 
     /// Show `content` next to `anchor` (screen coordinates), on the side

@@ -43,6 +43,9 @@ final class DockEngine {
     /// True while the separator is being dragged. The cursor can leave the
     /// panel mid-drag, and the dock must stay up until the drag ends.
     private var isResizing = false
+    /// Drag an item out to remove it. While a drag is on (button held),
+    /// exits do not arm the hide and the hide timer will not hide.
+    private let dragOut = DragOutController()
     private let interactions = DockInteractions()
     private var edgeSubscription: AnyCancellable?
     private var iconStyleSubscription: AnyCancellable?
@@ -66,8 +69,8 @@ final class DockEngine {
         self.layout = DockLayout()
         self.hover = DockHover(overlay: OverlayPanel())
         self.bouncer = LaunchBouncer(dockModel: dockModel, hover: hover)
-        self.groups = GroupController(dockModel: dockModel, runningApps: runningApps, hover: hover, bouncer: bouncer)
-        let strip = DockStrip(dockModel: dockModel, runningApps: runningApps, widgets: widgets, layout: layout, groups: groups, bouncer: bouncer, hover: hover, interactions: interactions)
+        self.groups = GroupController(dockModel: dockModel, runningApps: runningApps, hover: hover, bouncer: bouncer, dragOut: dragOut)
+        let strip = DockStrip(dockModel: dockModel, runningApps: runningApps, widgets: widgets, layout: layout, groups: groups, bouncer: bouncer, hover: hover, interactions: interactions, dragOut: dragOut)
         self.dockPanel = DockPanel(dockModel: dockModel, strip: strip)
         self.edgeTracker = EdgeTracker(edge: dockModel.edge)
         hover.setEdge(dockModel.edge)
@@ -84,6 +87,25 @@ final class DockEngine {
             dockPanel?.contentSizeChanged(size)
             // The panel recenters when it resizes, which moves every tile.
             bouncer?.tilesChanged()
+        }
+
+        dragOut.stripRegion = { [weak dockPanel] in dockPanel?.screenFrame }
+        dragOut.gridRegion = { [weak groups] in groups?.gridScreenFrame }
+        dragOut.onDraggingChanged = { [weak self] dragging in
+            guard let self else { return }
+            self.groups.itemDragChanged(dragging)
+            if dragging {
+                self.hover.clear()
+                if let pendingHide = self.pendingHide {
+                    pendingHide.cancel()
+                    self.pendingHide = nil
+                    self.logger.info("item drag started: pending hide canceled")
+                }
+            } else {
+                // Normal hide delay from here if the drop left the cursor
+                // outside the dock.
+                self.rearmHideIfCursorOutside(source: "item drag ended")
+            }
         }
 
         hover.stripToScreen = { [weak dockPanel] rect in dockPanel?.screenRect(forStripRect: rect) }
@@ -303,6 +325,12 @@ final class DockEngine {
         !dragTargets.isEmpty && NSEvent.pressedMouseButtons & 1 != 0
     }
 
+    /// An item is being dragged out of (or around) the dock. Same button
+    /// check, in case a drag never saw its end.
+    private var isItemDragging: Bool {
+        dragOut.isDragging && NSEvent.pressedMouseButtons & 1 != 0
+    }
+
     private func handleDragEntered(_ target: String) {
         dragTargets.insert(target)
         if dockPanel.isRevealedOrRevealing {
@@ -369,6 +397,10 @@ final class DockEngine {
             logger.info("\(source, privacy: .public) \(trigger, privacy: .public): drag still over the dock, hide not armed")
             return
         }
+        if isItemDragging {
+            logger.info("\(source, privacy: .public) \(trigger, privacy: .public): item drag in progress, hide not armed")
+            return
+        }
         if let pendingReveal {
             pendingReveal.cancel()
             self.pendingReveal = nil
@@ -392,6 +424,10 @@ final class DockEngine {
             }
             if self.isDragOverDock {
                 self.logger.info("hide timer fired during a drag over the dock, staying revealed")
+                return
+            }
+            if self.isItemDragging {
+                self.logger.info("hide timer fired during an item drag, staying revealed")
                 return
             }
             if self.groups.isEditing {

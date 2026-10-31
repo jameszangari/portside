@@ -34,6 +34,7 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 **Apps**
 - Pinned apps with running indicators, updated from `NSWorkspace` notifications.
 - Drag to reorder.
+- Drag an icon out of the dock to remove it, like the native Dock: a "Remove" label shows once it is clearly outside, and releasing it there removes it with a short poof (instant under Reduce Motion). Dragging back over the dock reorders as usual, and Escape puts it back. Works for app tiles, group tiles, and widgets; an app dragged out of an open group grid leaves the group instead.
 - Drag an .app from Finder onto the strip to pin it.
 - Drop files on an app tile to open them in that app, like the native Dock. Only tiles whose app can open the files highlight and accept the drop (Finder takes folders). A not-running pinned app launches with the bounce.
 - Running apps that are not pinned show after the pinned section.
@@ -86,7 +87,7 @@ From `docs/CHECKLIST.md` and `docs/PLAN.md`:
 - Milestone F, what is left: importing the native Dock's folders and files (`persistent-others`), once folder stacks exist.
 - Magnification (the stored setting exists, no UI yet).
 - Update checker: compare AppInfo.version with the latest GitHub release tag (vX.Y.Z), show 'up to date' or a link to the release. The Check for Updates button is a placeholder until then.
-- Native Dock parity: click-and-hold menu, drag icons out to remove, modifier clicks, Trash, folder stacks.
+- Native Dock parity: click-and-hold menu, modifier clicks, Trash, folder stacks.
 - Multi-display, fullscreen and Spaces behavior, badges.
 - Better widget layout on side docks.
 
@@ -145,7 +146,7 @@ build/Portside.app/Contents/MacOS/portside --restore-dock
 - `EdgeTracker` owns a thin, near-invisible window along the chosen screen edge. An `NSTrackingArea` on it reports `mouseEntered` and `mouseExited`, so reveal starts the moment the window server delivers the event. It is also a drag destination for files, since tracking areas are unreliable during another app's drag.
 - `DockPanel` is a non-activating `NSPanel` that slides in from the edge. It has its own tracking area so hovering it cancels the hide timer.
 - `DockEngine` coordinates both. The only timers are the one-shot hide delay, widget refresh, and group hover/close/spring-load delays, none of which poll.
-- `OverlayPanel` is a second non-activating panel used for hover labels and group grids. It sits outside the strip so its content can extend past the strip's bounds.
+- `OverlayPanel` is a second non-activating panel used for hover labels, group grids, and the drag-out "Remove" label. It sits outside the strip so its content can extend past the strip's bounds.
 
 ## Where data lives
 
@@ -198,6 +199,7 @@ Sources/portside/
   DockStrip.swift           SwiftUI strip: tiles, widgets, separator, reorder, drops
   DockItem.swift            App tile, icon cache, launch/activate, context menu
   FileDrop.swift            Per-drag state for file drops: pin vs open, can-open checks
+  DragOut.swift             Drag an item out to remove it: "Remove" label, poof, Escape
   DockHover.swift           Hover target frames and label placement
   FolderGroup.swift         Group and entry models
   GroupController.swift     Group open/close state and every close path

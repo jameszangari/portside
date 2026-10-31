@@ -60,6 +60,12 @@ final class GroupController: ObservableObject {
     private let runningApps: RunningApps
     private let hover: DockHover
     let bouncer: LaunchBouncer
+    /// Grid cells report their drags here (drag an app out to remove it
+    /// from the group).
+    let dragOut: DragOutController
+    /// An app is being dragged (from the grid or the strip). A
+    /// hover-opened grid does not close mid-drag.
+    private var isItemDragging = false
     /// Grid cell icon frames (overlay content coordinates), by bounce key.
     /// Kept across closes: reopening the same group reuses its SwiftUI
     /// views, which do not report an unchanged frame again.
@@ -83,11 +89,12 @@ final class GroupController: ObservableObject {
     private var openedByHover = false
     private let logger = Logger(subsystem: "com.james.portside", category: "Groups")
 
-    init(dockModel: DockModel, runningApps: RunningApps, hover: DockHover, bouncer: LaunchBouncer) {
+    init(dockModel: DockModel, runningApps: RunningApps, hover: DockHover, bouncer: LaunchBouncer, dragOut: DragOutController) {
         self.dockModel = dockModel
         self.runningApps = runningApps
         self.hover = hover
         self.bouncer = bouncer
+        self.dragOut = dragOut
         overlay.ignoresMouseEvents = false
         overlay.onMouseEntered = { [weak self] in
             guard let self else { return }
@@ -126,6 +133,22 @@ final class GroupController: ObservableObject {
 
     func containsScreenPoint(_ point: NSPoint) -> Bool {
         overlay.containsScreenPoint(point)
+    }
+
+    /// The open grid's card (plus its bridge to the tile), nil when closed.
+    var gridScreenFrame: NSRect? {
+        expandedID == nil ? nil : overlay.hitFrame
+    }
+
+    /// An item drag started or ended. When it ends, a hover-opened grid
+    /// gets its normal grace close if the cursor is no longer on it.
+    func itemDragChanged(_ dragging: Bool) {
+        isItemDragging = dragging
+        if dragging {
+            cancelHoverClose()
+        } else {
+            scheduleHoverCloseIfHoverOpened()
+        }
     }
 
     func toggle(_ groupID: String) {
@@ -362,7 +385,7 @@ final class GroupController: ObservableObject {
         guard openedByHover, let id = expandedID, !isEditing else { return }
         // A drag over the grid or the tile keeps it, wherever the cursor
         // reads (drag callbacks and the cursor can disagree at the edges).
-        if isDragOverGrid || dragTileGroupID == id { return }
+        if isDragOverGrid || dragTileGroupID == id || isItemDragging { return }
         let location = NSEvent.mouseLocation
         if overlay.containsScreenPoint(location) { return }
         if let tile = hover.screenFrame(forTargetID: "group:" + id), tile.contains(location) { return }

@@ -71,7 +71,9 @@ final class DockInteractions {
 ///
 /// Reorder uses a plain DragGesture inside the strip, not .onDrag: SwiftUI
 /// never starts a drag session from this panel because Portside is never the
-/// active app, and .onDrag has no "ended" callback anyway.
+/// active app, and .onDrag has no "ended" callback anyway. The same gesture
+/// removes an item dragged clearly out of the dock (`DragOutController`);
+/// widgets get a drag-out-only gesture.
 struct DockStrip: View {
     @ObservedObject var dockModel: DockModel
     @ObservedObject var runningApps: RunningApps
@@ -85,9 +87,17 @@ struct DockStrip: View {
     /// changes what the strip renders.
     let hover: DockHover
     let interactions: DockInteractions
+    /// Drag-out-to-remove: the "Remove" label, poof and Escape.
+    let dragOut: DragOutController
 
-    /// Id of the pinned entry (app or group) being dragged, if any.
+    /// Id of the pinned entry (app or group) or widget being dragged, if any.
     @State private var dragging: String?
+    /// Token of the current drag (see `DragOutController`), nil when idle.
+    @State private var dragToken: Int?
+    /// Where the dragged entry was when the drag began.
+    @State private var dragStartIndex = 0
+    /// The dragged item is clearly outside the dock right now.
+    @State private var dragOutside = false
     /// Cursor (screen coordinates) and tile size when a separator drag began.
     @State private var resizeStart: (mouse: CGPoint, tile: CGFloat)?
     /// App tile a file drag is over that can open the dragged items.
@@ -141,7 +151,7 @@ struct DockStrip: View {
         stack {
             ForEach(dockModel.entries) { entry in
                 entryView(entry, tile: tile)
-                    .opacity(dragging == entry.id ? 0.5 : 1)
+                    .opacity(dragging == entry.id ? (dragOutside ? 0.25 : 0.5) : 1)
                     .scaleEffect(dragging == entry.id ? 1.08 : 1, anchor: edge.growthAnchor)
                     .gesture(reorderGesture(for: entry, tile: tile, vertical: edge.isVertical))
             }
@@ -161,6 +171,8 @@ struct DockStrip: View {
                 separator(tile: tile, maxTile: maxTile, edge: edge)
                 ForEach(widgets.hosts) { host in
                     host.view
+                        .opacity(dragging == host.id ? (dragOutside ? 0.25 : 0.5) : 1)
+                        .gesture(widgetDragGesture(for: host, tile: tile))
                         .contextMenu {
                             Button("Remove Widget") { dockModel.setWidget(host.id, enabled: false) }
                         }
@@ -278,29 +290,126 @@ struct DockStrip: View {
             }
     }
 
-    // MARK: - Reorder
+    // MARK: - Reorder and drag out
 
     /// Live reorder: the dragged tile jumps to whichever slot the cursor is
-    /// over. Order is saved once, on release.
+    /// over. Order is saved once, on release. Clearly outside the dock the
+    /// tile goes back to its starting slot and a release removes it, like
+    /// "Remove from Dock" in its menu. Escape puts it back.
     private func reorderGesture(for entry: DockEntry, tile: CGFloat, vertical: Bool) -> some Gesture {
         DragGesture(minimumDistance: 4, coordinateSpace: .named(DockStrip.space))
             .onChanged { value in
-                if dragging == nil {
+                if dragToken == nil {
+                    let start = dockModel.entries.firstIndex { $0.id == entry.id } ?? 0
                     dragging = entry.id
+                    dragStartIndex = start
+                    dragOutside = false
                     stripLogger.info("reorder started: \(entry.id, privacy: .public)")
+                    dragToken = dragOut.begin(itemID: entry.id, source: .strip, label: "Remove",
+                                              preview: preview(for: entry, tile: tile), size: tile) {
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            dockModel.move(entryID: entry.id, toIndex: start, persist: false)
+                        }
+                        dragging = nil
+                        dragOutside = false
+                    }
                 }
-                let position = vertical ? value.location.y : value.location.x
-                let slot = Int((position / (tile + spacing)).rounded(.down))
+                guard let token = dragToken, !dragOut.isCanceled(token) else { return }
+                let outside = dragOut.update(token)
+                if outside != dragOutside { dragOutside = outside }
+                let slot: Int
+                if outside {
+                    slot = dragStartIndex
+                } else {
+                    let position = vertical ? value.location.y : value.location.x
+                    slot = Int((position / (tile + spacing)).rounded(.down))
+                }
                 withAnimation(.easeOut(duration: 0.12)) {
                     dockModel.move(entryID: entry.id, toIndex: slot, persist: false)
                 }
             }
             .onEnded { _ in
+                guard let token = dragToken else { return }
+                dragToken = nil
+                let canceled = dragOut.isCanceled(token)
+                let remove = dragOut.end(token)
                 dragging = nil
+                dragOutside = false
+                if remove {
+                    withAnimation(removalAnimation) {
+                        switch entry {
+                        case .app(let app): dockModel.unpin(app)
+                        case .group(let group): dockModel.removeGroup(groupID: group.id)
+                        }
+                    }
+                    stripLogger.info("removed by dragging out: \(entry.id, privacy: .public)")
+                    return
+                }
+                if canceled {
+                    // Already back in its slot; the saved order never changed.
+                    stripLogger.info("reorder canceled: \(entry.id, privacy: .public)")
+                    return
+                }
                 dockModel.saveOrder()
                 let index = dockModel.entries.firstIndex { $0.id == entry.id } ?? -1
                 stripLogger.info("reorder ended: \(entry.id, privacy: .public) at slot \(index)")
             }
+    }
+
+    /// Widgets do not reorder in the strip, but one dragged clearly out and
+    /// released is turned off, like "Remove Widget" in its menu.
+    private func widgetDragGesture(for host: WidgetHost, tile: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .named(DockStrip.space))
+            .onChanged { _ in
+                if dragToken == nil {
+                    dragging = host.id
+                    dragOutside = false
+                    let preview = host.view
+                        .environment(\.dockTileSize, tile)
+                        .environment(\.dockEdge, .bottom)
+                        .padding(4)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    dragToken = dragOut.begin(itemID: host.id, source: .strip, label: "Remove",
+                                              preview: AnyView(preview), size: tile + 8) {
+                        dragging = nil
+                        dragOutside = false
+                    }
+                }
+                guard let token = dragToken, !dragOut.isCanceled(token) else { return }
+                let outside = dragOut.update(token)
+                if outside != dragOutside { dragOutside = outside }
+            }
+            .onEnded { _ in
+                guard let token = dragToken else { return }
+                dragToken = nil
+                dragging = nil
+                dragOutside = false
+                guard dragOut.end(token) else { return }
+                withAnimation(removalAnimation) {
+                    dockModel.setWidget(host.id, enabled: false)
+                }
+                stripLogger.info("widget removed by dragging out: \(host.id, privacy: .public)")
+            }
+    }
+
+    private var removalAnimation: Animation? {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .easeOut(duration: 0.15)
+    }
+
+    /// What floats under the cursor while an entry is outside the dock.
+    private func preview(for entry: DockEntry, tile: CGFloat) -> AnyView {
+        switch entry {
+        case .app(let app):
+            return AnyView(Image(nsImage: IconCache.shared.icon(for: app.url))
+                .resizable()
+                .interpolation(.high)
+                .frame(width: tile, height: tile))
+        case .group(let group):
+            return AnyView(GroupTileView(group: group, size: tile, isExpanded: false, anyRunning: false,
+                                         onToggle: {}, onRename: {}, dockModel: dockModel)
+                .environment(\.dockEdge, .left)
+                .frame(height: tile))
+        }
     }
 }
 

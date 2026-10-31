@@ -1,6 +1,6 @@
 # Portside: Checklist
 
-Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand-tested. Milestone F is partly done (native Dock hide/restore, .app bundle, launch at login; the last two await James's hand test); the native Dock import is built (hand test pending) except `persistent-others`. P1 and P2 are partly built, see below.
+Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand-tested. Milestone F is done and hand-tested except `persistent-others` import (deferred until folder stacks exist). P1 and P2 are partly built, see below.
 
 ## Roadmap
 
@@ -11,9 +11,9 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [x] **B.6:** Dock position (bottom/left/right) and separator resize
 - [x] **D:** App groups (expand/collapse)
 - [x] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live; includes auto-hide toggle with Cmd+Option+D, Portside as a regular app while Settings is open, inline group naming and rename, open groups on hover
-- [ ] **F:** [x] Hide the macOS Dock (autohide-delay trick only, exact save and restore); [x] launch at login (`SMAppService`, hand test pending); [x] a real .app bundle (`scripts/build-app.sh`, hand test pending); [x] import native orientation and tilesize as Portside's initial position and icon size (hand test pending); [x] a manual "Import from macOS Dock" action with undo (hand test pending); [ ] import `persistent-others` (deferred until folder stacks exist). First-launch seeding of pinned apps from `persistent-apps` is built.
+- [ ] **F:** [x] Hide the macOS Dock (autohide-delay trick only, exact save and restore); [x] launch at login (`SMAppService`); [x] a real .app bundle (`scripts/build-app.sh`); [x] import native orientation and tilesize as Portside's initial position and icon size; [x] a manual "Import from macOS Dock" action with undo; [ ] import `persistent-others` (deferred until folder stacks exist). First-launch seeding of pinned apps from `persistent-apps` is built.
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
-- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder (built); drag icons out to remove; drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide (built)
+- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu; divider right-click (Turn Hiding On/Off, Magnification, Position on Screen, Dock Settings); Option turns Quit into Force Quit; drag apps in from Finder (built); drag icons out to remove (built, hand test pending); drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder); Option-click (Hide Others); Cmd-Option-D show/hide (built)
 - [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); right-click Trash shows Empty Trash; filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag (built for app groups; folder stacks not yet); magnification polish
 - [ ] **P3:** Follow the display the cursor hits; fullscreen apps and Spaces; badge counts via the real Dock's accessibility tree (Accessibility permission; private APIs only as fallback); window list in right-click menu with click to focus (Screen Recording for titles); VoiceOver labels and keyboard navigation; do not reveal while dragging a window or holding the mouse button (except file drags headed to the Dock)
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section; bounce on attention request (needs private APIs, not wanted for now)
@@ -22,9 +22,65 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 
 ---
 
+# P1 slice: drag an icon out of the dock to remove it
+
+Status: built and agent-verified, waiting for James's hand test. New file: `Sources/portside/DragOut.swift`. Log category `DragOut`. No new dock.json keys.
+
+## Deliverables
+
+- [x] Pinned app tile dragged clearly out and released: removed, same as "Remove from Dock" (`unpin`). A running app stays as an unpinned running app.
+- [x] "Clearly out": the cursor is 24pt or more outside the dock panel's frame in any direction (`DragOutController.threshold`), so past the far side or past either end, on all three edges. The "Remove" label and the floating icon show in an `OverlayPanel` (same non-activating, click-through class as the hover labels; its own instance so a hover label never replaces it). The cursor turns into the system "disappearing item" cursor while outside.
+- [x] While outside, the tile goes back to its starting slot (dimmed to 25%), so a removal never reorders the rest. Back over the dock: label hides and the normal live reorder resumes.
+- [x] Poof on removal: the icon scales up 1.5x and fades while eight soft puffs drift out (SwiftUI, 300ms, no private APIs). Reduce Motion: no poof, removal is instant.
+- [x] Escape during the drag cancels: the item snaps back to where it started and nothing is saved. Portside is never active, so for the length of a drag the drag overlay takes key focus without activating Portside (same trick as inline group rename) and gives it back at the end or on Escape.
+- [x] Group tiles: same as their "Remove from Dock" today, `removeGroup`: the group and all its apps leave the dock at once, with no confirmation (running members stay as unpinned running apps).
+- [x] Widgets: they already have "Remove Widget", so a widget dragged out and released is turned off the same way (`setWidget(_, enabled: false)`). Widgets still do not reorder in the strip; released over the dock nothing changes.
+- [x] Open group grid: an app dragged clearly out of the grid card and released is taken out of the group, same as "Remove from Group" (`removeFromGroup`): it lands right after the group tile; a group left with one app becomes that app. Label reads "Remove from Group". Released inside the grid, nothing changes (members are not reordered).
+- [x] Hide path: the drag start cancels a pending hide; exits during a drag do not arm it ("item drag in progress, hide not armed"); the hide timer also refuses while an item drag is on (button still held). After the drop the hide is re-armed with the normal delay if the cursor is outside. A hover-opened grid does not grace-close mid-drag.
+- [x] No polling: everything runs from the gesture's changes plus a local key and mouse-up monitor installed only for the drag. The only timer is the one-shot that removes the poof overlay.
+- [x] Clicks, file drops (`FileDrop.swift`), and in-dock reorder unchanged.
+- [x] `swift build` clean, no warnings; `swift run` stays up
+
+## Verification (agent, synthetic CGEvents)
+
+Scratch dock.json (Finder, TextEdit, Calculator, Chess, two groups, Dictionary; clock and battery; `hideNativeDock` off so the native Dock was never touched). Real dock.json backed up and restored byte for byte (`cmp`).
+
+- [x] Bottom: Chess dragged up and released: label and icon near the cursor (screenshot), removed, dock hid 300ms after the drop. Calculator out and back in: `outside` then `back over the dock`, reorder saved at the new slot. Calculator out then Escape: `canceled`, order unchanged on disk. Escape after an in-dock move: back to its original slot. Group "Doomed" out: removed with its apps; poof caught in two screenshots (scaling, puffs). Clock widget out: removed, widget stopped. Grid: Notes dragged out of the open TestGroup grid: removed from the group, placed right after it in dock.json. Preview moved inside the grid and released: nothing changed.
+- [x] Left (auto-hide on): remove, out and back (reorder), Escape, and a grid member out of the group.
+- [x] Right with hiding off: remove, out and back, Escape, group tile out (screenshot).
+- [x] Dock stayed up during every drag, including a 1.2s hold outside with a 300ms hide delay. Panel exits during drags logged "hide not armed".
+- [x] Focus: TextEdit frontmost, a reorder drag and then an Escape-canceled drag on the dock, typed keys landed in TextEdit both times; TextEdit stayed frontmost.
+- [x] Plain click after the drags opened the app (`panel mouseDown (key window: false, portside active: false)`).
+- [x] Reveal timing unchanged: mouseEntered to animation start 0.46 to 2.02ms.
+
+## Findings
+
+- A drag-out removal of a group tile is destructive with no undo (same as its menu item). Worth a confirmation or undo later.
+- The drag needs key focus for Escape, so for the length of a drag the frontmost app's window is briefly not key (keys typed mid-drag go nowhere). Focus comes back at the end (verified with TextEdit).
+- The floating icon only appears once the item is outside; inside the dock the tile itself moves between slots, as before.
+
+## Known gaps
+
+- Not seen by the agent: Reduce Motion (needs the system setting changed), the cursor change (screenshots do not show the cursor), and the feel of the poof at full speed.
+- Grid members cannot be reordered by dragging; a member dragged onto the strip is removed from the group (lands next to the group), not placed where it was dropped.
+- Unpinned running apps and Portside's own tile do not drag (nothing to remove), same as before.
+
+## Hand test must also check
+
+- [ ] Bottom, Left, Right: drag an app out (label shows, release removes with a poof)
+- [ ] Drag out and back in: no removal, normal reorder
+- [ ] Drag out, then Escape: snaps back, typing still goes to the frontmost app
+- [ ] Drag a group tile out (removes the group and its apps)
+- [ ] Drag an app out of an open group grid (leaves the group, appears next to it)
+- [ ] Drag a widget out (turned off); a plain widget click still works
+- [ ] Plain reorder and plain clicks unchanged; the dock stays up for the whole drag and hides after the normal delay
+- [ ] With hiding off
+
+---
+
 # Appearance slice: icon style and dock background
 
-Status: built and agent-verified, waiting for James's hand test. New file: `Sources/portside/DockAppearance.swift`. Log category `Appearance`. New dock.json keys: `iconStyle`, `backgroundStyle`, `backgroundFrost`, `backgroundTint`, `cornerRadius` (all optional on load; unknown values fall back to defaults).
+Status: done and hand-tested by James. New file: `Sources/portside/DockAppearance.swift`. Log category `Appearance`. New dock.json keys: `iconStyle`, `backgroundStyle`, `backgroundFrost`, `backgroundTint`, `cornerRadius` (all optional on load; unknown values fall back to defaults).
 
 ## Deliverables
 
@@ -53,17 +109,17 @@ Status: built and agent-verified, waiting for James's hand test. New file: `Sour
 
 ## Hand test must also check
 
-- [ ] System Settings > Appearance > Icon and widget style: switch Default, Dark, Clear, Tinted; the dock's icons follow within a moment, without a relaunch
-- [ ] Icon style Original: colorful app artwork regardless of the system style
-- [ ] Background Liquid Glass, Frost 0% / 50% / 100% over a colorful window; compare with the native Dock
-- [ ] Frosted and Solid, tint on/off, corner radius; group grid matches
-- [ ] Reset to Defaults; relaunch keeps the settings
+- [x] System Settings > Appearance > Icon and widget style: switch Default, Dark, Clear, Tinted; the dock's icons follow within a moment, without a relaunch
+- [x] Icon style Original: colorful app artwork regardless of the system style
+- [x] Background Liquid Glass, Frost 0% / 50% / 100% over a colorful window; compare with the native Dock
+- [x] Frosted and Solid, tint on/off, corner radius; group grid matches
+- [x] Reset to Defaults; relaunch keeps the settings
 
 ---
 
 # Branding slice: approved sail identity
 
-Status: built and agent-verified, waiting for James's hand test. New files: `Sources/portside/BrandAssets.swift`, `Sources/portside/Support/AppIcon-{16,32,128,256}.png` (actool's flat render of `AppIcon.icon`), `Sources/portside/Support/MenuBarIcon-{22,44}.png` (copies of `design/brand/menu-bar/portside-menu-bar-black-*`). Log category `Brand`.
+Status: done and hand-tested by James. New files: `Sources/portside/BrandAssets.swift`, `Sources/portside/Support/AppIcon-{16,32,128,256}.png` (actool's flat render of `AppIcon.icon`), `Sources/portside/Support/MenuBarIcon-{22,44}.png` (copies of `design/brand/menu-bar/portside-menu-bar-black-*`). Log category `Brand`.
 
 ## Deliverables
 
@@ -107,16 +163,16 @@ Status: built and agent-verified, waiting for James's hand test. New files: `Sou
 
 ## Hand test must also check
 
-- [ ] Menu bar item in light mode, dark mode, and over a tinted wallpaper
-- [ ] Icon in Finder (`build/Portside.app`) and in the native Dock while Settings is open, both bundled and `swift run`
-- [ ] About Portside: comes forward, link opens the repo
-- [ ] Alert icon (Settings > Hide the macOS Dock first-time dialog)
+- [x] Menu bar item in light mode, dark mode, and over a tinted wallpaper
+- [x] Icon in Finder (`build/Portside.app`) and in the native Dock while Settings is open, both bundled and `swift run`
+- [x] About Portside: comes forward, link opens the repo
+- [x] Alert icon (Settings > Hide the macOS Dock first-time dialog)
 
 ---
 
 # Milestone F part 3: import from the native Dock
 
-Status: built and agent-verified for first launch; the Settings sheet awaits James's hand test. New file: `NativeDockImport.swift`. Reads `com.apple.dock` through CFPreferences only, never writes it. Log category `Import`.
+Status: done and hand-tested by James (first launch and the Settings sheet). New file: `NativeDockImport.swift`. Reads `com.apple.dock` through CFPreferences only, never writes it. Log category `Import`.
 
 ## Deliverables
 
@@ -131,7 +187,7 @@ Status: built and agent-verified for first launch; the Settings sheet awaits Jam
 
 - First launch on the real prefs (dock.json moved aside): log `read native Dock: 27 apps, 0 missing, 0 spacers skipped, 1 folder/file tiles skipped, edge bottom, tilesize 37.0 (live)`; dock.json got edge bottom, iconSize 37, 27 entries. dock.json restored byte for byte afterwards.
 - `swift build` and `swift build -c release`: no warnings. No native Dock key written (autohide-delay still unset).
-- Not run by the agent: the sheet, Add missing, Replace, Undo, and the backup-sourced path (a fake backup would trigger launch recovery and touch the Dock). Hand test below.
+- Not run by the agent: the sheet, Add missing, Replace, Undo, and the backup-sourced path (a fake backup would trigger launch recovery and touch the Dock). Covered by James's hand test.
 
 ## Findings
 
@@ -147,13 +203,13 @@ Status: built and agent-verified for first launch; the Settings sheet awaits Jam
 
 ## Hand test must also check
 
-- [ ] See the numbered test in the report
+- [x] Settings sheet: Add missing, Replace apps, position and size checkbox, Undo last import
 
 ---
 
 # Milestone F part 2: .app bundle + launch at login
 
-Status: built and agent-verified, waiting for James's hand test. New files: `scripts/build-app.sh`, `Sources/portside/LaunchAtLogin.swift`.
+Status: done and hand-tested by James. New files: `scripts/build-app.sh`, `Sources/portside/LaunchAtLogin.swift`.
 
 ## Deliverables
 
@@ -197,12 +253,12 @@ Status: built and agent-verified, waiting for James's hand test. New files: `scr
 
 ## Hand test must also check
 
-- [ ] Icon in Finder and in the native Dock while Settings is open
-- [ ] Toggle on: Portside listed in System Settings > General > Login Items
-- [ ] Log out and in: Portside starts, and hides the native Dock if that option is on
-- [ ] Toggle off: removed from Login Items
-- [ ] `swift run portside`: toggle disabled with "Available when running Portside.app."
-- [ ] Bartender keeps the menu bar item placement across two bundle launches
+- [x] Icon in Finder and in the native Dock while Settings is open
+- [x] Toggle on: Portside listed in System Settings > General > Login Items
+- [x] Log out and in: Portside starts, and hides the native Dock if that option is on
+- [x] Toggle off: removed from Login Items
+- [x] `swift run portside`: toggle disabled with "Available when running Portside.app."
+- [x] Bartender keeps the menu bar item placement across two bundle launches
 
 ---
 
@@ -241,9 +297,9 @@ Status: done, hand-tested by James and committed. New files: `VERSION`, `scripts
 
 ## Hand test must also check
 
-- [ ] Settings header reads "Version 0.1.0 by James Cliff (<hash>-dirty)" now, and the same look as before otherwise
-- [ ] After committing, `scripts/gen-version.sh` then `swift run`: header shows the clean hash
-- [ ] `scripts/release.sh patch` prints a dry run and changes nothing (`git status`)
+- [x] Settings header reads "Version 0.1.0 by James Cliff (<hash>-dirty)" now, and the same look as before otherwise
+- [x] After committing, `scripts/gen-version.sh` then `swift run`: header shows the clean hash
+- [x] `scripts/release.sh patch` prints a dry run and changes nothing (`git status`)
 
 ---
 
@@ -288,14 +344,14 @@ Status: done, hand-tested by James and committed. Visual and layout only: no beh
 
 ## Hand test must also check
 
-- [ ] Each tab looks right in dark and light; switching tabs resizes smoothly with no jump
-- [ ] Drag a widget row to reorder; the dock follows. VoiceOver actions Move Up/Move Down work
-- [ ] Hover a group name: outline appears; click to rename, Return or click away saves; blank reverts
-- [ ] Delete still asks first; Ungroup puts apps back
-- [ ] Turning "Open groups on hover" off hides the two sliders and footer
-- [ ] Check for Updates shows the status line, which clears after a few seconds
-- [ ] Close and reopen Settings: same position. Cmd+W closes
-- [ ] First-time "Hide the macOS Dock?" alert shows the Portside icon (reset `nativeDockExplained` to see it again)
+- [x] Each tab looks right in dark and light; switching tabs resizes smoothly with no jump
+- [x] Drag a widget row to reorder; the dock follows. VoiceOver actions Move Up/Move Down work
+- [x] Hover a group name: outline appears; click to rename, Return or click away saves; blank reverts
+- [x] Delete still asks first; Ungroup puts apps back
+- [x] Turning "Open groups on hover" off hides the two sliders and footer
+- [x] Check for Updates shows the status line, which clears after a few seconds
+- [x] Close and reopen Settings: always opens centered. Cmd+W closes
+- [x] First-time "Hide the macOS Dock?" alert shows the Portside icon (reset `nativeDockExplained` to see it again)
 
 ---
 
@@ -354,9 +410,9 @@ Copy of `NativeDock.swift` pointed at `com.james.portside.ndtest`, a temp backup
 
 ## Hand test must also check
 
-- [ ] (a) to (f) from the report: before snapshot, enable, disable, quit, kill -9 plus relaunch, `--restore-dock`, each diff empty except `last-analytics-stamp`
-- [ ] First-time dialog appears once; Cancel leaves the toggle off and the Dock untouched
-- [ ] Menu bar "Restore macOS Dock" restores and turns the toggle off; with nothing to restore it says so
+- [x] (a) to (f) from the report: before snapshot, enable, disable, quit, kill -9 plus relaunch, `--restore-dock`, each diff empty except `last-analytics-stamp`
+- [x] First-time dialog appears once; Cancel leaves the toggle off and the Dock untouched
+- [x] Menu bar "Restore macOS Dock" restores and turns the toggle off; with nothing to restore it says so
 
 ---
 
@@ -411,12 +467,12 @@ Throwaway harness in `/tmp/portside-spring` (real drag session from its own wind
 
 ## Hand test must also check
 
-- [ ] Bottom, Left, Right: drag a file from Finder onto a group tile; the grid opens after about 600ms
-- [ ] Move onto a member that can open it: highlight, drop opens it in that app, app comes forward, grid closes
-- [ ] Onto a member that cannot: no highlight, no green plus, drop does nothing
-- [ ] Drag away without dropping: grid closes, dock hides
-- [ ] With hiding off, the same, minus the hide
-- [ ] Plain hover-open of groups (no drag) still works
+- [x] Bottom, Left, Right: drag a file from Finder onto a group tile; the grid opens after about 600ms
+- [x] Move onto a member that can open it: highlight, drop opens it in that app, app comes forward, grid closes
+- [x] Onto a member that cannot: no highlight, no green plus, drop does nothing
+- [x] Drag away without dropping: grid closes, dock hides
+- [x] With hiding off, the same, minus the hide
+- [x] Plain hover-open of groups (no drag) still works
 
 ---
 
@@ -474,11 +530,11 @@ Throwaway app in `/tmp/portside-droptest` that starts a real file drag session f
 
 ## Hand test must also check
 
-- [ ] `.txt` onto TextEdit, an image onto Preview, a folder onto Finder: highlight shows, drop opens, app comes forward
-- [ ] A file onto an app that cannot open it: no highlight, no green plus, nothing happens
-- [ ] A `.app` onto empty strip space pins it; a `.app` onto another app's tile pins it next to that tile
-- [ ] First drop works with another app frontmost, and Portside never takes focus
-- [ ] Bottom, Left, Right, and with hiding off
+- [x] `.txt` onto TextEdit, an image onto Preview, a folder onto Finder: highlight shows, drop opens, app comes forward
+- [x] A file onto an app that cannot open it: no highlight, no green plus, nothing happens
+- [x] A `.app` onto empty strip space pins it; a `.app` onto another app's tile pins it next to that tile
+- [x] First drop works with another app frontmost, and Portside never takes focus
+- [x] Bottom, Left, Right, and with hiding off
 
 ---
 
@@ -533,10 +589,10 @@ Throwaway app in `/tmp` that starts a real file drag session from its own window
 
 ## Hand test must also check
 
-- [ ] Reveal from a real Finder drag on Bottom, Left and Right, and whether the log shows `edge draggingEntered` or `edge mouseEntered` first
-- [ ] Dock stays up while dragging along and over the strip, with pauses
-- [ ] Drag away without dropping: hides after the hide delay
-- [ ] Clicks right at the screen edge (window resize edges, bottom controls) still work
+- [x] Reveal from a real Finder drag on Bottom, Left and Right, and whether the log shows `edge draggingEntered` or `edge mouseEntered` first
+- [x] Dock stays up while dragging along and over the strip, with pauses
+- [x] Drag away without dropping: hides after the hide delay
+- [x] Clicks right at the screen edge (window resize edges, bottom controls) still work
 
 ---
 
@@ -583,8 +639,8 @@ Throwaway test app in `/tmp` that takes 3s to finish launching (run loop kept re
 
 ## Hand test must also check
 
-- [ ] Sideways bounce feels like the bottom one (speed, height)
-- [ ] Hover-opened grid: moving off the grid mid-launch closes it and stops the bounce cleanly
+- [x] Sideways bounce feels like the bottom one (speed, height)
+- [x] Hover-opened grid: moving off the grid mid-launch closes it and stops the bounce cleanly
 
 ---
 
@@ -628,8 +684,8 @@ Used a throwaway test app in `/tmp` that delays finishing launch by a configurab
 
 ## Hand test must also check
 
-- [ ] Bounce side by side with the native Dock (for example launch an app from Finder with the native Dock revealed, then from Portside)
-- [ ] A slow app (for example Android Studio or Ableton Live) bounces until its window is about to appear, then lands
+- [x] Bounce side by side with the native Dock (for example launch an app from Finder with the native Dock revealed, then from Portside)
+- [x] A slow app (for example Android Studio or Ableton Live) bounces until its window is about to appear, then lands
 
 ---
 
@@ -676,10 +732,10 @@ Status: done, hand-tested by James and committed. New files: `HotKey.swift`, `Ap
 
 ## Hand test must also check
 
-- [ ] Cmd+Option+D (with the system shortcut disabled) toggles hiding on all three edges
-- [ ] With Settings open, Portside shows in Cmd+Tab and both docks; closing returns you to where you were
-- [ ] New Group and Rename feel natural: typing goes into the field, the app you were in keeps focus afterward
-- [ ] Hover open delay feels right; hover-opened grids close when you leave them but stay open tile to grid; click-opened grids stay until you dismiss them; sweeping never pops groups open
+- [x] Cmd+Option+D (with the system shortcut disabled) toggles hiding on all three edges
+- [x] With Settings open, Portside shows in Cmd+Tab and both docks; closing returns you to where you were
+- [x] New Group and Rename feel natural: typing goes into the field, the app you were in keeps focus afterward
+- [x] Hover open delay feels right; hover-opened grids close when you leave them but stay open tile to grid; click-opened grids stay until you dismiss them; sweeping never pops groups open
 
 ---
 
@@ -717,9 +773,9 @@ Status: done, hand-tested by James and committed.
 
 ## Hand test must also check
 
-- [ ] "Settings..." from the real menu bar click comes up focused (activation from a real menu click could not be tested here; Bartender owns the status item area)
-- [ ] Every setting applies live and survives a relaunch
-- [ ] With Settings closed, clicking the dock never takes focus from the frontmost app
+- [x] "Settings..." from the real menu bar click comes up focused (activation from a real menu click could not be tested here; Bartender owns the status item area)
+- [x] Every setting applies live and survives a relaunch
+- [x] With Settings closed, clicking the dock never takes focus from the frontmost app
 
 ## Findings
 
@@ -760,11 +816,11 @@ Status: done, hand-tested by James and committed.
 
 ## Hand test must also check
 
-- [ ] Create a group from an app's right-click menu, add more apps, open and close it on all three edges
-- [ ] Moving from the tile into the grid never hides the dock, and leaving both hides it after the delay
-- [ ] Clicking an app in the grid opens it on the first click without a "wake up" click
-- [ ] Clicking another app or the desktop closes the grid
-- [ ] Grid looks right next to the tile on Bottom, Left and Right (no label overlapping it)
+- [x] Create a group from an app's right-click menu, add more apps, open and close it on all three edges
+- [x] Moving from the tile into the grid never hides the dock, and leaving both hides it after the delay
+- [x] Clicking an app in the grid opens it on the first click without a "wake up" click
+- [x] Clicking another app or the desktop closes the grid
+- [x] Grid looks right next to the tile on Bottom, Left and Right (no label overlapping it)
 
 ## Findings
 
@@ -855,19 +911,19 @@ Status: done, hand-tested by James and committed. Verified with synthetic mouse 
 
 ## Hand test must also check
 
-- [ ] (a) The edge strip does not swallow clicks: try resizing a window from its bottom edge and clicking a control at the very bottom of an app. If blocked, shrink the strip to 1 to 2pt or switch to an event-driven global mouse-moved monitor. (Strip is now 1pt; agent test above passed.)
-- [ ] (b) Reveal timing logs are unchanged.
-- [ ] Resize cursor shows on the separator and during the drag
-- [ ] Left and right docks look and feel right (both docks react on the left edge while the native Dock lives there)
+- [x] (a) The edge strip does not swallow clicks: try resizing a window from its bottom edge and clicking a control at the very bottom of an app. If blocked, shrink the strip to 1 to 2pt or switch to an event-driven global mouse-moved monitor. (Strip is now 1pt; agent test above passed.)
+- [x] (b) Reveal timing logs are unchanged.
+- [x] Resize cursor shows on the separator and during the drag
+- [x] Left and right docks look and feel right (both docks react on the left edge while the native Dock lives there)
 
 ## Follow-ups (deferred)
 
 - [x] Resize cursor doesn't show when Portside isn't frontmost (`BackgroundCursor.swift`, SkyLight `SetsCursorInBackground`). At launch, `CGSMainConnectionID` and `CGSSetConnectionProperty` are resolved via `dlopen`/`dlsym` (falling back to the `SLS` names) and the property is set on our connection; any missing symbol or error logs once and leaves normal behavior. The separator now sets the cursor itself on every hover move (`onContinuousHover`), because `pointerStyle` and cursor rects only apply to the active app. Agent check with another app frontmost: the system cursor reads `resizeLeftRight` on the left and right separators, `resizeUpDown` on the bottom one, and the arrow off them. Log: `SetsCursorInBackground enabled on connection ..., read back: 1`. Deliberately early private API use (requested ahead of F).
 - [x] Menu bar item title/accessibility label shows "Bird" instead of "Portside". `MenuBarExtra("Portside", systemImage: "bird")` exposed the symbol name; now a label closure with `accessibilityLabel("Portside")`. Accessibility reads `AXTitle = Portside`.
 - [x] Some icons changed style with dock size (Splice white at 32pt and below, dark ghosted glyph from about 36pt up). Cause: `NSWorkspace.icon(forFile:)` returns 32 Icon Services reps (16 to 1024pt), and the system icon style (Dark here, `AppleIconAppearanceTheme = RegularDark`) is applied to Splice's 128px and larger reps but not to the small ones baked into its legacy `app.icns`, so the rep AppKit picked per tile size decided the look. Not an `NSAppearance` variant: forcing aqua or darkAqua changed nothing. The native Dock shows the dark version (screenshot at tilesize 36), so dark is the correct style. Fix: `IconCache` renders each icon once at 128pt times the screen scale into one sRGB bitmap and the tile only scales that bitmap. Verified during a live separator drag from 16 to 38pt (the bottom dock's fit limit): Splice stays dark, Finder, Settings, Notion and Live unchanged. Cache drops an entry when the app's `Info.plist` modification date changes (checked at most every 5s per app, so drags stay off the disk; verified with a test bundle) and drops everything when the screen scale changes (not testable here without a non-Retina display). Rendering 29 icons takes about 350ms at launch, before the edge tracker arms, so the first reveal is unaffected.
-- [ ] Hand test: drag a separator from 16 to the largest size and confirm Splice looks the same throughout
+- [x] Hand test: drag a separator from 16 to the largest size and confirm Splice looks the same throughout
 - [x] Dock ends clipped when growing it by dragging a separator. Cause: the panel only resized from `invalidateIntrinsicContentSize` on the hosting view, and on this macOS `NSHostingView` never calls it (zero calls logged across drags, app launches and quits). So the window kept the size it got at reveal: shrinking looked fine (content just sat inside a wider panel), growing past the reveal size clipped both ends until the next reveal recomputed the frame. It looked like a first-drag-only bug because later drags usually stayed within that size. Fix: the strip reports its measured size with `onGeometryChange` after its `.fixedSize()`, and `DockPanel` resizes to it immediately (centered on its edge, clamped to the visible frame); during a slide the completion handler catches up. Verified on a fresh launch for each edge by comparing every strip element's Accessibility frame to the panel window at each drag step (bottom 38 to 16 to 38pt, left and right 29 to 22 to 29pt): no clipping. Also verified right after launch on the bottom: app launched and quit, Clock widget removed and re-added, panel resized each time. Reveal timing unchanged (about 2.5ms to animation start).
-- [ ] Hand test: launch fresh, immediately drag a separator small to large and back on all three edges, no clipping
+- [x] Hand test: launch fresh, immediately drag a separator small to large and back on all three edges, no clipping
 
 ## Findings
 
@@ -936,8 +992,8 @@ Status: built, launched with `swift run`, widgets verified rendering live data (
 - [x] Panel fits on screen: 1684pt with all widgets on a 1728pt display (was 1665 to 1719pt for apps alone at 48pt)
 - [x] Saved list honored: with weather removed from `widgetKinds`, weather never started and the strip re-fit to 1712pt
 - [x] Reveal/hide timings unchanged (slide completes in ~150ms)
-- [ ] Calendar permission prompt and next-event display (needs a human to approve)
-- [ ] Clock flipping on the minute, widget clicks, Remove Widget / re-enable (hand test)
+- [x] Calendar permission prompt and next-event display (needs a human to approve)
+- [x] Clock flipping on the minute, widget clicks, Remove Widget / re-enable
 
 ## Changes outside the new files
 
@@ -980,7 +1036,7 @@ Status: done.
 - [x] Keep in Dock (CleanMyMac) via menu: appended and saved
 - [x] Restart loads `dock.json` (27 pinned, order kept)
 - [x] Launch Calculator while dock hidden, reveal: panel widened 1665 -> 1719pt, new tile clickable at its computed position; quit shrinks it back
-- [ ] Finder drag-and-drop of an .app (cannot be simulated reliably, hand test)
+- [x] Finder drag-and-drop of an .app (cannot be simulated reliably, hand test)
 - [x] Hand test by James
 
 ## Changes outside the new files
