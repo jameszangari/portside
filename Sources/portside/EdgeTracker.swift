@@ -2,22 +2,26 @@ import AppKit
 import os.log
 
 /// EdgeTracker owns a thin, practically invisible window along the dock's
-/// screen edge and reports cursor enter/exit through an NSTrackingArea.
-/// This is the fix for Dockset's lag: zero polling, the window server tells
-/// us the instant the cursor crosses into the edge zone.
+/// edge on **every** display and reports cursor enter/exit through an
+/// NSTrackingArea. This is the fix for Dockset's lag: zero polling, the
+/// window server tells us the instant the cursor crosses into the edge zone.
+///
+/// Multi-display (P3): each screen has its own edge window. Entering one
+/// reports that screen so the dock can move there before revealing.
 ///
 /// The window is alpha 1 with a 1% black background. A fully transparent
 /// window (alpha 0 or a clear background) is skipped for mouse events by
 /// macOS, so mouseEntered would never fire.
 final class EdgeTracker {
-    /// Called on the main thread when the cursor enters the edge zone.
-    var onMouseEntered: ((NSEvent) -> Void)?
-    /// Called on the main thread when the cursor leaves the edge zone.
+    /// Called on the main thread when the cursor enters an edge zone.
+    /// `screen` is the display that owns that zone.
+    var onMouseEntered: ((NSEvent, NSScreen) -> Void)?
+    /// Called on the main thread when the cursor leaves an edge zone.
     var onMouseExited: (() -> Void)?
-    /// A file drag reached the edge zone. Tracking areas are unreliable
+    /// A file drag reached an edge zone. Tracking areas are unreliable
     /// while another app owns a drag session, so drags are tracked through
     /// the dragging destination callbacks instead.
-    var onDragEntered: (() -> Void)?
+    var onDragEntered: ((NSScreen) -> Void)?
     /// The file drag left the edge zone or ended (`reason`: exited, ended).
     var onDragExited: ((String) -> Void)?
 
@@ -35,103 +39,165 @@ final class EdgeTracker {
     static let windowLevel = NSWindow.Level(rawValue: DockPanel.windowLevel.rawValue + 1)
 
     private(set) var edge: DockEdge
-    private let edgeWindow: NSWindow
-    private let edgeView: EdgeView
+    private var zones: [EdgeZone] = []
     private let logger = Logger(subsystem: "com.james.portside", category: "EdgeTracker")
-    private var screenObserver: NSObjectProtocol?
+    private var observers: [NSObjectProtocol] = []
+    private var isRunning = false
 
     init(edge: DockEdge) {
         self.edge = edge
-        edgeView = EdgeView(frame: .zero)
-        edgeWindow = NSWindow(
-            contentRect: EdgeTracker.edgeFrame(for: edge),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        edgeWindow.backgroundColor = NSColor(white: 0, alpha: 0.01)
-        edgeWindow.isOpaque = false
-        edgeWindow.hasShadow = false
-        edgeWindow.alphaValue = 1
-        edgeWindow.ignoresMouseEvents = false
-        edgeWindow.level = EdgeTracker.windowLevel
-        edgeWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle, .stationary]
-        edgeWindow.isReleasedWhenClosed = false
-        edgeWindow.contentView = edgeView
-
-        edgeView.onMouseEntered = { [weak self] event in self?.onMouseEntered?(event) }
-        edgeView.onMouseExited = { [weak self] in self?.onMouseExited?() }
-        edgeView.onDragEntered = { [weak self] in self?.onDragEntered?() }
-        edgeView.onDragExited = { [weak self] reason in self?.onDragExited?(reason) }
-        edgeView.onMouseDown = { [weak self] event in
-            let p = NSEvent.mouseLocation
-            self?.logger.info("edge zone took a click at \(p.x, format: .fixed(precision: 1)),\(p.y, format: .fixed(precision: 1)) (button \(event.buttonNumber))")
-        }
     }
 
     deinit {
-        if let screenObserver {
-            NotificationCenter.default.removeObserver(screenObserver)
+        for observer in observers {
+            NotificationCenter.default.removeObserver(observer)
         }
+        tearDownZones()
     }
 
     // MARK: - Lifecycle
 
-    /// Show the edge window. Never activates the app.
+    /// Show an edge window on every screen. Never activates the app.
     func start() {
-        place()
-        edgeWindow.orderFrontRegardless()
-        if screenObserver == nil {
-            screenObserver = NotificationCenter.default.addObserver(
+        isRunning = true
+        rebuildZones()
+        if observers.isEmpty {
+            let center = NotificationCenter.default
+            observers.append(center.addObserver(
                 forName: NSApplication.didChangeScreenParametersNotification,
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                self?.place()
-            }
+                DockScreen.reconcileAfterScreenChange()
+                self?.rebuildZones()
+            })
+            // After a Space or fullscreen switch, re-assert edge windows so
+            // they stay above the new Space's content (canJoinAllSpaces alone
+            // is not always enough for ordering).
+            observers.append(center.addObserver(
+                forName: NSWorkspace.activeSpaceDidChangeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.reassertFront()
+            })
         }
     }
 
     func stop() {
-        edgeWindow.orderOut(nil)
-        logger.info("edge window hidden")
+        isRunning = false
+        for zone in zones {
+            zone.window.orderOut(nil)
+        }
+        logger.info("edge windows hidden")
     }
 
-    /// Move the edge zone to another screen edge.
+    /// Keep edge zones above the current Space / fullscreen app.
+    private func reassertFront() {
+        guard isRunning else { return }
+        for zone in zones {
+            zone.window.orderFrontRegardless()
+        }
+    }
+
+    /// Move the edge zones to another screen edge on every display.
     func setEdge(_ newEdge: DockEdge) {
         guard newEdge != edge else { return }
         edge = newEdge
-        place()
+        rebuildZones()
     }
 
-    /// Whether a point in screen coordinates is inside the edge zone.
+    /// Whether a point in screen coordinates is inside any edge zone.
     func containsScreenPoint(_ point: NSPoint) -> Bool {
-        edgeWindow.frame.contains(point)
+        zones.contains { $0.window.frame.contains(point) }
     }
 
     // MARK: - Geometry
 
-    private func place() {
-        edgeWindow.setFrame(EdgeTracker.edgeFrame(for: edge), display: false)
-        let f = edgeWindow.frame
-        logger.info("edge window on \(self.edge.rawValue, privacy: .public) edge at \(f.origin.x, format: .fixed(precision: 0)),\(f.origin.y, format: .fixed(precision: 0)) size \(f.width, format: .fixed(precision: 0))x\(f.height, format: .fixed(precision: 0))")
+    private func rebuildZones() {
+        tearDownZones()
+        for screen in NSScreen.screens {
+            let zone = EdgeZone(edge: edge, screen: screen)
+            zone.view.onMouseEntered = { [weak self, weak zone] event in
+                guard let self, let zone, let screen = zone.screen else { return }
+                self.onMouseEntered?(event, screen)
+            }
+            zone.view.onMouseExited = { [weak self] in self?.onMouseExited?() }
+            zone.view.onDragEntered = { [weak self, weak zone] in
+                guard let self, let zone, let screen = zone.screen else { return }
+                self.onDragEntered?(screen)
+            }
+            zone.view.onDragExited = { [weak self] reason in self?.onDragExited?(reason) }
+            zone.view.onMouseDown = { [weak self] event in
+                let p = NSEvent.mouseLocation
+                self?.logger.info("edge zone took a click at \(p.x, format: .fixed(precision: 1)),\(p.y, format: .fixed(precision: 1)) (button \(event.buttonNumber))")
+            }
+            zones.append(zone)
+            if isRunning {
+                zone.window.orderFrontRegardless()
+            }
+            let f = zone.window.frame
+            logger.info("edge window on \(self.edge.rawValue, privacy: .public) @\(f.origin.x, format: .fixed(precision: 0)),\(f.origin.y, format: .fixed(precision: 0)) \(f.width, format: .fixed(precision: 0))x\(f.height, format: .fixed(precision: 0))")
+        }
     }
 
-    /// The zone the cursor is pinned to when pushed against `edge` of the
-    /// primary screen. Side zones stop below the menu bar so the menu bar's
+    private func tearDownZones() {
+        for zone in zones {
+            zone.window.orderOut(nil)
+            zone.window.contentView = nil
+        }
+        zones.removeAll()
+    }
+
+    /// The zone the cursor is pinned to when pushed against `edge` of
+    /// `screen`. Side zones stop below the menu bar so the menu bar's
     /// corners never reveal the dock.
-    static func edgeFrame(for edge: DockEdge) -> NSRect {
-        let screen = DockScreen.frame
-        let visible = DockScreen.visibleFrame
+    static func edgeFrame(for edge: DockEdge, on screen: NSScreen) -> NSRect {
+        let frame = screen.frame
+        let visible = screen.visibleFrame
         let t = edgeThickness
         switch edge {
         case .bottom:
-            return NSRect(x: screen.minX, y: screen.minY, width: screen.width, height: t)
+            return NSRect(x: frame.minX, y: frame.minY, width: frame.width, height: t)
         case .left:
-            return NSRect(x: screen.minX, y: screen.minY, width: t, height: visible.maxY - screen.minY)
+            return NSRect(x: frame.minX, y: frame.minY, width: t, height: visible.maxY - frame.minY)
         case .right:
-            return NSRect(x: screen.maxX - t, y: screen.minY, width: t, height: visible.maxY - screen.minY)
+            return NSRect(x: frame.maxX - t, y: frame.minY, width: t, height: visible.maxY - frame.minY)
         }
+    }
+
+    /// Primary-screen helper for callers that have not switched yet.
+    static func edgeFrame(for edge: DockEdge) -> NSRect {
+        edgeFrame(for: edge, on: DockScreen.active)
+    }
+}
+
+// MARK: - Per-screen zone
+
+private final class EdgeZone {
+    let window: NSWindow
+    let view: EdgeView
+    /// Retained so callbacks can report which display was hit.
+    private(set) var screen: NSScreen?
+
+    init(edge: DockEdge, screen: NSScreen) {
+        self.screen = screen
+        view = EdgeView(frame: .zero)
+        window = NSWindow(
+            contentRect: EdgeTracker.edgeFrame(for: edge, on: screen),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.backgroundColor = NSColor(white: 0, alpha: 0.01)
+        window.isOpaque = false
+        window.hasShadow = false
+        window.alphaValue = 1
+        window.ignoresMouseEvents = false
+        window.level = EdgeTracker.windowLevel
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle, .stationary]
+        window.isReleasedWhenClosed = false
+        window.contentView = view
     }
 }
 

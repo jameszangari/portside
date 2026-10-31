@@ -38,8 +38,13 @@ final class IconCache: ObservableObject {
 
     private init() {
         scale = DockScreen.backingScale
-        observer = NotificationCenter.default.addObserver(
+        let center = NotificationCenter.default
+        observer = center.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.screenChanged() }
+        // Also when the dock moves to another display (different Retina scale).
+        center.addObserver(
+            forName: .dockScreenDidChange, object: nil, queue: .main
         ) { [weak self] _ in self?.screenChanged() }
     }
 

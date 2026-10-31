@@ -60,6 +60,12 @@ final class DockEngine {
     private var iconStyleSubscription: AnyCancellable?
     private var autoHideSubscription: AnyCancellable?
     private var accessibilityObserver: NSObjectProtocol?
+    /// Global mouse-up: after a button-held edge suppress, reveal if the
+    /// cursor is still in an edge zone when the button releases.
+    private var mouseUpMonitor: Any?
+    /// True while an edge enter was skipped because a mouse button was down
+    /// (window drag). Cleared on exit, reveal, or a successful mouse-up check.
+    private var revealSuppressedForButtonHold = false
 
     /// Timestamp (CACurrentMediaTime) of the mouseEntered that started the
     /// current reveal, used for the enter -> animation start -> interactive logs.
@@ -302,10 +308,11 @@ final class DockEngine {
             .filter { !$0 }
             .sink { [weak self] _ in self?.bouncer.cancel(reason: "setting turned off") }
 
-        edgeTracker.onMouseEntered = { [weak self] event in
-            self?.handleEnter(source: "edge", event: event)
+        edgeTracker.onMouseEntered = { [weak self] event, screen in
+            self?.handleEdgeEnter(event: event, screen: screen)
         }
         edgeTracker.onMouseExited = { [weak self] in
+            self?.revealSuppressedForButtonHold = false
             self?.handleExit(source: "edge")
         }
         dockPanel.onMouseEntered = { [weak self] event in
@@ -316,7 +323,10 @@ final class DockEngine {
             self?.magnifier.cursorExited()
             self?.handleExit(source: "panel")
         }
-        edgeTracker.onDragEntered = { [weak self] in self?.handleDragEntered("edge") }
+        edgeTracker.onDragEntered = { [weak self] screen in
+            self?.applyScreen(screen)
+            self?.handleDragEntered("edge")
+        }
         edgeTracker.onDragExited = { [weak self] reason in self?.handleDragExited("edge", reason: reason) }
         dockPanel.onDragEntered = { [weak self] in self?.handleDragEntered("panel") }
         dockPanel.onDragExited = { [weak self] reason in self?.handleDragExited("panel", reason: reason) }
@@ -354,7 +364,12 @@ final class DockEngine {
     func start() {
         trash.start()
         configureMagnifier()
+        // Seed active screen from the cursor before the first layout.
+        if let screen = DockScreen.screen(containing: NSEvent.mouseLocation) {
+            DockScreen.setActive(screen)
+        }
         dockPanel.prepareHidden()
+        installMouseUpMonitor()
         if accessibilityObserver == nil {
             accessibilityObserver = NotificationCenter.default.addObserver(
                 forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
@@ -366,7 +381,7 @@ final class DockEngine {
         }
         if dockModel.autoHide {
             edgeTracker.start()
-            logger.info("engine started, panel hidden, edge tracker armed")
+            logger.info("engine started, panel hidden, edge tracker armed on \(NSScreen.screens.count) screen(s)")
         } else {
             dockPanel.show(animated: false)
             logger.info("engine started, auto-hide off, panel revealed, edge tracker idle")
@@ -406,6 +421,8 @@ final class DockEngine {
         pendingHide = nil
         pendingReveal?.cancel()
         pendingReveal = nil
+        revealSuppressedForButtonHold = false
+        removeMouseUpMonitor()
         hover.clear()
         magnifier.reset()
         bouncer.cancel(reason: "engine stopped")
@@ -416,6 +433,64 @@ final class DockEngine {
         widgets.stopAll()
         trash.stop()
         logger.info("engine stopped")
+    }
+
+    // MARK: - Multi-display
+
+    /// Switch the dock to `screen` and relocate the panel if it changed.
+    @discardableResult
+    private func applyScreen(_ screen: NSScreen) -> Bool {
+        guard DockScreen.setActive(screen) else { return false }
+        groups.collapse(reason: "dock moved screens", animated: false)
+        stacks.collapse(reason: "dock moved screens", animated: false)
+        bouncer.cancel(reason: "dock moved screens")
+        magnifier.reset()
+        // Panel observes dockScreenDidChange and relocates itself.
+        logger.info("dock active screen \(screen.frame.width, format: .fixed(precision: 0))x\(screen.frame.height, format: .fixed(precision: 0))")
+        return true
+    }
+
+    /// Edge zone enter: pick that display first, then the normal enter path.
+    private func handleEdgeEnter(event: NSEvent, screen: NSScreen) {
+        applyScreen(screen)
+        handleEnter(source: "edge", event: event)
+    }
+
+    // MARK: - Button-hold suppress (window drag)
+
+    /// Global mouse-up so a suppressed edge enter can reveal after the
+    /// window drag (or any button hold) ends, if the cursor is still on an
+    /// edge. Local monitors miss ups owned by other apps.
+    private func installMouseUpMonitor() {
+        guard mouseUpMonitor == nil else { return }
+        mouseUpMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseUp, .rightMouseUp, .otherMouseUp]
+        ) { [weak self] _ in
+            self?.considerRevealAfterButtonUp()
+        }
+    }
+
+    private func removeMouseUpMonitor() {
+        if let mouseUpMonitor {
+            NSEvent.removeMonitor(mouseUpMonitor)
+            self.mouseUpMonitor = nil
+        }
+    }
+
+    /// After a button release: if we suppressed an edge reveal and the
+    /// cursor is still in an edge zone, reveal now.
+    private func considerRevealAfterButtonUp() {
+        guard revealSuppressedForButtonHold else { return }
+        revealSuppressedForButtonHold = false
+        guard dockModel.autoHide, !dockPanel.isRevealedOrRevealing else { return }
+        guard NSEvent.pressedMouseButtons == 0 else { return }
+        let location = NSEvent.mouseLocation
+        guard edgeTracker.containsScreenPoint(location) else { return }
+        if let screen = DockScreen.screen(containing: location) {
+            applyScreen(screen)
+        }
+        logger.info("edge mouseUp after button-hold suppress: revealing")
+        handleEnter(source: "edge", event: nil, trigger: "mouseUp")
     }
 
     /// Move the dock to another screen edge, live. The panel snaps hidden on
@@ -539,6 +614,17 @@ final class DockEngine {
         if dockPanel.isRevealedOrRevealing {
             return
         }
+
+        // Do not reveal while a mouse button is held (window drag, etc.).
+        // File drags use trigger "draggingEntered" and still reveal. After
+        // the button releases, considerRevealAfterButtonUp may reveal if the
+        // cursor is still on the edge.
+        if trigger == "mouseEntered", NSEvent.pressedMouseButtons != 0 {
+            revealSuppressedForButtonHold = true
+            logger.info("\(source, privacy: .public) enter suppressed: mouse button held (buttons \(NSEvent.pressedMouseButtons))")
+            return
+        }
+        revealSuppressedForButtonHold = false
 
         revealRequestedAt = CACurrentMediaTime()
         revealTrigger = trigger

@@ -14,11 +14,43 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **F:** [x] Hide the macOS Dock (autohide-delay trick only, exact save and restore); [x] launch at login (`SMAppService`); [x] a real .app bundle (`scripts/build-app.sh`); [x] import native orientation and tilesize as Portside's initial position and icon size; [x] a manual "Import from macOS Dock" action with undo; [x] import `persistent-others` folders as stacks (file tiles still skipped). First-launch seeding of pinned apps and folder stacks is built.
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
 - [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu (built on app tiles, group tiles, Portside's own tile and grid cells, hand test pending); divider right-click (built: Turn Hiding On/Off, Turn Magnification On/Off, Position on Screen, Dock Settings); Option turns Quit into Force Quit (built); drag apps in from Finder (built); drag icons out to remove (built, hand test pending); drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder, built); Option-click (hide frontmost) and Cmd+Option-click (hide others) (built); Hide/Show and Force Quit in the app menu (built); Cmd-Option-D show/hide (built)
-- [ ] **P2:** Trash (built and hand-tested); filesystem folder stacks (grid-first, hand-tested; fan/list deferred); section spacers (built); system glass + Reduce Transparency (built); spring-load apps forward (built); magnification (all edges). Fan/list still deferred.
-- [ ] **P3:** Follow the display the cursor hits; fullscreen apps and Spaces; badge counts via the real Dock's accessibility tree (Accessibility permission; private APIs only as fallback); window list in right-click menu with click to focus (Screen Recording for titles); VoiceOver labels and keyboard navigation; do not reveal while dragging a window or holding the mouse button (except file drags headed to the Dock)
+- [x] **P2:** Trash; folder stacks (grid-first; fan/list deferred); spacers; system glass + Reduce Transparency; spring-load apps; magnification. Hand-tested.
+- [ ] **P3:** [x] Follow the display the cursor hits; [x] fullscreen apps and Spaces (`canJoinAllSpaces` / `fullScreenAuxiliary` + re-front on Space change); [x] do not reveal while holding the mouse button / dragging a window (file drags still reveal); [ ] badge counts via the real Dock's accessibility tree; [ ] window list in the right-click menu; [ ] VoiceOver labels and keyboard navigation
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section; bounce on attention request (needs private APIs, not wanted for now)
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
+
+---
+
+# P3: Multi-display, Spaces, button-hold suppress (2026-10-31)
+
+Status: implemented, debug build and launch verified. Hand test pending (James: no second display available right now; multi-display checks deferred). Single-screen items (button-hold suppress, Spaces/fullscreen, file-drag reveal) also still pending confirmation. Badges, window list, and VoiceOver are the next slices.
+
+## Deliverables
+
+- [x] `DockScreen.active` follows the display whose edge the cursor hits; panel, layout fit limit, and icon scale relocate on `dockScreenDidChange`.
+- [x] One edge window per screen (same thickness and level as before). Screen-parameter changes rebuild zones; Space / fullscreen switches re-front edge windows and a revealed panel.
+- [x] Panel and edge windows keep `.canJoinAllSpaces` and `.fullScreenAuxiliary` so reveal works over fullscreen apps and across Spaces.
+- [x] Edge `mouseEntered` while any mouse button is held does not reveal (window drag). File `draggingEntered` still reveals. On mouse-up, if the cursor is still in an edge zone, reveal then.
+- [x] README Features / Planned / layout notes updated.
+
+## Verification
+
+- Swift 6.4.2, Xcode 27.2, macOS 27.0.1, arm64. `swift build` clean. `.build/debug/portside` stayed alive; logs showed edge armed and panel relocated to the active screen (1 screen in the agent environment).
+
+## Hand test
+
+- [ ] Two displays: move to the bottom (or side) edge of the external display: dock appears there. Move to the built-in edge: dock moves there. Check logs for `dock active screen` and `panel relocated`.
+- [ ] Auto-hide on: drag a window by its title bar across the dock edge: dock does not reveal. Release with the cursor still on the edge: dock reveals. Log should show `enter suppressed` then `mouseUp after button-hold suppress`.
+- [ ] Drag a file from Finder to the edge: dock still reveals (unchanged).
+- [ ] Fullscreen an app (Safari or Photos): bump the dock edge: Portside reveals over it. Switch Spaces with the dock up or hidden: edge still works; revealed panel stays front.
+- [ ] Single-display reveal/hide timing and hide-delay cancel still feel the same.
+
+## Deferred (later P3)
+
+- Badge counts (Accessibility / private fallback).
+- Window list in the app menu (Screen Recording for titles).
+- VoiceOver labels and keyboard navigation.
 
 ---
 
@@ -56,7 +88,7 @@ Status: done and hand-tested by James. Fan/list/sort deferred.
 
 # P2: Spacers, Reduce Transparency, app spring-load (2026-10-31)
 
-Status: implemented, debug build and launch verified. Hand test pending. New file: `Sources/portside/AppSpringLoad.swift`. dock.json: `DockEntry` type `spacer` (`{ type, spacer: { id, size } }`).
+Status: done and hand-tested by James. New file: `Sources/portside/AppSpringLoad.swift`. dock.json: `DockEntry` type `spacer` (`{ type, spacer: { id, size } }`).
 
 ## Deliverables
 
@@ -68,11 +100,11 @@ Status: implemented, debug build and launch verified. Hand test pending. New fil
 
 ## Hand test
 
-- [ ] Separator menu > Add Spacer (Regular and Small); drag to reorder; drag out to remove; right-click Remove Spacer.
-- [ ] Import from macOS Dock (or first-launch seed) keeps native spacers in place.
-- [ ] System Settings > Accessibility > Display > Reduce Transparency on/off: glass becomes opaque frosted live; off restores glass.
-- [ ] Drag a file from Finder onto a running app tile, hold ~0.6s: that app comes forward; drop still opens the file. Pass quickly: no activate.
-- [ ] Reveal/hide, groups, stacks unchanged.
+- [x] Separator menu > Add Spacer (Regular and Small); drag to reorder; drag out to remove; right-click Remove Spacer.
+- [x] Import from macOS Dock (or first-launch seed) keeps native spacers in place.
+- [x] System Settings > Accessibility > Display > Reduce Transparency on/off: glass becomes opaque frosted live; off restores glass.
+- [x] Drag a file from Finder onto a running app tile, hold ~0.6s: that app comes forward; drop still opens the file. Pass quickly: no activate.
+- [x] Reveal/hide, groups, stacks unchanged.
 
 ## Deferred
 

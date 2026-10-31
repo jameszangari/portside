@@ -11,16 +11,25 @@ final class DockLayout: ObservableObject {
     /// the strip. The Settings icon size slider stops here, the same limit
     /// the separator drag uses.
     @Published private(set) var fitTileSize: CGFloat = DockModel.iconSizeRange.upperBound
-    private var observer: NSObjectProtocol?
+    private var observers: [NSObjectProtocol] = []
 
     /// Room left for the panel's own insets and a small margin at each end.
     private let reservedLength: CGFloat = 40
 
     init() {
         update()
-        observer = NotificationCenter.default.addObserver(
-            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
-        ) { [weak self] _ in self?.update() }
+        let center = NotificationCenter.default
+        for name in [NSApplication.didChangeScreenParametersNotification, .dockScreenDidChange] {
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.update()
+            })
+        }
+    }
+
+    deinit {
+        for observer in observers {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 
     /// Longest the strip may be along `edge` (width on the bottom, height on

@@ -47,7 +47,7 @@ final class DockPanel {
     private var state: State = .hidden
     /// Incremented on every show/hide so stale animation completions can be ignored.
     private var generation = 0
-    private var screenObserver: NSObjectProtocol?
+    private var screenObservers: [NSObjectProtocol] = []
     /// Last size the strip reported. Nil until its first layout.
     private var measuredContentSize: CGSize?
 
@@ -133,19 +133,55 @@ final class DockPanel {
         hosting.onMouseDown = { [weak self] in self?.onMouseDown?() }
 
         layout()
-        screenObserver = NotificationCenter.default.addObserver(
+        let center = NotificationCenter.default
+        screenObservers.append(center.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             self?.layout()
-        }
+        })
+        screenObservers.append(center.addObserver(
+            forName: .dockScreenDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.relocateForActiveScreen()
+        })
+        // Stay above content after a Space / fullscreen switch.
+        screenObservers.append(center.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self, self.isRevealedOrRevealing else { return }
+            self.panel.orderFrontRegardless()
+        })
     }
 
     deinit {
-        if let screenObserver {
-            NotificationCenter.default.removeObserver(screenObserver)
+        for observer in screenObservers {
+            NotificationCenter.default.removeObserver(observer)
         }
+    }
+
+    /// Snap the panel to `DockScreen.active` after a multi-display switch.
+    /// Mid-slide generations are abandoned so the dock does not finish on the
+    /// old screen.
+    func relocateForActiveScreen() {
+        generation += 1
+        switch state {
+        case .hidden, .hiding:
+            state = .hidden
+            panel.setFrame(hiddenFrame, display: false)
+            if panel.isVisible { panel.orderOut(nil) }
+        case .revealed, .revealing:
+            state = .revealed
+            panel.setFrame(revealedFrame, display: true)
+            if !panel.isVisible { panel.orderFrontRegardless() }
+        }
+        layout(display: state == .revealed)
+        logger.info("panel relocated to active screen \(DockScreen.frame.width, format: .fixed(precision: 0))x\(DockScreen.frame.height, format: .fixed(precision: 0))")
     }
 
     // MARK: - Geometry

@@ -58,21 +58,66 @@ enum DockEdge: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-/// Screen used for the dock: the primary display. `NSScreen.main` follows
-/// the key window, which an accessory app does not have.
+extension Notification.Name {
+    /// `DockScreen.active` changed (multi-display: the dock moved screens).
+    static let dockScreenDidChange = Notification.Name("com.james.portside.dockScreenDidChange")
+}
+
+/// The screen the dock is attached to. Follows the display whose edge the
+/// cursor hit (P3). Falls back to the first screen. Prefer this over
+/// `NSScreen.main`, which tracks the key window an accessory app never has.
 enum DockScreen {
-    static var frame: NSRect {
-        NSScreen.screens.first?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+    private static var _active: NSScreen?
+
+    /// Screen the dock panel and layout use right now.
+    static var active: NSScreen {
+        if let current = _active,
+           let match = NSScreen.screens.first(where: { screensMatch($0, current) }) {
+            return match
+        }
+        return NSScreen.screens.first!
     }
 
-    /// Frame minus the menu bar (and any native Dock reservation).
-    static var visibleFrame: NSRect {
-        NSScreen.screens.first?.visibleFrame ?? frame
+    static var frame: NSRect { active.frame }
+
+    /// Frame minus the menu bar (and any native Dock reservation) on the
+    /// active screen.
+    static var visibleFrame: NSRect { active.visibleFrame }
+
+    /// Points to pixels (2 on Retina) for the active screen.
+    static var backingScale: CGFloat { active.backingScaleFactor }
+
+    /// Switch the dock to `screen`. No-op if it is already active.
+    @discardableResult
+    static func setActive(_ screen: NSScreen) -> Bool {
+        if let current = _active, screensMatch(current, screen) { return false }
+        _active = screen
+        NotificationCenter.default.post(name: .dockScreenDidChange, object: screen)
+        return true
     }
 
-    /// Points to pixels (2 on Retina).
-    static var backingScale: CGFloat {
-        NSScreen.screens.first?.backingScaleFactor ?? 2
+    /// Screen containing `point`, or nil if none (rare; between displays).
+    static func screen(containing point: NSPoint) -> NSScreen? {
+        NSScreen.screens.first { NSMouseInRect(point, $0.frame, false) }
+            ?? NSScreen.screens.first { $0.frame.contains(point) }
+    }
+
+    /// Keep `active` valid after displays change (unplug, resolution).
+    static func reconcileAfterScreenChange() {
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return }
+        if let current = _active,
+           let match = screens.first(where: { screensMatch($0, current) }) {
+            _active = match
+            return
+        }
+        let mouse = NSEvent.mouseLocation
+        _active = screen(containing: mouse) ?? screens.first
+        NotificationCenter.default.post(name: .dockScreenDidChange, object: _active)
+    }
+
+    private static func screensMatch(_ a: NSScreen, _ b: NSScreen) -> Bool {
+        a === b || a.frame == b.frame
     }
 }
 

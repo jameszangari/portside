@@ -30,6 +30,7 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - Dragging a file to the edge reveals the dock, and it stays up while the drag is over it. Hides with the normal delay after the drop or when the drag leaves.
 - Timing logs for mouseEntered (or draggingEntered), animation start, and panel-interactive.
 - Auto-hide toggle (menu bar item, separator right-click menu, Settings, or Cmd+Option+D). With hiding off, the dock stays revealed.
+- Multi-display: an edge zone on every screen; the dock follows the display whose edge you hit. Works across Spaces and over fullscreen apps. Does not reveal while you are holding a mouse button (for example dragging a window); file drags to the edge still reveal.
 
 **Apps**
 - Pinned apps with running indicators, updated from `NSWorkspace` notifications.
@@ -112,7 +113,7 @@ From `docs/CHECKLIST.md` and `docs/PLAN.md`:
 - Update checker: compare AppInfo.version with the latest GitHub release tag (vX.Y.Z), show 'up to date' or a link to the release. The Check for Updates button is a placeholder until then.
 - Native Dock parity: Open at Login in the app menu.
 - Trash: Option-click "Empty Trash without warning" and icon animation.
-- Multi-display, fullscreen and Spaces behavior, badges.
+- Native Dock parity leftovers: badge counts, window list in the app menu, VoiceOver / keyboard navigation.
 - Better widget layout on side docks.
 
 ## Requirements and build
@@ -219,10 +220,10 @@ The built app lives at `build/Portside.app` (ignored by git), and at `~/Applicat
 Sources/portside/
   PortsideApp.swift         Entry point (--restore-dock, --export-icon, crash recovery, signals), menu bar, About panel, app delegate
   DockEngine.swift          Coordinator for tracker, panel, hide timer, and model
-  EdgeTracker.swift         Edge window with NSTrackingArea (event-driven reveal)
-  DockPanel.swift           Non-activating NSPanel, slide animation, panel tracking
+  EdgeTracker.swift         Per-screen edge windows with NSTrackingArea (event-driven reveal)
+  DockPanel.swift           Non-activating NSPanel, slide animation, panel tracking, multi-display relocate
   DockModel.swift           Codable settings and entries, persistence to dock.json
-  DockEdge.swift            Bottom/Left/Right enum and screen selection
+  DockEdge.swift            Bottom/Left/Right enum and DockScreen (active display)
   DockStrip.swift           SwiftUI strip: tiles, widgets, separator, reorder, drops
   DockItem.swift            App tile, icon cache, launch/activate
   TileActions.swift         Modifier clicks (Cmd, Option) and the AppKit right-click menu with Force Quit
