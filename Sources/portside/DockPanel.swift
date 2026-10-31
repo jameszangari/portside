@@ -19,6 +19,8 @@ final class DockPanel {
     var onPanelInteractive: (() -> Void)?
     /// Fired when the reveal slide completes (or immediately if instant).
     var onRevealAnimationFinished: (() -> Void)?
+    /// Fired when the panel is off screen (hide finished, or parked hidden).
+    var onHidden: (() -> Void)?
     /// Cursor moved over the panel, in strip root coordinates (`DockHover.space`).
     var onStripMouseMoved: ((CGPoint) -> Void)?
     /// Any mouse button went down on the strip (click, drag, context menu).
@@ -64,6 +66,10 @@ final class DockPanel {
     /// When the window last grew or shrank for room. AppKit answers a shrink
     /// under a still cursor with an exit and an enter about 8ms apart.
     private var roomResizedAt: CFTimeInterval = 0
+    /// Watches for the cursor coming back while the panel ignores the mouse
+    /// (tiles settling after an exit). Exists only for that settle, about
+    /// 200ms; a global monitor because our window gets no events then.
+    private var settleReentryMonitor: Any?
 
     /// Screen edge the panel is attached to.
     private(set) var edge: DockEdge
@@ -214,6 +220,21 @@ final class DockPanel {
         }
     }
 
+    /// How far the shelf may widen past each end before it leaves the
+    /// visible frame, in strip content order (left then right on the
+    /// bottom, top then bottom on the sides).
+    var magnifyAlongLimits: (lead: CGFloat, trail: CGFloat) {
+        let base = baseRevealedFrame
+        let visible = DockScreen.visibleFrame.insetBy(dx: screenMargin, dy: screenMargin)
+        let i = insets
+        switch edge {
+        case .bottom:
+            return (base.minX + i.left - visible.minX, visible.maxX - (base.maxX - i.right))
+        case .left, .right:
+            return (visible.maxY - (base.maxY - i.top), base.minY + i.bottom - visible.minY)
+        }
+    }
+
     /// Same frame, pushed just past the screen edge.
     private var hiddenFrame: NSRect {
         var frame = revealedFrame
@@ -264,7 +285,10 @@ final class DockPanel {
     func setMagnifyRoom(_ newRoom: MagnifyRoom) {
         guard newRoom != room else { return }
         room = newRoom
-        if room == .zero { panel.ignoresMouseEvents = false }
+        if room == .zero {
+            panel.ignoresMouseEvents = false
+            removeSettleReentryMonitor()
+        }
         layoutIfSizeChanged()
     }
 
@@ -390,8 +414,12 @@ final class DockPanel {
         cursorInside = false
         // While the tiles settle back the room is still there; let clicks
         // above the dock through right away instead of after the settle.
-        // Mouse events come back when the room goes (`setMagnifyRoom`).
-        if room != .zero { panel.ignoresMouseEvents = true }
+        // Mouse events come back when the room goes (`setMagnifyRoom`), or
+        // as soon as the cursor is back over the shelf.
+        if room != .zero {
+            panel.ignoresMouseEvents = true
+            if state == .revealed { installSettleReentryMonitor() }
+        }
         guard !exitReported else { return }
         exitReported = true
         onMouseExited?()
@@ -417,6 +445,30 @@ final class DockPanel {
         if inside { onStripMouseMoved?(point) }
     }
 
+    /// The cursor came back over the shelf while the tiles were still
+    /// settling: take the mouse again and report the enter and the move at
+    /// once, so magnification resumes without waiting for the settle.
+    private func installSettleReentryMonitor() {
+        guard settleReentryMonitor == nil else { return }
+        settleReentryMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
+            guard let self, self.panel.ignoresMouseEvents, self.room != .zero else { return }
+            let location = NSEvent.mouseLocation
+            guard self.panel.isVisible, self.baseScreenFrame.contains(location) else { return }
+            self.removeSettleReentryMonitor()
+            self.panel.ignoresMouseEvents = false
+            self.logger.debug("cursor back over the shelf while settling")
+            let windowPoint = self.panel.convertPoint(fromScreen: location)
+            self.reportEnter(event)
+            self.onStripMouseMoved?(self.stripPoint(fromWindowPoint: windowPoint))
+        }
+    }
+
+    private func removeSettleReentryMonitor() {
+        guard let monitor = settleReentryMonitor else { return }
+        NSEvent.removeMonitor(monitor)
+        settleReentryMonitor = nil
+    }
+
     private func reportEnter(_ event: NSEvent) {
         cursorInside = true
         exitReported = false
@@ -428,10 +480,12 @@ final class DockPanel {
     /// Put the panel in its hidden state without animation and keep it off screen.
     func prepareHidden() {
         panel.ignoresMouseEvents = false
+        removeSettleReentryMonitor()
         generation += 1
         state = .hidden
         panel.setFrame(hiddenFrame, display: false)
         panel.orderOut(nil)
+        onHidden?()
     }
 
     /// Slide the panel in from its edge. Non-activating: the frontmost
@@ -446,6 +500,7 @@ final class DockPanel {
             panel.setFrame(hiddenFrame, display: false)
         }
         panel.ignoresMouseEvents = false
+        removeSettleReentryMonitor()
         panel.orderFrontRegardless()
 
         let target = revealedFrame
@@ -476,6 +531,7 @@ final class DockPanel {
         generation += 1
         let myGeneration = generation
         state = .hiding
+        removeSettleReentryMonitor()
 
         let target = hiddenFrame
         let duration = effectiveDuration(animated: animated)
@@ -510,6 +566,7 @@ final class DockPanel {
         cursorInside = false
         layoutIfSizeChanged()
         logger.info("panel hidden")
+        onHidden?()
     }
 
     /// Animation duration honoring the instant option and Reduce Motion.

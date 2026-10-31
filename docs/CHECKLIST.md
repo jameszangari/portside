@@ -13,8 +13,8 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [x] **E:** Settings window (reveal/hide delay, animation, icon size, magnification, dock position, widgets, groups) applying live; includes auto-hide toggle with Cmd+Option+D, Portside as a regular app while Settings is open, inline group naming and rename, open groups on hover
 - [ ] **F:** [x] Hide the macOS Dock (autohide-delay trick only, exact save and restore); [x] launch at login (`SMAppService`); [x] a real .app bundle (`scripts/build-app.sh`); [x] import native orientation and tilesize as Portside's initial position and icon size; [x] a manual "Import from macOS Dock" action with undo; [ ] import `persistent-others` (deferred until folder stacks exist). First-launch seeding of pinned apps from `persistent-apps` is built.
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
-- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu (built on app tiles and grid cells, hand test pending; group tiles still use right-click only); divider right-click (built: Turn Hiding On/Off, Turn Magnification On/Off, Position on Screen, Dock Settings); Option turns Quit into Force Quit (built); drag apps in from Finder (built); drag icons out to remove (built, hand test pending); drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder, built); Option-click (hide frontmost) and Cmd+Option-click (hide others) (built); Hide/Show and Force Quit in the app menu (built); Cmd-Option-D show/hide (built)
-- [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); right-click Trash shows Empty Trash; filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag (built for app groups; folder stacks not yet); magnification (bottom edge built, see below; side edges and polish next)
+- [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu (built on app tiles, group tiles, Portside's own tile and grid cells, hand test pending); divider right-click (built: Turn Hiding On/Off, Turn Magnification On/Off, Position on Screen, Dock Settings); Option turns Quit into Force Quit (built); drag apps in from Finder (built); drag icons out to remove (built, hand test pending); drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder, built); Option-click (hide frontmost) and Cmd+Option-click (hide others) (built); Hide/Show and Force Quit in the app menu (built); Cmd-Option-D show/hide (built)
+- [ ] **P2:** Trash (full/empty + drag-to-trash, Full Disk Access note); right-click Trash shows Empty Trash; filesystem folder stacks (fan/grid/list, separate from app groups); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag (built for app groups; folder stacks not yet); magnification (built on all three edges, see the part 2 section)
 - [ ] **P3:** Follow the display the cursor hits; fullscreen apps and Spaces; badge counts via the real Dock's accessibility tree (Accessibility permission; private APIs only as fallback); window list in right-click menu with click to focus (Screen Recording for titles); VoiceOver labels and keyboard navigation; do not reveal while dragging a window or holding the mouse button (except file drags headed to the Dock)
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section; bounce on attention request (needs private APIs, not wanted for now)
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
@@ -22,9 +22,66 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 
 ---
 
+# Magnification, part 2: side edges and polish (2026-10-31)
+
+Status: built and agent-tested with synthetic input on all three edges, waiting for James's hand test. No new files, no new dock.json keys.
+
+## Deliverables
+
+- [x] Left and Right: same falloff, settings and off-during-drag rules. Icons grow sideways away from the screen edge (scale anchored at the screen side), the shelf keeps its width and lengthens, widgets and separators shift without growing. Room, hit areas, the active band and hover frames are all edge-aware now.
+- [x] Fix found while testing: at launch the strip reported its tiles before the magnifier knew the edge (it defaulted to bottom), so side docks measured tiles along x and nothing grew. The magnifier keeps the raw targets and re-reads them when the edge changes.
+- [x] Long docks: the shelf stays inside the visible frame. If widening around the cursor would push an end off screen (or under the menu bar on the sides), the growth goes to the other end; only past both limits does it spill evenly. Tested with 30 entries on Left, Right and Bottom.
+- [x] Side docks: the column is as wide as the widest widget, so while magnified a tile's hover frame reaches the shelf's screen-side edge (the cursor there already magnifies that tile). Off: unchanged.
+- [x] Labels: anchored on the magnified frame on every edge, centered on the icon, usual bubble gap. They slide with the tiles (ease-out about the spring's response) instead of jumping to where the tile is headed; a label that opens as the tiles start to grow starts at the normal frame and rises with the icon.
+- [x] Launch bounce while magnified: **bounce at the live magnified size and keep magnifying** (picked over freezing the tile: freezing left the dock unresponsive for the whole launch). Magnification no longer pauses for a bounce. The bounce layer follows its tile's size and slot with the same spring as the tiles (Core Animation spring with the same response and damping), inside a bounce window with room around it so the window never moves mid-follow. The icon is drawn once at the magnified size and scaled down (trilinear). Magnification off: exact old behavior (tile-size bitmap, same window).
+- [x] Group tiles and Portside's own tile use the shared AppKit menu path (`appKitContextMenu` with `MenuHold`): right-click and press-and-hold work on the full magnified icon and the menu opens above it. Group tile menu: Rename, Ungroup, Remove from Dock. Portside tile: Settings..., Quit.
+- [x] Quick re-entry: while tiles settle after an exit the panel ignores the mouse (clicks above pass through); a global mouse-moved monitor that exists only during that settle takes the mouse back as soon as the cursor is over the shelf and resumes magnification at once.
+- [x] Control-Shift flips magnification while held (on to off, off to on). Flags-changed monitors (global plus local) exist only while the dock is revealed; each mouse move over the dock also reports the modifier state. Settings shows a hint under the Magnification toggle.
+- [x] Menus and the keyboard: while any dock menu tracks, a 1x1 invisible non-activating panel takes key focus, so key events reach the menu while the frontmost app stays active. Ordering it out after gives focus back. Log category `TileActions`: "menu opened (key focus borrowed ...)" and "menu closed, frontmost app ...".
+- [x] Group grid while magnified: opens the usual gap from the tile's normal position and stays there while the tiles settle (screenshots on all three edges: no movement between the first frame and the settled frame).
+
+## Verification (agent, synthetic input, screenshots)
+
+- `swift build` and `swift build -c release` clean. `swift run` launches; SIGTERM quits and the native Dock comes back (`autohide-delay` removed). Your dock.json was backed up, swapped for test configs (30 entries, each edge) and restored byte for byte.
+- Reveal timing unchanged: mouseEntered -> animation start 0.9 to 2.1ms, finished about 145 to 150ms.
+- Left and Right with 30 entries plus widgets: growth sideways, label beside the magnified icon, shelf clamped below the menu bar at the top end. Bottom with 30 entries: shelf stays on screen at both ends.
+- Bounce (triggered with a temporary debug hook, removed): Calculator bounced at 64pt (tile 32pt) with magnification on, kept bouncing at the shrinking size and new slot as the cursor moved along, and the tiles settled normally on exit.
+- Right-click and press-and-hold on the raised part of a magnified group tile opened the group's menu above it. Press-and-hold on an app tile still works.
+- Escape: a menu left open 2.5s stayed open, then closed about 0.3s after a synthetic Escape posted at the HID level (the same route real keys take). Frontmost app unchanged, Portside never active.
+- Re-entry: out of the dock and back over the shelf within about 100ms: "cursor back over the shelf while settling", tiles magnified again in the next screenshot.
+- Control-Shift: held -> tiles settle and the label drops to the normal tile; released -> magnified again, without moving the mouse.
+- Mouse-move cost unchanged: handler about 100 to 150us, whole turn about 2.4 to 3.3ms average.
+
+## Known gaps
+
+- The global flags monitor worked here because this shell has Accessibility access. A built Portside.app without it may get no global flags events; then Control-Shift applies on the next mouse move over the dock instead of instantly. No prompt is shown either way.
+- Borrowing key focus for a menu takes key status from the frontmost app's window while the menu is open (it stays the active app, like Spotlight). Real typing into the frontmost app right after a menu closes is untested here.
+- A plain synthetic click still does not launch an app (see the app click regression section), so click-to-launch while magnified is only verified through the debug hook.
+- One synthetic press-and-hold on a group tile, sent 250ms after a menu closed with no mouse move between, did not open the menu; with a move first it worked every time. Watch for this in the hand test.
+- Widget right-click still uses SwiftUI `.contextMenu` (widgets do not magnify), so the keyboard fix does not cover the Remove Widget menu.
+- The bounce icon is drawn from the magnified-size bitmap even after the tiles settle back mid-bounce; it is scaled down with trilinear filtering, so the hand-off back to the tile may look a hair different.
+- Menus still turn magnification off while open (part 1 behavior).
+
+## Hand test (do each on Bottom, Left and Right; Settings > General > Position)
+
+- [ ] Sweep slowly and fast: smooth growth away from the edge, about 2 tiles of falloff, widgets and separators move but do not grow, still cursor never jitters. On a side dock, also sweep along the screen-edge side of the column
+- [ ] With many apps (27+ plus widgets), sweep to both ends: the shelf stays on screen (and below the menu bar on the sides)
+- [ ] Labels: sit the usual gap from the magnified icon's top (or outer side), centered, slide along with it without flicker, including the first label right after entering
+- [ ] Click an app (launch and activate), right-click and press-and-hold an app tile and a group tile, including the raised part: the right menu, above (beside) the magnified icon
+- [ ] Click a not-running app while magnified: it bounces at the magnified size, magnification keeps following the cursor, no jump; move off the dock mid-bounce: tiles and bounce shrink back together
+- [ ] Leave the dock and come straight back within about 200ms: magnification picks up at once
+- [ ] Hold Control-Shift over the dock: magnification turns off; release: back on. With Magnification off in Settings, Control-Shift turns it on while held. Note whether it is instant or needs a mouse move (Accessibility, see gaps)
+- [ ] Open a menu (right-click and press-and-hold): Escape closes it, arrow keys and Return work, and afterwards typing goes to the frontmost app as before
+- [ ] Click a group tile while magnified: the grid opens the usual gap from the tile's normal spot and does not move as the tiles settle
+- [ ] Open Settings so Portside's own tile shows: right-click and hold on it give Settings... and Quit
+- [ ] Turn Magnification off: dock looks and behaves exactly as before
+- [ ] Reveal timing in the log unchanged (`log stream --level info --predicate 'subsystem == "com.james.portside"'`)
+
+---
+
 # Magnification, part 1: bottom edge, engine and setting (2026-10-31)
 
-Status: built and agent-tested with synthetic input on the bottom edge, waiting for James's hand test. Part 2 (side edges, labels, drags, bounce, grids polish) is next.
+Status: built and agent-tested with synthetic input on the bottom edge, waiting for James's hand test. Part 2 (above) addresses the known gaps below except the icon margins and menus turning magnification off.
 
 ## Deliverables
 

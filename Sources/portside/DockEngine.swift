@@ -29,6 +29,7 @@ final class DockEngine {
     private let groups: GroupController
     private let bouncer: LaunchBouncer
     private let magnifier = Magnifier()
+    private let flipKeys = MagnifyFlipKeys()
     private var magnifySubscriptions: [AnyCancellable] = []
     private var bounceSettingSubscription: AnyCancellable?
     private let logger = Logger(subsystem: "com.james.portside", category: "DockEngine")
@@ -121,10 +122,25 @@ final class DockEngine {
         hover.displayFrame = { [weak magnifier] target in
             magnifier?.displayFrame(id: target.id, base: target.frame) ?? target.frame
         }
+        hover.tileMotion = { [weak magnifier] in
+            guard let magnifier, let motion = magnifier.lastMotion else { return (0, false) }
+            // An ease-out of about the spring's response tracks it closely.
+            return (motion.response * 1.1, magnifier.lastChangeEngaged)
+        }
         magnifier.onRoomChanged = { [weak dockPanel] room in dockPanel?.setMagnifyRoom(room) }
         magnifier.contentSizeProvider = { [weak dockPanel] in dockPanel?.stripSize ?? .zero }
+        magnifier.alongLimitsProvider = { [weak dockPanel] in dockPanel?.magnifyAlongLimits ?? (.infinity, .infinity) }
+        // A bouncing strip tile keeps its magnified size and follows it.
+        magnifier.onLayoutChanged = { [weak bouncer] in bouncer?.magnificationChanged() }
+        bouncer.magnifiedDrawSize = { [weak magnifier] in magnifier?.maxDrawnSize ?? 0 }
+        bouncer.magnifiedReach = { [weak magnifier] in magnifier?.maxDisplacement ?? 0 }
+        bouncer.magnifyMotion = { [weak magnifier] in magnifier?.lastMotion }
+        flipKeys.onChange = { [weak self] held in self?.magnifyFlipChanged(held) }
         dockPanel.onStripMouseMoved = { [weak self] point in
             guard let self, self.dockPanel.isRevealed else { return }
+            // Control-Shift state rides along with every move (works even
+            // when the global flags monitor gets nothing).
+            self.flipKeys.update(NSEvent.modifierFlags)
             // Magnify first, so the label hit-tests the new layout.
             self.magnifier.cursorMoved(to: point)
             self.hover.cursorMoved(to: point)
@@ -230,11 +246,8 @@ final class DockEngine {
         ].map {
             $0.receive(on: DispatchQueue.main).sink { [weak self] in self?.configureMagnifier() }
         }
-        // An open group grid, or a launch bounce (it draws the unmagnified
-        // tile for now), turns magnification off until it ends.
+        // An open group grid turns magnification off until it closes.
         magnifySubscriptions.append(groups.$expandedID.removeDuplicates().receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.updateMagnifierSuspension() })
-        magnifySubscriptions.append(bouncer.$bouncingID.removeDuplicates().receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.updateMagnifierSuspension() })
         bounceSettingSubscription = dockModel.$animateOpeningApplications
             .removeDuplicates()
@@ -269,7 +282,10 @@ final class DockEngine {
         }
         dockPanel.onRevealAnimationStarted = { [weak self] in
             self?.logTiming(label: "animation start")
+            // After the timing log: the reveal path itself is unchanged.
+            self?.flipKeys.start()
         }
+        dockPanel.onHidden = { [weak self] in self?.flipKeys.stop() }
         dockPanel.onPanelInteractive = { [weak self] in
             self?.logTiming(label: "panel interactive")
         }
@@ -368,9 +384,21 @@ final class DockEngine {
         magnifier.configure(enabled: dockModel.magnificationEnabled, size: dockModel.magnifiedSize, edge: dockModel.edge)
     }
 
+    /// Control-Shift went down or up while the dock is up: flip
+    /// magnification and apply it at once if the cursor is over the dock.
+    private func magnifyFlipChanged(_ held: Bool) {
+        guard magnifier.setFlipped(held), dockPanel.isRevealed else { return }
+        let location = NSEvent.mouseLocation
+        guard dockPanel.containsScreenPoint(location),
+              let point = dockPanel.stripPoint(forScreenPoint: location) else { return }
+        magnifier.cursorMoved(to: point)
+        hover.cursorMoved(to: point)
+    }
+
     /// Off during any drag (reorder, drag-out, file drag, separator resize),
-    /// while a group grid, menu or the remove-group alert is open, and while
-    /// a launch bounce plays. Back on with the next mouse move after.
+    /// and while a group grid, menu or the remove-group alert is open. Back
+    /// on with the next mouse move after. A launch bounce does not stop it:
+    /// the bouncing icon follows its magnified tile.
     private func updateMagnifierSuspension() {
         var reasons: [String] = []
         if menuIsOpen { reasons.append("menu") }
@@ -379,7 +407,6 @@ final class DockEngine {
         if !dragTargets.isEmpty { reasons.append("file drag") }
         if groups.expandedID != nil { reasons.append("group open") }
         if isConfirmingRemoval { reasons.append("alert") }
-        if bouncer.bouncingID != nil { reasons.append("bounce") }
         magnifier.setSuspended(!reasons.isEmpty, reason: reasons.isEmpty ? "clear" : reasons.joined(separator: ", "))
     }
 

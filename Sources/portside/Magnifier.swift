@@ -33,13 +33,24 @@ final class Magnifier: ObservableObject {
     /// The panel needs extra room (above and on both sides) while tiles are
     /// magnified or settling, and none otherwise. Zero means none.
     var onRoomChanged: ((MagnifyRoom) -> Void)?
+    /// Runs right after every change to `layout` (things drawn outside the
+    /// strip, like the launch bounce, follow the tiles with `lastMotion`).
+    var onLayoutChanged: (() -> Void)?
+    /// How far the shelf may widen past each end (content leading, trailing)
+    /// before it leaves the visible screen. Nil: no limit.
+    var alongLimitsProvider: (() -> (lead: CGFloat, trail: CGFloat))?
 
     private(set) var edge: DockEdge = .bottom
     private var settingEnabled = false
+    /// Control-Shift held over the dock: magnification flips (on becomes
+    /// off, off becomes on) until it is released.
+    private var flipped = false
     private var magnifiedSize: CGFloat = DockModel.Defaults.magnifiedSize
     private var suspended = false
     /// Unmagnified tile frames along the strip, sorted.
     private var tiles: [TileSlot] = []
+    /// The hover targets `tiles` came from, to rebuild them for a new edge.
+    private var targets: [HoverTarget] = []
     /// Unmagnified strip content size (the shelf), from the panel.
     var contentSizeProvider: (() -> CGSize)?
     private var contentSize: CGSize { contentSizeProvider?() ?? .zero }
@@ -54,10 +65,27 @@ final class Magnifier: ObservableObject {
         var start: CGFloat
         var length: CGFloat
         var crossStart: CGFloat
+        var crossEnd: CGFloat
     }
 
-    /// Bottom edge only for now. Side edges come next.
-    var isActive: Bool { settingEnabled && edge == .bottom && magnifiedSize > minTileLength }
+    var isActive: Bool { settingEnabled != flipped && magnifiedSize > minTileLength }
+
+    /// Spring of the latest layout change, nil if it was instant (Reduce
+    /// Motion, a reset). The launch bounce and labels move with it.
+    private(set) var lastMotion: MagnifyMotion?
+    /// The latest layout change grew the tiles from their normal size.
+    private(set) var lastChangeEngaged = false
+
+    /// Largest size a tile can be drawn at right now (its own size if
+    /// magnification is off).
+    var maxDrawnSize: CGFloat { isActive ? max(magnifiedSize, minTileLength) : 0 }
+
+    /// Upper bound on how far a magnified tile can move from its slot along
+    /// the strip, or grow away from the edge.
+    var maxDisplacement: CGFloat {
+        guard isActive else { return 0 }
+        return max(0, magnifiedSize - minTileLength) * (Self.radius + 1)
+    }
 
     var isMagnified: Bool { layout.focus != nil }
 
@@ -75,7 +103,12 @@ final class Magnifier: ObservableObject {
         let toggled = enabled != settingEnabled || edge != self.edge
         settingEnabled = enabled
         magnifiedSize = size
-        self.edge = edge
+        if edge != self.edge {
+            self.edge = edge
+            // The strip may have reported its tiles before the edge was set
+            // (at launch): re-read them along the new axis.
+            tiles = Self.slots(from: targets, vertical: edge.isVertical)
+        }
         if toggled {
             magnifyLogger.info("magnification \(enabled ? "on" : "off", privacy: .public), size \(size, format: .fixed(precision: 0))pt, edge \(edge.rawValue, privacy: .public)")
         } else {
@@ -83,13 +116,26 @@ final class Magnifier: ObservableObject {
         }
         if isActive, let focus = layout.focus {
             updateRoom()
-            apply(focus: focus, animation: Self.followAnimation)
+            apply(focus: focus, motion: Self.followMotion)
         } else {
             settle(animated: true)
         }
     }
 
-    /// Drag sessions, an open group grid or menu, a bounce: tiles settle
+    /// Control-Shift pressed or released while the dock is up. True if that
+    /// changed anything. Turning off settles; turning on waits for the
+    /// caller to report the cursor.
+    @discardableResult
+    func setFlipped(_ value: Bool) -> Bool {
+        guard value != flipped else { return false }
+        let wasActive = isActive
+        flipped = value
+        magnifyLogger.info("Control-Shift \(value ? "held" : "released", privacy: .public): magnification \(self.isActive ? "on" : "off", privacy: .public)")
+        if wasActive && !isActive { settle(animated: true) }
+        return wasActive != isActive
+    }
+
+    /// Drag sessions, an open group grid or menu: tiles settle
     /// back and stay unmagnified until the next mouse move after this ends.
     func setSuspended(_ value: Bool, reason: String) {
         guard value != suspended else { return }
@@ -100,19 +146,24 @@ final class Magnifier: ObservableObject {
 
     /// Hover target frames from the strip (unmagnified, content space).
     func updateTiles(_ targets: [HoverTarget]) {
-        let vertical = edge.isVertical
-        let slots = targets.map { t in
-            TileSlot(id: t.id,
-                     start: vertical ? t.frame.minY : t.frame.minX,
-                     length: vertical ? t.frame.height : t.frame.width,
-                     crossStart: vertical ? t.frame.minX : t.frame.minY)
-        }.sorted { $0.start < $1.start }
+        self.targets = targets
+        let slots = Self.slots(from: targets, vertical: edge.isVertical)
         guard slots != tiles else { return }
         tiles = slots
         if let focus = layout.focus {
             updateRoom()
-            apply(focus: focus, animation: nil)
+            apply(focus: focus, motion: nil)
         }
+    }
+
+    private static func slots(from targets: [HoverTarget], vertical: Bool) -> [TileSlot] {
+        targets.map { t in
+            TileSlot(id: t.id,
+                     start: vertical ? t.frame.minY : t.frame.minX,
+                     length: vertical ? t.frame.height : t.frame.width,
+                     crossStart: vertical ? t.frame.minX : t.frame.minY,
+                     crossEnd: vertical ? t.frame.maxX : t.frame.maxY)
+        }.sorted { $0.start < $1.start }
     }
 
     /// Cursor over the dock's active region, in content coordinates.
@@ -130,7 +181,7 @@ final class Magnifier: ObservableObject {
             updateRoom()
             stats.begin()
         }
-        apply(focus: focus, animation: engaging ? Self.engageAnimation : Self.followAnimation)
+        apply(focus: focus, motion: engaging ? Self.engageMotion : Self.followMotion)
         stats.recordMove(handlerSeconds: CACurrentMediaTime() - started)
     }
 
@@ -156,8 +207,15 @@ final class Magnifier: ObservableObject {
         let length = vertical ? contentSize.height : contentSize.width
         let crossLength = vertical ? contentSize.width : contentSize.height
         guard along >= -layout.leading, along <= length + layout.trailing else { return false }
-        let top = (tiles.map(\.crossStart).min() ?? 0) - layout.maxLift
-        return cross >= top && cross <= crossLength
+        // The shelf, plus the band past the tiles' far side.
+        switch edge {
+        case .bottom, .right:
+            let far = (tiles.map(\.crossStart).min() ?? 0) - layout.maxLift
+            return cross >= min(0, far) && cross <= crossLength
+        case .left:
+            let far = (tiles.map(\.crossEnd).max() ?? 0) + layout.maxLift
+            return cross >= 0 && cross <= max(crossLength, far)
+        }
     }
 
     /// Where a tile is drawn right now (target values, not mid-spring), in
@@ -166,22 +224,44 @@ final class Magnifier: ObservableObject {
         guard layout.focus != nil else { return base }
         let scale = layout.scales[id] ?? 1
         let shift = layout.shifts[id] ?? 0
-        // Bottom dock: the icon is as wide as the tile and grows upward.
-        let lift = (scale - 1) * base.width
         var frame = base
-        frame.size.width = base.width * scale
-        frame.origin.x = base.midX + shift - frame.width / 2
-        frame.origin.y = base.minY - lift
-        frame.size.height = base.height + lift
+        if edge.isVertical {
+            // Side docks: the icon is as tall as the tile and grows sideways.
+            let lift = (scale - 1) * base.height
+            frame.size.height = base.height * scale
+            frame.origin.y = base.midY + shift - frame.height / 2
+            frame.size.width = base.width + lift
+            if edge == .right { frame.origin.x = base.minX - lift }
+            // Reach the shelf's screen-edge side too: the column is as wide
+            // as the widest widget, and the cursor there magnifies this tile,
+            // so it should hover it as well. Labels and the bounce use the
+            // far side, which this leaves alone.
+            if edge == .left {
+                frame.size.width += frame.minX
+                frame.origin.x = 0
+            } else {
+                frame.size.width = max(frame.width, contentSize.width - frame.minX)
+            }
+        } else {
+            // Bottom dock: the icon is as wide as the tile and grows upward.
+            let lift = (scale - 1) * base.width
+            frame.size.width = base.width * scale
+            frame.origin.x = base.midX + shift - frame.width / 2
+            frame.origin.y = base.minY - lift
+            frame.size.height = base.height + lift
+        }
         return frame
     }
 
     // MARK: - Layout math
 
-    private func apply(focus: CGFloat, animation: Animation?) {
+    private func apply(focus: CGFloat, motion: MagnifyMotion?) {
         let next = computeLayout(focus: focus)
         guard next != layout else { return }
-        withAnimation(animation) { layout = next }
+        lastChangeEngaged = layout.focus == nil
+        lastMotion = motion
+        withAnimation(motion?.animation) { layout = next }
+        onLayoutChanged?()
     }
 
     private func computeLayout(focus: CGFloat) -> MagnifyLayout {
@@ -207,20 +287,33 @@ final class Magnifier: ObservableObject {
             }
         }
 
+        // The point under the cursor stays put, unless that would push the
+        // shelf off screen (a long dock near its ends): then the growth moves
+        // to the other end, and only past both limits does it spill evenly.
+        let total = growth.reduce(0, +)
+        var lead = atFocus
+        if let limits = alongLimitsProvider?() {
+            let roomLead = max(0, limits.lead)
+            let roomTrail = max(0, limits.trail)
+            lead = total <= roomLead + roomTrail
+                ? min(max(atFocus, total - roomTrail), roomLead)
+                : roomLead + (total - roomLead - roomTrail) / 2
+        }
+
         var result = MagnifyLayout()
         result.focus = focus
         var before: CGFloat = 0
         for (tile, grow) in zip(tiles, growth) {
             result.scales[tile.id] = 1 + grow / tile.length
-            result.shifts[tile.id] = before + grow / 2 - atFocus
+            result.shifts[tile.id] = before + grow / 2 - lead
             result.growths[tile.id] = grow
             result.steps.append(.init(center: tile.start + tile.length / 2, growthThrough: before + grow))
             before += grow
             result.maxLift = max(result.maxLift, grow)
         }
-        result.growthAtFocus = atFocus
-        result.leading = atFocus
-        result.trailing = before - atFocus
+        result.growthAtFocus = lead
+        result.leading = lead
+        result.trailing = total - lead
         return result
     }
 
@@ -244,33 +337,59 @@ final class Magnifier: ObservableObject {
         stats.end()
         let finish = { [weak self] in
             guard let self, self.generation == myGeneration, self.layout.focus == nil else { return }
+            self.lastMotion = nil
             self.room = .zero
             self.onRoomChanged?(.zero)
         }
+        lastChangeEngaged = false
         guard animated, !Self.reduceMotion, layout.focus != nil else {
+            lastMotion = nil
             withAnimation(nil) { layout = MagnifyLayout() }
+            onLayoutChanged?()
             finish()
             return
         }
-        withAnimation(Self.settleAnimation, completionCriteria: .logicallyComplete) {
+        lastMotion = Self.settleMotion
+        withAnimation(Self.settleMotion.animation, completionCriteria: .logicallyComplete) {
             layout = MagnifyLayout()
         } completion: {
             finish()
         }
+        onLayoutChanged?()
     }
 
     // MARK: - Motion (Reduce Motion: follow the cursor with no spring)
 
-    private static var engageAnimation: Animation? {
-        reduceMotion ? nil : .spring(response: 0.16, dampingFraction: 0.86)
+    private static var engageMotion: MagnifyMotion? {
+        reduceMotion ? nil : MagnifyMotion(response: 0.16, dampingFraction: 0.86)
     }
 
-    private static var followAnimation: Animation? {
-        reduceMotion ? nil : .interactiveSpring(response: 0.12, dampingFraction: 0.86)
+    private static var followMotion: MagnifyMotion? {
+        reduceMotion ? nil : MagnifyMotion(response: 0.12, dampingFraction: 0.86, interactive: true)
     }
 
-    private static var settleAnimation: Animation {
-        .spring(response: 0.2, dampingFraction: 0.92)
+    private static let settleMotion = MagnifyMotion(response: 0.2, dampingFraction: 0.92)
+}
+
+/// One of the magnifier's springs, so views outside SwiftUI (the bounce
+/// layer, the label window) can move the same way.
+struct MagnifyMotion: Equatable {
+    var response: Double
+    var dampingFraction: Double
+    var interactive = false
+
+    var animation: Animation {
+        interactive
+            ? .interactiveSpring(response: response, dampingFraction: dampingFraction)
+            : .spring(response: response, dampingFraction: dampingFraction)
+    }
+
+    /// The same spring for Core Animation.
+    func caSpring(keyPath: String) -> CASpringAnimation {
+        let spring = CASpringAnimation(perceptualDuration: response, bounce: 1 - dampingFraction)
+        spring.keyPath = keyPath
+        spring.duration = spring.settlingDuration
+        return spring
     }
 }
 
@@ -312,6 +431,49 @@ struct MagnifyLayout: Equatable {
         guard focus != nil else { return 0 }
         let through = steps.last { $0.center < center }?.growthThrough ?? 0
         return through - growthAtFocus
+    }
+}
+
+// MARK: - Control-Shift flip
+
+/// Holding Control and Shift over the dock flips magnification, like the
+/// native Dock. Flags-changed monitors exist only while the dock is up
+/// (`start` on reveal, `stop` on hide), so there is no cost otherwise.
+///
+/// The global monitor sees modifier changes while another app is
+/// frontmost; macOS may withhold those without Accessibility access, so
+/// the dock's own mouse moves also report the modifier state (`update`).
+/// No polling either way.
+final class MagnifyFlipKeys {
+    /// True while both keys are held.
+    var onChange: ((Bool) -> Void)?
+    private var monitors: [Any] = []
+    private var held = false
+
+    func start() {
+        guard monitors.isEmpty else { return }
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged, handler: { [weak self] event in
+            self?.update(event.modifierFlags)
+        }) { monitors.append(global) }
+        // Portside is a regular app while Settings is open: its own events.
+        if let local = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged, handler: { [weak self] event in
+            self?.update(event.modifierFlags)
+            return event
+        }) { monitors.append(local) }
+        update(NSEvent.modifierFlags)
+    }
+
+    func stop() {
+        monitors.forEach(NSEvent.removeMonitor)
+        monitors = []
+        update([])
+    }
+
+    func update(_ flags: NSEvent.ModifierFlags) {
+        let now = flags.contains(.control) && flags.contains(.shift)
+        guard now != held else { return }
+        held = now
+        onChange?(now)
     }
 }
 
@@ -397,12 +559,17 @@ private struct ObservedMagnifyEffect: ViewModifier {
             .offset(x: edge.isVertical ? 0 : shift, y: edge.isVertical ? shift : 0)
         if case .hitArea(let id) = target {
             // Real frame changes (not a render transform): AppKit hit-tests
-            // and anchors the menu with the view's frame. Bottom dock only.
+            // and anchors the menu with the view's frame.
             let grow = magnifier.layout.growths[id] ?? 0
-            content
-                .padding(.top, -grow)
-                .padding(.horizontal, -grow / 2)
-                .offset(x: magnifier.layout.shifts[id] ?? 0)
+            let shift = magnifier.layout.shifts[id] ?? 0
+            switch edge {
+            case .bottom:
+                content.padding(.top, -grow).padding(.horizontal, -grow / 2).offset(x: shift)
+            case .left:
+                content.padding(.trailing, -grow).padding(.vertical, -grow / 2).offset(y: shift)
+            case .right:
+                content.padding(.leading, -grow).padding(.vertical, -grow / 2).offset(y: shift)
+            }
         } else if case .fixed = target {
             // Measured outside the transforms, so this is the unmagnified slot.
             moved.onGeometryChange(for: CGFloat.self) { proxy in

@@ -12,6 +12,10 @@ import os.log
 /// while that window is up. The tile keeps its slot and its click target, so
 /// neighbors never move.
 ///
+/// With magnification on, a strip tile bounces at its magnified size and
+/// keeps following the magnifier (size and slot, with the same spring), so
+/// clicking an app never makes the dock jump back to normal size.
+///
 /// Event driven: Core Animation runs the bounce (repeat count = safety cap),
 /// and the launch is followed with KVO on `NSRunningApplication` plus the
 /// workspace launch notification. No timers.
@@ -30,6 +34,7 @@ final class LaunchBouncer: ObservableObject {
         let key: String
         let level: NSWindow.Level
         /// The icon's screen rect for an icon size, or nil if it is gone.
+        /// Strip tiles return their drawn (maybe magnified) icon instead.
         let iconFrame: (CGFloat) -> NSRect?
     }
 
@@ -50,6 +55,12 @@ final class LaunchBouncer: ObservableObject {
 
     private let dockModel: DockModel
     private let hover: DockHover
+    /// Magnification: the largest size a strip icon can be drawn at (0 when
+    /// off), how far it can move while bouncing, and the spring of the
+    /// latest change (nil: instant).
+    var magnifiedDrawSize: (() -> CGFloat)?
+    var magnifiedReach: (() -> CGFloat)?
+    var magnifyMotion: (() -> MagnifyMotion?)?
     private let window: NSPanel
     private let iconLayer = CALayer()
     private let logger = Logger(subsystem: "com.james.portside", category: "LaunchBounce")
@@ -62,6 +73,10 @@ final class LaunchBouncer: ObservableObject {
     /// safety cap), false if it was cut short.
     private var onEnd: ((Bool) -> Void)?
     private var tileSize: CGFloat = 0
+    /// Bounce height, fixed when the bounce starts.
+    private var peak: CGFloat = 0
+    /// Size the icon bitmap was drawn for.
+    private var renderedSize: CGFloat = 0
     private var startedAt: CFTimeInterval = 0
     /// Layer time the bounce animation began, so a shortened copy keeps its phase.
     private var animationBegin: CFTimeInterval = 0
@@ -139,8 +154,10 @@ final class LaunchBouncer: ObservableObject {
     /// The tile's icon in the strip. The running dot sits between the icon
     /// and the screen edge, so the icon is the far `size` points of the tile.
     private func stripTarget(for app: PinnedApp) -> BounceTarget {
-        BounceTarget(key: app.id, level: EdgeTracker.windowLevel) { [weak hover] size in
-            guard let hover, let tile = hover.screenFrame(forTargetID: app.id) else { return nil }
+        BounceTarget(key: app.id, level: EdgeTracker.windowLevel) { [weak hover] _ in
+            // The drawn frame: magnified tiles bounce at their magnified size.
+            guard let hover, let tile = hover.displayScreenFrame(forTargetID: app.id) else { return nil }
+            let size = hover.edge.isVertical ? tile.height : tile.width
             switch hover.edge {
             case .bottom: return NSRect(x: tile.midX - size / 2, y: tile.maxY - size, width: size, height: size)
             case .left: return NSRect(x: tile.maxX - size, y: tile.midY - size / 2, width: size, height: size)
@@ -161,7 +178,9 @@ final class LaunchBouncer: ObservableObject {
         startedAt = CACurrentMediaTime()
         // Above whatever the tile lives in (dock panel or group overlay).
         window.level = target.level
-        guard place() else {
+        let drawn = target.iconFrame(size).map { max($0.width, $0.height) } ?? size
+        peak = drawn * Self.heightRatio
+        guard place(animated: false) else {
             logger.info("bounce skipped for \(app.displayName, privacy: .public): tile not on screen")
             self.app = nil
             self.target = nil
@@ -177,7 +196,7 @@ final class LaunchBouncer: ObservableObject {
         addAnimation(repeatCount: Self.maxCycles)
         observeWorkspaceLaunch(of: app)
         let kind = Self.isGridKey(target.key) ? "grid cell" : "strip tile"
-        logger.info("bounce started: \(app.displayName, privacy: .public) \(kind, privacy: .public) at \(size, format: .fixed(precision: 0))pt on the \(self.edge.rawValue, privacy: .public) edge")
+        logger.info("bounce started: \(app.displayName, privacy: .public) \(kind, privacy: .public) at \(drawn, format: .fixed(precision: 0))pt (tile \(size, format: .fixed(precision: 0))pt) on the \(self.edge.rawValue, privacy: .public) edge")
     }
 
     /// Unit vector the icon moves along at the top of a bounce (layer
@@ -193,9 +212,8 @@ final class LaunchBouncer: ObservableObject {
     // MARK: - Animation
 
     private func addAnimation(repeatCount: Float) {
-        let height = tileSize * Self.heightRatio
         let vertical = direction.dy != 0
-        let peak = height * (vertical ? direction.dy : direction.dx)
+        let peak = self.peak * (vertical ? direction.dy : direction.dx)
         let anim = CAKeyframeAnimation(keyPath: vertical ? "transform.translation.y" : "transform.translation.x")
         anim.values = [0, peak, 0]
         anim.keyTimes = [0, 0.5, 1]
@@ -282,26 +300,51 @@ final class LaunchBouncer: ObservableObject {
     // MARK: - Placement
 
     /// Puts the window over the tile's icon, with headroom on the side the
-    /// bounce goes. False if the tile is gone or off screen.
+    /// bounce goes. False if the tile is gone or off screen. `animated`:
+    /// the icon moves with the magnifier's spring (it grew or shifted).
     @discardableResult
-    private func place() -> Bool {
+    private func place(animated: Bool) -> Bool {
         guard let target, let icon = target.iconFrame(tileSize) else { return false }
-        let size = tileSize
-        let headroom = (size * Self.heightRatio).rounded() + 2
+        let headroom = peak.rounded() + 2
         let travel = direction
         // The icon plus the space it travels through.
         let reach = icon.union(icon.offsetBy(dx: travel.dx * headroom, dy: travel.dy * headroom))
-        // Tiles can sit on half points. The window server rounds window
-        // frames to whole points, so the window takes the whole part and the
-        // layer the fraction; otherwise the icon lands half a point off and
-        // visibly ticks when the tile's own icon comes back.
-        let origin = NSPoint(x: reach.minX.rounded(.down), y: reach.minY.rounded(.down))
-        let frame = NSRect(x: origin.x, y: origin.y, width: reach.width.rounded(.up) + 1, height: reach.height.rounded(.up) + 1)
-        if window.frame != frame { window.setFrame(frame, display: false) }
+        var frame = window.frame
+        let moveWindow = !frame.contains(reach)
+        if moveWindow {
+            // While magnifying, room all around for the icon to grow and
+            // slide without moving the window (the layer animates inside it).
+            let slack = Self.isGridKey(target.key) ? 0 : (magnifiedReach?() ?? 0)
+            let room = reach.insetBy(dx: -slack, dy: -slack)
+            // Tiles can sit on half points. The window server rounds window
+            // frames to whole points, so the window takes the whole part and
+            // the layer the fraction; otherwise the icon lands half a point
+            // off and visibly ticks when the tile's own icon comes back.
+            let origin = NSPoint(x: room.minX.rounded(.down), y: room.minY.rounded(.down))
+            frame = NSRect(x: origin.x, y: origin.y, width: room.width.rounded(.up) + 1, height: room.height.rounded(.up) + 1)
+            window.setFrame(frame, display: false)
+        }
+        let layerFrame = CGRect(x: icon.minX - frame.minX, y: icon.minY - frame.minY, width: icon.width, height: icon.height)
+        let motion = animated && !moveWindow ? magnifyMotion?() : nil
+        let from = iconLayer.presentation()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        iconLayer.frame = CGRect(x: icon.minX - origin.x, y: icon.minY - origin.y, width: size, height: size)
+        iconLayer.frame = layerFrame
         CATransaction.commit()
+        if let motion, let from {
+            // Same spring as the tiles, from where the icon is drawn now.
+            let position = motion.caSpring(keyPath: "position")
+            position.fromValue = NSValue(point: from.position)
+            position.toValue = NSValue(point: iconLayer.position)
+            iconLayer.add(position, forKey: "magnify.position")
+            let bounds = motion.caSpring(keyPath: "bounds")
+            bounds.fromValue = NSValue(rect: from.bounds)
+            bounds.toValue = NSValue(rect: iconLayer.bounds)
+            iconLayer.add(bounds, forKey: "magnify.bounds")
+        } else {
+            iconLayer.removeAnimation(forKey: "magnify.position")
+            iconLayer.removeAnimation(forKey: "magnify.bounds")
+        }
         return true
     }
 
@@ -309,7 +352,14 @@ final class LaunchBouncer: ObservableObject {
     /// grid moved). Follows the tile, or stops if it is gone.
     func tilesChanged() {
         guard app != nil else { return }
-        if !place() { cancel(reason: "tile removed") }
+        if !place(animated: false) { cancel(reason: "tile removed") }
+    }
+
+    /// The magnifier grew, shrank or shifted the tiles. A bouncing strip
+    /// tile follows with the same spring.
+    func magnificationChanged() {
+        guard app != nil, let target, !Self.isGridKey(target.key) else { return }
+        if !place(animated: true) { cancel(reason: "tile removed") }
     }
 
     /// Strip icon size changed while bouncing (grid cells keep their size).
@@ -325,11 +375,15 @@ final class LaunchBouncer: ObservableObject {
     /// scale the large cached bitmap itself (bilinear) looked slightly
     /// different, which showed as a shimmer when the bounce handed back to
     /// the tile.
+    /// While magnification is on, a strip tile can grow, so its icon is
+    /// drawn at the magnified size and the layer scales it down (trilinear).
     private func renderIcon() {
-        guard let app else { return }
+        guard let app, let target else { return }
         let source = IconCache.shared.icon(for: app.url)
         let scale = DockScreen.backingScale
-        let pixels = Int((tileSize * scale).rounded())
+        let magnified = Self.isGridKey(target.key) ? 0 : (magnifiedDrawSize?() ?? 0)
+        renderedSize = max(tileSize, magnified)
+        let pixels = Int((renderedSize * scale).rounded())
         var image: Any = source
         if pixels > 0, let space = CGColorSpace(name: CGColorSpace.sRGB),
            let context = CGContext(data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0,
@@ -347,6 +401,7 @@ final class LaunchBouncer: ObservableObject {
         CATransaction.setDisableActions(true)
         iconLayer.contents = image
         iconLayer.contentsScale = scale
+        iconLayer.minificationFilter = renderedSize > tileSize ? .trilinear : .linear
         CATransaction.commit()
     }
 
@@ -385,7 +440,7 @@ final class LaunchBouncer: ObservableObject {
             NSWorkspace.shared.notificationCenter.removeObserver(launchObserver)
             self.launchObserver = nil
         }
-        iconLayer.removeAnimation(forKey: Self.animationKey)
+        iconLayer.removeAllAnimations()
         bouncingID = nil
         if landed {
             // The icon is at rest over the tile's own icon, so keep it one more

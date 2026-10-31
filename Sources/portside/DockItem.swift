@@ -176,6 +176,7 @@ struct PortsideTileView: View {
     /// Redraws when the icon style or the system icon style changes.
     @ObservedObject private var icons = IconCache.shared
     let onOpenSettings: () -> Void
+    @State private var hold = MenuHold()
     @Environment(\.dockEdge) private var edge
 
     static let hoverID = "portside.self"
@@ -186,10 +187,14 @@ struct PortsideTileView: View {
             .accessibilityLabel("Portside")
             .accessibilityAddTraits(.isButton)
             .dockHoverTarget(id: Self.hoverID, title: "Portside")
-            .contextMenu {
-                Button("Settings...", action: onOpenSettings)
-                Divider()
-                Button("Quit") { NSApp.terminate(nil) }
+            // Same AppKit menu path as app tiles (whole magnified tile).
+            .appKitContextMenu(edge: edge, hold: hold, magnifyID: Self.hoverID) {
+                let menu = NSMenu()
+                menu.autoenablesItems = false
+                menu.addItem(ClosureMenuItem("Settings...", onOpenSettings))
+                menu.addItem(.separator())
+                menu.addItem(ClosureMenuItem("Quit") { NSApp.terminate(nil) })
+                return menu
             }
     }
 
@@ -207,7 +212,7 @@ struct PortsideTileView: View {
             .interpolation(.high)
             .frame(width: size, height: size)
             .contentShape(Rectangle())
-            .onTapGesture(perform: onOpenSettings)
+            .menuHold(hold, onTap: onOpenSettings)
             .magnifiedIcon(id: Self.hoverID)
     }
 

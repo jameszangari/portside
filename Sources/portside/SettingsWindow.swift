@@ -413,9 +413,7 @@ private struct GeneralSettings: View {
                     set: { dockModel.setMagnificationEnabled($0) }
                 )) {
                     Text("Magnification")
-                    if dockModel.magnificationEnabled && dockModel.edge.isVertical {
-                        Text("Works on the bottom position for now.").helperStyle()
-                    }
+                    Text("Hold Control-Shift over the dock to flip it for a moment.").helperStyle()
                 }
 
                 SettingsSlider(

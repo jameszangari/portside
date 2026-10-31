@@ -39,7 +39,8 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - Drop files on an app tile to open them in that app, like the native Dock. Only tiles whose app can open the files highlight and accept the drop (Finder takes folders). A not-running pinned app launches with the bounce.
 - Running apps that are not pinned show after the pinned section.
 - Right-click menu: Keep in Dock or Remove from Dock, Add to Group, Show in Finder, then for running apps Hide (Show if hidden) and Quit. Hold Option and Quit becomes Force Quit.
-- App tiles and group cells share one exclusive short-click/hold gesture: short click opens the app; hold for 0.5s opens its menu; moving first starts a drag. Real-input verification of the click regression fix is pending.
+- App tiles, group tiles, Portside's own tile and group cells share one exclusive short-click/hold gesture: short click opens (or toggles the group); hold for 0.5s opens its menu; moving first starts a drag. Real-input verification of the click regression fix is pending.
+- Dock menus take the keyboard while open (Escape closes them, arrows move through them) without taking focus from the frontmost app.
 - Separator right-click menu: Turn Hiding On/Off, Turn Magnification On/Off, Position on Screen (Left, Bottom, Right, checkmark on the current one), Dock Settings.
 - The app menu opens above the icon (beside it on the side docks), like the native Dock.
 - Native Dock modifier clicks on app tiles and group grid cells: Cmd-click reveals the app in Finder (no launch), Option-click switches to the app and hides the one that was frontmost, Cmd+Option-click switches and hides all other apps. Portside itself is never hidden.
@@ -50,7 +51,7 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 **Layout**
 - Bottom, Left, or Right position, switchable live.
 - Drag the separator to resize icons live (clamped to what fits, persisted).
-- Magnification (bottom position): app and group tiles grow under the cursor with a smooth falloff to their neighbors, rising above a shelf that keeps its height while it widens. Widgets and separators keep their size. Magnified size 16 to 128pt, set live in Settings. Off during drags, while a group grid, menu or launch bounce is up. Under Reduce Motion the size follows the cursor without the spring.
+- Magnification on every position: app and group tiles grow under the cursor with a smooth falloff to their neighbors, away from the screen edge (up on the bottom, sideways on the sides), past a shelf that keeps its thickness while it lengthens. Near the ends of a long dock the shelf stays on screen. Widgets and separators keep their size. Magnified size 16 to 128pt, set live in Settings. Hold Control-Shift over the dock to flip it for a moment. Labels, right-click and press-and-hold follow the magnified icon, and a launch bounce plays at the magnified size. Off during drags and while a group grid or menu is up. Under Reduce Motion the size follows the cursor without the spring.
 
 **Widgets**
 - Clock, Battery, Calendar, Weather, System Stats.
@@ -92,9 +93,8 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 From `docs/CHECKLIST.md` and `docs/PLAN.md`:
 - Verify the app-click regression fix with real mouse/trackpad input, including hold menus and dragging.
 - Milestone F, what is left: importing the native Dock's folders and files (`persistent-others`), once folder stacks exist.
-- Magnification on the Left and Right positions, plus polish: launch bounce at the magnified size, labels and grids anchored to magnified tiles, right-click on the raised part of group tiles.
 - Update checker: compare AppInfo.version with the latest GitHub release tag (vX.Y.Z), show 'up to date' or a link to the release. The Check for Updates button is a placeholder until then.
-- Native Dock parity: click-and-hold on group tiles, Open at Login in the app menu, Trash, folder stacks.
+- Native Dock parity: Open at Login in the app menu, Trash, folder stacks.
 - Multi-display, fullscreen and Spaces behavior, badges.
 - Better widget layout on side docks.
 

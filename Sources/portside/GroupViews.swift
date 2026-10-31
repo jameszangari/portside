@@ -36,6 +36,7 @@ struct GroupTileView: View {
     let onRemove: () -> Void
     @ObservedObject var dockModel: DockModel
     @ObservedObject private var icons = IconCache.shared
+    @State private var hold = MenuHold()
     @Environment(\.dockEdge) private var edge
 
     var body: some View {
@@ -44,11 +45,16 @@ struct GroupTileView: View {
             .accessibilityLabel(group.name)
             .accessibilityAddTraits(.isButton)
             .dockHoverTarget(id: DockEntry.group(group).id, title: group.name)
-            .contextMenu {
-                Button("Rename", action: onRename)
-                Divider()
-                Button("Ungroup") { dockModel.ungroup(groupID: group.id) }
-                Button("Remove from Dock", action: onRemove)
+            // AppKit menu like app tiles: right-click and press-and-hold
+            // work on the whole magnified tile, and the menu opens above it.
+            .appKitContextMenu(edge: edge, hold: hold, magnifyID: DockEntry.group(group).id) {
+                let menu = NSMenu()
+                menu.autoenablesItems = false
+                menu.addItem(ClosureMenuItem("Rename", onRename))
+                menu.addItem(.separator())
+                menu.addItem(ClosureMenuItem("Ungroup") { dockModel.ungroup(groupID: group.id) })
+                menu.addItem(ClosureMenuItem("Remove from Dock", onRemove))
+                return menu
             }
     }
 
@@ -88,7 +94,7 @@ struct GroupTileView: View {
             }
             .frame(width: size, height: size)
             .contentShape(Rectangle())
-            .onTapGesture(perform: onToggle)
+            .menuHold(hold, onTap: onToggle)
             .magnifiedIcon(id: DockEntry.group(group).id)
     }
 

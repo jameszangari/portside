@@ -261,6 +261,55 @@ private final class RightClickView: NSView {
         case .left: origin = NSPoint(x: tile.maxX + gap, y: tile.midY + size.height / 2)
         case .right: origin = NSPoint(x: tile.minX - gap - size.width, y: tile.midY + size.height / 2)
         }
-        menu.popUp(positioning: nil, at: origin, in: nil)
+        MenuKeyFocus.shared.popUp(menu, at: origin)
     }
+}
+
+/// Portside is never the active app, so keys pressed while one of its
+/// menus is open went to the frontmost app: Escape did not close the menu
+/// and the arrow keys did not move through it. While a menu tracks, a tiny
+/// invisible non-activating panel takes key focus (the frontmost app stays
+/// active, like the rename field in a group grid), so key events come to
+/// Portside's menu tracking. Ordering it out afterwards gives keyboard focus
+/// back to the frontmost app.
+final class MenuKeyFocus {
+    static let shared = MenuKeyFocus()
+
+    private let panel: KeyOnlyPanel
+
+    private init() {
+        panel = KeyOnlyPanel(contentRect: NSRect(x: 0, y: 0, width: 1, height: 1),
+                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.level = DockPanel.windowLevel
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle, .stationary]
+        panel.isReleasedWhenClosed = false
+        panel.animationBehavior = .none
+        panel.hidesOnDeactivate = false
+    }
+
+    /// Pops `menu` with its top-left corner at `origin` (screen points) and
+    /// returns when it closes.
+    func popUp(_ menu: NSMenu, at origin: NSPoint) {
+        // Settings open: Portside is active and already gets the keys.
+        let borrow = !NSApp.isActive
+        if borrow {
+            panel.setFrameOrigin(NSPoint(x: origin.x, y: origin.y - 1))
+            panel.orderFrontRegardless()
+            panel.makeKey()
+        }
+        actionsLogger.info("menu opened (key focus borrowed: \(borrow), key: \(self.panel.isKeyWindow))")
+        menu.popUp(positioning: nil, at: origin, in: nil)
+        if borrow { panel.orderOut(nil) }
+        let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
+        actionsLogger.info("menu closed, frontmost app \(front, privacy: .public), portside active: \(NSApp.isActive)")
+    }
+}
+
+private final class KeyOnlyPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 }
