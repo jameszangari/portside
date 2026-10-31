@@ -270,10 +270,7 @@ struct DockItemView: View {
                     .padding(-3)
             )
             .contentShape(Rectangle())
-            .menuHold(hold)
-            .onTapGesture {
-                // The release after a press-and-hold is not a click.
-                if hold.consumeFired() { return }
+            .menuHold(hold) {
                 // Modifier state at click time; a tap gesture has no event.
                 TileClick.perform(app, running: running, flags: NSEvent.modifierFlags) { afterOpen in
                     if running == nil && isPinned {

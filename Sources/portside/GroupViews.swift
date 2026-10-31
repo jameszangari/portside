@@ -317,9 +317,7 @@ private struct GroupAppCell: View {
         .opacity(dragging ? 0.5 : 1)
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
-        .menuHold(hold)
-        .onTapGesture {
-            if hold.consumeFired() { return }
+        .menuHold(hold) {
             TileClick.perform(app, running: running, flags: NSEvent.modifierFlags) { afterOpen in onLaunch(app, afterOpen) }
         }
         .gesture(dragOutGesture)

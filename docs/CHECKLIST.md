@@ -53,7 +53,7 @@ Status: built and agent-tested with synthetic input on the bottom edge, waiting 
 - Hit-testing: press-and-hold and right-click on the raised part of a magnified Mail icon (above the shelf) opened Mail's menu.
 - Reorder drag: magnification suspended at drag start, tiles back to base size during the drag, dropped back in its slot, resumed after.
 - Cost per mouse move (release build, 30 pinned entries plus running apps, about 480 moves per sweep at 120Hz): handler about 80us; whole main-thread turn including SwiftUI update and CA commit about 3.3ms average, about 10ms max (the max is the engage move that resizes and redraws the window). Logged once per hover: category `Magnifier`, "mouse-moved cost". Measurements are noisy at this scale.
-- Not verifiable with synthetic input: a plain click launching the right app. Synthetic taps do not fire on the last commit either, so this needs the hand test.
+- Not verifiable with synthetic input: a plain click launching the right app. Synthetic taps do not fire on HEAD either (see the app click regression section), so this needs the hand test.
 
 ## Known gaps (part 2 or later)
 
@@ -81,14 +81,25 @@ Status: built and agent-tested with synthetic input on the bottom edge, waiting 
 
 ---
 
+# App click regression (2026-10-31)
+
+- [x] Replaced separately attached long-press and tap recognizers with one `LongPressGesture.exclusively(before: TapGesture())` in `menuHold`. Both strip app icons and group app cells use it. Removed the persistent fired flag and its next-click suppression path.
+- [x] `swift build` passed with Swift 6.4.2 / Xcode 27.2. `swift run portside` built and launched without an immediate crash.
+- [x] Temporary AppKit/SwiftUI harness using the actual gesture helper: short click, hold, next short click, and drag produced exactly 2 taps, 1 hold, 1 drag. No tap on hold release or drag.
+- [ ] Human verification: real mouse/trackpad clicks open apps in strip and groups; holds and right-click still open menus; reorder still works.
+- Finding: the simplified old-gesture harness also accepted synthetic clicks, so the original real-input failure is not reproduced automatically. This is a candidate fix to gesture arbitration, not a confirmed root cause. The temporary harness does not exercise native menu tracking or app launching.
+- No new source files, preferences, or dock.json keys.
+
+---
+
 # P1 slice: click-and-hold menu and divider menu
 
 Status: built, `swift build` clean, waiting for James's hand test. No new files, no dock.json changes. Log category `TileActions` ("press and hold: opening menu").
 
 ## Deliverables
 
-- [x] Click-and-hold on an app tile (strip tiles, unpinned running apps, group grid cells) opens the right-click menu at the tile. `menuHold(_:)` is a SwiftUI `onLongPressGesture` (0.5s, 4pt): a one-shot recognizer, no timer of ours. Moving more than 4pt first cancels it and the reorder or drag-out gesture takes over. A short click is unchanged (no added delay).
-- [x] The release after a hold is not a click: `MenuHold.consumeFired()` at the top of each tap handler (the flag resets at the next press).
+- [x] Click-and-hold on an app tile (strip tiles, unpinned running apps, group grid cells) opens the right-click menu at the tile. `menuHold(_:onTap:)` combines a SwiftUI long press (0.5s, 4pt) exclusively with a tap: a one-shot recognizer, no timer of ours. Moving more than 4pt first cancels it and the reorder or drag-out gesture takes over. A short click is unchanged (no added delay).
+- [x] The release after a hold is not a click: the exclusive gesture resolves to only one action, with no persistent suppression flag.
 - [x] Same `RightClickView` popup as right-click, so placement per edge, hover label hiding and the grid-close-on-menu rules are shared. Panel untouched (still non-activating).
 - [x] Divider right-click is now an AppKit menu: Turn Hiding On/Off, Position on Screen (Left, Bottom, Right, checkmark on the current, `setEdge`, live), Dock Settings... (opens Settings). The old "Settings..." SwiftUI item is gone.
 - [x] Magnification: the divider menu has Turn Magnification On/Off (built with magnification, 2026-10-31).
@@ -101,7 +112,7 @@ Status: built, `swift build` clean, waiting for James's hand test. No new files,
 ## Known gaps
 
 - Group tiles (the folder tile in the strip) still use SwiftUI `.contextMenu`, so no hold there. Their tap toggles the grid.
-- Whether SwiftUI delivers the tap after a completed long press is unverified; the flag guards it either way.
+- Exclusive hold/tap dispatch passes the synthetic event harness; real mouse and menu tracking still need verification.
 - Releasing the button with the cursor over a menu item may pick it (native behavior); the menu opens 4pt off the tile so the cursor starts outside it.
 - If drag-reorder, drag-out, file drops or spring-loading regress, suspect the long-press gesture on the tile first.
 

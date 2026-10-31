@@ -175,37 +175,31 @@ extension View {
         overlay(RightClickMenuHost(edge: edge, hold: hold, menu: menu).magnifiedHitArea(id: magnifyID))
     }
 
-    /// Click-and-hold opens the tile's context menu, like the native Dock.
-    /// A one-shot press recognizer (no timer of ours): it fires after 0.5s if
-    /// the cursor stays within 4pt, and fails on earlier movement so the
-    /// reorder drag takes over. A short click is untouched. Put this next to
-    /// the tile's tap gesture, and have the tap call `hold.consumeFired()`.
-    func menuHold(_ hold: MenuHold) -> some View {
-        onLongPressGesture(minimumDuration: 0.5, maximumDistance: 4, perform: {
-            hold.fire()
-        }, onPressingChanged: { pressing in
-            if pressing { hold.reset() }
-        })
+    /// Resolve a press as either a hold or a tap in one gesture. Separate
+    /// gesture modifiers can compete with each other and the tile's drag.
+    /// Movement beyond 4pt fails the hold so the drag can take over.
+    func menuHold(_ hold: MenuHold, onTap: @escaping () -> Void) -> some View {
+        gesture(
+            LongPressGesture(minimumDuration: 0.5, maximumDistance: 4)
+                .exclusively(before: TapGesture())
+                .onEnded { result in
+                    switch result {
+                    case .first(true): hold.fire()
+                    case .second: onTap()
+                    default: break
+                    }
+                }
+        )
     }
 }
 
 /// Connects a tile's press-and-hold to its right-click menu host.
 final class MenuHold {
     fileprivate var show: (() -> Void)?
-    private var fired = false
 
     fileprivate func fire() {
-        fired = true
         actionsLogger.info("press and hold: opening menu")
         show?()
-    }
-
-    fileprivate func reset() { fired = false }
-
-    /// True once after a hold opened the menu, so the release is not a click.
-    func consumeFired() -> Bool {
-        defer { fired = false }
-        return fired
     }
 }
 
