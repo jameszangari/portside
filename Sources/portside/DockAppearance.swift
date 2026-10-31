@@ -87,6 +87,24 @@ struct DockLook: Equatable {
     var frost: Double
     var tint: RGBAColor?
     var cornerRadius: CGFloat
+    /// Snapshot of System Settings > Accessibility > Display > Reduce
+    /// Transparency, so the strip redraws when that option flips.
+    var reduceTransparency: Bool = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+
+    /// Style after Reduce Transparency: glass becomes frosted (native Dock
+    /// also drops translucency when that Accessibility option is on).
+    var displayStyle: DockBackgroundStyle {
+        let base = style.effective
+        if reduceTransparency {
+            return base == .solid ? .solid : .frosted
+        }
+        return base
+    }
+
+    /// Frost/opacity after Reduce Transparency (at least mostly opaque).
+    var displayFrost: Double {
+        reduceTransparency ? max(frost, 0.92) : frost
+    }
 }
 
 extension View {
@@ -109,14 +127,14 @@ private struct DockBackgroundModifier<S: InsettableShape>: ViewModifier {
     let shadow: Bool
 
     func body(content: Content) -> some View {
-        switch look.style.effective {
+        switch look.displayStyle {
         case .glass:
             if #available(macOS 26, *) {
                 // Clear glass with a material blended in on top: frost 0
                 // shows the refraction, frost 1 is a frosted pane. The tint
                 // goes into the glass itself so it keeps its highlights.
                 content
-                    .background { shape.fill(.regularMaterial).opacity(look.frost) }
+                    .background { shape.fill(.regularMaterial).opacity(look.displayFrost) }
                     .glassEffect(look.tint.map { Glass.clear.tint($0.color) } ?? .clear, in: shape)
             } else {
                 frosted(content, shape: shape)
@@ -126,7 +144,7 @@ private struct DockBackgroundModifier<S: InsettableShape>: ViewModifier {
         case .solid:
             content
                 .background {
-                    shape.fill(Color(white: 0.12).opacity(0.4 + 0.6 * look.frost))
+                    shape.fill(Color(white: 0.12).opacity(0.4 + 0.6 * look.displayFrost))
                         .overlay { if let tint = look.tint { shape.fill(tint.color) } }
                         .shadow(color: .black.opacity(shadow ? 0.3 : 0), radius: 12, y: 5)
                 }
@@ -137,7 +155,7 @@ private struct DockBackgroundModifier<S: InsettableShape>: ViewModifier {
     private func frosted(_ content: Content, shape: S) -> some View {
         content
             .background {
-                shape.fill(.ultraThinMaterial).opacity(0.3 + 0.7 * look.frost)
+                shape.fill(.ultraThinMaterial).opacity(0.3 + 0.7 * look.displayFrost)
                     .overlay { if let tint = look.tint { shape.fill(tint.color) } }
                     .shadow(color: .black.opacity(shadow ? 0.3 : 0), radius: 12, y: 5)
             }

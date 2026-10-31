@@ -135,6 +135,8 @@ struct DockStrip: View {
     @State private var dragOverTrash = false
     /// The file drag over the strip right now (URLs and per-app verdicts).
     @State private var fileDrop = FileDropSession()
+    /// Brings a running app forward when a file drag rests on its tile.
+    @State private var appSpringLoad = AppSpringLoad()
     /// Tile frames in the strip's root space, for hit-testing drops.
     @State private var tileFrames: [HoverTarget] = []
 
@@ -194,11 +196,7 @@ struct DockStrip: View {
                 if entryInsertIndex == index {
                     insertionGap(tile: tile)
                 }
-                entryView(entry, tile: tile)
-                    // Gap while dragging: the floating DragOut preview follows
-                    // the cursor; the strip slot stays empty so neighbors shift.
-                    .opacity(dragging == entry.id ? 0 : 1)
-                    .gesture(reorderGesture(for: entry, tile: tile, vertical: edge.isVertical))
+                pinnedSlot(entry, tile: tile, vertical: edge.isVertical)
             }
             if entryInsertIndex == dockModel.entries.count {
                 insertionGap(tile: tile)
@@ -271,7 +269,7 @@ struct DockStrip: View {
             stackInsertIndex: $stackInsertIndex, entryInsertIndex: $entryInsertIndex,
             tileFrames: tileFrames, apps: dropApps(extras: extras), trash: showsTrash ? trash : nil,
             stackController: stacks,
-            runningApps: runningApps, bouncer: bouncer,
+            runningApps: runningApps, bouncer: bouncer, appSpringLoad: appSpringLoad,
             tile: tile, vertical: edge.isVertical))
         .onChange(of: maxTile, initial: true) { _, fit in layout.reportFitTileSize(fit) }
         .onChange(of: tile) { _, size in bouncer.tileSizeChanged(size) }
@@ -306,6 +304,20 @@ struct DockStrip: View {
         return apps
     }
 
+    /// Pinned entry with reorder; spacers also shift under magnification.
+    @ViewBuilder private func pinnedSlot(_ entry: DockEntry, tile: CGFloat, vertical: Bool) -> some View {
+        let body = entryView(entry, tile: tile)
+            // Gap while dragging: the floating DragOut preview follows the
+            // cursor; the strip slot stays empty so neighbors shift.
+            .opacity(dragging == entry.id ? 0 : 1)
+            .gesture(reorderGesture(for: entry, tile: tile, vertical: vertical))
+        if entry.spacer != nil {
+            body.magnifiedShift()
+        } else {
+            body
+        }
+    }
+
     @ViewBuilder private func entryView(_ entry: DockEntry, tile: CGFloat) -> some View {
         switch entry {
         case .app(let app):
@@ -322,18 +334,21 @@ struct DockStrip: View {
                 onRemove: { removeGroupAfterConfirming(group, fromDrag: false) },
                 dockModel: dockModel
             )
+        case .spacer(let spacer):
+            SpacerTileView(spacer: spacer, tile: tile) {
+                dockModel.removeSpacer(id: spacer.id)
+            }
         }
     }
 
     // MARK: - Separator (drag to resize)
 
-    /// A thin line between sections. Like the native Dock's separator,
-    /// dragging it away from the screen edge grows the icons and toward the
-    /// edge shrinks them.
+    /// A thin line between sections. Nearly invisible like the native Dock;
+    /// the hit area stays full so resize and the menu still work.
     private func separator(tile: CGFloat, maxTile: CGFloat, edge: DockEdge) -> some View {
         let vertical = edge.isVertical
         return Rectangle()
-            .fill(Color(nsColor: .separatorColor))
+            .fill(Color.primary.opacity(0.12))
             .frame(width: vertical ? tile * 0.8 : 1, height: vertical ? 1 : tile * 0.8)
             .padding(vertical ? .vertical : .horizontal, separatorPadding)
             .padding(edge.farSide, tile * 0.1)
@@ -378,6 +393,14 @@ struct DockStrip: View {
         }
         position.submenu = positions
         menu.addItem(position)
+        let spacers = NSMenuItem(title: "Add Spacer", action: nil, keyEquivalent: "")
+        let spacerMenu = NSMenu()
+        spacerMenu.autoenablesItems = false
+        for size in DockSpacer.Size.allCases {
+            spacerMenu.addItem(ClosureMenuItem(size.title) { dockModel.addSpacer(size) })
+        }
+        spacers.submenu = spacerMenu
+        menu.addItem(spacers)
         menu.addItem(ClosureMenuItem("Dock Settings...") { interactions.onOpenSettings?() })
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem("Quit Portside") { NSApp.terminate(nil) })
@@ -466,13 +489,15 @@ struct DockStrip: View {
                     _ = dragOut.end(token, deferResolution: false)
                     dragging = nil
                     dragOutside = false
-                    let target: DockTrashDropTarget = {
-                        switch entry {
-                        case .app(let app): return .app(app)
-                        case .group(let group): return .group(group)
-                        }
-                    }()
-                    DispatchQueue.main.async { finishTrashDrop(target) }
+                    switch entry {
+                    case .app(let app):
+                        DispatchQueue.main.async { finishTrashDrop(.app(app)) }
+                    case .group(let group):
+                        DispatchQueue.main.async { finishTrashDrop(.group(group)) }
+                    case .spacer(let spacer):
+                        // Spacers just disappear; nothing on disk to trash.
+                        withAnimation(removalAnimation) { dockModel.removeSpacer(id: spacer.id) }
+                    }
                     return
                 }
                 var deferred = false
@@ -491,6 +516,7 @@ struct DockStrip: View {
                         switch entry {
                         case .app(let app): dockModel.unpin(app)
                         case .group(let group): dockModel.removeGroup(groupID: group.id)
+                        case .spacer(let spacer): dockModel.removeSpacer(id: spacer.id)
                         }
                     }
                     stripLogger.info("removed by dragging out: \(entry.id, privacy: .public)")
@@ -718,7 +744,40 @@ struct DockStrip: View {
                                          onToggle: {}, onRename: {}, onRemove: {}, dockModel: dockModel)
                 .environment(\.dockEdge, .left)
                 .frame(height: tile))
+        case .spacer(let spacer):
+            return AnyView(SpacerTileView(spacer: spacer, tile: tile, onRemove: {}))
         }
+    }
+}
+
+/// Invisible gap between pinned apps. Hover / right-click to grab or remove.
+private struct SpacerTileView: View {
+    let spacer: DockSpacer
+    let tile: CGFloat
+    let onRemove: () -> Void
+    @State private var hovered = false
+    @Environment(\.dockEdge) private var edge
+
+    private var length: CGFloat { max(8, tile * spacer.size.widthFactor) }
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: tile * 0.22, style: .continuous)
+            .fill(Color.primary.opacity(hovered ? 0.2 : 0))
+            .frame(
+                width: edge.isVertical ? tile : length,
+                height: edge.isVertical ? length : tile
+            )
+            .contentShape(Rectangle())
+            .onHover { hovered = $0 }
+            .dockHoverTarget(id: "spacer:" + spacer.id, title: spacer.size.title)
+            .appKitContextMenu(edge: edge) {
+                let menu = NSMenu()
+                menu.autoenablesItems = false
+                menu.addItem(ClosureMenuItem("Remove Spacer", onRemove))
+                return menu
+            }
+            .accessibilityLabel(spacer.size.title)
+            .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -768,6 +827,7 @@ private struct FileDropDelegate: DropDelegate {
     let stackController: StackController
     let runningApps: RunningApps
     let bouncer: LaunchBouncer
+    let appSpringLoad: AppSpringLoad
     let tile: CGFloat
     let vertical: Bool
 
@@ -785,6 +845,7 @@ private struct FileDropDelegate: DropDelegate {
         setTarget(nil)
         setStackInsert(nil)
         setEntryInsert(nil)
+        appSpringLoad.cancel()
         session.end()
         interactions.onDragOverGroupTile?(nil)
         interactions.onDragOverStackTile?(nil)
@@ -796,6 +857,7 @@ private struct FileDropDelegate: DropDelegate {
         if let trash, isOverTrash(info) {
             interactions.onDragOverGroupTile?(nil)
             interactions.onDragOverStackTile?(nil)
+            appSpringLoad.cancel()
             setStackInsert(nil)
             setEntryInsert(nil)
             let ok = session.canTrash(using: trash)
@@ -805,6 +867,7 @@ private struct FileDropDelegate: DropDelegate {
         switch session.mode {
         case .pinApps:
             setStackInsert(nil)
+            appSpringLoad.cancel()
             // Folder stack or app group under the cursor: open immediately
             // and deposit/add instead of showing a pin gap beside it.
             if let stackID = stackUnderCursor(info), session.canDeposit() {
@@ -829,6 +892,7 @@ private struct FileDropDelegate: DropDelegate {
         case .pinFolders:
             setTarget(nil)
             setEntryInsert(nil)
+            appSpringLoad.cancel()
             interactions.onDragOverGroupTile?(nil)
             interactions.onDragOverStackTile?(nil)
             setStackInsert(folderInsertIndex(info))
@@ -836,7 +900,9 @@ private struct FileDropDelegate: DropDelegate {
         case .open:
             setStackInsert(nil)
             setEntryInsert(nil)
-            return DropProposal(operation: updateOpenTarget(info) == nil ? .forbidden : .copy)
+            let id = updateOpenTarget(info)
+            updateAppSpringLoad(id)
+            return DropProposal(operation: id == nil ? .forbidden : .copy)
         }
     }
 
@@ -846,6 +912,7 @@ private struct FileDropDelegate: DropDelegate {
         let entryAt = entryInsertIndex
         let depositStackID = stackUnderCursor(info)
         let dropGroupID = groupUnderCursor(info)
+        appSpringLoad.cancel()
         // Clear the insertion gap without animation, then pin in the same
         // turn so the real tile replaces the gap (no scale-out jitter).
         var t = Transaction()
@@ -964,6 +1031,14 @@ private struct FileDropDelegate: DropDelegate {
         guard targetID != id else { return }
         targetID = id
         stripLogger.info("drop target: \(id ?? "none", privacy: .public)")
+    }
+
+    private func updateAppSpringLoad(_ targetID: String?) {
+        guard let targetID, let entry = apps[targetID] else {
+            appSpringLoad.cancel()
+            return
+        }
+        appSpringLoad.update(app: entry.app, running: runningApps.runningInstance(of: entry.app))
     }
 
     private func open(_ urls: [URL], with app: PinnedApp, isPinned: Bool) {

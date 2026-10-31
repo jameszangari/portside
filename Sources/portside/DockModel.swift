@@ -154,12 +154,22 @@ final class DockModel: Codable, ObservableObject {
     @Published private(set) var backgroundFrost: Double = Defaults.backgroundFrost
     @Published private(set) var backgroundTint: RGBAColor?
     @Published private(set) var cornerRadius: CGFloat = Defaults.cornerRadius
+    /// Mirrors Accessibility > Display > Reduce Transparency for live redraws.
+    @Published private(set) var reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
 
     static let cornerRadiusRange: ClosedRange<CGFloat> = 4...28
 
     /// The strip and group grid background, in one value.
     var look: DockLook {
-        DockLook(style: backgroundStyle, frost: backgroundFrost, tint: backgroundTint, cornerRadius: cornerRadius)
+        DockLook(style: backgroundStyle, frost: backgroundFrost, tint: backgroundTint,
+                 cornerRadius: cornerRadius, reduceTransparency: reduceTransparency)
+    }
+
+    func syncReduceTransparency() {
+        let next = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+        guard next != reduceTransparency else { return }
+        reduceTransparency = next
+        DockModel.logger.info("Reduce Transparency \(next ? "on" : "off", privacy: .public)")
     }
 
     func setIconStyle(_ style: IconStyle) {
@@ -542,8 +552,29 @@ final class DockModel: Codable, ObservableObject {
             case .group(var group):
                 group.apps.removeAll { $0.id == app.id }
                 return group.apps.isEmpty ? nil : .group(group)
+            case .spacer:
+                return entry
             }
         }
+    }
+
+    /// Insert a spacer in the pinned section (at the end if `index` is nil).
+    @discardableResult
+    func addSpacer(_ size: DockSpacer.Size, at index: Int? = nil) -> DockSpacer {
+        let spacer = DockSpacer(size: size)
+        var list = entries
+        let at = min(max(index ?? list.count, 0), list.count)
+        list.insert(.spacer(spacer), at: at)
+        entries = list
+        persist()
+        return spacer
+    }
+
+    func removeSpacer(id: String) {
+        let before = entries.count
+        entries.removeAll { $0.spacer?.id == id }
+        guard entries.count != before else { return }
+        persist()
     }
 
     // MARK: - Codable
@@ -661,7 +692,7 @@ final class DockModel: Codable, ObservableObject {
         }
         let model = DockModel()
         let native = NativeDockImport.readSnapshot()
-        model.entries = native.apps.map(DockEntry.app)
+        model.entries = native.appSection
         model.stacks = native.folderStacks
         model.edge = native.edge
         model.iconSize = NativeDockImport.clampedIconSize(
@@ -670,7 +701,7 @@ final class DockModel: Codable, ObservableObject {
             widgetKinds: model.widgetKinds.count
         )
         model.persist()
-        logger.info("first launch: seeded \(model.entries.count) pinned apps, \(model.stacks.count) stacks, edge \(native.edge.rawValue, privacy: .public), icon size \(Double(model.iconSize), format: .fixed(precision: 0)) from the native Dock")
+        logger.info("first launch: seeded \(model.entries.count) entries (\(native.apps.count) apps, \(native.spacerCount) spacers), \(model.stacks.count) stacks, edge \(native.edge.rawValue, privacy: .public), icon size \(Double(model.iconSize), format: .fixed(precision: 0)) from the native Dock")
         return model
     }
 
@@ -713,12 +744,15 @@ final class DockModel: Codable, ObservableObject {
         var list = entries
         if replace {
             let grouped = Set(groups.flatMap(\.apps).map(\.id))
-            let incoming = native.apps.filter { !grouped.contains($0.id) }
-            result.inGroups = native.apps.count - incoming.count
-            result.removed = list.filter { if case .app = $0 { return true } else { return false } }.count
-            result.added = incoming.count
+            let incoming = native.appSection.filter { entry in
+                if case .app(let app) = entry { return !grouped.contains(app.id) }
+                return true // keep spacers from the native list
+            }
+            result.inGroups = native.apps.count - incoming.compactMap(\.apps.first).count
+            result.removed = list.filter { if case .app = $0 { return true }; return false }.count
+            result.added = incoming.compactMap { if case .app(let a) = $0 { return a }; return nil }.count
             // Groups keep their slots (capped at the new length).
-            var merged = incoming.map(DockEntry.app)
+            var merged = incoming
             for (index, entry) in list.enumerated() where entry.group != nil {
                 merged.insert(entry, at: min(index, merged.count))
             }

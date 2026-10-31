@@ -40,7 +40,8 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - Right-click menu: Keep in Dock or Remove from Dock, Add to Group, Show in Finder, then for running apps Hide (Show if hidden) and Quit. Hold Option and Quit becomes Force Quit.
 - App tiles, group tiles, Portside's own tile and group cells: short click opens (or toggles the group); hold for 0.5s opens its menu (simultaneous with the tap, not exclusive); moving first starts a drag. Hover labels track the magnified icon's spring frames so they stay centered.
 - Dock menus take the keyboard while open (Escape closes them, arrows move through them) without taking focus from the frontmost app.
-- Separator right-click menu: Turn Hiding On/Off, Turn Magnification On/Off, Position on Screen (Left, Bottom, Right, checkmark on the current one), Dock Settings, Quit Portside.
+- Separator right-click menu: Turn Hiding On/Off, Turn Magnification On/Off, Position on Screen (Left, Bottom, Right, checkmark on the current one), Add Spacer (Regular / Small), Dock Settings, Quit Portside.
+- Spacers: empty gaps between pinned apps (like native Dock spacer tiles). Reorder by drag; drag out or Remove Spacer to delete. Imported from the macOS Dock on first launch and via Import.
 - The app menu opens above the icon (beside it on the side docks), like the native Dock.
 - Native Dock modifier clicks on app tiles and group grid cells: Cmd-click reveals the app in Finder (no launch), Option-click switches to the app and hides the one that was frontmost, Cmd+Option-click switches and hides all other apps. Portside itself is never hidden.
 - Native-style launch bounce for pinned apps on any edge (sideways on the side docks) and for apps opened from a group grid (optional, off under Reduce Motion).
@@ -62,11 +63,12 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - Removing a group that has apps ("Remove from Dock", or dragging its tile out) asks first: Ungroup Instead (default, apps return as normal tiles), Remove Group, or Cancel. Empty groups go without asking. The alert gives focus back to the previous app.
 - Optional open on hover, with configurable open delay and close grace.
 - Dragging a file or app over a group tile opens its grid immediately. Drop an app on the tile or into the grid to add it (a dashed tile-sized gap follows the cursor so you choose the slot). Drop a file on a member that can open it (it highlights) to open it there. The grid closes when the drag leaves both the tile and the grid.
+- Resting a file drag on a running app tile for about 600ms brings that app forward (native spring-load).
 - Dragging a member out of the open grid asks Remove from Group (stays on the dock next to the group) or Remove from Dock, or Cancel.
 
 **Appearance**
 - Icons match the macOS icon style (Default, Dark, Clear, Tinted) like the native Dock, and refresh when you change it in System Settings. Or pick "Original" to show each app's own artwork.
-- Dock background: Liquid Glass (macOS 26 and later, the default), Frosted, or Solid, with a Frost (or Opacity) slider, an optional tint color, and corner radius. Open group grids use the same look. Widgets keep their own frosted card whatever the Frost setting.
+- Dock background: Liquid Glass (macOS 26 and later, the default), Frosted, or Solid, with a Frost (or Opacity) slider, an optional tint color, and corner radius. Open group grids use the same look. Widgets keep their own frosted card whatever the Frost setting. Accessibility Reduce Transparency turns glass into opaque frosted live; Reduce Motion is respected for slides, springs, and the poof.
 
 **Folder stacks**
 - Filesystem folders pin in the right section (after widgets, before Trash), separate from app groups. Drag a folder from Finder onto the dock to add one (an insertion gap opens at the drop slot, like the native Dock); reorder among stacks; drag out or Remove from Dock to unpin.
@@ -112,7 +114,6 @@ From `docs/CHECKLIST.md` and `docs/PLAN.md`:
 - Trash: Option-click "Empty Trash without warning" and icon animation.
 - Multi-display, fullscreen and Spaces behavior, badges.
 - Better widget layout on side docks.
-- Section divider; system glass matching the native Dock.
 
 ## Requirements and build
 
@@ -199,7 +200,7 @@ The Settings window controls:
 - Groups: rename, ungroup, delete, open on hover, open delay, close grace
 - Appearance: icon style (`iconStyle`: `matchSystem` or `original`), background (`backgroundStyle`: `glass`, `frosted`, or `solid`), `backgroundFrost` (0 to 1), `backgroundTint` (sRGB `red`, `green`, `blue`, `alpha`; absent when off), `cornerRadius` (points)
 - Hide the macOS Dock (`hideNativeDock`, plus `nativeDockExplained` once the first-time dialog was confirmed)
-- Import from macOS Dock and Undo last import (nothing new stored in `dock.json`; imported apps, position, and icon size land in `entries`, `edge`, and `iconSize`)
+- Import from macOS Dock and Undo last import (nothing new stored in `dock.json`; imported apps, spacers, position, and icon size land in `entries`, `edge`, and `iconSize`). Entries may include `{ type: "spacer", spacer: { id, size } }` (`regular` or `small`).
 - Open Portside at login: not stored by Portside. macOS keeps it (System Settings > General > Login Items).
 
 The built app lives at `build/Portside.app` (ignored by git), and at `~/Applications/Portside.app` after `scripts/build-app.sh --install`.
@@ -226,6 +227,7 @@ Sources/portside/
   DockItem.swift            App tile, icon cache, launch/activate
   TileActions.swift         Modifier clicks (Cmd, Option) and the AppKit right-click menu with Force Quit
   FileDrop.swift            Per-drag state for pin apps/folders, open, deposit, and Trash drops
+  AppSpringLoad.swift       File drag resting on a running app brings it forward
   Trash.swift               Native Trash tile, directory watcher, Finder actions
   TrashDrop.swift           Confirm when a dock tile is dropped on Trash
   FolderStack.swift         Folder stack model and FSEvents contents
@@ -234,7 +236,7 @@ Sources/portside/
   DragOut.swift             Drag an item out to remove it: "Remove" label, poof, Escape
   DockHover.swift           Hover target frames and label placement
   Magnifier.swift           Dock magnification: per-tile scale and shift from the cursor, shelf widening, panel room
-  FolderGroup.swift         Group and entry models
+  FolderGroup.swift         Group, spacer, and entry models
   GroupController.swift     Group open/close state and every close path
   GroupRemoval.swift        "Remove group?" confirmation alert and focus hand-back
   GroupViews.swift          Group tile and expanded grid views

@@ -59,6 +59,7 @@ final class DockEngine {
     private var edgeSubscription: AnyCancellable?
     private var iconStyleSubscription: AnyCancellable?
     private var autoHideSubscription: AnyCancellable?
+    private var accessibilityObserver: NSObjectProtocol?
 
     /// Timestamp (CACurrentMediaTime) of the mouseEntered that started the
     /// current reveal, used for the enter -> animation start -> interactive logs.
@@ -354,6 +355,15 @@ final class DockEngine {
         trash.start()
         configureMagnifier()
         dockPanel.prepareHidden()
+        if accessibilityObserver == nil {
+            accessibilityObserver = NotificationCenter.default.addObserver(
+                forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+                object: nil, queue: .main
+            ) { [weak self] _ in
+                self?.dockModel.syncReduceTransparency()
+            }
+            dockModel.syncReduceTransparency()
+        }
         if dockModel.autoHide {
             edgeTracker.start()
             logger.info("engine started, panel hidden, edge tracker armed")

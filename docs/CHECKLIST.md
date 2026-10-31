@@ -14,7 +14,7 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **F:** [x] Hide the macOS Dock (autohide-delay trick only, exact save and restore); [x] launch at login (`SMAppService`); [x] a real .app bundle (`scripts/build-app.sh`); [x] import native orientation and tilesize as Portside's initial position and icon size; [x] a manual "Import from macOS Dock" action with undo; [x] import `persistent-others` folders as stacks (file tiles still skipped). First-launch seeding of pinned apps and folder stacks is built.
 - [ ] **Live on it:** Daily-drive checkpoint with notes before starting P1
 - [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu (built on app tiles, group tiles, Portside's own tile and grid cells, hand test pending); divider right-click (built: Turn Hiding On/Off, Turn Magnification On/Off, Position on Screen, Dock Settings); Option turns Quit into Force Quit (built); drag apps in from Finder (built); drag icons out to remove (built, hand test pending); drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder, built); Option-click (hide frontmost) and Cmd+Option-click (hide others) (built); Hide/Show and Force Quit in the app menu (built); Cmd-Option-D show/hide (built)
-- [ ] **P2:** Trash (built and hand-tested); filesystem folder stacks (grid-first slice in progress; fan/list later); section divider; system glass/translucent material matching the native Dock (Reduce Transparency and Reduce Motion); spring-loaded drag (built for app groups; folder stacks in progress); magnification (built on all three edges, see the part 2 section)
+- [ ] **P2:** Trash (built and hand-tested); filesystem folder stacks (grid-first, hand-tested; fan/list deferred); section spacers (built); system glass + Reduce Transparency (built); spring-load apps forward (built); magnification (all edges). Fan/list still deferred.
 - [ ] **P3:** Follow the display the cursor hits; fullscreen apps and Spaces; badge counts via the real Dock's accessibility tree (Accessibility permission; private APIs only as fallback); window list in right-click menu with click to focus (Screen Recording for titles); VoiceOver labels and keyboard navigation; do not reveal while dragging a window or holding the mouse button (except file drags headed to the Dock)
 - [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section; bounce on attention request (needs private APIs, not wanted for now)
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
@@ -24,7 +24,7 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 
 # P2: Folder stacks, grid-first (2026-10-31)
 
-Status: implemented, debug build and launch verified (Downloads stack listed 90 items). Hand test pending. Fan/list/sort deferred. No commits yet for this slice unless asked.
+Status: done and hand-tested by James. Fan/list/sort deferred.
 
 ## Deliverables
 
@@ -43,14 +43,36 @@ Status: implemented, debug build and launch verified (Downloads stack listed 90 
 
 ## Hand test: Bottom, Left, Right
 
-- [ ] Drag a folder from Finder onto the dock: stack appears before Trash; mini icons match contents.
-- [ ] Click opens grid; click a file/app opens it; Portside stays inactive. Right-click Open / Show in Finder / Remove.
-- [ ] Drop a file onto the closed stack and into the open grid: it lands in the folder; tile/grid update.
-- [ ] Open a stack grid, drag an app from Applications into a chosen slot (gap follows); it stays in that place after drop.
-- [ ] Drop an app from Finder onto the strip (not a stack): pins with no visible jitter when the gap becomes the icon.
-- [ ] Drag a file or app onto a stack tile: grid opens immediately; leave closes after grace via hide rules.
-- [ ] Reorder stacks; drag one out to remove. Import from macOS Dock adds native folders. Mag + labels OK.
-- [ ] Reveal/hide still within a frame; app groups still work alongside stacks.
+- [x] Drag a folder from Finder onto the dock: stack appears before Trash; mini icons match contents.
+- [x] Click opens grid; click a file/app opens it; Portside stays inactive. Right-click Open / Show in Finder / Remove.
+- [x] Drop a file onto the closed stack and into the open grid: it lands in the folder; tile/grid update.
+- [x] Open a stack grid, drag an app from Applications into a chosen slot (gap follows); it stays in that place after drop.
+- [x] Drop an app from Finder onto the strip (not a stack): pins with no visible jitter when the gap becomes the icon.
+- [x] Drag a file or app onto a stack tile: grid opens immediately; leave closes after grace via hide rules.
+- [x] Reorder stacks; drag one out to remove. Import from macOS Dock adds native folders. Mag + labels OK.
+- [x] Reveal/hide still within a frame; app groups still work alongside stacks.
+
+---
+
+# P2: Spacers, Reduce Transparency, app spring-load (2026-10-31)
+
+Status: implemented, debug build and launch verified. Hand test pending. New file: `Sources/portside/AppSpringLoad.swift`. dock.json: `DockEntry` type `spacer` (`{ type, spacer: { id, size } }`).
+
+## Deliverables
+
+- [x] Section spacers (regular / small) in the pinned section: Add Spacer on the separator menu; reorder by drag; drag out or Remove Spacer to delete. Import / first-launch seed from native `spacer-tile` / `small-spacer-tile`.
+- [x] Reduce Transparency (Accessibility): Liquid Glass falls back to frosted at high opacity; strip redraws live via `accessibilityDisplayOptionsDidChangeNotification`. Reduce Motion already respected elsewhere.
+- [x] File drag resting ~600ms on a running app tile brings that app forward (`AppSpringLoad`). Does not launch not-running apps.
+- [x] System glass (Liquid Glass / Frosted / Solid) was already shipped; this slice only adds the Accessibility Reduce Transparency path.
+- [x] Magnification polish already on all three edges (prior slice).
+
+## Hand test
+
+- [ ] Separator menu > Add Spacer (Regular and Small); drag to reorder; drag out to remove; right-click Remove Spacer.
+- [ ] Import from macOS Dock (or first-launch seed) keeps native spacers in place.
+- [ ] System Settings > Accessibility > Display > Reduce Transparency on/off: glass becomes opaque frosted live; off restores glass.
+- [ ] Drag a file from Finder onto a running app tile, hold ~0.6s: that app comes forward; drop still opens the file. Pass quickly: no activate.
+- [ ] Reveal/hide, groups, stacks unchanged.
 
 ## Deferred
 

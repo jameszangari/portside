@@ -6,12 +6,10 @@ let importLogger = Logger(subsystem: "com.james.portside", category: "Import")
 /// What the native Dock holds, read through CFPreferences. Read only: nothing
 /// in `com.apple.dock` is ever written from here.
 struct NativeDockSnapshot {
-    /// Finder first, then `persistent-apps` in native order, paths that exist.
-    var apps: [PinnedApp]
+    /// Finder first, then `persistent-apps` in native order (apps and spacers).
+    var appSection: [DockEntry] = []
     /// Apps whose path no longer exists.
     var missingApps = 0
-    /// Spacer tiles in `persistent-apps`.
-    var spacers = 0
     /// Folder tiles from `persistent-others` that exist on disk.
     var folderStacks: [FolderStack] = []
     /// File tiles and missing paths in `persistent-others` (skipped).
@@ -26,6 +24,14 @@ struct NativeDockSnapshot {
     /// Native default when `tilesize` is not set.
     static let defaultTileSize: CGFloat = 48
 
+    var apps: [PinnedApp] {
+        appSection.compactMap { if case .app(let app) = $0 { return app }; return nil }
+    }
+
+    var spacerCount: Int {
+        appSection.reduce(0) { $0 + ($1.spacer != nil ? 1 : 0) }
+    }
+
     var edgeTitle: String { edge.title }
     var sizeTitle: String { "\(Int(tileSize.rounded())) pt" }
 }
@@ -36,10 +42,10 @@ enum NativeDockImport {
     /// Read the native Dock. If a Hide-the-Dock backup exists, orientation
     /// and tilesize come from it, otherwise from the live preferences.
     static func readSnapshot() -> NativeDockSnapshot {
-        var snapshot = NativeDockSnapshot(apps: [], edge: .bottom, tileSize: NativeDockSnapshot.defaultTileSize, fromBackup: false)
+        var snapshot = NativeDockSnapshot(edge: .bottom, tileSize: NativeDockSnapshot.defaultTileSize, fromBackup: false)
 
         let finder = PinnedApp(bundleIdentifier: "com.apple.finder", path: "/System/Library/CoreServices/Finder.app")
-        snapshot.apps = [finder]
+        snapshot.appSection = [.app(finder)]
         for tile in tiles("persistent-apps") {
             switch tile["tile-type"] as? String {
             case "file-tile":
@@ -54,10 +60,12 @@ enum NativeDockImport {
                 }
                 let app = PinnedApp(bundleIdentifier: data["bundle-identifier"] as? String, path: url.path)
                 if !snapshot.apps.contains(where: { $0.id == app.id }) {
-                    snapshot.apps.append(app)
+                    snapshot.appSection.append(.app(app))
                 }
-            case "spacer-tile", "small-spacer-tile", "flex-spacer-tile":
-                snapshot.spacers += 1
+            case "spacer-tile", "flex-spacer-tile":
+                snapshot.appSection.append(.spacer(DockSpacer(size: .regular)))
+            case "small-spacer-tile":
+                snapshot.appSection.append(.spacer(DockSpacer(size: .small)))
             default:
                 break
             }
@@ -103,7 +111,7 @@ enum NativeDockImport {
 
         importLogger.info("""
             read native Dock: \(snapshot.apps.count) apps, \(snapshot.missingApps) missing, \
-            \(snapshot.spacers) spacers skipped, \(snapshot.folderStacks.count) folder stacks, \
+            \(snapshot.spacerCount) spacers, \(snapshot.folderStacks.count) folder stacks, \
             \(snapshot.othersSkipped) other tiles skipped, \
             edge \(snapshot.edge.rawValue, privacy: .public), tilesize \(Double(snapshot.tileSize), format: .fixed(precision: 1)) \
             (\(snapshot.fromBackup ? "from backup" : "live", privacy: .public))
@@ -157,7 +165,7 @@ struct ImportSheet: View {
             Text("Import from macOS Dock").font(.headline)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Found \(snapshot.apps.count) \(snapshot.apps.count == 1 ? "app" : "apps")\(snapshot.folderStacks.isEmpty ? "" : ", \(snapshot.folderStacks.count) folder \(snapshot.folderStacks.count == 1 ? "stack" : "stacks")"), native position \(snapshot.edgeTitle), native icon size \(snapshot.sizeTitle).")
+                Text("Found \(snapshot.apps.count) \(snapshot.apps.count == 1 ? "app" : "apps")\(snapshot.spacerCount == 0 ? "" : ", \(snapshot.spacerCount) \(snapshot.spacerCount == 1 ? "spacer" : "spacers")")\(snapshot.folderStacks.isEmpty ? "" : ", \(snapshot.folderStacks.count) folder \(snapshot.folderStacks.count == 1 ? "stack" : "stacks")"), native position \(snapshot.edgeTitle), native icon size \(snapshot.sizeTitle).")
                 if snapshot.fromBackup {
                     Text("Position and size come from the saved settings of the hidden macOS Dock.").helperStyle()
                 }
