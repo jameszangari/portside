@@ -41,6 +41,8 @@ final class DragOutController {
     private var canceled = false
     private var isOutside = false
     private var source: Source = .strip
+    /// The current (or last) drag started on the strip, not in a grid.
+    var isFromStrip: Bool { source == .strip }
     private var itemID = ""
     private var onCancel: (() -> Void)?
     private var monitor: Any?
@@ -48,6 +50,8 @@ final class DragOutController {
 
     private let overlay = OverlayPanel()
     private let state = DragOutState()
+    /// A removal is waiting on a confirmation; the overlay is still up.
+    private var isDeferred = false
     private let logger = Logger(subsystem: "com.james.portside", category: "DragOut")
 
     /// The poof's length. The overlay is removed right after it.
@@ -63,6 +67,7 @@ final class DragOutController {
         }
         pendingDismiss?.cancel()
         pendingDismiss = nil
+        if isDeferred { resolve(remove: false) }
         token += 1
         isDragging = true
         canceled = false
@@ -107,16 +112,30 @@ final class DragOutController {
 
     /// The gesture ended (mouse up). Returns true if the item should be
     /// removed now; the poof is already playing.
-    func end(_ token: Int) -> Bool {
+    ///
+    /// With `deferResolution`, a removal keeps the overlay up with no poof
+    /// until the caller reports the outcome through `resolve(remove:)` (used
+    /// while a confirmation alert is shown).
+    func end(_ token: Int, deferResolution: Bool = false) -> Bool {
         guard token == self.token, isDragging else { return false }
         let remove = !canceled && isOutside
-        finish(remove: remove, reason: canceled ? "canceled" : (remove ? "dropped outside" : "dropped inside"))
+        finish(remove: remove, deferResolution: deferResolution && remove,
+               reason: canceled ? "canceled" : (remove ? "dropped outside" : "dropped inside"))
         return remove
+    }
+
+    /// Ends a deferred removal: the poof if it went ahead, else the overlay
+    /// just goes away.
+    func resolve(remove: Bool) {
+        guard isDeferred else { return }
+        isDeferred = false
+        logger.info("deferred removal resolved: \(remove ? "removing" : "kept", privacy: .public)")
+        finishOverlay(poof: remove)
     }
 
     // MARK: - Private
 
-    private func finish(remove: Bool, reason: String) {
+    private func finish(remove: Bool, deferResolution: Bool = false, reason: String) {
         removeMonitor()
         overlay.endKeyFocus()
         isDragging = false
@@ -125,7 +144,16 @@ final class DragOutController {
         onCancel = nil
         NSCursor.arrow.set()
         logger.info("drag ended (\(reason, privacy: .public)): \(self.itemID, privacy: .public)\(remove ? ", removing" : "", privacy: .public)")
-        if remove && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+        if deferResolution {
+            isDeferred = true
+        } else {
+            finishOverlay(poof: remove)
+        }
+        onDraggingChanged?(false)
+    }
+
+    private func finishOverlay(poof: Bool) {
+        if poof && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             state.phase = .poof
             let work = DispatchWorkItem { [weak self] in
                 self?.pendingDismiss = nil
@@ -136,7 +164,6 @@ final class DragOutController {
         } else {
             overlay.dismiss()
         }
-        onDraggingChanged?(false)
     }
 
     private func cancel() {

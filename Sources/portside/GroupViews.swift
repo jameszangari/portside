@@ -32,6 +32,8 @@ struct GroupTileView: View {
     let anyRunning: Bool
     let onToggle: () -> Void
     let onRename: () -> Void
+    /// "Remove from Dock": the strip asks for confirmation first.
+    let onRemove: () -> Void
     @ObservedObject var dockModel: DockModel
     @ObservedObject private var icons = IconCache.shared
     @Environment(\.dockEdge) private var edge
@@ -46,7 +48,7 @@ struct GroupTileView: View {
                 Button("Rename", action: onRename)
                 Divider()
                 Button("Ungroup") { dockModel.ungroup(groupID: group.id) }
-                Button("Remove from Dock") { dockModel.removeGroup(groupID: group.id) }
+                Button("Remove from Dock", action: onRemove)
             }
     }
 

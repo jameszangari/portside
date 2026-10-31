@@ -22,6 +22,47 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 
 ---
 
+# Safety slice: confirm before removing a group
+
+Status: built, `swift build` clean, `swift run` stays up, waiting for James's hand test. New file: `Sources/portside/GroupRemoval.swift`. Log category `GroupRemoval`. No dock.json changes.
+
+## Deliverables
+
+- [x] "Remove from Dock" on a group tile and dragging a group tile out both ask: "Remove group <name>?" / "This removes the group and its N apps from the dock." Buttons: Ungroup Instead (default, same as Ungroup), Remove Group (destructive), Cancel. Portside's icon.
+- [x] Focus: `NSApp.activate()` for the alert, then the previously frontmost app is activated again (not when Settings was the frontmost app).
+- [x] The hide timer refuses while the alert is up (`isConfirmingRemoval`); it is re-armed when the alert closes.
+- [x] Drag-out: the overlay stays up without the poof (`end(_, deferResolution:)`) until the choice is made (`resolve(remove:)`). Cancel: tile is already in its slot, nothing saved. Remove: poof (none under Reduce Motion). Ungroup: overlay vanishes, group replaced by its apps.
+- [x] Empty groups: no alert, removed as before (poof on drag). App tile removal untouched. Settings > Groups Delete already confirmed.
+
+## Verification (agent)
+
+- `swift build` clean; `swift run` stays up; SIGTERM leaves `autohide-delay` unset.
+- Not run by the agent: the alert, all three buttons, drag paths, focus hand-back (need real clicks and drags).
+
+## Follow-up fixes (James's test round 1)
+
+- [x] Dragging a tile (including a group tile) off the strip closes any open grid at drag start, hover-opened or clicked; hover cannot open a grid mid-drag. Drags from inside a grid keep it open (`itemDragChanged(_, fromStrip:)`).
+- [x] A context menu opened over the strip closes the open grid, so a group's right-click menu no longer sits on top of its own grid (`stripMenuOpened`). Menus inside the grid leave it open.
+- [x] Icon rim: the running copy had been launched before the icon rebuild. After a relaunch Portside's tile is dark with the same rim as its neighbors (screenshot of the strip with Settings open).
+
+## Known gaps
+
+- Alert is modal and shown on the next run loop turn after the click or drop, so the dock may hold the overlay for a frame first.
+- Under Reduce Motion the poof is skipped but the alert still shows.
+- After a strip menu closes with the cursor still on a group tile, hover can open the grid again after the normal delay.
+
+## Hand test
+
+- [ ] Right-click a group > Remove from Dock: alert shows name and app count. Ungroup Instead: apps back as tiles in the slot. Repeat for Remove Group (gone) and Cancel (nothing changes)
+- [ ] Frontmost app is the same before and after the alert; dock stayed up while it was open and hides after
+- [ ] Drag a group tile out and release: alert. Cancel snaps the tile back, dock.json unchanged. Remove Group poofs. Ungroup Instead ungroups
+- [ ] Empty group (if you can make one): no alert
+- [ ] App tiles still remove instantly (menu and drag)
+- [ ] Open groups on hover on: hover a group open, then drag that group tile: the grid closes as the drag starts
+- [ ] Hover a group open, right-click its tile: grid closes, menu shows alone. Right-click a cell inside the grid: grid stays
+
+---
+
 # P1 slice: modifier clicks and app menu (Hide, Force Quit)
 
 Status: built, `swift build` clean, waiting for James's hand test. New file: `Sources/portside/TileActions.swift`. Log category `TileActions`. No dock.json changes.
@@ -72,7 +113,7 @@ Status: built and agent-verified, waiting for James's hand test. New file: `Sour
 - [x] While outside, the tile goes back to its starting slot (dimmed to 25%), so a removal never reorders the rest. Back over the dock: label hides and the normal live reorder resumes.
 - [x] Poof on removal: the icon scales up 1.5x and fades while eight soft puffs drift out (SwiftUI, 300ms, no private APIs). Reduce Motion: no poof, removal is instant.
 - [x] Escape during the drag cancels: the item snaps back to where it started and nothing is saved. Portside is never active, so for the length of a drag the drag overlay takes key focus without activating Portside (same trick as inline group rename) and gives it back at the end or on Escape.
-- [x] Group tiles: same as their "Remove from Dock" today, `removeGroup`: the group and all its apps leave the dock at once, with no confirmation (running members stay as unpinned running apps).
+- [x] Group tiles: same as their "Remove from Dock", now behind a confirmation (see the safety slice above); running members stay as unpinned running apps.
 - [x] Widgets: they already have "Remove Widget", so a widget dragged out and released is turned off the same way (`setWidget(_, enabled: false)`). Widgets still do not reorder in the strip; released over the dock nothing changes.
 - [x] Open group grid: an app dragged clearly out of the grid card and released is taken out of the group, same as "Remove from Group" (`removeFromGroup`): it lands right after the group tile; a group left with one app becomes that app. Label reads "Remove from Group". Released inside the grid, nothing changes (members are not reordered).
 - [x] Hide path: the drag start cancels a pending hide; exits during a drag do not arm it ("item drag in progress, hide not armed"); the hide timer also refuses while an item drag is on (button still held). After the drop the hide is re-armed with the normal delay if the cursor is outside. A hover-opened grid does not grace-close mid-drag.
@@ -94,7 +135,7 @@ Scratch dock.json (Finder, TextEdit, Calculator, Chess, two groups, Dictionary; 
 
 ## Findings
 
-- A drag-out removal of a group tile is destructive with no undo (same as its menu item). Worth a confirmation or undo later.
+- A drag-out removal of a group tile is destructive with no undo; now asks first (safety slice above).
 - The drag needs key focus for Escape, so for the length of a drag the frontmost app's window is briefly not key (keys typed mid-drag go nowhere). Focus comes back at the end (verified with TextEdit).
 - The floating icon only appears once the item is outside; inside the dock the tile itself moves between slots, as before.
 
@@ -145,6 +186,7 @@ Status: done and hand-tested by James. New file: `Sources/portside/DockAppearanc
 - Glass needs macOS 26; older systems show Frosted and hide the Liquid Glass option.
 - The macOS "Liquid Glass: Clear / Tinted" preference (`NSGlassTintAmount`) is applied by the system glass itself; Portside does not read it.
 - Hover labels keep their own style.
+- Widget cards were an 8% white fill over the dock background, so low Frost made them see-through. They now have their own `regularMaterial` backing (plus the same white fill) in `WidgetTile`, independent of style, frost and tint. Seen over T3 Code with the current settings (screenshot); not checked at Frost 0 or with Solid.
 
 ## Hand test must also check
 
@@ -192,6 +234,7 @@ Status: done and hand-tested by James. New files: `Sources/portside/BrandAssets.
 - actool's flat `AppIcon.icns` only holds 16, 32, 128, and 256 px; the larger sizes live in `Assets.car`.
 - SwiftPM's `Bundle.module` looks for the resource bundle beside `Portside.app`, not in `Contents/Resources`, and would `fatalError` in the packaged app.
 - The v2 package has no app mockups or screenshots, so the README shows no app imagery.
+- The `.icon` had only a solid navy fill with no dark variant, so with the Dark icon style the system still drew the light rendering (navy, light glass rim) while every other app got the dark one (seen in the remove-group alert and Portside's own tile). Fixed by a `fill-specializations` entry in `icon.json`: navy by default, `automatic` for the dark appearance. Rendered through `NSWorkspace.icon(forFile:)` next to Messages and Notion: background and rim now match. Dark style no longer shows navy.
 
 ## Known gaps
 

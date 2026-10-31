@@ -43,6 +43,9 @@ final class DockEngine {
     /// True while the separator is being dragged. The cursor can leave the
     /// panel mid-drag, and the dock must stay up until the drag ends.
     private var isResizing = false
+    /// True while the "Remove group?" alert is up. The cursor is over the
+    /// alert, not the dock, but the dock stays revealed until it is closed.
+    private var isConfirmingRemoval = false
     /// Drag an item out to remove it. While a drag is on (button held),
     /// exits do not arm the hide and the hide timer will not hide.
     private let dragOut = DragOutController()
@@ -95,7 +98,7 @@ final class DockEngine {
         dragOut.look = { [weak dockModel] in dockModel?.look }
         dragOut.onDraggingChanged = { [weak self] dragging in
             guard let self else { return }
-            self.groups.itemDragChanged(dragging)
+            self.groups.itemDragChanged(dragging, fromStrip: self.dragOut.isFromStrip)
             if dragging {
                 self.hover.clear()
                 if let pendingHide = self.pendingHide {
@@ -122,6 +125,16 @@ final class DockEngine {
 
         // The open group's panel is part of "inside the dock": entering it
         // cancels a pending hide, leaving it arms one, like the panel itself.
+        interactions.confirmRemoveGroup = { [weak self] group in
+            guard let self else { return .cancel }
+            self.isConfirmingRemoval = true
+            self.pendingHide?.cancel()
+            self.pendingHide = nil
+            let choice = GroupRemoval.confirm(group)
+            self.isConfirmingRemoval = false
+            self.rearmHideIfCursorOutside(source: "group removal alert closed")
+            return choice
+        }
         interactions.onGroupTapped = { [weak self] id in self?.groups.toggle(id) }
         hover.onTargetsChanged = { [weak self] in
             self?.groups.targetsChanged()
@@ -152,6 +165,10 @@ final class DockEngine {
             self.menuIsOpen = true
             // The menu opens where the hover label is; the native Dock hides it.
             self.hover.isSuppressed = true
+            let location = NSEvent.mouseLocation
+            if self.dockPanel.containsScreenPoint(location), !self.groups.containsScreenPoint(location) {
+                self.groups.stripMenuOpened()
+            }
         })
         menuObservers.append(center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
@@ -423,6 +440,10 @@ final class DockEngine {
             guard self.dockModel.autoHide else { return }
             if self.menuIsOpen {
                 self.logger.info("hide timer fired but a menu is open, staying revealed")
+                return
+            }
+            if self.isConfirmingRemoval {
+                self.logger.info("hide timer fired while the remove-group alert is up, staying revealed")
                 return
             }
             if self.isResizing {

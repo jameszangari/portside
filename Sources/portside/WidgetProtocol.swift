@@ -76,10 +76,13 @@ struct WidgetTile<Content: View>: View {
         let units = CGFloat(size.rawValue)
         content
             .frame(width: tile * units + DockMetrics.spacing * (units - 1), height: tile)
-            .background(
-                RoundedRectangle(cornerRadius: tile * 0.22, style: .continuous)
-                    .fill(Color.white.opacity(0.08))
-            )
+            // Own frosted backing, so the dock's Frost and style settings
+            // never make a widget see-through.
+            .background {
+                let shape = RoundedRectangle(cornerRadius: tile * 0.22, style: .continuous)
+                shape.fill(.regularMaterial)
+                    .overlay(shape.fill(Color.white.opacity(0.08)))
+            }
             .clipShape(RoundedRectangle(cornerRadius: tile * 0.22, style: .continuous))
     }
 }

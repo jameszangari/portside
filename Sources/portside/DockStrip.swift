@@ -52,6 +52,8 @@ final class DockInteractions {
     var onRenameGroup: ((String) -> Void)?
     /// "Settings..." from the separator's context menu.
     var onOpenSettings: (() -> Void)?
+    /// Asks whether to remove a group tile (alert, hide held off meanwhile).
+    var confirmRemoveGroup: ((FolderGroup) -> GroupRemovalChoice)?
     /// A file drag entered the strip (true) or left it, dropped or not
     /// (false, with a reason for the log).
     var onDragOverStrip: ((Bool, String) -> Void)?
@@ -230,6 +232,7 @@ struct DockStrip: View {
                 anyRunning: group.apps.contains { runningApps.isRunning($0) },
                 onToggle: { interactions.onGroupTapped?(group.id) },
                 onRename: { interactions.onRenameGroup?(group.id) },
+                onRemove: { removeGroupAfterConfirming(group, fromDrag: false) },
                 dockModel: dockModel
             )
         }
@@ -332,9 +335,17 @@ struct DockStrip: View {
                 guard let token = dragToken else { return }
                 dragToken = nil
                 let canceled = dragOut.isCanceled(token)
-                let remove = dragOut.end(token)
+                var deferred = false
+                if case .group(let group) = entry, GroupRemoval.needsConfirmation(group) { deferred = true }
+                let remove = dragOut.end(token, deferResolution: deferred)
                 dragging = nil
                 dragOutside = false
+                if remove, case .group(let group) = entry, deferred {
+                    // Alert after this gesture callback returns. The tile is
+                    // already back in its slot, so Cancel has nothing to undo.
+                    DispatchQueue.main.async { removeGroupAfterConfirming(group, fromDrag: true) }
+                    return
+                }
                 if remove {
                     withAnimation(removalAnimation) {
                         switch entry {
@@ -392,6 +403,33 @@ struct DockStrip: View {
             }
     }
 
+    /// Both group removal paths. Non-empty groups ask first; empty ones go
+    /// at once. `fromDrag`: the drag overlay is waiting to poof or vanish.
+    private func removeGroupAfterConfirming(_ group: FolderGroup, fromDrag: Bool) {
+        let choice: GroupRemovalChoice
+        if GroupRemoval.needsConfirmation(group) {
+            DispatchQueue.main.async {
+                let picked = interactions.confirmRemoveGroup?(group) ?? GroupRemoval.confirm(group)
+                finishGroupRemoval(group, picked, fromDrag: fromDrag)
+            }
+            return
+        }
+        choice = .remove
+        finishGroupRemoval(group, choice, fromDrag: fromDrag)
+    }
+
+    private func finishGroupRemoval(_ group: FolderGroup, _ choice: GroupRemovalChoice, fromDrag: Bool) {
+        if fromDrag { dragOut.resolve(remove: choice != .cancel) }
+        withAnimation(removalAnimation) {
+            switch choice {
+            case .ungroup: dockModel.ungroup(groupID: group.id)
+            case .remove: dockModel.removeGroup(groupID: group.id)
+            case .cancel: break
+            }
+        }
+        stripLogger.info("group \(group.id, privacy: .public): \(String(describing: choice), privacy: .public)")
+    }
+
     private var removalAnimation: Animation? {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .easeOut(duration: 0.15)
     }
@@ -406,7 +444,7 @@ struct DockStrip: View {
                 .frame(width: tile, height: tile))
         case .group(let group):
             return AnyView(GroupTileView(group: group, size: tile, isExpanded: false, anyRunning: false,
-                                         onToggle: {}, onRename: {}, dockModel: dockModel)
+                                         onToggle: {}, onRename: {}, onRemove: {}, dockModel: dockModel)
                 .environment(\.dockEdge, .left)
                 .frame(height: tile))
         }

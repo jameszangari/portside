@@ -140,12 +140,19 @@ final class GroupController: ObservableObject {
         expandedID == nil ? nil : overlay.hitFrame
     }
 
-    /// An item drag started or ended. When it ends, a hover-opened grid
-    /// gets its normal grace close if the cursor is no longer on it.
-    func itemDragChanged(_ dragging: Bool) {
+    /// An item drag started or ended. A drag that starts on the strip (a
+    /// tile, including a group tile) closes any open grid, like a click
+    /// elsewhere. A drag from inside the grid keeps it; when that ends, a
+    /// hover-opened grid gets its normal grace close if the cursor left it.
+    func itemDragChanged(_ dragging: Bool, fromStrip: Bool) {
         isItemDragging = dragging
         if dragging {
+            pendingHoverOpen?.cancel()
+            pendingHoverOpen = nil
             cancelHoverClose()
+            if fromStrip, expandedID != nil {
+                collapse(reason: "item drag started on the strip")
+            }
         } else {
             scheduleHoverCloseIfHoverOpened()
         }
@@ -300,6 +307,15 @@ final class GroupController: ObservableObject {
 
     // MARK: - Strip events
 
+    /// A context menu opened over the strip (not over the grid): the menu
+    /// replaces any open grid, including the group's own.
+    func stripMenuOpened() {
+        pendingHoverOpen?.cancel()
+        pendingHoverOpen = nil
+        guard expandedID != nil else { return }
+        collapse(reason: "context menu opened on the strip")
+    }
+
     /// A mouse down landed on the dock strip. Anything but the open group's
     /// own tile closes it (the tile's click toggles it instead).
     func stripMouseDown(at screenPoint: NSPoint) {
@@ -334,7 +350,7 @@ final class GroupController: ObservableObject {
         pendingHoverOpen?.cancel()
         pendingHoverOpen = nil
         updateHoverOpenedClose(targetID: targetID)
-        guard dockModel.openGroupsOnHover, !isEditing,
+        guard dockModel.openGroupsOnHover, !isEditing, !isItemDragging,
               let targetID, targetID.hasPrefix("group:") else { return }
         let groupID = String(targetID.dropFirst("group:".count))
         if expandedID == groupID {

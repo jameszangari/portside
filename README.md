@@ -34,7 +34,7 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 **Apps**
 - Pinned apps with running indicators, updated from `NSWorkspace` notifications.
 - Drag to reorder.
-- Drag an icon out of the dock to remove it, like the native Dock: a "Remove" label shows once it is clearly outside, and releasing it there removes it with a short poof (instant under Reduce Motion). Dragging back over the dock reorders as usual, and Escape puts it back. Works for app tiles, group tiles, and widgets; an app dragged out of an open group grid leaves the group instead.
+- Drag an icon out of the dock to remove it, like the native Dock: a "Remove" label shows once it is clearly outside, and releasing it there removes it with a short poof (instant under Reduce Motion). Dragging back over the dock reorders as usual, and Escape puts it back. Works for app tiles, group tiles, and widgets (a group with apps in it asks first, see Groups); an app dragged out of an open group grid leaves the group instead.
 - Drag an .app from Finder onto the strip to pin it.
 - Drop files on an app tile to open them in that app, like the native Dock. Only tiles whose app can open the files highlight and accept the drop (Finder takes folders). A not-running pinned app launches with the bounce.
 - Running apps that are not pinned show after the pinned section.
@@ -56,12 +56,13 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 **Groups**
 - User-defined groups of apps shown as one tile that opens a grid.
 - Inline naming on creation, rename, ungroup, and remove-from-group from context menus.
+- Removing a group that has apps ("Remove from Dock", or dragging its tile out) asks first: Ungroup Instead (default, apps return as normal tiles), Remove Group, or Cancel. Empty groups go without asking. The alert gives focus back to the previous app.
 - Optional open on hover, with configurable open delay and close grace.
 - Spring-loading: resting a file drag on a group tile for about 600ms opens its grid. Drop on a member that can open the file (it highlights) to open it there. The grid closes when the drag leaves both the tile and the grid.
 
 **Appearance**
 - Icons match the macOS icon style (Default, Dark, Clear, Tinted) like the native Dock, and refresh when you change it in System Settings. Or pick "Original" to show each app's own artwork.
-- Dock background: Liquid Glass (macOS 26 and later, the default), Frosted, or Solid, with a Frost (or Opacity) slider, an optional tint color, and corner radius. Open group grids use the same look.
+- Dock background: Liquid Glass (macOS 26 and later, the default), Frosted, or Solid, with a Frost (or Opacity) slider, an optional tint color, and corner radius. Open group grids use the same look. Widgets keep their own frosted card whatever the Frost setting.
 
 **Settings window**
 - General, Appearance, Widgets, and Groups tabs. Changes apply live.
@@ -206,6 +207,7 @@ Sources/portside/
   DockHover.swift           Hover target frames and label placement
   FolderGroup.swift         Group and entry models
   GroupController.swift     Group open/close state and every close path
+  GroupRemoval.swift        "Remove group?" confirmation alert and focus hand-back
   GroupViews.swift          Group tile and expanded grid views
   OverlayPanel.swift        Reusable non-activating overlay panel
   LaunchBounce.swift        Native-style launch bounce animation
