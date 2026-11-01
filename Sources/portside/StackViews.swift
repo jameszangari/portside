@@ -14,11 +14,15 @@ struct StackTileView: View {
     let onOpen: () -> Void
     let onRemove: () -> Void
     @ObservedObject var contents: StackContents
+    /// Nil in drag previews, which have no menu.
+    var dockModel: DockModel?
     @ObservedObject private var icons = IconCache.shared
     @State private var hold = MenuHold()
     @Environment(\.dockEdge) private var edge
 
-    private var preview: [StackItem] { Array(contents.items(for: stack).prefix(9)) }
+    private var preview: [StackItem] {
+        stack.showAsFolder ? [] : Array(contents.items(for: stack).prefix(9))
+    }
 
     var body: some View {
         tile
@@ -33,6 +37,10 @@ struct StackTileView: View {
                 menu.addItem(ClosureMenuItem("Show in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([stack.url])
                 })
+                if let dockModel {
+                    menu.addItem(.separator())
+                    StackOptionsMenu.items(for: stack, dockModel: dockModel).forEach(menu.addItem)
+                }
                 menu.addItem(.separator())
                 menu.addItem(ClosureMenuItem("Remove from Dock", onRemove))
                 return menu
@@ -101,6 +109,47 @@ struct StackTileView: View {
     }
 }
 
+/// View, sort and filter choices for a stack, as menu items (the tile's
+/// right-click menu). The open stack's header has the same choices in SwiftUI.
+enum StackOptionsMenu {
+    static func items(for stack: FolderStack, dockModel: DockModel) -> [NSMenuItem] {
+        let id = stack.id
+        // The tile may be older than the last change; read the live values.
+        let stack = dockModel.stacks.first { $0.id == id } ?? stack
+
+        func submenu<Option: Identifiable & Equatable>(
+            _ title: String, _ options: [Option], current: Option, label: (Option) -> String,
+            apply: @escaping (inout FolderStack, Option) -> Void
+        ) -> NSMenuItem {
+            let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            let menu = NSMenu()
+            menu.autoenablesItems = false
+            for option in options {
+                let item = ClosureMenuItem(label(option)) {
+                    dockModel.updateStack(id: id) { apply(&$0, option) }
+                }
+                item.state = option == current ? .on : .off
+                menu.addItem(item)
+            }
+            parent.submenu = menu
+            return parent
+        }
+        func toggle(_ title: String, _ isOn: Bool, _ apply: @escaping (inout FolderStack) -> Void) -> NSMenuItem {
+            let item = ClosureMenuItem(title) { dockModel.updateStack(id: id, apply) }
+            item.state = isOn ? .on : .off
+            return item
+        }
+
+        return [
+            submenu("View as", StackViewMode.allCases, current: stack.view, label: \.title) { $0.view = $1 },
+            submenu("Sort by", StackSortMode.allCases, current: stack.sort, label: \.title) { $0.sort = $1 },
+            toggle("Folders First", stack.foldersFirst) { $0.foldersFirst.toggle() },
+            toggle("Show Hidden Files", stack.showHidden) { $0.showHidden.toggle() },
+            toggle("Display as Folder", stack.showAsFolder) { $0.showAsFolder.toggle() },
+        ]
+    }
+}
+
 /// Expanded folder stack grid in the overlay panel.
 struct StackPopoverView: View {
     let stackID: String
@@ -120,6 +169,7 @@ struct StackPopoverView: View {
     private static let cellWidth: CGFloat = 76
     static let shadowPadding: CGFloat = 18
     private static let maxGridHeight: CGFloat = 320
+    private static let listWidth: CGFloat = 280
     static let dropSpace = "stack-grid-drop"
 
     static func hitInsets(for edge: DockEdge) -> NSEdgeInsets {
@@ -144,6 +194,8 @@ struct StackPopoverView: View {
                     insertIndex: $insertIndex,
                     cellFrames: cellFrames,
                     itemCount: stacks.contents.items(for: stack).count,
+                    appendOnly: stack.view == .fan || stack.sort != .manual,
+                    isList: stack.view == .list,
                     onDeposit: onDeposit,
                     onDragOverGrid: onDragOverGrid
                 ))
@@ -165,39 +217,25 @@ struct StackPopoverView: View {
 
     private func content(_ stack: FolderStack) -> some View {
         let items = stacks.contents.items(for: stack)
-        let slotCount = items.count + (insertIndex != nil ? 1 : 0)
+        // Fan and sorted stacks pick each item's position themselves, so a
+        // drop only needs to land in the folder.
+        let positioned = stack.view != .fan && stack.sort == .manual
+        let gapAt = positioned ? insertIndex : nil
+        let slotCount = items.count + (gapAt != nil ? 1 : 0)
         let columns = GroupPopoverView.columns(for: max(slotCount, 1))
         return VStack(spacing: 10) {
-            Text(stack.displayName)
-                .font(.system(size: 13, weight: .semibold))
-                .lineLimit(1)
+            header(stack)
             if items.isEmpty && insertIndex == nil {
                 Text("Empty folder")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .frame(minWidth: 160, minHeight: 48)
             } else {
-                ScrollView {
-                    let slots = gridSlots(items: items, insertAt: insertIndex)
-                    let rows = stride(from: 0, to: slots.count, by: columns).map {
-                        Array(slots[$0..<min($0 + columns, slots.count)])
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(rows.indices, id: \.self) { row in
-                            HStack(spacing: 4) {
-                                ForEach(rows[row]) { slot in
-                                    switch slot {
-                                    case .item(let item):
-                                        StackItemCell(item: item, iconSize: Self.iconSize, width: Self.cellWidth, onOpen: onOpen)
-                                    case .gap(let id):
-                                        stackGridInsertionGap(id: id)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                switch stack.view {
+                case .grid: gridBody(items: items, gapAt: gapAt, columns: columns)
+                case .list: listBody(items: items, gapAt: gapAt, sort: stack.sort)
+                case .fan: fanBody(stack: stack, items: items)
                 }
-                .frame(maxHeight: Self.maxGridHeight)
             }
         }
         .padding(12)
@@ -208,6 +246,97 @@ struct StackPopoverView: View {
             }
         }
         .dockBackground(dockModel.look, shadow: true)
+    }
+
+    private func header(_ stack: FolderStack) -> some View {
+        let id = stack.id
+        return HStack(spacing: 6) {
+            Text(stack.displayName)
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+            Menu {
+                Picker("View as", selection: Binding(
+                    get: { stack.view },
+                    set: { mode in dockModel.updateStack(id: id) { $0.view = mode } }
+                )) {
+                    ForEach(StackViewMode.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.inline)
+                Picker("Sort by", selection: Binding(
+                    get: { stack.sort },
+                    set: { mode in dockModel.updateStack(id: id) { $0.sort = mode } }
+                )) {
+                    ForEach(StackSortMode.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.inline)
+                Toggle("Folders First", isOn: Binding(
+                    get: { stack.foldersFirst },
+                    set: { on in dockModel.updateStack(id: id) { $0.foldersFirst = on } }
+                ))
+                Toggle("Show Hidden Files", isOn: Binding(
+                    get: { stack.showHidden },
+                    set: { on in dockModel.updateStack(id: id) { $0.showHidden = on } }
+                ))
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .accessibilityLabel("View and sort options")
+        }
+    }
+
+    private func gridBody(items: [StackItem], gapAt: Int?, columns: Int) -> some View {
+        ScrollView {
+            let slots = gridSlots(items: items, insertAt: gapAt)
+            let rows = stride(from: 0, to: slots.count, by: columns).map {
+                Array(slots[$0..<min($0 + columns, slots.count)])
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(rows.indices, id: \.self) { row in
+                    HStack(spacing: 4) {
+                        ForEach(rows[row]) { slot in
+                            switch slot {
+                            case .item(let item):
+                                StackItemCell(item: item, iconSize: Self.iconSize, width: Self.cellWidth, onOpen: onOpen)
+                            case .gap(let id):
+                                stackGridInsertionGap(id: id)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxHeight: Self.maxGridHeight)
+    }
+
+    private func listBody(items: [StackItem], gapAt: Int?, sort: StackSortMode) -> some View {
+        ScrollView {
+            VStack(spacing: 2) {
+                ForEach(gridSlots(items: items, insertAt: gapAt)) { slot in
+                    switch slot {
+                    case .item(let item):
+                        StackListRow(item: item, sort: sort, width: Self.listWidth, onOpen: onOpen)
+                    case .gap(let id):
+                        stackGridInsertionGap(id: id)
+                            .frame(width: Self.listWidth, height: StackListRow.height)
+                    }
+                }
+            }
+        }
+        .frame(maxHeight: Self.maxGridHeight)
+    }
+
+    private func fanBody(stack: FolderStack, items: [StackItem]) -> some View {
+        StackFanView(
+            items: Array(items.prefix(StackFanView.limit)),
+            extra: max(items.count - StackFanView.limit, 0),
+            folderURL: stack.url,
+            edge: edge,
+            onOpen: onOpen,
+            onOpenFolder: { stacks.openFolder(stackID) }
+        )
     }
 
     private enum GridSlot: Identifiable {
@@ -259,6 +388,10 @@ private struct StackGridDropDelegate: DropDelegate {
     @Binding var insertIndex: Int?
     let cellFrames: [String: CGRect]
     let itemCount: Int
+    /// Fan and sorted stacks: the drop lands in the folder, no chosen slot.
+    let appendOnly: Bool
+    /// Rows stack vertically, so the slot is decided by height alone.
+    let isList: Bool
     let onDeposit: ([URL], Int) -> Void
     let onDragOverGrid: (Bool, String) -> Void
 
@@ -277,7 +410,7 @@ private struct StackGridDropDelegate: DropDelegate {
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        let index = slotIndex(at: info.location)
+        let index = appendOnly ? itemCount : slotIndex(at: info.location)
         if insertIndex != index {
             withAnimation(.easeOut(duration: 0.12)) {
                 insertIndex = index
@@ -314,6 +447,9 @@ private struct StackGridDropDelegate: DropDelegate {
                 return a.minY < b.minY
             }
         if ordered.isEmpty { return 0 }
+        if isList {
+            return ordered.firstIndex { point.y < $0.midY } ?? ordered.count
+        }
         for (i, frame) in ordered.enumerated() {
             if point.y < frame.midY - frame.height * 0.45 { return i }
             if abs(point.y - frame.midY) <= frame.height * 0.55, point.x < frame.midX {
@@ -383,5 +519,154 @@ private struct StackItemCell: View {
         .onTapGesture { onOpen(item) }
         .accessibilityLabel(item.name)
         .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// One row of the list view: icon, name, and a detail that follows the sort.
+private struct StackListRow: View {
+    static let height: CGFloat = 30
+    let item: StackItem
+    let sort: StackSortMode
+    let width: CGFloat
+    let onOpen: (StackItem) -> Void
+    @ObservedObject private var icons = IconCache.shared
+    @State private var hovered = false
+
+    private var detail: String {
+        switch sort {
+        case .dateAdded: item.dateAdded.formatted(date: .abbreviated, time: .omitted)
+        case .dateModified: item.dateModified.formatted(date: .abbreviated, time: .omitted)
+        default: item.kind
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(nsImage: icons.icon(for: item.url))
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 22, height: 22)
+            Text(item.name)
+                .font(.system(size: 12))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 8)
+            Text(detail)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 8)
+        .frame(width: width, height: Self.height)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.primary.opacity(hovered ? 0.12 : 0))
+        )
+        .background(GeometryReader { proxy in
+            Color.clear.preference(
+                key: StackCellFramesKey.self,
+                value: [item.id: proxy.frame(in: .named(StackPopoverView.dropSpace))]
+            )
+        })
+        .contentShape(Rectangle())
+        .onHover { hovered = $0 }
+        .onTapGesture { onOpen(item) }
+        .accessibilityLabel(item.name)
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// The native Dock's fan: icons rise from the tile in a gentle curve, each
+/// with its name beside it. The first item sits nearest the tile.
+private struct StackFanView: View {
+    static let limit = 10
+    private static let iconSize: CGFloat = 40
+    private static let step: CGFloat = 46
+    private static let labelWidth: CGFloat = 150
+    private static let arc: CGFloat = 56
+
+    let items: [StackItem]
+    /// Items past `limit`, summed into one "more in Finder" row.
+    let extra: Int
+    let folderURL: URL
+    let edge: DockEdge
+    let onOpen: (StackItem) -> Void
+    let onOpenFolder: () -> Void
+    @ObservedObject private var icons = IconCache.shared
+
+    private var count: Int { items.count + (extra > 0 ? 1 : 0) }
+
+    /// Sideways shift of row `index`: none at the tile, most at the top. The
+    /// fan bends away from a side dock and toward the right on the bottom.
+    private func shift(_ index: Int) -> CGFloat {
+        let t = count > 1 ? CGFloat(index) / CGFloat(count - 1) : 0
+        let bend = Self.arc * pow(t, 1.6)
+        return edge == .right ? Self.arc - bend : bend
+    }
+
+    var body: some View {
+        let height = CGFloat(max(count - 1, 0)) * Self.step + Self.iconSize
+        let rowWidth = Self.iconSize + 8 + Self.labelWidth
+        // Names go on the side facing away from the screen edge.
+        let labelsLeft = edge != .left
+        ZStack(alignment: .topLeading) {
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                row(icon: icons.icon(for: item.url), title: item.name, labelsLeft: labelsLeft) { onOpen(item) }
+                    .offset(x: shift(index), y: height - Self.iconSize - CGFloat(index) * Self.step)
+            }
+            if extra > 0 {
+                row(icon: icons.icon(for: folderURL), title: "\(extra) more in Finder", labelsLeft: labelsLeft, action: onOpenFolder)
+                    .offset(x: shift(items.count), y: height - Self.iconSize - CGFloat(items.count) * Self.step)
+            }
+        }
+        .frame(width: rowWidth + Self.arc, height: height, alignment: .topLeading)
+    }
+
+    private func row(icon: NSImage, title: String, labelsLeft: Bool, action: @escaping () -> Void) -> some View {
+        FanRow(icon: icon, title: title, iconSize: Self.iconSize, labelWidth: Self.labelWidth,
+               labelsLeft: labelsLeft, action: action)
+    }
+}
+
+private struct FanRow: View {
+    let icon: NSImage
+    let title: String
+    let iconSize: CGFloat
+    let labelWidth: CGFloat
+    let labelsLeft: Bool
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if labelsLeft { label; image } else { image; label }
+        }
+        .frame(height: iconSize)
+        .contentShape(Rectangle())
+        .onHover { hovered = $0 }
+        .onTapGesture(perform: action)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var image: some View {
+        Image(nsImage: icon)
+            .resizable()
+            .interpolation(.high)
+            .frame(width: iconSize, height: iconSize)
+            .scaleEffect(hovered ? 1.08 : 1)
+            .animation(.easeOut(duration: 0.1), value: hovered)
+    }
+
+    private var label: some View {
+        Text(title)
+            .font(.system(size: 12))
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Color(white: 0.12, opacity: hovered ? 0.95 : 0.78), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .frame(width: labelWidth, alignment: labelsLeft ? .trailing : .leading)
     }
 }

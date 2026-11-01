@@ -153,11 +153,12 @@ struct DockStrip: View {
 
     private var spacing: CGFloat { dockModel.iconGap }
     private let alongPadding: CGFloat = 8
-    /// Fixed air on each side of a separator hairline, independent of icon
-    /// gap. The HStack already inserts `spacing`, so the separator pads
-    /// itself by the rest.
-    private static let separatorAir: CGFloat = 10
-    private var separatorPad: CGFloat { max(0, Self.separatorAir - spacing) }
+    /// Air on each side of a separator hairline: a base plus the icon
+    /// gap, so it tracks the gap setting. The HStack already
+    /// inserts `spacing`, so the separator pads itself by the rest.
+    private static let separatorAirBase: CGFloat = 5
+    private var separatorAir: CGFloat { Self.separatorAirBase + spacing }
+    private var separatorPad: CGFloat { max(0, separatorAir - spacing) }
     private var separatorLength: CGFloat { 1 + separatorPad * 2 }
     private static let space = "strip"
     /// Minimum hit size along the dock for the separator (points).
@@ -263,7 +264,8 @@ struct DockStrip: View {
                         onToggle: { interactions.onStackTapped?(folder.id) },
                         onOpen: { stacks.openFolder(folder.id) },
                         onRemove: { dockModel.removeStack(id: folder.id) },
-                        contents: stacks.contents
+                        contents: stacks.contents,
+                        dockModel: dockModel
                     )
                     .opacity(dragging == folder.hoverID ? 0 : 1)
                     .gesture(stackDragGesture(for: folder, tile: tile, vertical: edge.isVertical))
@@ -369,7 +371,7 @@ struct DockStrip: View {
     // MARK: - Separator (drag to resize)
 
     /// A thin line between sections. Nearly invisible like the native Dock;
-    /// spacing around it stays fixed while icon gap changes, and the hit
+    /// spacing around it grows slightly with icon gap, and the hit
     /// area stays wide so resize and the menu always work.
     private func separator(tile: CGFloat, maxTile: CGFloat, edge: DockEdge) -> some View {
         let vertical = edge.isVertical

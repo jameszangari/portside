@@ -52,7 +52,7 @@ Status (2026-10-31): built. Settings always centers on the primary display; Icon
 
 - [x] **Settings window position:** every open (from closed or miniaturized) places the fixed 760x560 window at the dead center of the primary screen's visible frame. No longer follows the cursor's screen. Menu bar and separator menu share the same path.
 - [x] **Icon gap slider:** Settings > General > Dock, under Icon size. Range 0 to 8pt, default 6. Live apply, persisted as `iconGap` in `dock.json`. Strip, multi-unit widgets, hover slop, and magnifier slot math all use it on Bottom/Left/Right.
-- [x] **Icon gap vs separators:** icon gap now spaces only tiles (apps, groups, folders, widgets, Trash). Section separators keep fixed 10pt air on each side at any gap (separator pads itself by `10 - iconGap`). Hit target stays at least 9pt so resize/menu work at gap 0.
+- [x] **Icon gap vs separators:** icon gap now spaces only tiles (apps, groups, folders, widgets, Trash). Section separator air per side is `5 + iconGap` (separator pads itself by a constant 5), so it tracks the gap. Hit target stays at least 9pt so resize/menu work at gap 0.
 - [x] **Same minimum spacing for every item:** app icons carry a built-in transparent margin (100/1024 of the tile per side, measured on system icons), so at gap 0 they never touch. Widgets now pad by that margin along the dock, and group/folder tiles draw their rounded square at the icon's visible size (`IconMetrics.margin` in DockItem.swift). Gap 0 = app-icon spacing everywhere; fit-to-screen math includes the widget margins.
 
 #### Hand test
@@ -83,14 +83,34 @@ Already shipped: create/rename from menus and Settings, Finder drop into group, 
 - [ ] 5. Reveal timing unchanged.
 
 ### 3. Folder stacks (P2 leftovers)
+
+Status (2026-10-31): built, `swift build` clean, app launches and the existing Downloads stack loads. Hand test pending.
+
 Already shipped: pin folder from Finder, grid popover, drop-in, FSEvents, import from native Dock.
-Still open:
-- [ ] **Fan view** (native fan stack)
-- [ ] **List view**
-- [ ] **View picker** on the stack (and/or Settings): Fan / Grid / List, persisted per stack
-- [ ] **Sort / filter:** name, date added, date modified, kind; optional folders-first; optional hide hidden files. Persist per stack in `dock.json`
-- [ ] **Show as folder vs stack of icons** (native option)
+- [x] **Fan view:** icons rise from the tile in a curve (`StackFanView`), name pill beside each, first 10 then "N more in Finder". Bends right on Bottom and Left docks and left on a Right dock; names sit on the side away from a Left dock, otherwise to the left of the icons.
+- [x] **List view:** rows with icon, name, and a detail that follows the sort (date for the date sorts, kind otherwise). Scrolls past 320pt. Drop slot uses height only.
+- [x] **View picker:** tile right-click > View as (Grid, Fan, List), and the `...` button in the open stack's header. Persisted per stack as `view`.
+- [x] **Sort / filter:** Custom Order (default), Name, Date Added, Date Modified (newest first), Kind; Folders First; Show Hidden Files. Persisted per stack (`sort`, `foldersFirst`, `showHidden`). Changing one re-reads the folder, so the open stack updates live.
+- [x] **Show as folder vs stack of icons:** Display as Folder (`showAsFolder`) draws the folder's own icon on the tile.
+- [x] **Import:** native `showas`, `arrangement` and `displayas` map onto view, sort and Display as Folder when stacks import.
+- [x] Fixes found on the way: a file change refreshed a stack with the settings it had when first watched (stale `itemOrder`); a refresh queued during a read reused stale settings. Both now use the newest stack.
 - [ ] Milestone F leftover: import plain file tiles from `persistent-others` (folders already import)
+
+#### Hand test
+- [ ] 1. Right-click the Downloads stack: View as, Sort by, Folders First, Show Hidden Files, Display as Folder are listed with checkmarks on the current choices.
+- [ ] 2. View as Fan, then click the tile: icons curve up from the tile with names beside them; click one to open it. A folder with more than 10 items ends with "N more in Finder".
+- [ ] 3. View as List: rows with a kind (or date) on the right; scrolls when long. Click opens.
+- [ ] 4. Open the stack and use the `...` button in its header: pick Sort by Date Modified, then Name: the order changes live while open. Does the menu open and close without the dock hiding?
+- [ ] 5. Folders First and Show Hidden Files: items regroup / dotfiles appear and disappear.
+- [ ] 6. Display as Folder: tile shows the plain folder icon; turn off: mini grid returns.
+- [ ] 7. Drop a file into the open stack: Custom Order + Grid or List shows the dashed slot; Fan or any other sort just drops in.
+- [ ] 8. Quit and relaunch: view, sort and filters are kept per stack.
+- [ ] 9. Try the Fan on a Left and a Right dock; reveal timing unchanged.
+
+Known gaps (stacks):
+- The fan opens centered on the tile like the grid, so it is not anchored at its base the way the native fan is. Side docks are the least tested.
+- No in-stack drag reordering; Custom Order is set by where files are dropped.
+- Nothing in Settings yet; options live on the tile menu and the open stack.
 
 ### 4. P3 leftovers
 - [ ] Window list in the app right-click menu (Screen Recording for titles; click focuses)

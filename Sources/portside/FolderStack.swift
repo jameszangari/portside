@@ -5,16 +5,51 @@ import os.log
 
 private let stackLogger = Logger(subsystem: "com.james.portside", category: "Stacks")
 
+/// How an open stack lays out its items.
+enum StackViewMode: String, Codable, CaseIterable, Identifiable {
+    case grid, fan, list
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .grid: "Grid"
+        case .fan: "Fan"
+        case .list: "List"
+        }
+    }
+}
+
+/// What orders a stack's items. `manual` is name order plus the order the
+/// user set by dropping items at a chosen slot (`itemOrder`).
+enum StackSortMode: String, Codable, CaseIterable, Identifiable {
+    case manual, name, dateAdded, dateModified, kind
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .manual: "Custom Order"
+        case .name: "Name"
+        case .dateAdded: "Date Added"
+        case .dateModified: "Date Modified"
+        case .kind: "Kind"
+        }
+    }
+}
+
 /// A filesystem folder pinned in the dock's right section (before Trash),
-/// separate from user-defined app groups. Grid view only in this slice;
-/// fan and list come later.
+/// separate from user-defined app groups. Opens as a grid, fan, or list.
 struct FolderStack: Hashable, Identifiable {
     var id: String
     /// Absolute path to the folder.
     var path: String
     /// Preferred display order of child names (`lastPathComponent`). Missing
-    /// names are appended (name-sorted). Empty means pure name sort.
+    /// names are appended (name-sorted). Empty means pure name sort. Only
+    /// used while `sort` is `.manual`.
     var itemOrder: [String]
+    var view: StackViewMode = .grid
+    var sort: StackSortMode = .manual
+    var foldersFirst = false
+    var showHidden = false
+    /// Tile shows the folder's own icon instead of a mini grid of contents.
+    var showAsFolder = false
 
     init(id: String = UUID().uuidString, path: String, itemOrder: [String] = []) {
         self.id = id
@@ -41,13 +76,21 @@ struct FolderStack: Hashable, Identifiable {
 }
 
 extension FolderStack: Codable {
-    private enum CodingKeys: String, CodingKey { case id, path, itemOrder }
+    private enum CodingKeys: String, CodingKey {
+        case id, path, itemOrder, view, sort, foldersFirst, showHidden, showAsFolder
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         path = try c.decode(String.self, forKey: .path)
         itemOrder = try c.decodeIfPresent([String].self, forKey: .itemOrder) ?? []
+        // Unknown values (a newer build wrote them) fall back to defaults.
+        view = (try? c.decodeIfPresent(StackViewMode.self, forKey: .view)) ?? .grid
+        sort = (try? c.decodeIfPresent(StackSortMode.self, forKey: .sort)) ?? .manual
+        foldersFirst = (try? c.decodeIfPresent(Bool.self, forKey: .foldersFirst)) ?? false
+        showHidden = (try? c.decodeIfPresent(Bool.self, forKey: .showHidden)) ?? false
+        showAsFolder = (try? c.decodeIfPresent(Bool.self, forKey: .showAsFolder)) ?? false
     }
 
     func encode(to encoder: Encoder) throws {
@@ -57,6 +100,11 @@ extension FolderStack: Codable {
         if !itemOrder.isEmpty {
             try c.encode(itemOrder, forKey: .itemOrder)
         }
+        if view != .grid { try c.encode(view, forKey: .view) }
+        if sort != .manual { try c.encode(sort, forKey: .sort) }
+        if foldersFirst { try c.encode(true, forKey: .foldersFirst) }
+        if showHidden { try c.encode(true, forKey: .showHidden) }
+        if showAsFolder { try c.encode(true, forKey: .showAsFolder) }
     }
 }
 
@@ -67,6 +115,10 @@ struct StackItem: Identifiable, Hashable {
     let name: String
     let isDirectory: Bool
     let isApplication: Bool
+    var dateAdded = Date.distantPast
+    var dateModified = Date.distantPast
+    /// Localized kind ("PDF Document", "Folder").
+    var kind = ""
 }
 
 /// Lists and watches folder-stack contents. Event-driven via FSEvents; no
@@ -77,7 +129,8 @@ final class StackContents: ObservableObject {
     private var streams: [String: FSEventStreamRef] = [:]
     private let queue = DispatchQueue(label: "com.james.portside.stacks", qos: .utility)
     private var reading = Set<String>()
-    private var readAgain = Set<String>()
+    /// Stacks changed while a read was running, with their newest settings.
+    private var readAgain: [String: FolderStack] = [:]
 
     deinit { stopAll() }
 
@@ -89,6 +142,8 @@ final class StackContents: ObservableObject {
         }
         for stack in stacks {
             if streams[stack.id] == nil { watch(stack) }
+            // File events refresh with the newest sort and filter settings.
+            watchedPaths[stack.id] = stack
             refresh(stack, reason: "sync")
         }
     }
@@ -100,14 +155,13 @@ final class StackContents: ObservableObject {
     func refresh(_ stack: FolderStack, reason: String) {
         let id = stack.id
         if reading.contains(id) {
-            readAgain.insert(id)
+            readAgain[id] = stack
             return
         }
         reading.insert(id)
         let url = stack.url
-        let order = stack.itemOrder
         queue.async { [weak self] in
-            let listed = Self.applyOrder(Self.list(url), order: order)
+            let listed = Self.arrange(Self.list(url, showHidden: stack.showHidden), for: stack)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.reading.remove(id)
@@ -115,11 +169,38 @@ final class StackContents: ObservableObject {
                     self.items[id] = listed
                     stackLogger.info("stack \(stack.displayName, privacy: .public): \(listed.count) item(s) (\(reason, privacy: .public))")
                 }
-                if self.readAgain.remove(id) != nil {
-                    self.refresh(stack, reason: "\(reason) (again)")
+                if let newest = self.readAgain.removeValue(forKey: id) {
+                    self.refresh(newest, reason: "\(reason) (again)")
                 }
             }
         }
+    }
+
+    /// Applies the stack's sort and "folders first" to a name-sorted listing.
+    static func arrange(_ listed: [StackItem], for stack: FolderStack) -> [StackItem] {
+        func byName(_ a: StackItem, _ b: StackItem) -> Bool {
+            a.name.localizedStandardCompare(b.name) == .orderedAscending
+        }
+        var items: [StackItem]
+        switch stack.sort {
+        case .manual:
+            items = applyOrder(listed, order: stack.itemOrder)
+        case .name:
+            items = listed.sorted(by: byName)
+        case .dateAdded:
+            items = listed.sorted { $0.dateAdded != $1.dateAdded ? $0.dateAdded > $1.dateAdded : byName($0, $1) }
+        case .dateModified:
+            items = listed.sorted { $0.dateModified != $1.dateModified ? $0.dateModified > $1.dateModified : byName($0, $1) }
+        case .kind:
+            items = listed.sorted {
+                let order = $0.kind.localizedStandardCompare($1.kind)
+                return order != .orderedSame ? order == .orderedAscending : byName($0, $1)
+            }
+        }
+        if stack.foldersFirst {
+            items = items.filter(\.isDirectory) + items.filter { !$0.isDirectory }
+        }
+        return items
     }
 
     /// Name-sorted listing, then `order` (filenames) applied when non-empty.
@@ -138,21 +219,28 @@ final class StackContents: ObservableObject {
         return result
     }
 
-    private static func list(_ url: URL) -> [StackItem] {
+    private static func list(_ url: URL, showHidden: Bool) -> [StackItem] {
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: url.path) else { return [] }
+        let keys: Set<URLResourceKey> = [
+            .isDirectoryKey, .isApplicationKey, .isPackageKey,
+            .addedToDirectoryDateKey, .contentModificationDateKey, .localizedTypeDescriptionKey,
+        ]
         return names
-            .filter { $0 != ".DS_Store" && $0 != ".localized" && !$0.hasPrefix(".") }
+            .filter { $0 != ".DS_Store" && $0 != ".localized" && (showHidden || !$0.hasPrefix(".")) }
             .compactMap { name -> StackItem? in
                 let itemURL = url.appendingPathComponent(name)
-                let values = try? itemURL.resourceValues(forKeys: [.isDirectoryKey, .isApplicationKey, .isPackageKey])
+                let values = try? itemURL.resourceValues(forKeys: keys)
                 let isApp = values?.isApplication == true || itemURL.pathExtension.lowercased() == "app"
                 let isDir = values?.isDirectory == true && !isApp
                 return StackItem(
                     url: itemURL,
                     name: fm.displayName(atPath: itemURL.path),
                     isDirectory: isDir,
-                    isApplication: isApp
+                    isApplication: isApp,
+                    dateAdded: values?.addedToDirectoryDate ?? values?.contentModificationDate ?? .distantPast,
+                    dateModified: values?.contentModificationDate ?? .distantPast,
+                    kind: values?.localizedTypeDescription ?? ""
                 )
             }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }

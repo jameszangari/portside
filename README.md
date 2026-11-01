@@ -53,7 +53,7 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 **Layout**
 - Bottom, Left, or Right position, switchable live.
 - Drag the separator to resize icons live (clamped to what fits, persisted).
-- Icon gap (0 to 8pt, default 6) between tiles, live in Settings; same gap on side docks. At 0, every item keeps the app-icon minimum spacing; separators keep fixed spacing.
+- Icon gap (0 to 8pt, default 6) between tiles, live in Settings; same gap on side docks. At 0, every item keeps the app-icon minimum spacing; separator air tracks the gap (5pt plus the gap per side).
 - Magnification on every position: app and group tiles grow under the cursor with a smooth falloff to their neighbors, away from the screen edge (up on the bottom, sideways on the sides), past a shelf that keeps its thickness while it lengthens. Near the ends of a long dock the shelf stays on screen. Widgets and separators keep their size. Magnified size 16 to 128pt, set live in Settings. Hold Control-Shift over the dock to flip it for a moment. Labels, right-click and press-and-hold follow the magnified icon, and a launch bounce plays at the magnified size. Off during drags and while a group grid or menu is up. Under Reduce Motion the size follows the cursor without the spring.
 
 **Widgets**
@@ -75,10 +75,10 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 
 **Folder stacks**
 - Filesystem folders pin in the right section (after widgets, before Trash), separate from app groups. Drag a folder from Finder onto the dock to add one (an insertion gap opens at the drop slot, like the native Dock); reorder among stacks; drag out or Remove from Dock to unpin.
-- Tile shows a mini grid of the folder's contents (folder icon when empty). Click opens a grid popover; click an item to open it. Menu: Open, Show in Finder, Remove from Dock.
+- Tile shows a mini grid of the folder's contents (folder icon when empty, or always with Display as Folder). Click opens the stack as a Grid, Fan, or List; click an item to open it. Fan curves up from the tile with a name beside each icon (first 10, then "N more in Finder"). Menu: Open, Show in Finder, View as, Sort by, Folders First, Show Hidden Files, Display as Folder, Remove from Dock. The open stack's ... button has the same view, sort, and filter choices. Settings are per stack.
+- Sort by Custom Order (default: name, plus the slots you drop items into), Name, Date Added, Date Modified (newest first), or Kind. Drops choose a slot only in Custom Order with Grid or List; otherwise the item just lands in the folder.
 - Drop files or apps onto a stack (or into its open grid) to move them into the folder (copy if move fails). Dragging over a stack tile opens its grid immediately. In the open grid, an insertion gap follows the cursor so you choose the slot; order is kept in dock.json. Contents update via FSEvents (no polling).
-- Grid view only for now. Fan, list, and sort options come later.
-- Native Dock folder tiles from `persistent-others` import on first launch and via Import from macOS Dock. Plain file tiles are still skipped.
+- Native Dock folder tiles from `persistent-others` import on first launch and via Import from macOS Dock, with their view (fan, grid, list), sort (name, date added, date modified, kind), and Display as Folder choice. Plain file tiles are still skipped.
 
 **Trash**
 - Trash stays at the far end on Bottom, Left, and Right, with native empty/full icons, magnification, and a hover label. "Show Trash in dock" (General > Dock) applies live and defaults on.
@@ -111,7 +111,6 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 ## Planned
 
 From `docs/CHECKLIST.md` Remaining backlog:
-- Folder stacks: fan and list views, per-stack view/sort/filter, show-as-folder vs stack icon.
 - Milestone F leftover: import plain file tiles from `persistent-others` (folders already import).
 - P3 leftovers: window list in the app menu; VoiceOver / keyboard navigation.
 - Side-dock widget layout; window previews on hover; profiles; update checker; Trash Option-click Empty and icon animation.
@@ -195,7 +194,7 @@ The Settings window controls:
 - Position, auto-hide, icon size, icon gap (`iconGap`, points, 0 to 8, default 6), "Animate opening applications"
 - Show Trash in dock (`showTrash`, default `true`); dismissed Full Disk Access hint (`trashAccessHintDismissed`, default `false`)
 - Show notification badges (`showBadges`, default `true`); badge color (`badgeColor`: `macOS`, `accent`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `graphite` or `custom`, default `macOS`); custom badge color (`badgeCustomColor`, sRGB `{ red, green, blue, alpha }`, used when `badgeColor` is `custom`)
-- Folder stacks (`stacks`: `{ id, path, itemOrder? }[]`, right section before Trash; `itemOrder` is child filenames for grid placement)
+- Folder stacks (`stacks`: `{ id, path, itemOrder?, view?, sort?, foldersFirst?, showHidden?, showAsFolder? }[]`, right section before Trash; `itemOrder` is child filenames for Custom Order placement; `view` is `grid` (default), `fan`, or `list`; `sort` is `manual` (default), `name`, `dateAdded`, `dateModified`, or `kind`; the rest are written only when on)
 - Magnification (`magnificationEnabled`) and Magnified size (`magnifiedSize`, points, 16 to 128, default 64)
 - Reveal delay, hide delay, animation duration (with reset to defaults)
 - Widgets: on/off and order

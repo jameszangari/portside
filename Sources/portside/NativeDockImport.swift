@@ -80,8 +80,25 @@ enum NativeDockImport {
                 snapshot.othersSkipped += 1
                 continue
             }
-            if let stack = FolderStack(folderURL: url),
+            if var stack = FolderStack(folderURL: url),
                !snapshot.folderStacks.contains(where: { $0.path == stack.path }) {
+                // Native: showas 1 fan, 2 grid, 3 list (0 auto); arrangement
+                // 1 name, 2 date added, 3 date modified, 4 date created, 5
+                // kind; displayas 1 folder.
+                switch (data["showas"] as? NSNumber)?.intValue {
+                case 1: stack.view = .fan
+                case 2: stack.view = .grid
+                case 3: stack.view = .list
+                default: break
+                }
+                switch (data["arrangement"] as? NSNumber)?.intValue {
+                case 1: stack.sort = .name
+                case 2: stack.sort = .dateAdded
+                case 3, 4: stack.sort = .dateModified
+                case 5: stack.sort = .kind
+                default: break
+                }
+                stack.showAsFolder = (data["displayas"] as? NSNumber)?.intValue == 1
                 snapshot.folderStacks.append(stack)
             } else {
                 snapshot.othersSkipped += 1

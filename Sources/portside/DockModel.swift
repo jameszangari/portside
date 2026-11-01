@@ -321,6 +321,16 @@ final class DockModel: Codable, ObservableObject {
         if shouldPersist { persist() }
     }
 
+    /// Changes one stack's view, sort, or filter settings and saves.
+    func updateStack(id: String, _ change: (inout FolderStack) -> Void) {
+        guard let i = stacks.firstIndex(where: { $0.id == id }) else { return }
+        var stack = stacks[i]
+        change(&stack)
+        guard stack != stacks[i] else { return }
+        stacks[i] = stack
+        persist()
+    }
+
     func replaceStacks(_ newStacks: [FolderStack]) {
         stacks = newStacks
         persist()

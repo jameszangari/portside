@@ -4,7 +4,7 @@ import SwiftUI
 import os.log
 
 /// Expands and collapses filesystem folder stacks. Same overlay placement as
-/// app groups (beside the tile, away from the screen edge). Grid only.
+/// app groups (beside the tile, away from the screen edge). Grid, fan, or list.
 ///
 /// Event-driven: tile clicks, outside clicks, model changes. A file drag over
 /// a stack tile opens the grid immediately (no spring-load delay). One-shot
@@ -248,7 +248,8 @@ final class StackController: ObservableObject {
             }
             DispatchQueue.main.async {
                 guard let self else { return }
-                if !landed.isEmpty {
+                // Other sorts decide the position themselves.
+                if !landed.isEmpty, stack.sort == .manual {
                     self.dockModel.insertStackItemOrder(stackID: stackID, names: landed, at: insertAt, seed: seed)
                 }
                 if let latest = self.dockModel.stacks.first(where: { $0.id == stackID }) {
