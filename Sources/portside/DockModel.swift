@@ -927,7 +927,9 @@ final class DockModel: Codable, ObservableObject {
 
     // MARK: - Codable
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        /// App version that last wrote the file. Lets a downgrade back the file up first.
+        case savedByVersion
         case revealDelay, hideDelay, animationDuration, iconSize, iconGap, magnificationEnabled, magnifiedSize, edge, entries, widgetKinds
         case autoHide, openGroupsOnHover, groupHoverDelay, groupHoverCloseGrace
         case animateOpeningApplications
@@ -1014,6 +1016,7 @@ final class DockModel: Codable, ObservableObject {
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(AppInfo.version, forKey: .savedByVersion)
         try c.encode(revealDelay, forKey: .revealDelay)
         try c.encode(hideDelay, forKey: .hideDelay)
         try c.encode(animationDuration, forKey: .animationDuration)
@@ -1069,8 +1072,66 @@ final class DockModel: Codable, ObservableObject {
     func save() throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(self)
+        let data = Self.carryingForwardUnknownKeys(into: try encoder.encode(self))
         try data.write(to: DockModel.storageURL, options: .atomic)
+    }
+
+    private static let knownKeys = Set(CodingKeys.allCases.map(\.stringValue))
+
+    /// Top-level keys in the file on disk that this build does not know
+    /// (written by a newer Portside) are kept, so running an older copy never
+    /// drops newer settings. Keys this build knows are always its own values.
+    private static func carryingForwardUnknownKeys(into encoded: Data) -> Data {
+        guard let existing = try? Data(contentsOf: storageURL),
+              let old = try? JSONSerialization.jsonObject(with: existing) as? [String: Any] else { return encoded }
+        let unknown = old.filter { !knownKeys.contains($0.key) }
+        guard !unknown.isEmpty,
+              var merged = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any] else { return encoded }
+        merged.merge(unknown) { current, _ in current }
+        guard let data = try? JSONSerialization.data(withJSONObject: merged, options: [.prettyPrinted, .sortedKeys]) else {
+            return encoded
+        }
+        logger.info("kept \(unknown.count) dock.json key(s) from a newer build: \(unknown.keys.sorted().joined(separator: ", "), privacy: .public)")
+        return data
+    }
+
+    static var beforeUpdateURL: URL {
+        storageURL.deletingLastPathComponent().appendingPathComponent("dock.json.before-update")
+    }
+
+    /// Copy dock.json aside right before an update replaces the app.
+    static func backUpBeforeUpdate() throws {
+        guard FileManager.default.fileExists(atPath: storageURL.path) else { return }
+        try? FileManager.default.removeItem(at: beforeUpdateURL)
+        try FileManager.default.copyItem(at: storageURL, to: beforeUpdateURL)
+    }
+
+    /// A file written by a newer build is copied aside once per downgrade,
+    /// since nested values this build does not know can still be lost.
+    private static func backUpIfDowngrading(_ data: Data) {
+        guard let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let written = raw[CodingKeys.savedByVersion.stringValue] as? String,
+              UpdateChecker.isNewer(written, than: AppInfo.version) else { return }
+        let backup = storageURL.deletingLastPathComponent().appendingPathComponent("dock.json.from-\(written)")
+        guard !FileManager.default.fileExists(atPath: backup.path) else { return }
+        do {
+            try data.write(to: backup, options: .atomic)
+            logger.info("dock.json was written by \(written, privacy: .public), newer than \(AppInfo.version, privacy: .public); copied to \(backup.lastPathComponent, privacy: .public)")
+        } catch {
+            logger.error("could not back up dock.json before downgrade: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// An existing file that fails to decode is moved aside, never overwritten.
+    private static func setAsideUnreadable(_ error: Error) {
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let aside = storageURL.deletingLastPathComponent().appendingPathComponent("dock.json.unreadable-\(stamp)")
+        do {
+            try FileManager.default.moveItem(at: storageURL, to: aside)
+            logger.error("dock.json could not be read (\(error.localizedDescription, privacy: .public)); moved to \(aside.lastPathComponent, privacy: .public)")
+        } catch {
+            logger.error("dock.json could not be read and could not be moved aside: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func persist() {
@@ -1085,10 +1146,15 @@ final class DockModel: Codable, ObservableObject {
     /// Load from disk. On first launch (no file), seed pinned apps from the
     /// native Dock and save immediately so later launches use Portside's list.
     static func load() -> DockModel {
-        if let data = try? Data(contentsOf: storageURL),
-           let model = try? JSONDecoder().decode(DockModel.self, from: data) {
-            logger.info("loaded \(model.entries.count) entries (\(model.allPinnedApps.count) apps, \(model.groups.count) groups) from dock.json")
-            return model
+        if let data = try? Data(contentsOf: storageURL) {
+            backUpIfDowngrading(data)
+            do {
+                let model = try JSONDecoder().decode(DockModel.self, from: data)
+                logger.info("loaded \(model.entries.count) entries (\(model.allPinnedApps.count) apps, \(model.groups.count) groups) from dock.json")
+                return model
+            } catch {
+                setAsideUnreadable(error)
+            }
         }
         let model = DockModel()
         let native = NativeDockImport.readSnapshot()

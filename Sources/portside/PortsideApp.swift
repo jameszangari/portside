@@ -18,6 +18,12 @@ enum PortsideMain {
         if let index = CommandLine.arguments.firstIndex(of: "--export-icon") {
             exit(exportIconCommand(argumentIndex: index))
         }
+        if let index = CommandLine.arguments.firstIndex(of: "--install-update") {
+            exit(UpdateChecker.installFromCommandLine(arguments: CommandLine.arguments, flagIndex: index))
+        }
+        if CommandLine.arguments.contains("--resave-settings") {
+            exit(resaveSettingsCommand())
+        }
         NativeDock.recoverIfNeeded()
         installSignalHandlers()
         PortsideApp.main()
@@ -32,6 +38,20 @@ enum PortsideMain {
             case .nothingToRestore:
                 print("No backup at \(NativeDock.backupURL.path). Portside has not changed the macOS Dock.")
             }
+            return 0
+        } catch {
+            FileHandle.standardError.write(Data("portside: \(error.localizedDescription)\n".utf8))
+            return 1
+        }
+    }
+
+    /// `portside --resave-settings`: load dock.json and write it back through
+    /// the normal save path (unknown keys kept, version stamped), then exit.
+    /// Hidden; used to check preference retention without the UI.
+    private static func resaveSettingsCommand() -> Int32 {
+        do {
+            try DockModel.load().save()
+            print("Saved dock.json as \(AppInfo.version)")
             return 0
         } catch {
             FileHandle.standardError.write(Data("portside: \(error.localizedDescription)\n".utf8))

@@ -11,6 +11,9 @@ enum AppInfo {
     static let isDirty = BuildInfo.isDirty
     static let isRelease = BuildInfo.isRelease
     static let repoURL = URL(string: "https://github.com/jameszangari/portside-dock")!
+    static let bundleIdentifier = "com.james.portside"
+    /// Developer ID team that signs release builds. Updates signed by anyone else are refused.
+    static let releaseTeamID = "WNZ8H4UHQE"
 
     /// Short hash for dirty or unreleased builds ("abc1234", "abc1234-dirty"),
     /// nil for a clean release or when the commit is unknown.

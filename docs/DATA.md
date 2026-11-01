@@ -8,6 +8,16 @@ Settings and the dock layout are saved as JSON at:
 
 Before each "Import from macOS Dock", the previous layout is copied to `dock.json.before-import` in the same folder (overwritten by the next import, deleted by "Undo last import").
 
+Keeping preferences across versions:
+
+- `savedByVersion`: the Portside version that last wrote the file.
+- Top-level keys this build does not know (written by a newer build) are kept on every save, so running an older copy does not drop newer settings. Builds up to 0.5.0 do not do this.
+- If the file was written by a newer version, it is copied once to `dock.json.from-<version>` before this build saves anything (nested values an older build does not know can still be lost).
+- A file that cannot be read is moved to `dock.json.unreadable-<timestamp>` instead of being overwritten, then a fresh layout is seeded.
+- Check for Updates copies the file to `dock.json.before-update` right before replacing the app. The app swap itself never touches this folder.
+
+Update steps are logged to `~/Library/Logs/Portside/update.log`.
+
 While "Hide the macOS Dock" is on, the native Dock's prior settings are backed up at:
 
 ```
@@ -44,7 +54,7 @@ It is deleted after a verified restore. If it exists when Portside starts, Ports
 
 ## Build outputs and signing
 
-The built app lives at `build/Portside.app` (ignored by git), the versioned release disk image at `build/dist/Portside-X.Y.Z.dmg`, and the installed copy at `~/Applications/Portside.app` after `scripts/build-app.sh --install`.
+The built app lives at `build/Portside.app` (ignored by git), with a copy of the latest build at `Portside.app` in the repo root (also ignored; the stapled release app after `--notarize`). The versioned release disk image is at `build/dist/Portside-X.Y.Z.dmg`, and the installed copy at `~/Applications/Portside.app` after `scripts/build-app.sh --install`.
 
 The local signing certificate and private key live in your default user keychain. Its fingerprint is stored at `~/Library/Application Support/com.james.portside/signing/identity.sha1`. Keep the same identity across rebuilds. Downloads and other macOS privacy decisions are managed by macOS, outside `dock.json`.
 

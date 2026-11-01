@@ -1,5 +1,6 @@
 #!/bin/bash
-# Builds build/Portside.app from a release build.
+# Builds build/Portside.app from a release build, and refreshes the
+# gitignored Portside.app at the repo root with the same bundle.
 # Usage: scripts/build-app.sh [--install] [--package] [--notarize]
 #   --install   also copy the app to ~/Applications/Portside.app. Refuses
 #               while that copy is running. Never touches /Applications.
@@ -292,6 +293,20 @@ elif [ "$package" = true ]; then
     verify_dmg
     echo "Packaged $dmg"
 fi
+
+# The repo root always holds a copy of the latest build (gitignored). After
+# --notarize it is the stapled release app. Swapped with renames so a failed
+# copy never leaves the root without an app.
+root_app="$root/Portside.app"
+root_tmp="$root/.Portside.app.new"
+root_old="$root/.Portside.app.old"
+rm -rf "$root_tmp" "$root_old"
+ditto "$app" "$root_tmp"
+codesign --verify --deep --strict "$root_tmp"
+[ -e "$root_app" ] && mv "$root_app" "$root_old"
+mv "$root_tmp" "$root_app"
+rm -rf "$root_old"
+echo "Updated $root_app ($version)"
 
 if [ "$install" = true ]; then
     dest="$HOME/Applications/Portside.app"

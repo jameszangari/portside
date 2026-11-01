@@ -339,7 +339,7 @@ private struct SettingsSidebar: View {
                 if let dmgURL, UpdateChecker.canInstallInPlace {
                     withAnimation { status = "Version \(version) is available." }
                     do {
-                        try await UpdateChecker.downloadAndInstall(dmgURL: dmgURL) { phase in
+                        try await UpdateChecker.downloadAndInstall(dmgURL: dmgURL, version: version) { phase in
                             withAnimation { status = phase }
                         }
                         // terminate was requested; keep the button disabled.
@@ -526,9 +526,13 @@ private struct UpdatesAuthSection: View {
     @State private var status: String?
     @State private var hasSaved = GitHubAuth.hasPortsideToken
     @State private var hasAny = GitHubAuth.hasAnyToken
+    @State private var otherCopies: [InstalledCopy] = []
 
     var body: some View {
         Section {
+            ForEach(otherCopies) { copy in
+                otherCopyRow(copy)
+            }
             SecureField("Personal access token", text: $draft)
                 .textContentType(.password)
             HStack {
@@ -555,6 +559,38 @@ private struct UpdatesAuthSection: View {
         .onAppear {
             hasSaved = GitHubAuth.hasPortsideToken
             hasAny = GitHubAuth.hasAnyToken
+            refreshCopies()
+        }
+    }
+
+    /// Only shown when running from an installed .app; under `swift run`
+    /// every built copy would be "other".
+    private func refreshCopies() {
+        otherCopies = UpdateChecker.canInstallInPlace ? UpdateChecker.otherInstalledCopies() : []
+    }
+
+    private func otherCopyRow(_ copy: InstalledCopy) -> some View {
+        let path = (copy.url.path as NSString).abbreviatingWithTildeInPath
+        let older = UpdateChecker.isNewer(AppInfo.version, than: copy.version)
+        return HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Another copy: v\(copy.version)")
+                Text("\(path)\(older ? ". Older than this one; Open at Login or Spotlight may launch it instead." : "")")
+                    .helperStyle()
+            }
+            Spacer()
+            Button("Show in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([copy.url])
+            }
+            Button("Move to Trash") {
+                NSWorkspace.shared.recycle([copy.url]) { _, error in
+                    DispatchQueue.main.async {
+                        status = error.map { "Couldn't move it to the Trash: \($0.localizedDescription)" }
+                            ?? "Moved \(path) to the Trash."
+                        refreshCopies()
+                    }
+                }
+            }
         }
     }
 
