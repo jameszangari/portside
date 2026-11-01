@@ -429,13 +429,14 @@ final class DockModel: Codable, ObservableObject {
                   before: entryIDs.dropFirst(i + 1).first { list.contains($0) }, fallback: 0)
         }
         place(Self.runningID, after: entryIDs.last, before: nil, fallback: 0)
+        let trashIDs = showTrash ? [Self.trashID] : []
         for (i, id) in widgetIDs.enumerated() {
-            let next = (stackIDs + (showTrash ? [Self.trashID] : [])).first { list.contains($0) }
+            let next = (widgetIDs.dropFirst(i + 1) + stackIDs + trashIDs).first { list.contains($0) }
             place(id, after: i > 0 ? widgetIDs[i - 1] : nil, before: next, fallback: list.count)
         }
         for (i, id) in stackIDs.enumerated() {
-            place(id, after: i > 0 ? stackIDs[i - 1] : nil,
-                  before: showTrash ? Self.trashID : nil, fallback: list.count)
+            let next = (stackIDs.dropFirst(i + 1) + trashIDs).first { list.contains($0) }
+            place(id, after: i > 0 ? stackIDs[i - 1] : nil, before: next, fallback: list.count)
         }
         if showTrash { place(Self.trashID, after: nil, before: nil, fallback: list.count) }
         return list

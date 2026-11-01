@@ -2049,3 +2049,9 @@ Status: done and hand-tested by James.
 - [x] Rebased onto main (conflicts in SettingsWindow, FEATURES, CHECKLIST resolved by hand), then `swift build` and `swift run` on macOS 27 / Xcode 27. The rebase moved the native Dock options (indicators, recents, hidden apps) into Dock > Apps, added Dock > Activity Icons, and put Open Settings on launch under General > Startup.
 - [ ] Hand test: open Settings and confirm Dock is selected; toggle auto-hide off and on and confirm the delay sliders disappear and return; toggle magnification and badges the same way; check Reset Timing and Reset Appearance; confirm General still imports, hides the macOS Dock, and records the shortcut; confirm nothing clips at 760 x 560.
 - Known gap: Reset Appearance does not touch icon size, gap, magnification or badges (same as before; those were never part of the reset).
+
+## Follow-up: folder drop position (2026-11-01)
+
+- [x] A folder dropped in front of an existing folder landed last (just before the Trash) instead of where the drop gap showed. The new folder went into the stacks list at the right index, but a saved layout placed new folders after the previous folder or before the Trash, never before the next folder. `resolvedLayout()` now places new folders and widgets before the next one of their kind already in the layout, the same way apps already worked. Existing misplaced folders fix themselves on next launch.
+- [x] `swift build` clean. Not launched, because a second copy would share the live `dock.json` with the installed app.
+- [ ] Hand test: drop a folder before, between, and after existing folders; it lands where the gap showed and stays there after relaunch.
