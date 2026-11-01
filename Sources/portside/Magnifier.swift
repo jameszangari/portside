@@ -46,6 +46,7 @@ final class Magnifier: ObservableObject {
     /// off, off becomes on) until it is released.
     private var flipped = false
     private var magnifiedSize: CGFloat = DockModel.Defaults.magnifiedSize
+    private var iconGap: CGFloat = DockModel.Defaults.iconGap
     private var suspended = false
     /// Unmagnified tile frames along the strip, sorted.
     private var tiles: [TileSlot] = []
@@ -95,14 +96,15 @@ final class Magnifier: ObservableObject {
 
     // MARK: - Inputs
 
-    func configure(enabled: Bool, size: CGFloat, edge: DockEdge) {
-        let changed = enabled != settingEnabled || size != magnifiedSize || edge != self.edge
+    func configure(enabled: Bool, size: CGFloat, edge: DockEdge, iconGap: CGFloat = DockModel.Defaults.iconGap) {
+        let changed = enabled != settingEnabled || size != magnifiedSize || edge != self.edge || iconGap != self.iconGap
         guard changed else { return }
         // The size slider calls this on every step; only on/off and edge
         // changes go to the info log.
         let toggled = enabled != settingEnabled || edge != self.edge
         settingEnabled = enabled
         magnifiedSize = size
+        self.iconGap = iconGap
         if edge != self.edge {
             self.edge = edge
             // The strip may have reported its tiles before the edge was set
@@ -272,7 +274,7 @@ final class Magnifier: ObservableObject {
     }
 
     private func computeLayout(focus: CGFloat) -> MagnifyLayout {
-        let slot = (tiles.map(\.length).max() ?? 0) + DockMetrics.spacing
+        let slot = (tiles.map(\.length).max() ?? 0) + iconGap
         guard slot > 0 else { return MagnifyLayout() }
 
         // Growth of each tile along the strip (it also rises by this much).

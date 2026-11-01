@@ -151,11 +151,17 @@ struct DockStrip: View {
     /// Tile frames in the strip's root space, for hit-testing drops.
     @State private var tileFrames: [HoverTarget] = []
 
-    private let spacing = DockMetrics.spacing
+    private var spacing: CGFloat { dockModel.iconGap }
     private let alongPadding: CGFloat = 8
-    private let separatorPadding: CGFloat = 4
-    private var separatorLength: CGFloat { 1 + separatorPadding * 2 }
+    /// Fixed air on each side of a separator hairline, independent of icon
+    /// gap. The HStack already inserts `spacing`, so the separator pads
+    /// itself by the rest.
+    private static let separatorAir: CGFloat = 10
+    private var separatorPad: CGFloat { max(0, Self.separatorAir - spacing) }
+    private var separatorLength: CGFloat { 1 + separatorPad * 2 }
     private static let space = "strip"
+    /// Minimum hit size along the dock for the separator (points).
+    private static let separatorHitAlong: CGFloat = 9
 
     /// Largest tile that still fits everything on screen, ignoring `iconSize`.
     private func maxTileSize(extrasCount: Int, showsTrash: Bool, stackCount: Int, edge: DockEdge) -> CGFloat {
@@ -169,7 +175,8 @@ struct DockStrip: View {
         let innerWidgetGaps = edge.isVertical ? 0 : units - widgets.hosts.count
         let fixed = alongPadding * 2 + separatorLength * CGFloat(separators)
             + spacing * CGFloat(max(items - 1, 0) + innerWidgetGaps)
-        let tileUnits = CGFloat(max(apps + units, 1))
+        let widgetMargins = 2 * IconMetrics.margin * CGFloat(widgets.hosts.count)
+        let tileUnits = max(CGFloat(apps + units) + widgetMargins, 1)
         let fit = ((layout.maxStripLength(for: edge) - fixed) / tileUnits).rounded(.down)
         return max(DockModel.iconSizeRange.lowerBound, fit)
     }
@@ -197,6 +204,7 @@ struct DockStrip: View {
             edge: edge
         )
         let tile = min(dockModel.iconSize, maxTile)
+        let spacing = self.spacing
         // Items align to the far side so icons line up with widgets.
         let stack = edge.isVertical
             ? AnyLayout(VStackLayout(alignment: edge == .left ? .trailing : .leading, spacing: spacing))
@@ -232,6 +240,8 @@ struct DockStrip: View {
                     .magnifiedShift()
                 ForEach(widgets.hosts) { host in
                     host.view
+                        // Same visible air as an app icon's built-in margin.
+                        .padding(edge.isVertical ? .vertical : .horizontal, tile * IconMetrics.margin)
                         .magnifiedShift()
                         .opacity(dragging == host.id ? 0 : 1)
                         .gesture(widgetDragGesture(for: host, tile: tile))
@@ -269,6 +279,7 @@ struct DockStrip: View {
             }
         }
         .environment(\.dockTileSize, tile)
+        .environment(\.dockIconGap, spacing)
         .environment(\.dockEdge, edge)
         .coordinateSpace(name: DockStrip.space)
         .padding(edge.isVertical ? .vertical : .horizontal, alongPadding)
@@ -281,7 +292,7 @@ struct DockStrip: View {
             tileFrames: tileFrames, apps: dropApps(extras: extras), trash: showsTrash ? trash : nil,
             stackController: stacks,
             runningApps: runningApps, bouncer: bouncer, appSpringLoad: appSpringLoad,
-            tile: tile, vertical: edge.isVertical))
+            tile: tile, spacing: spacing, vertical: edge.isVertical))
         .onChange(of: maxTile, initial: true) { _, fit in layout.reportFitTileSize(fit) }
         .onChange(of: tile) { _, size in bouncer.tileSizeChanged(size) }
         .fixedSize()
@@ -356,15 +367,20 @@ struct DockStrip: View {
     // MARK: - Separator (drag to resize)
 
     /// A thin line between sections. Nearly invisible like the native Dock;
-    /// the hit area stays full so resize and the menu still work.
+    /// spacing around it stays fixed while icon gap changes, and the hit
+    /// area stays wide so resize and the menu always work.
     private func separator(tile: CGFloat, maxTile: CGFloat, edge: DockEdge) -> some View {
         let vertical = edge.isVertical
+        let hitExtra = max(0, (Self.separatorHitAlong - 1) / 2)
         return Rectangle()
             .fill(Color.primary.opacity(0.12))
             .frame(width: vertical ? tile * 0.8 : 1, height: vertical ? 1 : tile * 0.8)
-            .padding(vertical ? .vertical : .horizontal, separatorPadding)
             .padding(edge.farSide, tile * 0.1)
+            .padding(vertical ? .vertical : .horizontal, separatorPad)
+            // Invisible hit slop only; negative padding restores layout size.
+            .padding(vertical ? .vertical : .horizontal, hitExtra)
             .contentShape(Rectangle())
+            .padding(vertical ? .vertical : .horizontal, -hitExtra)
             .modifier(ResizePointer(edge: edge, isResizing: resizeStart != nil))
             .gesture(resizeGesture(maxTile: maxTile, tile: tile, edge: edge))
             .appKitContextMenu(edge: edge) { dividerMenu() }
@@ -555,6 +571,7 @@ struct DockStrip: View {
                     dragOutside = false
                     let preview = host.view
                         .environment(\.dockTileSize, tile)
+                        .environment(\.dockIconGap, spacing)
                         .environment(\.dockEdge, .bottom)
                         .padding(4)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -841,6 +858,7 @@ private struct FileDropDelegate: DropDelegate {
     let bouncer: LaunchBouncer
     let appSpringLoad: AppSpringLoad
     let tile: CGFloat
+    let spacing: CGFloat
     let vertical: Bool
 
     func validateDrop(info: DropInfo) -> Bool {
@@ -982,7 +1000,7 @@ private struct FileDropDelegate: DropDelegate {
     }
 
     private func isOverTrash(_ info: DropInfo) -> Bool {
-        let slop = -DockMetrics.spacing / 2
+        let slop = -spacing / 2
         return tileFrames.contains {
             $0.id == TrashController.hoverID
                 && $0.frame.insetBy(dx: vertical ? 0 : slop, dy: vertical ? slop : 0).contains(info.location)
@@ -1000,7 +1018,7 @@ private struct FileDropDelegate: DropDelegate {
     }
 
     private func tileUnderCursor(_ info: DropInfo) -> String? {
-        let slop = -DockMetrics.spacing / 2
+        let slop = -spacing / 2
         return tileFrames.first {
             $0.frame.insetBy(dx: vertical ? 0 : slop, dy: vertical ? slop : 0).contains(info.location)
         }?.id
@@ -1019,7 +1037,7 @@ private struct FileDropDelegate: DropDelegate {
 
     @discardableResult
     private func updateOpenTarget(_ info: DropInfo) -> String? {
-        let slop = -DockMetrics.spacing / 2
+        let slop = -spacing / 2
         let hit = tileFrames.first {
             $0.frame.insetBy(dx: vertical ? 0 : slop, dy: vertical ? slop : 0).contains(info.location)
         }

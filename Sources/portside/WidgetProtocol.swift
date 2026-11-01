@@ -50,12 +50,16 @@ extension DockWidget {
 // MARK: - Shared layout helpers
 
 enum DockMetrics {
-    /// Gap between tiles in the strip.
-    static let spacing: CGFloat = 6
+    /// Default gap between tiles in the strip. Live value is `DockModel.iconGap`.
+    static let spacing: CGFloat = DockModel.Defaults.iconGap
 }
 
 private struct DockTileSizeKey: EnvironmentKey {
     static let defaultValue: CGFloat = 48
+}
+
+private struct DockIconGapKey: EnvironmentKey {
+    static let defaultValue: CGFloat = DockMetrics.spacing
 }
 
 extension EnvironmentValues {
@@ -64,6 +68,12 @@ extension EnvironmentValues {
         get { self[DockTileSizeKey.self] }
         set { self[DockTileSizeKey.self] = newValue }
     }
+
+    /// Gap between strip tiles (and inside multi-unit widgets).
+    var dockIconGap: CGFloat {
+        get { self[DockIconGapKey.self] }
+        set { self[DockIconGapKey.self] = newValue }
+    }
 }
 
 /// Standard widget chrome: a rounded tile of `size` units wide.
@@ -71,11 +81,12 @@ struct WidgetTile<Content: View>: View {
     let size: WidgetSize
     @ViewBuilder var content: Content
     @Environment(\.dockTileSize) private var tile
+    @Environment(\.dockIconGap) private var iconGap
 
     var body: some View {
         let units = CGFloat(size.rawValue)
         content
-            .frame(width: tile * units + DockMetrics.spacing * (units - 1), height: tile)
+            .frame(width: tile * units + iconGap * (units - 1), height: tile)
             // Own frosted backing, so the dock's Frost and style settings
             // never make a widget see-through.
             .background {

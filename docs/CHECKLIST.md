@@ -20,6 +20,82 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
+## Remaining backlog (actionable)
+
+Ordered for daily-driver impact. One slice at a time; hand-test gate after each. Milestones A to E and most of F/P1/P2/P3 are already shipped; this is what is left.
+
+### 0. Pending hand tests (clear before more features)
+
+Status (2026-10-31): James confirmed A, C, E, F. **B (Open at Login) and D (multi-display / Spaces / button-hold) deferred** until he can test them. Fresh `~/Applications/Portside.app` was used.
+
+#### A. Settings sidebar
+- [x] 1–4. Confirmed
+
+#### B. Open at Login (app tile checkbox) — deferred
+- [ ] 5–10. Deferred (Automation / Login Items)
+
+#### C. Notification badges
+- [x] 11–17. Confirmed
+
+#### D. Spaces / fullscreen / button-hold — deferred
+- [ ] 18–22. Deferred (second display / deeper Spaces testing)
+
+#### E. Magnification smoke
+- [x] 23–26. Confirmed
+
+#### F. Quick regressions
+- [x] 27–28. Confirmed
+
+### 1. Quick bugs and polish
+
+Status (2026-10-31): built. Settings always centers on the primary display; Icon gap slider in General > Dock (`iconGap`, 0 to 8pt, default 6). `swift build` clean. Hand test pending.
+
+- [x] **Settings window position:** every open (from closed or miniaturized) places the fixed 760x560 window at the dead center of the primary screen's visible frame. No longer follows the cursor's screen. Menu bar and separator menu share the same path.
+- [x] **Icon gap slider:** Settings > General > Dock, under Icon size. Range 0 to 8pt, default 6. Live apply, persisted as `iconGap` in `dock.json`. Strip, multi-unit widgets, hover slop, and magnifier slot math all use it on Bottom/Left/Right.
+- [x] **Icon gap vs separators:** icon gap now spaces only tiles (apps, groups, folders, widgets, Trash). Section separators keep fixed 10pt air on each side at any gap (separator pads itself by `10 - iconGap`). Hit target stays at least 9pt so resize/menu work at gap 0.
+- [x] **Same minimum spacing for every item:** app icons carry a built-in transparent margin (100/1024 of the tile per side, measured on system icons), so at gap 0 they never touch. Widgets now pad by that margin along the dock, and group/folder tiles draw their rounded square at the icon's visible size (`IconMetrics.margin` in DockItem.swift). Gap 0 = app-icon spacing everywhere; fit-to-screen math includes the widget margins.
+
+#### Hand test
+- [ ] 1. Close Settings if open. Menu bar > Settings: window opens centered on the main display. Close. Separator > Dock Settings: same spot and size. Move the window, close, reopen: back to that center (not where you left it).
+- [ ] 2. Open Settings while the cursor is near a screen edge or (if available) on another display: still primary-center, not under the cursor.
+- [ ] 3. General > Icon gap: drag 0 to 8 while the dock is visible; tiles tighten/loosen live. At 0, widgets, groups, folders and Trash sit as far apart as app icons do (none touch). At 0 and 8, space around each separator stays the same. Default 6 matches the previous look. Relaunch: value kept.
+- [ ] 4. Switch to Left and Right: same gap along the column. Reveal timing unchanged. Separator still draggable / right-clickable at gap 0.
+
+### 2. App groups (gaps vs native feel)
+Already shipped: create/rename from menus and Settings, Finder drop into group, drag member out, open on hover.
+Still open:
+- [ ] **Drag strip icon into a group:** drag a pinned (or unpinned running) app tile onto a group tile or into an open group grid; insertion gap chooses the slot; remove from strip / add to group in one drop. Escape cancels.
+- [ ] **Click group card title to rename:** tap the title in the open group popover to edit inline (same key-focus-while-editing rules as creation rename). Return / Escape commits or cancels; focus returns to the previous app.
+- [ ] **Reorder inside a group:** drag a member within the open grid to a new slot (same dashed gap as Finder add). Persist order in the group; no remove-from-group prompt when the drop stays inside the grid.
+
+### 3. Folder stacks (P2 leftovers)
+Already shipped: pin folder from Finder, grid popover, drop-in, FSEvents, import from native Dock.
+Still open:
+- [ ] **Fan view** (native fan stack)
+- [ ] **List view**
+- [ ] **View picker** on the stack (and/or Settings): Fan / Grid / List, persisted per stack
+- [ ] **Sort / filter:** name, date added, date modified, kind; optional folders-first; optional hide hidden files. Persist per stack in `dock.json`
+- [ ] **Show as folder vs stack of icons** (native option)
+- [ ] Milestone F leftover: import plain file tiles from `persistent-others` (folders already import)
+
+### 4. P3 leftovers
+- [ ] Window list in the app right-click menu (Screen Recording for titles; click focuses)
+- [ ] VoiceOver labels and keyboard navigation
+- [ ] (Optional) hide badges when the app's Notification badge setting is off, if/when that becomes readable
+
+### 5. UX cleanup
+- [ ] Side-dock widget layout (see phase below). Evaluate candidates; do not shrink bottom-dock behavior. Acceptance: Left/Right with 27+ apps and 5 widgets keep configured icon size; widget text >= 11pt; reveal timing unchanged.
+
+### 6. Enhancements (after parity gaps above)
+- [ ] Window previews on hover (reuse B.5 overlay)
+- [ ] Profiles (saved layouts / pin sets)
+- [ ] Update checker (GitHub release tag vs AppInfo.version; replace Check for Updates placeholder)
+- [ ] Trash polish: Option-click Empty without warning; empty/full icon animation
+- [ ] More widget kinds (only if daily drive asks for them)
+
+### Explicitly still out of scope
+Minimized windows in the Dock; attention bounce; two-finger App Expose; assign-to-Spaces from the menu; recents section.
+
 ---
 
 # Settings: sidebar layout (2026-10-31)

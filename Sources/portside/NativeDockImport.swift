@@ -136,7 +136,7 @@ enum NativeDockImport {
             let length = (edge.isVertical ? screen.height : screen.width) - 40
             // Horizontal widgets can be up to 2 tiles wide; assume 2.
             let units = CGFloat(itemCount + widgetKinds * (edge.isVertical ? 1 : 2) + 1)
-            let gaps = DockMetrics.spacing * (CGFloat(itemCount + widgetKinds) + 2) + 16 + 18
+            let gaps = DockModel.Defaults.iconGap * (CGFloat(itemCount + widgetKinds) + 2) + 16 + 18
             limit = ((length - gaps) / max(units, 1)).rounded(.down)
         }
         let upper = min(limit, DockModel.iconSizeRange.upperBound)

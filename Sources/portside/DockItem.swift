@@ -4,6 +4,14 @@ import os.log
 
 private let itemLogger = Logger(subsystem: "com.james.portside", category: "DockItem")
 
+/// macOS app icons leave a transparent margin around the visible shape
+/// (100pt of the 1024pt grid on each side). Tiles that fill their whole
+/// frame (widgets, groups, folders) inset by this much so every item keeps
+/// the same visible spacing, and icon gap 0 is the tightest the icons sit.
+enum IconMetrics {
+    static let margin: CGFloat = 100.0 / 1024
+}
+
 /// App icons, rendered once per app into a single bitmap that every tile
 /// size scales. NSWorkspace icons hold many representations (16 to 1024pt)
 /// and the system icon style is not applied to all of them alike, so letting

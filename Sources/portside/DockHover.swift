@@ -48,6 +48,8 @@ final class DockHover {
 
     private let overlay: OverlayPanel
     private var targets: [HoverTarget] = []
+    /// Matches `DockModel.iconGap` so label hit-slop tracks the live gap.
+    var iconGap: CGFloat = DockModel.Defaults.iconGap
     private var cursor: CGPoint?
     private var current: HoverTarget?
     /// Where the current label points (screen), to follow a magnified tile.
@@ -153,7 +155,7 @@ final class DockHover {
     }
 
     private func evaluate() {
-        let slop = -DockMetrics.spacing / 2
+        let slop = -iconGap / 2
         let hit = cursor.flatMap { point in
             // Tiles have a small gap between them. Extending each hit rect by
             // half of it along the dock means sweeping across icons swaps the

@@ -71,15 +71,17 @@ struct GroupTileView: View {
     private var icon: some View {
         let shown = Array(group.apps.prefix(9))
         let columns = shown.count > 4 ? 3 : 2
-        let inset = size * 0.12
-        let gap = size * 0.05
-        let cell = (size - inset * 2 - gap * CGFloat(columns - 1)) / CGFloat(columns)
+        // Drawn at an app icon's visible size so spacing matches the icons.
+        let drawn = size * (1 - 2 * IconMetrics.margin)
+        let inset = drawn * 0.12
+        let gap = drawn * 0.05
+        let cell = (drawn - inset * 2 - gap * CGFloat(columns - 1)) / CGFloat(columns)
         let grid = Array(repeating: GridItem(.fixed(cell), spacing: gap), count: columns)
-        return RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+        return RoundedRectangle(cornerRadius: drawn * 0.22, style: .continuous)
             .fill(Color.white.opacity(isExpanded ? 0.32 : 0.18))
             .animation(GroupPopoverMotion.present, value: isExpanded)
             .overlay(
-                RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+                RoundedRectangle(cornerRadius: drawn * 0.22, style: .continuous)
                     .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5)
             )
             .overlay(alignment: .topLeading) {
@@ -93,6 +95,7 @@ struct GroupTileView: View {
                 }
                 .padding(inset)
             }
+            .frame(width: drawn, height: drawn)
             .frame(width: size, height: size)
             .dockBadge(dockModel.showBadges ? badges.badge(forGroup: group) : nil, iconSize: size, style: dockModel.badgeStyle)
             .contentShape(Rectangle())

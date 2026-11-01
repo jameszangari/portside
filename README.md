@@ -53,6 +53,7 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 **Layout**
 - Bottom, Left, or Right position, switchable live.
 - Drag the separator to resize icons live (clamped to what fits, persisted).
+- Icon gap (0 to 8pt, default 6) between tiles, live in Settings; same gap on side docks. At 0, every item keeps the app-icon minimum spacing; separators keep fixed spacing.
 - Magnification on every position: app and group tiles grow under the cursor with a smooth falloff to their neighbors, away from the screen edge (up on the bottom, sideways on the sides), past a shelf that keeps its thickness while it lengthens. Near the ends of a long dock the shelf stays on screen. Widgets and separators keep their size. Magnified size 16 to 128pt, set live in Settings. Hold Control-Shift over the dock to flip it for a moment. Labels, right-click and press-and-hold follow the magnified icon, and a launch bounce plays at the magnified size. Off during drags and while a group grid or menu is up. Under Reduce Motion the size follows the cursor without the spring.
 
 **Widgets**
@@ -88,7 +89,7 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 
 **Settings window**
 - System Settings-style layout: a sidebar with General, Appearance, Widgets, Groups, and System panes, and the selected pane on the right. Changes apply live.
-- Fixed 760 x 560 window (wide and short); long panes scroll instead of growing the window. Opens in the center of the screen with the cursor.
+- Fixed 760 x 560 window (wide and short); long panes scroll instead of growing the window. Always opens centered on the primary display (same spot every time).
 - Sidebar shows the Portside icon and version (`v0.2.0`; hover for author and build hash) and a Check for Updates button.
 - Drag widget rows to reorder them.
 
@@ -109,13 +110,12 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 
 ## Planned
 
-From `docs/CHECKLIST.md` and `docs/PLAN.md`:
-- Folder stacks: fan and list views, sort options, show-as-folder vs stack icon.
+From `docs/CHECKLIST.md` Remaining backlog:
+- Groups: drag strip icons into a group, click title to rename, reorder members inside the grid.
+- Folder stacks: fan and list views, per-stack view/sort/filter, show-as-folder vs stack icon.
 - Milestone F leftover: import plain file tiles from `persistent-others` (folders already import).
-- Update checker: compare AppInfo.version with the latest GitHub release tag (vX.Y.Z), show 'up to date' or a link to the release. The Check for Updates button is a placeholder until then.
-- Trash: Option-click "Empty Trash without warning" and icon animation.
-- Native Dock parity leftovers: window list in the app menu, VoiceOver / keyboard navigation; hide badges for apps whose badges are off in Notifications settings (that setting is not readable today).
-- Better widget layout on side docks.
+- P3 leftovers: window list in the app menu; VoiceOver / keyboard navigation.
+- Side-dock widget layout; window previews on hover; profiles; update checker; Trash Option-click Empty and icon animation.
 
 ## Requirements and build
 
@@ -193,7 +193,7 @@ While "Hide the macOS Dock" is on, the native Dock's prior settings are backed u
 It is deleted after a verified restore. If it exists when Portside starts, Portside restores from it first.
 
 The Settings window controls:
-- Position, auto-hide, icon size, "Animate opening applications"
+- Position, auto-hide, icon size, icon gap (`iconGap`, points, 0 to 8, default 6), "Animate opening applications"
 - Show Trash in dock (`showTrash`, default `true`); dismissed Full Disk Access hint (`trashAccessHintDismissed`, default `false`)
 - Show notification badges (`showBadges`, default `true`); badge color (`badgeColor`: `macOS`, `accent`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `graphite` or `custom`, default `macOS`); custom badge color (`badgeCustomColor`, sRGB `{ red, green, blue, alpha }`, used when `badgeColor` is `custom`)
 - Folder stacks (`stacks`: `{ id, path, itemOrder? }[]`, right section before Trash; `itemOrder` is child filenames for grid placement)

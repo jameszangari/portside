@@ -38,8 +38,13 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     func show() {
         let window = self.window ?? makeWindow()
         self.window = window
-        if !window.isVisible {
-            center(window)
+        // Re-center whenever the window was closed or miniaturized so it
+        // always opens in the same place (primary screen, dead center).
+        // Cursor-screen centering drifted when Settings was opened from
+        // different edges or displays.
+        if !window.isVisible || window.isMiniaturized {
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            placeCentered(window)
         }
         launchAtLogin.refresh()
         trash.refresh(reason: "Settings opened")
@@ -93,27 +98,27 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.toolbarStyle = .unified
         window.isReleasedWhenClosed = false
         window.delegate = self
-        // Older builds saved the window position; it now always opens centered.
+        // Do not restore a saved frame: position is always the primary
+        // screen center (see placeCentered).
         UserDefaults.standard.removeObject(forKey: "NSWindow Frame PortsideSettings")
         return window
     }
 
-    /// Dead center of the visible area (menu bar excluded) of the screen
-    /// with the cursor, or the primary screen. NSWindow.center() sits
+    /// Dead center of the primary display's visible area (menu bar
+    /// excluded). Uses the fixed Settings size, not the live frame, so a
+    /// stray resize cannot shift the next open. NSWindow.center() sits
     /// higher than center on purpose, so it is not used.
-    private func center(_ window: NSWindow) {
-        let mouse = NSEvent.mouseLocation
-        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) ?? NSScreen.screens.first else { return }
-        window.setFrame(centered(window.frame.size, on: screen), display: false)
-    }
-
-    private func centered(_ size: NSSize, on screen: NSScreen) -> NSRect {
+    private func placeCentered(_ window: NSWindow) {
+        guard let screen = NSScreen.screens.first else { return }
+        window.setContentSize(SettingsLayout.windowSize)
+        let size = window.frame.size
         let area = screen.visibleFrame
-        return NSRect(
+        let frame = NSRect(
             x: (area.midX - size.width / 2).rounded(),
             y: (area.midY - size.height / 2).rounded(),
             width: size.width, height: size.height
         )
+        window.setFrame(frame, display: false)
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -344,6 +349,15 @@ private struct GeneralSettings: View {
                     snap: 1,
                     format: { "\(Int($0)) pt" },
                     set: { dockModel.setIconSize(min(CGFloat($0), maxIconSize), persist: $1) }
+                )
+
+                SettingsSlider(
+                    title: "Icon gap",
+                    value: Double(dockModel.iconGap),
+                    range: Double(DockModel.iconGapRange.lowerBound)...Double(DockModel.iconGapRange.upperBound),
+                    snap: 1,
+                    format: { "\(Int($0)) pt" },
+                    set: { dockModel.setIconGap(CGFloat($0), persist: $1) }
                 )
 
                 Toggle(isOn: Binding(

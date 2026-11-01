@@ -50,15 +50,17 @@ struct StackTileView: View {
     private var icon: some View {
         let shown = preview
         let columns = shown.count > 4 ? 3 : max(shown.isEmpty ? 1 : 2, shown.count > 1 ? 2 : 1)
-        let inset = size * 0.12
-        let gap = size * 0.05
-        let cell = (size - inset * 2 - gap * CGFloat(max(columns - 1, 0))) / CGFloat(max(columns, 1))
+        // Drawn at an app icon's visible size so spacing matches the icons.
+        let drawn = size * (1 - 2 * IconMetrics.margin)
+        let inset = drawn * 0.12
+        let gap = drawn * 0.05
+        let cell = (drawn - inset * 2 - gap * CGFloat(max(columns - 1, 0))) / CGFloat(max(columns, 1))
         let grid = Array(repeating: GridItem(.fixed(cell), spacing: gap), count: columns)
-        return RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+        return RoundedRectangle(cornerRadius: drawn * 0.22, style: .continuous)
             .fill(Color.white.opacity(isExpanded ? 0.32 : 0.18))
             .animation(GroupPopoverMotion.present, value: isExpanded)
             .overlay(
-                RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+                RoundedRectangle(cornerRadius: drawn * 0.22, style: .continuous)
                     .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5)
             )
             .overlay {
@@ -66,7 +68,7 @@ struct StackTileView: View {
                     Image(nsImage: icons.icon(for: stack.url))
                         .resizable()
                         .interpolation(.high)
-                        .padding(size * 0.14)
+                        .padding(drawn * 0.14)
                 } else {
                     LazyVGrid(columns: grid, alignment: .leading, spacing: gap) {
                         ForEach(shown) { item in
@@ -85,6 +87,7 @@ struct StackTileView: View {
                     .fill(Color.primary.opacity(isDropTarget ? 0.22 : 0))
                     .padding(-3)
             )
+            .frame(width: drawn, height: drawn)
             .frame(width: size, height: size)
             .contentShape(Rectangle())
             .menuHold(hold, onTap: onToggle)

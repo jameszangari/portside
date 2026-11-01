@@ -62,6 +62,8 @@ final class DockModel: Codable, ObservableObject {
         static let backgroundFrost: Double = 0.5
         static let cornerRadius: CGFloat = 16
         static let magnifiedSize: CGFloat = 64
+        /// Gap between strip tiles. Matches the long-standing DockMetrics default.
+        static let iconGap: CGFloat = 6
     }
 
     static let revealDelayRange: ClosedRange<TimeInterval> = 0...1
@@ -114,6 +116,17 @@ final class DockModel: Codable, ObservableObject {
 
     /// Same range as the native Dock's `tilesize`.
     static let iconSizeRange: ClosedRange<CGFloat> = 16...128
+
+    /// Gap (points) between strip tiles along the dock. Side docks use the
+    /// same value down the column. Small range: a slight tweak only.
+    @Published private(set) var iconGap: CGFloat = Defaults.iconGap
+    static let iconGapRange: ClosedRange<CGFloat> = 0...8
+
+    func setIconGap(_ gap: CGFloat, persist shouldPersist: Bool = true) {
+        let clamped = min(max(gap.rounded(), Self.iconGapRange.lowerBound), Self.iconGapRange.upperBound)
+        if clamped != iconGap { iconGap = clamped }
+        if shouldPersist { persist() }
+    }
 
     /// Native-style magnification: tiles grow under the cursor (bottom
     /// edge for now).
@@ -610,7 +623,7 @@ final class DockModel: Codable, ObservableObject {
     // MARK: - Codable
 
     private enum CodingKeys: String, CodingKey {
-        case revealDelay, hideDelay, animationDuration, iconSize, magnificationEnabled, magnifiedSize, edge, entries, widgetKinds
+        case revealDelay, hideDelay, animationDuration, iconSize, iconGap, magnificationEnabled, magnifiedSize, edge, entries, widgetKinds
         case autoHide, openGroupsOnHover, groupHoverDelay, groupHoverCloseGrace
         case animateOpeningApplications
         case hideNativeDock, nativeDockExplained
@@ -628,6 +641,8 @@ final class DockModel: Codable, ObservableObject {
         hideDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .hideDelay) ?? Defaults.hideDelay, to: Self.hideDelayRange)
         animationDuration = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .animationDuration) ?? Defaults.animationDuration, to: Self.animationDurationRange)
         iconSize = try c.decodeIfPresent(CGFloat.self, forKey: .iconSize) ?? 48.0
+        let gap = (try? c.decodeIfPresent(CGFloat.self, forKey: .iconGap)) ?? Defaults.iconGap
+        iconGap = min(max(gap.rounded(), Self.iconGapRange.lowerBound), Self.iconGapRange.upperBound)
         magnificationEnabled = try c.decodeIfPresent(Bool.self, forKey: .magnificationEnabled) ?? false
         let magnified = (try? c.decodeIfPresent(CGFloat.self, forKey: .magnifiedSize)) ?? Defaults.magnifiedSize
         magnifiedSize = min(max(magnified, Self.magnifiedSizeRange.lowerBound), Self.magnifiedSizeRange.upperBound)
@@ -669,6 +684,7 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(hideDelay, forKey: .hideDelay)
         try c.encode(animationDuration, forKey: .animationDuration)
         try c.encode(iconSize, forKey: .iconSize)
+        try c.encode(iconGap, forKey: .iconGap)
         try c.encode(magnificationEnabled, forKey: .magnificationEnabled)
         try c.encode(magnifiedSize, forKey: .magnifiedSize)
         try c.encode(edge, forKey: .edge)
@@ -830,6 +846,7 @@ final class DockModel: Codable, ObservableObject {
         hideDelay = old.hideDelay
         animationDuration = old.animationDuration
         iconSize = old.iconSize
+        iconGap = old.iconGap
         magnificationEnabled = old.magnificationEnabled
         magnifiedSize = old.magnifiedSize
         animateOpeningApplications = old.animateOpeningApplications

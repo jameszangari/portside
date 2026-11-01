@@ -296,6 +296,7 @@ final class DockEngine {
         magnifySubscriptions = [
             dockModel.$magnificationEnabled.map { _ in () }.eraseToAnyPublisher(),
             dockModel.$magnifiedSize.map { _ in () }.eraseToAnyPublisher(),
+            dockModel.$iconGap.map { _ in () }.eraseToAnyPublisher(),
             dockModel.$edge.map { _ in () }.eraseToAnyPublisher(),
         ].map {
             $0.receive(on: DispatchQueue.main).sink { [weak self] in self?.configureMagnifier() }
@@ -532,7 +533,13 @@ final class DockEngine {
     // MARK: - Magnification
 
     private func configureMagnifier() {
-        magnifier.configure(enabled: dockModel.magnificationEnabled, size: dockModel.magnifiedSize, edge: dockModel.edge)
+        hover.iconGap = dockModel.iconGap
+        magnifier.configure(
+            enabled: dockModel.magnificationEnabled,
+            size: dockModel.magnifiedSize,
+            edge: dockModel.edge,
+            iconGap: dockModel.iconGap
+        )
     }
 
     /// Control-Shift went down or up while the dock is up: flip
