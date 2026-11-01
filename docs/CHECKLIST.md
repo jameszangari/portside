@@ -20,6 +20,15 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
+## Windows respect Portside: Phase 6 (2026-11-01)
+
+- [x] `reserveSpace` in dock.json (default `true`; older files keep the default). Space is reserved only while hiding is off and this is on. Restored by Undo last import like `autoHide`.
+- [x] `AccessibilityTrust.swift`: `@Published isTrusted`, refreshed on the system's `com.apple.accessibility.api` distributed notification (re-read 0.5s later, when the new value has landed) and when Portside becomes active. No polling. `DockEngine` re-applies the reservation to `WindowFitter` when trust changes, so granting or revoking access works without a relaunch.
+- [x] Settings > Dock > Auto-hide: with hiding off, "Keep windows clear of the dock" toggle. Turning it on asks for Accessibility once (system prompt; nothing prompts at launch). While access is missing: an explanation plus Grant Access and Open Accessibility Settings. The hiding helper text no longer says windows extend under the dock when they do not.
+- [x] Verified (sandboxed dev build, Settings on launch, switch pressed through AX): off -> nothing reserved; on -> "reserved 61pt ... (keep windows clear setting)", fitter starts, Settings re-centers (center y 575 -> 544), dock.json `reserveSpace: true`; off -> reservation off, fitter stops, `false` saved. `swift build` clean.
+- [ ] Hand test: in the installed app (after a release or `scripts/build-app.sh --install`), turn hiding off: the Accessibility row appears if Portside is not allowed; Grant Access shows the system prompt; allow it in System Settings and maximize a window without relaunching Portside: it stops at the dock. Remove Portside from Accessibility: fitting stops.
+- Known gaps: the untrusted path (row, prompt, live grant) was not exercised by the agent, since the dev build inherits the terminal's trust. A signed app keeps its grant across updates with the same Developer ID; a locally signed build may need re-granting when its signature changes.
+
 ## Windows respect Portside: Phase 5 (2026-11-01)
 
 - [x] Survey of Portside's own windows: only Settings places itself on screen (centered on the primary display). Hover labels, group and stack grids, and the panel are part of the dock and keep using `visibleFrame`. Settings is fixed-size, so Rectangle can only move it; no fitting needed.

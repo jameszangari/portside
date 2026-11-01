@@ -28,7 +28,7 @@ It is deleted after a verified restore. If it exists when Portside starts, Ports
 
 ## Settings controlled from the UI
 
-- Position, auto-hide, icon size, icon gap (`iconGap`, points, 0 to 8, default 6), "Animate opening applications"
+- Position, auto-hide, keep windows clear of the dock while hiding is off (`reserveSpace`, default `true`; needs Accessibility), icon size, icon gap (`iconGap`, points, 0 to 8, default 6), "Animate opening applications"
 - Open Settings hotkey (`settingsHotkey`: `{ keyCode, modifiers }` Carbon values, default Command-Shift-D; `null` means cleared; missing key keeps the default)
 - Show Trash in dock (`showTrash`, default `true`); dismissed Full Disk Access hint (`trashAccessHintDismissed`, default `false`)
 - Show notification badges (`showBadges`, default `true`); badge color (`badgeColor`: `macOS`, `accent`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `graphite` or `custom`, default `macOS`); custom badge color (`badgeCustomColor`, a palette color as below, opacity ignored, used when `badgeColor` is `custom`)

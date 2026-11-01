@@ -252,7 +252,7 @@ Goal: with Portside's hiding off, Rectangle Maximize, Window > Fill and tiling s
 - **Phase 3 (done; also releases windows on quit):** toggle reflow, matching macOS: hiding turned off shrinks windows flush with the screen edge; hiding turned on grows windows flush with the reserved edge back to the screen edge.
 - **Phase 4 (dropped):** Rectangle gap sync. Rectangle caches `screenEdgeGapBottom` and does not pick up a `defaults write` while running.
 - **Phase 5 (done):** Portside's own Settings and overlays place themselves inside the usable frame.
-- **Phase 6:** Settings toggle "Keep windows clear of the dock" (`reserveSpace`), docs.
+- **Phase 6 (done):** Settings toggle "Keep windows clear of the dock" (`reserveSpace`), docs.
 
 ---
 

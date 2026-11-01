@@ -40,7 +40,6 @@ From [docs/CHECKLIST.md](docs/CHECKLIST.md) remaining backlog:
 - Import plain file tiles from `persistent-others` (folders already import)
 - Window list in the app menu; VoiceOver / keyboard navigation
 - Side-dock widget layout; window previews; profiles; Trash Option-click Empty
-- Reserved space: Settings toggle and Accessibility prompt
 
 ## Quick start
 

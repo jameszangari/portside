@@ -441,6 +441,7 @@ private struct SettingsSidebar: View {
 /// Where the dock sits and how it behaves. Controls that only matter in some
 /// states (the hide delays) appear only then, instead of sitting greyed out.
 private struct DockSettings: View {
+    @ObservedObject private var accessibility = AccessibilityTrust.shared
     @ObservedObject var dockModel: DockModel
     @ObservedObject var trash: TrashController
 
@@ -484,8 +485,33 @@ private struct DockSettings: View {
                     Text("Hide dock automatically")
                     Text(dockModel.autoHide
                          ? "The dock slides away until the pointer touches the screen edge."
-                         : "The dock stays visible, so windows can extend under it.")
+                         : dockModel.reserveSpace
+                            ? "The dock stays visible."
+                            : "The dock stays visible, so windows can extend under it.")
                         .helperStyle()
+                }
+
+                if !dockModel.autoHide {
+                    Toggle(isOn: Binding(
+                        get: { dockModel.reserveSpace },
+                        set: { on in
+                            dockModel.setReserveSpace(on)
+                            if on { accessibility.requestAccess() }
+                        }
+                    )) {
+                        Text("Keep windows clear of the dock")
+                        Text("Maximized and tiled windows stop at the dock, like they do at the macOS Dock.")
+                            .helperStyle()
+                    }
+                    if dockModel.reserveSpace && !accessibility.isTrusted {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Portside needs Accessibility access to resize other apps' windows. Until then, windows can extend under the dock.").helperStyle()
+                            HStack {
+                                Button("Grant Access…") { accessibility.requestAccess() }
+                                Button("Open Accessibility Settings") { accessibility.openSettings() }
+                            }
+                        }
+                    }
                 }
 
                 if dockModel.autoHide {

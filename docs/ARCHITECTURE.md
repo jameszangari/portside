@@ -33,6 +33,7 @@ Sources/portside/
   DockModel.swift           Codable settings and entries, persistence to dock.json
   DockEdge.swift            Bottom/Left/Right enum and DockScreen (active display)
   DockReservation.swift     Space the pinned dock takes from its edge (depth, band, usable frame)
+  AccessibilityTrust.swift  Observable Accessibility permission (system notification, no polling), prompt, Settings link
   WindowFitter.swift        Accessibility observers that fit other apps' flush windows clear of the pinned dock
   DockStrip.swift           SwiftUI strip: tiles, widgets, separator, reorder, drops
   DockItem.swift            App tile, icon cache, launch/activate

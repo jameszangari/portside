@@ -284,6 +284,16 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    /// With hiding off, keep other apps' windows out of the dock's space
+    /// (like the native Dock). Needs Accessibility.
+    @Published private(set) var reserveSpace: Bool = true
+
+    func setReserveSpace(_ enabled: Bool) {
+        guard enabled != reserveSpace else { return }
+        reserveSpace = enabled
+        persist()
+    }
+
     // MARK: - Keyboard
 
     /// Global shortcut that opens Settings. Nil means none is registered.
@@ -932,7 +942,7 @@ final class DockModel: Codable, ObservableObject {
         /// App version that last wrote the file. Lets a downgrade back the file up first.
         case savedByVersion
         case revealDelay, hideDelay, animationDuration, iconSize, iconGap, magnificationEnabled, magnifiedSize, edge, entries, widgetKinds
-        case autoHide, openGroupsOnHover, groupHoverDelay, groupHoverCloseGrace
+        case autoHide, reserveSpace, openGroupsOnHover, groupHoverDelay, groupHoverCloseGrace
         case animateOpeningApplications
         case hideNativeDock, nativeDockExplained, openSettingsOnLaunch
         case showTrash, trashAccessHintDismissed
@@ -969,6 +979,7 @@ final class DockModel: Codable, ObservableObject {
         }
         widgetKinds = try c.decodeIfPresent([String].self, forKey: .widgetKinds) ?? WidgetCatalog.defaultKinds
         autoHide = try c.decodeIfPresent(Bool.self, forKey: .autoHide) ?? true
+        reserveSpace = try c.decodeIfPresent(Bool.self, forKey: .reserveSpace) ?? true
         animateOpeningApplications = try c.decodeIfPresent(Bool.self, forKey: .animateOpeningApplications) ?? true
         hideNativeDock = try c.decodeIfPresent(Bool.self, forKey: .hideNativeDock) ?? false
         nativeDockExplained = try c.decodeIfPresent(Bool.self, forKey: .nativeDockExplained) ?? false
@@ -1029,6 +1040,7 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(entries, forKey: .entries)
         try c.encode(widgetKinds, forKey: .widgetKinds)
         try c.encode(autoHide, forKey: .autoHide)
+        try c.encode(reserveSpace, forKey: .reserveSpace)
         try c.encode(animateOpeningApplications, forKey: .animateOpeningApplications)
         try c.encode(hideNativeDock, forKey: .hideNativeDock)
         try c.encode(nativeDockExplained, forKey: .nativeDockExplained)
@@ -1265,6 +1277,7 @@ final class DockModel: Codable, ObservableObject {
         magnifiedSize = old.magnifiedSize
         animateOpeningApplications = old.animateOpeningApplications
         autoHide = old.autoHide
+        reserveSpace = old.reserveSpace
         showTrash = old.showTrash
         showBadges = old.showBadges
         activityIcons = old.activityIcons

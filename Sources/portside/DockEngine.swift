@@ -40,6 +40,7 @@ final class DockEngine {
     private let windowFitter = WindowFitter()
     private var reservationUpdateQueued = false
     private var reservationObservers: [NSObjectProtocol] = []
+    private var reservationSubscriptions: [AnyCancellable] = []
     private let flipKeys = MagnifyFlipKeys()
     private var magnifySubscriptions: [AnyCancellable] = []
     private var bounceSettingSubscription: AnyCancellable?
@@ -112,6 +113,16 @@ final class DockEngine {
         hover.look = { [weak dockModel] in dockModel?.look }
 
         reservation.onChange = { [weak windowFitter] _, new in windowFitter?.setReservation(new) }
+        reservationSubscriptions = [
+            dockModel.$reserveSpace.removeDuplicates().dropFirst().receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in self?.queueReservationUpdate(reason: "keep windows clear setting") },
+            // Granted or revoked in System Settings: start or stop fitting.
+            AccessibilityTrust.shared.$isTrusted.removeDuplicates().dropFirst().receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    guard let self else { return }
+                    self.windowFitter.setReservation(self.reservation.current)
+                },
+        ]
 
         interactions.onResizingChanged = { [weak self] resizing in
             guard let self else { return }
@@ -606,7 +617,7 @@ final class DockEngine {
             // The saved preference, not `effectiveAutoHide`: Settings pinning
             // the dock for live preview should not move other apps' windows.
             self.reservation.update(
-                active: !self.dockModel.autoHide,
+                active: !self.dockModel.autoHide && self.dockModel.reserveSpace,
                 edge: self.dockPanel.edge,
                 depth: self.dockPanel.reservedDepth,
                 screenFrame: DockScreen.frame,
