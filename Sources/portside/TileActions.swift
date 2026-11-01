@@ -274,7 +274,7 @@ private final class RightClickView: NSView {
         case .left: origin = NSPoint(x: tile.maxX + gap, y: tile.midY + size.height / 2)
         case .right: origin = NSPoint(x: tile.minX - gap - size.width, y: tile.midY + size.height / 2)
         }
-        MenuKeyFocus.shared.popUp(menu, at: origin)
+        MenuKeyFocus.shared.popUp(menu, at: origin, from: window)
     }
 }
 
@@ -306,7 +306,11 @@ final class MenuKeyFocus {
 
     /// Pops `menu` with its top-left corner at `origin` (screen points) and
     /// returns when it closes.
-    func popUp(_ menu: NSMenu, at origin: NSPoint) {
+    ///
+    /// Pass `from` when the click came from a window above `.popUpMenu` (the
+    /// stack / group overlay). NSMenu windows sit at pop-up level, so a higher
+    /// overlay would cover them; that window is demoted for the tracking run.
+    func popUp(_ menu: NSMenu, at origin: NSPoint, from window: NSWindow? = nil) {
         // Settings open: Portside is active and already gets the keys.
         let borrow = !NSApp.isActive
         if borrow {
@@ -314,8 +318,16 @@ final class MenuKeyFocus {
             panel.orderFrontRegardless()
             panel.makeKey()
         }
+        let priorLevel: NSWindow.Level?
+        if let window, window.level.rawValue > NSWindow.Level.popUpMenu.rawValue {
+            priorLevel = window.level
+            window.level = .popUpMenu
+        } else {
+            priorLevel = nil
+        }
         actionsLogger.info("menu opened (key focus borrowed: \(borrow), key: \(self.panel.isKeyWindow))")
         menu.popUp(positioning: nil, at: origin, in: nil)
+        if let window, let priorLevel { window.level = priorLevel }
         if borrow { panel.orderOut(nil) }
         let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
         actionsLogger.info("menu closed, frontmost app \(front, privacy: .public), portside active: \(NSApp.isActive)")

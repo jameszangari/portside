@@ -24,8 +24,10 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 
 - [x] Cause: the open stack's `...` header used a SwiftUI `Menu` with `Toggle`s. On the non-key overlay, those toggles needed a wake-up click before Folders First / Show Hidden Files fired.
 - [x] Fix: `...` pops the same AppKit `StackOptionsMenu` as the tile right-click (via `StackOptionsMenuButton` + `MenuKeyFocus`), so checkbox items fire on the first click. Header now also includes Display as Folder.
-- [x] `swift build` passes.
-- [ ] Hand test: open a folder stack, click `...`, click Folders First once: items regroup immediately; click again to undo. Same for Show Hidden Files. Confirm Escape closes the menu and the dock does not hide while it is open.
+- [x] Follow-up: AppKit menus sit at `.popUpMenu`, but the stack/group overlay is higher, so the menu drew as a ghost behind the glass. `MenuKeyFocus.popUp` demotes the source window to `.popUpMenu` for the tracking run (also covers group-grid right-clicks).
+- [x] Follow-up: the grid order and the Folders First checkmark drifted apart (checked showed files first, unchecked showed folders first). Cause: the cache held the already-arranged list and the toggle re-sorted that list. With Custom Order and no saved order the sort is a no-op, so turning Folders First off kept folders in front, and each toggle compounded it. Fix: `StackContents` now stores only the raw name-sorted listing (`listings`); `items(for:)` applies sort and folders-first from the live stack on every read. Disk reads happen only when the path or Show Hidden Files changes. `StackController` forwards `contents.objectWillChange` so the open grid redraws when a read lands.
+- [x] `swift build` passes. Release build installed to `~/Applications/Portside.app` and relaunched.
+- [ ] Hand test: open a folder stack, click `...`: menu on top of the grid; click Folders First several times: order and checkmark stay in sync every time. Same for Show Hidden Files and each Sort by option. Escape closes; dock stays up.
 - README Features already covered; no new dock.json keys.
 
 ## Battery compact icon (2026-10-31)

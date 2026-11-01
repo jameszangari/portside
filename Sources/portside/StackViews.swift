@@ -208,7 +208,7 @@ private final class StackOptionsMenuNSButton: NSButton {
         let frame = window.convertToScreen(convert(bounds, to: nil))
         // popUp wants the menu's top-left; place it just under the button.
         let origin = NSPoint(x: frame.minX, y: frame.minY)
-        MenuKeyFocus.shared.popUp(menu, at: origin)
+        MenuKeyFocus.shared.popUp(menu, at: origin, from: window)
     }
 }
 

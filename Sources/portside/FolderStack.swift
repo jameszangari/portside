@@ -122,9 +122,11 @@ struct StackItem: Identifiable, Hashable {
 }
 
 /// Lists and watches folder-stack contents. Event-driven via FSEvents; no
-/// polling. Publishes per-stack item lists for tiles and the open grid.
+/// polling. Publishes each stack's raw, name-sorted listing; `items(for:)`
+/// applies the stack's current sort and folders-first on read, so the
+/// order always matches the settings the menu shows.
 final class StackContents: ObservableObject {
-    @Published private(set) var items: [String: [StackItem]] = [:]
+    @Published private(set) var listings: [String: [StackItem]] = [:]
 
     private var streams: [String: FSEventStreamRef] = [:]
     private let queue = DispatchQueue(label: "com.james.portside.stacks", qos: .utility)
@@ -138,18 +140,27 @@ final class StackContents: ObservableObject {
         let ids = Set(stacks.map(\.id))
         for id in streams.keys where !ids.contains(id) {
             stopWatching(id)
-            items[id] = nil
+            publish(id, nil, reason: "removed")
         }
         for stack in stacks {
-            if streams[stack.id] == nil { watch(stack) }
-            // File events refresh with the newest sort and filter settings.
+            if streams[stack.id] == nil {
+                watch(stack)
+                watchedPaths[stack.id] = stack
+                refresh(stack, reason: "sync")
+                continue
+            }
+            let previous = watchedPaths[stack.id]
             watchedPaths[stack.id] = stack
-            refresh(stack, reason: "sync")
+            // Only the path and hidden-file filter change what is on disk;
+            // sort and folders-first are applied in `items(for:)`.
+            if previous?.path != stack.path || previous?.showHidden != stack.showHidden {
+                refresh(stack, reason: "sync")
+            }
         }
     }
 
     func items(for stack: FolderStack) -> [StackItem] {
-        items[stack.id] ?? []
+        Self.arrange(listings[stack.id] ?? [], for: stack)
     }
 
     func refresh(_ stack: FolderStack, reason: String) {
@@ -160,19 +171,31 @@ final class StackContents: ObservableObject {
         }
         reading.insert(id)
         let url = stack.url
+        let showHidden = stack.showHidden
         queue.async { [weak self] in
-            let listed = Self.arrange(Self.list(url, showHidden: stack.showHidden), for: stack)
+            let raw = Self.list(url, showHidden: showHidden)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.reading.remove(id)
-                if self.items[id] != listed {
-                    self.items[id] = listed
-                    stackLogger.info("stack \(stack.displayName, privacy: .public): \(listed.count) item(s) (\(reason, privacy: .public))")
-                }
-                if let newest = self.readAgain.removeValue(forKey: id) {
+                if let newest = self.readAgain.removeValue(forKey: id),
+                   newest.showHidden != showHidden || newest.path != stack.path {
+                    // Listing inputs changed; the raw result is the wrong set.
                     self.refresh(newest, reason: "\(reason) (again)")
+                    return
                 }
+                self.publish(id, raw, reason: reason)
             }
+        }
+    }
+
+    private func publish(_ id: String, _ listed: [StackItem]?, reason: String) {
+        guard listings[id] != listed else { return }
+        var next = listings
+        next[id] = listed
+        listings = next
+        if let listed {
+            let name = watchedPaths[id]?.displayName ?? id
+            stackLogger.info("stack \(name, privacy: .public): \(listed.count) item(s) (\(reason, privacy: .public))")
         }
     }
 
@@ -308,6 +331,6 @@ final class StackContents: ObservableObject {
 
     func stopAll() {
         for id in Array(streams.keys) { stopWatching(id) }
-        items = [:]
+        listings = [:]
     }
 }

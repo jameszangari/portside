@@ -54,6 +54,11 @@ final class StackController: ObservableObject {
                 }
             }
             .store(in: &subscriptions)
+        // The open grid reads contents through this controller; forward so a
+        // folders-first rearrange refreshes the popover without a second click.
+        contents.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &subscriptions)
         contents.sync(stacks: dockModel.stacks)
     }
 
