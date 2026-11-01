@@ -63,8 +63,8 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - Enable, disable, and reorder in Settings, or toggle from the menu bar item.
 - Every widget has a square (Small) design: an analog clock face, a Calendar-icon date with a dot for the next event, text-free concentric CPU (outer, blue) and memory (inner, purple) rings, and the existing Weather and Battery tiles. Side docks always use Small, so the column stays one tile wide.
 - Hover labels show live readings: CPU / memory percentages, battery and charging state, weather temperature and location, clock date/time, and Calendar date/event or access status. Labels refresh with widget data. Click actions are unchanged.
-- CPU, Memory and Battery show one large number without a tiny label or percent sign. Hover for the named percentage. System Stats keeps concentric rings; Wide adds color-matched numbers with neutral CPU / RAM labels. CPU and Memory start disabled and open Activity Monitor.
-- Widget text uses system typography. At small dock sizes, Clock Wide shows just the time and Calendar shows the date with a status symbol and a red bar matching the date text width; secondary details stay in hover labels. Weather keeps its symbol and larger temperature.
+- CPU, Memory and Battery show one large number without a tiny label or percent sign. Below 28pt they switch to an SF Symbol in the ring (Battery picks a level or bolt glyph from charge state). Hover for the named percentage. System Stats keeps concentric rings; Wide adds color-matched numbers with neutral CPU / RAM labels. CPU and Memory start disabled and open Activity Monitor.
+- Widget text uses system typography scaled from a 32pt tile reference, so the same size ratio holds across the icon-size range. At small dock sizes, Clock Wide shows just the time and Calendar shows the date with a status symbol and a red bar matching the date text width; secondary details stay in hover labels. Weather keeps its symbol and temperature.
 - On the bottom dock, Clock, Calendar and System Stats can be Small or Wide. Pick with the iOS-style size row in the widget's right-click menu (with Remove Widget and Edit Widgets...) or in Settings > Widgets.
 
 **Groups**
@@ -162,7 +162,7 @@ open build/Portside.app
 
 - Runs `swift build -c release`, then assembles `Contents/MacOS/portside`, `Contents/Info.plist` (from the repo's `Info.plist` plus bundle keys and the version from `VERSION`), the app icon, and the SwiftPM resource bundle with the brand PNGs (in `Contents/Resources`, covered by the signature). The icon is `design/brand/icon-composer/AppIcon.icon` compiled by `xcrun actool` into `Assets.car` (Liquid Glass, `CFBundleIconName`) plus a flat `AppIcon.icns` for older macOS. If actool fails it prints why and copies `design/brand/approved-icon/icns/` instead; if that is missing too, the hidden `portside --export-icon <path.png>` flag renders one. No network.
 - `--install` copies to `~/Applications/Portside.app`, never `/Applications`. It refuses while that copy is running; quit Portside first. Without the flag nothing is installed.
-- Run `scripts/setup-signing.sh` once. It creates a ten-year self-signed `Portside Local Development` certificate in your default user keychain and trusts it for code signing only. Only `/usr/bin/codesign` is granted access to the imported private key. Later runs reuse the existing identity. The certificate fingerprint is saved outside the repo; temporary key files are deleted on exit.
+- Run `scripts/setup-signing.sh` once. It creates a ten-year self-signed `Portside Local Development` certificate in your default user keychain and trusts it for code signing only. Only `/usr/bin/codesign` is granted access to the imported private key. `scripts/build-app.sh` (and setup) call `scripts/ensure-codesign-key-access.sh` before signing: a native alert (Okay / Not Now) may appear once, then the system Touch ID or password sheet. No custom password field and no sudo. Later builds reuse the identity silently. The certificate fingerprint is saved outside the repo; temporary key files are deleted on exit.
 - Builds use the saved fingerprint by default and fail if it is missing or unavailable, instead of silently switching identities. Setup also validates an existing fingerprint before looking up certificates by name and never replaces it automatically. `SIGN_IDENTITY="Your Cert Name" scripts/build-app.sh` overrides it. `SIGN_IDENTITY=- scripts/build-app.sh` explicitly uses ad-hoc signing, which may cause macOS to ask for permission again when the binary changes.
 - When switching from an ad-hoc build, allow Downloads and other requested permissions once for the newly signed app. Use the installed `~/Applications/Portside.app` for permission checks. `swift run` remains a separate development launch and does not use the local certificate.
 - Turn on "Open Portside at login" from the copy you keep (normally `~/Applications/Portside.app`). macOS remembers the path it was registered from.
@@ -297,6 +297,8 @@ scripts/
   release.sh                Bumps VERSION, commits, and tags a release
   build-app.sh              Builds and signs build/Portside.app (--install to ~/Applications)
   setup-signing.sh          Creates or reuses the stable local code signing identity
+  ensure-codesign-key-access.sh  Native Okay consent + Touch ID, then silent key unlock
+  SigningConsent.swift      Stock NSAlert + LocalAuthentication for build consent
   check-tile-input.swift    Synthetic Accessibility check: clicks, hold menu, label centering
 design/brand/               Approved Portside sail icon, wordmarks, menu bar assets, and tokens; see its README
 ```

@@ -173,25 +173,28 @@ private struct CalendarView: View {
     }
 
     private var dateFace: some View {
-        VStack(spacing: 1) {
+        VStack(spacing: tile * 0.03) {
             if tile >= 44 {
                 Text(today, format: .dateTime.weekday(.abbreviated))
-                    .font(.system(size: max(10, tile * 0.18), weight: .medium))
+                    .font(.system(size: WidgetTypography.fontSize(6, tile: tile), weight: .medium))
                     .foregroundStyle(.red)
             }
             Text(today, format: .dateTime.day())
-                .font(.system(size: max(14, tile * 0.46), weight: .medium))
+                .font(.system(size: WidgetTypography.fontSize(15, tile: tile), weight: .medium))
                 .monospacedDigit()
-                .padding(.top, tile < 44 ? 3 : 0)
+                .minimumScaleFactor(0.7)
+                .padding(.top, tile < 44 ? tile * 0.09 : 0)
                 .overlay(alignment: .top) {
                     if tile < 44 {
-                        Capsule().fill(.red).frame(height: 2)
+                        Capsule().fill(.red).frame(height: max(1.5, tile * 0.06))
                     }
                 }
         }
         .overlay(alignment: .bottomTrailing) {
             if let next {
-                Circle().fill(next.color).frame(width: 4, height: 4).offset(x: 5)
+                Circle().fill(next.color)
+                    .frame(width: tile * 0.12, height: tile * 0.12)
+                    .offset(x: tile * 0.16)
             }
         }
     }
@@ -206,18 +209,19 @@ private struct CalendarView: View {
                 dateFace.frame(width: tile * 0.65)
                 if tile < 44 {
                     Image(systemName: access == .granted ? (next == nil ? "calendar" : "calendar.badge.clock") : "calendar.badge.exclamationmark")
-                        .font(.system(size: tile * 0.46, weight: .regular))
+                        .font(.system(size: WidgetTypography.fontSize(15, tile: tile), weight: .regular))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
                 } else {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: tile * 0.06) {
                         Text(primaryLine)
-                            .font(.system(size: max(11, tile * 0.20), weight: .medium))
+                            .font(.system(size: WidgetTypography.fontSize(6.5, tile: tile), weight: .medium))
                         Text(secondaryLine)
-                            .font(.system(size: max(11, tile * 0.18)))
+                            .font(.system(size: WidgetTypography.fontSize(6, tile: tile)))
                             .foregroundStyle(.secondary)
                     }
                     .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }

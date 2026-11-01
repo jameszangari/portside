@@ -40,18 +40,18 @@ private struct ClockView: View {
                 AnalogClockFace(now: now)
                     .padding(tile * 0.12)
             } else {
-                VStack(spacing: 0) {
+                VStack(spacing: tile * 0.02) {
                     Text(now, format: .dateTime.hour().minute())
-                        .font(.system(size: max(11, tile * 0.34), weight: .medium))
+                        .font(.system(size: WidgetTypography.fontSize(11, tile: tile), weight: .medium))
                         .monospacedDigit()
                     if tile >= 48 {
                         Text(now, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day())
-                            .font(.system(size: max(11, tile * 0.20)))
+                            .font(.system(size: WidgetTypography.fontSize(6.5, tile: tile)))
                             .foregroundStyle(.secondary)
                     }
                 }
                 .lineLimit(1)
-                .minimumScaleFactor(0.9)
+                .minimumScaleFactor(0.7)
             }
         }
     }

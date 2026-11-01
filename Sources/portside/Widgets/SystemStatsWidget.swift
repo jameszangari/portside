@@ -119,12 +119,13 @@ private struct StatsView: View {
                     ring(value(metric), metric.color, line: tile * 0.085)
                     if tile >= 28 {
                         Text("\(Int((value(metric) * 100).rounded()))")
-                            .font(.system(size: max(11, tile * 0.34), weight: .semibold))
+                            .font(.system(size: WidgetTypography.fontSize(11, tile: tile), weight: .semibold))
                             .monospacedDigit()
                             .foregroundStyle(.primary)
+                            .minimumScaleFactor(0.7)
                     } else {
                         Image(systemName: metric == .cpu ? "cpu" : "memorychip")
-                            .font(.system(size: tile * 0.34))
+                            .font(.system(size: WidgetTypography.fontSize(11, tile: tile)))
                     }
                 }
                 .padding(tile * 0.08)
@@ -133,10 +134,7 @@ private struct StatsView: View {
             } else {
                 HStack(spacing: tile * 0.12) {
                     rings.frame(width: tile * 0.65, height: tile * 0.65)
-                    VStack(spacing: tile * 0.10) {
-                        legend(.cpu)
-                        legend(.memory)
-                    }
+                    legend
                 }
                 .padding(.horizontal, tile * 0.09)
             }
@@ -170,17 +168,33 @@ private struct StatsView: View {
         .padding(line / 2)
     }
 
-    private func legend(_ metric: StatsMetric) -> some View {
-        HStack(spacing: tile * 0.05) {
-            Text(metric.label)
-                .font(.system(size: max(8, tile * 0.12), weight: .medium))
-                .foregroundStyle(.secondary)
-            Text("\(Int((value(metric) * 100).rounded()))")
-                .font(.system(size: max(10, tile * 0.18), weight: .semibold))
-                .monospacedDigit()
-                .foregroundStyle(metric.color)
+    /// Two-column legend so CPU / RAM values share one vertical number column.
+    private var legend: some View {
+        let labelSize = WidgetTypography.fontSize(8, tile: tile)
+        let valueSize = WidgetTypography.fontSize(10, tile: tile)
+        return Grid(alignment: .leading, horizontalSpacing: tile * 0.05, verticalSpacing: tile * 0.06) {
+            GridRow {
+                Text(StatsMetric.cpu.label)
+                    .font(.system(size: labelSize, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Text("\(Int((cpu * 100).rounded()))")
+                    .font(.system(size: valueSize, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(StatsMetric.cpu.color)
+                    .gridColumnAlignment(.trailing)
+            }
+            GridRow {
+                Text(StatsMetric.memory.label)
+                    .font(.system(size: labelSize, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Text("\(Int((memory * 100).rounded()))")
+                    .font(.system(size: valueSize, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(StatsMetric.memory.color)
+            }
         }
-        .fixedSize()
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }

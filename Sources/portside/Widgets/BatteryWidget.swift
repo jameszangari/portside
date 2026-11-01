@@ -84,6 +84,18 @@ private struct BatteryView: View {
         return percent <= 20 ? .red : .primary
     }
 
+    /// Same compact threshold as CPU / Memory gauges: icon instead of digits.
+    private var symbolName: String {
+        if isCharging || onAC { return "battery.100percent.bolt" }
+        switch percent ?? 0 {
+        case 76...: return "battery.100percent"
+        case 51..<76: return "battery.75percent"
+        case 26..<51: return "battery.50percent"
+        case 1..<26: return "battery.25percent"
+        default: return "battery.0percent"
+        }
+    }
+
     var body: some View {
         WidgetTile(size: .small) {
             ZStack {
@@ -93,15 +105,21 @@ private struct BatteryView: View {
                     .trim(from: 0, to: CGFloat(percent ?? 0) / 100)
                     .stroke(color, style: StrokeStyle(lineWidth: tile * 0.08, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                VStack(spacing: 0) {
-                    if tile >= 48 && (isCharging || onAC) {
-                        Image(systemName: "bolt.fill")
-                            .font(.system(size: tile * 0.16))
-                            .foregroundStyle(.green)
+                if tile >= 28 {
+                    VStack(spacing: 0) {
+                        if tile >= 48 && (isCharging || onAC) {
+                            Image(systemName: "bolt.fill")
+                                .font(.system(size: WidgetTypography.fontSize(5, tile: tile)))
+                                .foregroundStyle(.green)
+                        }
+                        Text(percent.map { "\($0)" } ?? "--")
+                            .font(.system(size: WidgetTypography.fontSize(11, tile: tile), weight: .semibold))
+                            .monospacedDigit()
+                            .minimumScaleFactor(0.7)
                     }
-                    Text(percent.map { "\($0)" } ?? "--")
-                        .font(.system(size: max(11, tile * 0.34), weight: .semibold))
-                        .monospacedDigit()
+                } else {
+                    Image(systemName: symbolName)
+                        .font(.system(size: WidgetTypography.fontSize(11, tile: tile)))
                 }
             }
             .padding(tile * 0.12)

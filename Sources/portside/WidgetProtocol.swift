@@ -80,6 +80,17 @@ enum DockMetrics {
     static let spacing: CGFloat = DockModel.Defaults.iconGap
 }
 
+/// Widget type sizes are authored against a 32pt tile. Scale with the live
+/// tile so the same visual ratio holds from 16pt to 128pt. Fixed `max(...)`
+/// floors break that ratio (too big when small, too small when large).
+enum WidgetTypography {
+    static let referenceTile: CGFloat = 32
+
+    static func fontSize(_ pointsAt32: CGFloat, tile: CGFloat) -> CGFloat {
+        tile * (pointsAt32 / referenceTile)
+    }
+}
+
 private struct DockTileSizeKey: EnvironmentKey {
     static let defaultValue: CGFloat = 48
 }

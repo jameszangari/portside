@@ -130,10 +130,11 @@ private struct WeatherView: View {
             VStack(spacing: tile * 0.02) {
                 Image(systemName: symbol)
                     .symbolRenderingMode(.multicolor)
-                    .font(.system(size: tile * 0.3))
+                    .font(.system(size: WidgetTypography.fontSize(9.5, tile: tile)))
                 Text(temperature.map { "\(Int($0.rounded()))°" } ?? "--")
-                    .font(.system(size: max(11, tile * 0.32), weight: .semibold))
+                    .font(.system(size: WidgetTypography.fontSize(11, tile: tile), weight: .semibold))
                     .monospacedDigit()
+                    .minimumScaleFactor(0.7)
             }
         }
     }

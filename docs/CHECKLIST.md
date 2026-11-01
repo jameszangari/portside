@@ -20,6 +20,23 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
+## Battery compact icon (2026-10-31)
+
+- [x] Below 28pt tile (same cutoff as CPU / Memory), Battery shows a state-aware SF Symbol (`battery.*.percent` or `.bolt` when charging/plugged) instead of the percentage digits. Hover still shows the named percent.
+- [x] Compact Battery icon uses default (neutral) foreground, matching CPU / Memory glyphs; ring color still reflects charge/AC.
+- [x] Wide System Stats legend is a two-column Grid so CPU / RAM values share one trailing number column.
+- [x] `swift build` passes.
+- [ ] Hand test: shrink below 28pt and confirm Battery shows a neutral icon; grow back for the number. At Wide System Stats, confirm the two numbers stack on one vertical line.
+- README Features updated; no new dock.json keys.
+
+## Widget text scales from 32pt (2026-10-31)
+
+- [x] Cause: widget fonts used `max(fixedPt, tile * ratio)`, so below ~32pt text overflowed the tile, and above it secondary labels stayed tiny while gauges grew.
+- [x] Fix: `WidgetTypography.fontSize(_:tile:)` scales every widget face from the 32pt visual (System Stats Wide legend 8/10pt, gauge readings 11pt, Calendar day 15pt, and matching Clock / Weather / Battery sizes). No fixed floors; `minimumScaleFactor` only as a safety net.
+- [x] `swift build` passes on Swift 6.4.2 / Xcode 27.2.
+- [ ] Hand test: set icon size to 32pt and confirm the look, then drag to ~24pt and ~64pt and confirm CPU/RAM, Calendar, Weather, Battery, and Clock keep the same relative sizing with no clipping.
+- README Features updated; no new dock.json keys.
+
 ## Settings focus pins dock (2026-10-31)
 
 - [x] While Settings is the key window and auto-hide is on, DockEngine suppresses auto-hide (edge tracker off, panel stays revealed) without flipping `dockModel.autoHide` or the Settings toggle.
@@ -77,6 +94,16 @@ Supersedes the inline labels from the activity widget pass below.
 - Known gap: combined Small labels remain small at low icon sizes. Prefer Wide or the separate gauges for readability. GPU, disk and network metrics are not added in this slice.
 
 ## Remaining backlog (actionable)
+
+### codesign keychain prompt (2026-10-31)
+
+- [x] Dialog `codesign wants to access key "identity"` is Portside's local signing private key (ACL description `identity`, cert `Portside Local Development`), triggered by `scripts/build-app.sh`.
+- [x] Root cause: import used `-T /usr/bin/codesign`, but `partition_id` was only `apple-tool:`. Without `codesign:` in the partition list, macOS keeps asking for the login password.
+- [x] Added `scripts/ensure-codesign-key-access.sh`: checks the partition list, tries a silent fix, then native consent. Called from `scripts/build-app.sh` before codesign and from `scripts/setup-signing.sh` on create/reuse. Unattended runs can set `PORTSIDE_SKIP_KEYCHAIN_PROMPT=1`.
+- [x] `scripts/SigningConsent.swift`: stock `NSAlert` (Okay primary, Not Now destructive). No custom panel (that caused the extra border/shadow frame). After Okay, `LocalAuthentication` shows the system Touch ID / password sheet. Compiled cache under `scripts/.cache/` (gitignored).
+- [ ] Human: run `scripts/build-app.sh` (or `--install`). Click Okay on the system alert, approve Touch ID / password, confirm later rebuilds stay quiet. If codesign still asks, Always Allow.
+- Known gap: silent partition fix can still fail after owner auth if the key ACL requires the login password string; codesign's Always Allow remains the fallback.
+- README signing notes updated. No dock.json or Settings changes.
 
 ### Remember macOS folder permissions (2026-10-31)
 
