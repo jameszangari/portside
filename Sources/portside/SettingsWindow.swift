@@ -677,13 +677,15 @@ private func milliseconds(_ seconds: Double) -> String {
 /// and the current value right-aligned. The value snaps in the binding.
 /// Updates the model live while dragging and saves once when the drag ends;
 /// keyboard and accessibility changes have no drag, so they save at once.
-private struct SettingsSlider: View {
+struct SettingsSlider: View {
     let title: String
     let value: Double
     let range: ClosedRange<Double>
     /// Values round to a multiple of this (0.01 s = 10 ms, 1 pt).
     let snap: Double
     let format: (Double) -> String
+    var labelWidth = SettingsLayout.labelWidth
+    var valueWidth = SettingsLayout.valueWidth
     /// (new value, persist)
     let set: (Double, Bool) -> Void
 
@@ -696,7 +698,7 @@ private struct SettingsSlider: View {
         let shown = draft ?? value
         HStack(spacing: 12) {
             Text(title)
-                .frame(width: SettingsLayout.labelWidth, alignment: .leading)
+                .frame(width: labelWidth, alignment: .leading)
             Slider(
                 value: Binding(
                     get: { draft ?? value },
@@ -722,7 +724,7 @@ private struct SettingsSlider: View {
             Text(format(shown))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
-                .frame(width: SettingsLayout.valueWidth, alignment: .trailing)
+                .frame(width: valueWidth, alignment: .trailing)
                 .accessibilityHidden(true)
         }
     }
@@ -983,9 +985,12 @@ private struct AppearanceSettings: View {
 /// Portside's own color picker: preset swatches plus Saturation, Tint,
 /// Shade and (optionally) Opacity sliders. Inline in the form, so it never
 /// needs the system color panel (which a non-activating app handles badly).
-private struct PaletteColorEditor: View {
+struct PaletteColorEditor: View {
     let color: PaletteColor
     var showsOpacity = true
+    /// Narrower columns for compact hosts (the group icon picker).
+    var labelWidth = SettingsLayout.labelWidth
+    var valueWidth = SettingsLayout.valueWidth
     /// (new color, persist)
     let set: (PaletteColor, Bool) -> Void
 
@@ -1021,6 +1026,8 @@ private struct PaletteColorEditor: View {
             range: 0...1,
             snap: 0.01,
             format: { "\(Int(($0 * 100).rounded()))%" },
+            labelWidth: labelWidth,
+            valueWidth: valueWidth,
             set: { value, persist in
                 var next = color
                 next[keyPath: path] = value
@@ -1032,7 +1039,7 @@ private struct PaletteColorEditor: View {
 
 /// A round color sample over a checkerboard (so opacity shows). With an
 /// action it is a button; `isSelected` draws a ring.
-private struct ColorChip: View {
+struct ColorChip: View {
     let color: Color
     var size: CGFloat = 22
     var isSelected = false
@@ -1060,7 +1067,7 @@ private struct ColorChip: View {
     }
 }
 
-private struct Checkerboard: View {
+struct Checkerboard: View {
     var body: some View {
         Canvas { context, size in
             let cell: CGFloat = 4
@@ -1231,16 +1238,34 @@ private struct GroupSettingsRow: View {
     @State private var confirmingDelete = false
     @State private var choosingIcon = false
     @State private var hovering = false
+    @State private var iconHovering = false
     @FocusState private var nameFocused: Bool
 
     var body: some View {
         HStack(spacing: 12) {
-            Button { choosingIcon = true } label: { GroupMiniIcon(group: group) }
+            Button { choosingIcon = true } label: {
+                GroupMiniIcon(group: group)
+                    // Hover (or the open picker) shows a pencil, so the
+                    // icon reads as editable.
+                    .overlay {
+                        let shown = iconHovering || choosingIcon
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.black.opacity(shown ? 0.45 : 0))
+                            .overlay(
+                                Image(systemName: "pencil")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                    .opacity(shown ? 1 : 0)
+                            )
+                            .animation(.easeOut(duration: 0.12), value: shown)
+                    }
+            }
                 .buttonStyle(.plain)
+                .onHover { iconHovering = $0 }
                 .help("Change the group's dock icon")
                 .accessibilityLabel("Change icon")
                 .popover(isPresented: $choosingIcon, arrowEdge: .bottom) {
-                    GroupIconPicker(icon: group.icon) { dockModel.setGroupIcon(groupID: group.id, to: $0) }
+                    GroupIconPicker(icon: group.icon) { dockModel.setGroupIcon(groupID: group.id, to: $0, persist: $1) }
                         .padding(12)
                 }
 
@@ -1252,6 +1277,8 @@ private struct GroupSettingsRow: View {
 
             Spacer(minLength: 8)
 
+            Button("Change Icon…") { choosingIcon = true }
+                .help("Pick a symbol and color for the group's dock tile")
             Button("Ungroup") { dockModel.ungroup(groupID: group.id) }
                 .help("Put the apps back in the dock")
             Button("Delete…") { confirmingDelete = true }

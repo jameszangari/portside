@@ -257,6 +257,9 @@ struct DockStrip: View {
         .padding(edge.isVertical ? .vertical : .horizontal, alongPadding)
         .padding(edge.farSide, 6)
         .padding(edge.nearSide, 3)
+        // Running dots and separators read on the shelf (black on a white
+        // dock); the shelf itself is outside this, on the system scheme.
+        .dockContentScheme(dockModel.look)
         .magnifiedShelf(dockModel.look)
         .onDrop(of: [.fileURL], delegate: FileDropDelegate(
             dockModel: dockModel, interactions: interactions, session: fileDrop, targetID: $dropTargetID,

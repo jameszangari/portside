@@ -28,7 +28,7 @@ It is deleted after a verified restore. If it exists when Portside starts, Ports
 - Magnification (`magnificationEnabled`) and Magnified size (`magnifiedSize`, points, 16 to 128, default 64)
 - Reveal delay, hide delay, animation duration (with reset to defaults)
 - Widgets: on/off and order (`widgetKinds`; optional `cpu` and `memory` alongside `systemStats`, no new keys)
-- Groups: rename, ungroup, delete, open on hover, open delay, close grace. A group entry may carry `icon: { symbol, color }` (an SF Symbol name and one of `red`, `orange`, `yellow`, `green`, `mint`, `teal`, `cyan`, `blue`, `indigo`, `purple`, `pink`, `brown`, `gray`; absent means the app grid; an unknown color reads as `blue`)
+- Groups: rename, ungroup, delete, open on hover, open delay, close grace. A group entry may carry `icon: { symbol, color }` (an SF Symbol name and one of `red`, `orange`, `yellow`, `green`, `mint`, `teal`, `cyan`, `blue`, `indigo`, `purple`, `pink`, `brown`, `gray`; absent means the app grid; an unknown color reads as `blue`; optional `custom`, a palette color as below with opacity ignored, overrides `color`)
 - Appearance: icon style (`iconStyle`: `matchSystem` or `original`), `background` object (below), `cornerRadius` (points). Older `backgroundStyle` / `backgroundFrost` / `backgroundTint` keys are read once for migration and no longer written
 - `background`: `style` (`glass`, `frosted`, or `solid`) plus one object per style, all kept when switching. Fractions are 0 to 1.
   - Palette colors (tints, solid colors, custom badge): `base` (sRGB `red`, `green`, `blue`, `alpha` 1), `saturation`, `tint` (toward white), `shade` (toward black), `opacity`. A plain sRGB `{ red, green, blue, alpha }` from older builds still loads, with its alpha as the opacity.

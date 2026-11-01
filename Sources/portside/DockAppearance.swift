@@ -58,7 +58,7 @@ enum DockBackgroundStyle: String, Codable, CaseIterable, Identifiable {
 }
 
 /// sRGB color with alpha, stored in dock.json as four numbers.
-struct RGBAColor: Codable, Equatable {
+struct RGBAColor: Codable, Hashable {
     var red: Double
     var green: Double
     var blue: Double
@@ -83,7 +83,7 @@ struct RGBAColor: Codable, Equatable {
 /// saturation, tint (toward white), shade (toward black), and opacity.
 /// Stored as those parts so the editor reopens where the user left it.
 /// Also reads a plain `RGBAColor` (older dock.json) as base plus opacity.
-struct PaletteColor: Codable, Equatable {
+struct PaletteColor: Codable, Hashable {
     /// Alpha ignored; `opacity` is the alpha.
     var base: RGBAColor
     /// 0 to 1, a multiplier on the base's saturation.
@@ -379,13 +379,64 @@ struct DockLook: Equatable {
     func opaque(_ value: Double) -> Double {
         reduceTransparency ? max(value, 0.92) : value
     }
+
+    /// Light or dark content (text, running dots) that stays readable on
+    /// this background: a white solid dock gets black text, a dark tint
+    /// gets white. Estimated from the colors the user picked, laid over a
+    /// backdrop of the system's light or dark gray (what materials and
+    /// glass show without a color). Picks whichever of black or white text
+    /// has the higher WCAG contrast.
+    var contentScheme: ColorScheme {
+        let darkMode = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let backdrop = darkMode ? 0.12 : 0.88
+        let luminance: Double
+        switch displayStyle {
+        case .solid:
+            let solid = background.solid
+            let stops = solid.fill.isGradient ? [solid.color, solid.endColor] : [solid.color]
+            luminance = stops.map { stop in
+                let rgba = stop.resolved
+                return Self.over(rgba, alpha: rgba.alpha * opaque(solid.opacity), backdrop: backdrop)
+            }.reduce(0, +) / Double(stops.count)
+        case .frosted:
+            let tint = background.style.effective == .glass
+                ? background.glass.tint.map { ($0.resolved, background.glass.strength) }
+                : background.frosted.tint.map { ($0.resolved, $0.resolved.alpha) }
+            luminance = tint.map { Self.over($0.0, alpha: $0.1, backdrop: backdrop) } ?? Self.linear(backdrop)
+        case .glass:
+            let glass = background.glass
+            luminance = glass.tint.map { Self.over($0.resolved, alpha: glass.strength, backdrop: backdrop) }
+                ?? Self.linear(backdrop)
+        }
+        // Equal contrast point between black and white text.
+        return luminance > 0.179 ? .light : .dark
+    }
+
+    /// Relative luminance of `color` at `alpha` over a gray `backdrop`.
+    private static func over(_ color: RGBAColor, alpha: Double, backdrop: Double) -> Double {
+        let a = min(max(alpha, 0), 1)
+        func mix(_ c: Double) -> Double { linear(c * a + backdrop * (1 - a)) }
+        return 0.2126 * mix(color.red) + 0.7152 * mix(color.green) + 0.0722 * mix(color.blue)
+    }
+
+    /// sRGB component to linear light.
+    private static func linear(_ c: Double) -> Double {
+        c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+    }
 }
 
 extension View {
+    /// Content drawn on the dock background (text, dots) uses the scheme
+    /// that reads on it. Set on the content only, so the background itself
+    /// keeps the system appearance.
+    func dockContentScheme(_ look: DockLook) -> some View {
+        environment(\.colorScheme, look.contentScheme)
+    }
+
     /// The dock background in `look`, clipped to its rounded rectangle.
     /// `shadow` is for floating surfaces (group grids); glass draws its own.
     func dockBackground(_ look: DockLook, shadow: Bool = false) -> some View {
-        modifier(DockBackgroundModifier(
+        dockContentScheme(look).modifier(DockBackgroundModifier(
             look: look, shape: RoundedRectangle(cornerRadius: look.cornerRadius, style: .continuous),
             roundedRadius: look.cornerRadius, shadow: shadow
         ))
@@ -395,7 +446,7 @@ extension View {
     /// it always matches the dock. Clear glass uses the public (blurred)
     /// variant here, since the see-through one only does rounded rects.
     func dockBackground<S: InsettableShape>(_ look: DockLook, in shape: S, shadow: Bool = false) -> some View {
-        modifier(DockBackgroundModifier(look: look, shape: shape, roundedRadius: nil, shadow: shadow))
+        dockContentScheme(look).modifier(DockBackgroundModifier(look: look, shape: shape, roundedRadius: nil, shadow: shadow))
     }
 }
 

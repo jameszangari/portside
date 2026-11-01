@@ -76,7 +76,6 @@ private struct BatteryView: View {
     let percent: Int?
     let isCharging: Bool
     let onAC: Bool
-    @Environment(\.dockTileSize) private var tile
 
     private var color: Color {
         guard let percent else { return .secondary }
@@ -98,31 +97,17 @@ private struct BatteryView: View {
 
     var body: some View {
         WidgetTile(size: .small) {
-            ZStack {
-                Circle()
-                    .stroke(Color.primary.opacity(0.15), lineWidth: tile * 0.08)
-                Circle()
-                    .trim(from: 0, to: CGFloat(percent ?? 0) / 100)
-                    .stroke(color, style: StrokeStyle(lineWidth: tile * 0.08, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                if tile >= 28 {
-                    VStack(spacing: 0) {
-                        if tile >= 48 && (isCharging || onAC) {
-                            Image(systemName: "bolt.fill")
-                                .font(.system(size: WidgetTypography.fontSize(5, tile: tile)))
-                                .foregroundStyle(.green)
-                        }
-                        Text(percent.map { "\($0)" } ?? "--")
-                            .font(.system(size: WidgetTypography.fontSize(11, tile: tile), weight: .semibold))
-                            .monospacedDigit()
-                            .minimumScaleFactor(0.7)
-                    }
-                } else {
-                    Image(systemName: symbolName)
-                        .font(.system(size: WidgetTypography.fontSize(11, tile: tile)))
-                }
-            }
-            .padding(tile * 0.12)
+            RingGauge(
+                value: Double(percent ?? 0) / 100,
+                color: color,
+                trackColor: Color.primary.opacity(0.15),
+                number: percent,
+                symbol: symbolName,
+                fullSymbol: "battery.100percent",
+                // Charging shows as a bolt in the tile's corner, clear of
+                // the ring and the number.
+                cornerSymbol: isCharging || onAC ? "bolt.fill" : nil
+            )
         }
     }
 }

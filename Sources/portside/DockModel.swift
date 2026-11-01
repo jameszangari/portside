@@ -827,15 +827,19 @@ final class DockModel: Codable, ObservableObject {
     }
 
     /// Set or clear (nil) a group's custom tile icon.
-    func setGroupIcon(groupID: String, to icon: GroupIcon?) {
+    /// Slider drags pass `persist: false` until release.
+    func setGroupIcon(groupID: String, to icon: GroupIcon?, persist shouldPersist: Bool = true) {
         guard let index = entries.firstIndex(where: { $0.group?.id == groupID }),
-              var group = entries[index].group, group.icon != icon else { return }
-        group.icon = icon
-        var list = entries
-        list[index] = .group(group)
-        entries = list
+              var group = entries[index].group else { return }
+        if group.icon != icon {
+            group.icon = icon
+            var list = entries
+            list[index] = .group(group)
+            entries = list
+        }
+        guard shouldPersist else { return }
         persist()
-        Self.logger.info("group icon \(group.name, privacy: .public): \(icon?.symbol ?? "apps", privacy: .public) \(icon?.color.rawValue ?? "", privacy: .public)")
+        Self.logger.info("group icon \(group.name, privacy: .public): \(icon?.symbol ?? "apps", privacy: .public) \(icon?.custom == nil ? icon?.color.rawValue ?? "" : "custom", privacy: .public)")
     }
 
     /// Remove the group and its apps from the dock.

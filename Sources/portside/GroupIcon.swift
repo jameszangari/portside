@@ -10,8 +10,18 @@ private let iconLogger = Logger(subsystem: "com.james.portside", category: "Grou
 struct GroupIcon: Codable, Hashable {
     var symbol: String
     var color: GroupIconColor
+    /// A color from Portside's palette (presets plus Saturation, Tint and
+    /// Shade, like the Solid dock background). Overrides `color` when set.
+    var custom: PaletteColor?
 
     static let defaultSymbol = "folder.fill"
+
+    /// The color the artwork is drawn in (opaque).
+    var nsColor: NSColor {
+        guard let custom else { return color.nsColor }
+        let c = custom.resolved
+        return NSColor(srgbRed: c.red, green: c.green, blue: c.blue, alpha: 1)
+    }
 }
 
 /// The standard macOS system colors. Stored by name so a saved dock.json
@@ -185,7 +195,7 @@ struct GroupIconArtwork: View {
     }
 
     private var tint: NSColor {
-        GroupIconAppearance.current.variant == .tinted ? .controlAccentColor : icon.color.nsColor
+        GroupIconAppearance.current.variant == .tinted ? .controlAccentColor : icon.nsColor
     }
 
     private func background(_ look: GroupIconAppearance) -> LinearGradient {
@@ -239,10 +249,13 @@ struct GroupIconArtwork: View {
 // MARK: - Picker
 
 /// Color swatches plus a searchable SF Symbols grid. Changes apply as soon
-/// as they are picked (`onChange`); "Show Apps" goes back to the mini grid.
+/// as they are picked; "Show Apps" goes back to the mini grid. The last
+/// swatch opens Portside's palette editor (the Solid background's presets
+/// and sliders) for any other color.
 struct GroupIconPicker: View {
     let icon: GroupIcon?
-    let onChange: (GroupIcon?) -> Void
+    /// (new icon, persist). Slider drags send `false` until release.
+    let onChange: (GroupIcon?, Bool) -> Void
 
     @State private var query = ""
     @State private var results = SymbolCatalog.suggested
@@ -252,15 +265,23 @@ struct GroupIconPicker: View {
     private static let swatch: CGFloat = 16
 
     private var color: GroupIconColor { icon?.color ?? .blue }
+    private var current: GroupIcon { icon ?? GroupIcon(symbol: GroupIcon.defaultSymbol, color: .blue) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             swatches
+            if let custom = icon?.custom {
+                PaletteColorEditor(color: custom, showsOpacity: false, labelWidth: 70, valueWidth: 40) { value, persist in
+                    var next = current
+                    next.custom = value
+                    onChange(next, persist)
+                }
+            }
             HStack(spacing: 6) {
                 TextField("Search symbols", text: $query)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityLabel("Search symbols")
-                Button("Show Apps") { onChange(nil) }
+                Button("Show Apps") { onChange(nil, true) }
                     .disabled(icon == nil)
                     .help("Use the grid of app icons instead")
             }
@@ -274,29 +295,47 @@ struct GroupIconPicker: View {
         // Equal-width cells spread the swatches across the picker's width.
         HStack(spacing: 0) {
             ForEach(GroupIconColor.allCases) { option in
-                Circle()
-                    .fill(Color(nsColor: option.nsColor))
-                    .frame(width: Self.swatch, height: Self.swatch)
-                    .overlay(
-                        Circle()
-                            .strokeBorder(Color.primary.opacity(icon != nil && option == color ? 0.9 : 0), lineWidth: 2)
-                            .padding(-3)
-                    )
-                    .frame(maxWidth: .infinity)
-                    .frame(height: Self.swatch + 8)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        onChange(GroupIcon(symbol: icon?.symbol ?? GroupIcon.defaultSymbol, color: option))
-                    }
-                    .help(option.title)
-                    .accessibilityLabel(option.title)
-                    .accessibilityAddTraits(icon?.color == option ? [.isButton, .isSelected] : .isButton)
+                let selected = icon != nil && icon?.custom == nil && option == color
+                swatch(Circle().fill(Color(nsColor: option.nsColor)), selected: selected, title: option.title) {
+                    var next = current
+                    next.color = option
+                    next.custom = nil
+                    onChange(next, true)
+                }
+            }
+            // Custom: starts from the current color so the sliders adjust it.
+            swatch(Circle().fill(AngularGradient(
+                colors: [.red, .yellow, .green, .cyan, .blue, .purple, .red], center: .center)),
+                   selected: icon?.custom != nil, title: "Custom") {
+                guard icon?.custom == nil else { return }
+                var next = current
+                let c = current.color.nsColor.usingColorSpace(.sRGB) ?? .systemBlue
+                next.custom = PaletteColor(base: RGBAColor(red: c.redComponent, green: c.greenComponent, blue: c.blueComponent, alpha: 1))
+                onChange(next, true)
             }
         }
     }
 
+    private func swatch(_ fill: some View, selected: Bool, title: String, action: @escaping () -> Void) -> some View {
+        fill
+            .frame(width: Self.swatch, height: Self.swatch)
+            .overlay(
+                Circle()
+                    .strokeBorder(Color.primary.opacity(selected ? 0.9 : 0), lineWidth: 2)
+                    .padding(-3)
+            )
+            .frame(maxWidth: .infinity)
+            .frame(height: Self.swatch + 8)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
+            .help(title)
+            .accessibilityLabel(title)
+            .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+
     private var symbolGrid: some View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 8)
+        let tint = Color(nsColor: current.nsColor)
         return ScrollView {
             if results.isEmpty {
                 Text("No symbols match")
@@ -313,10 +352,14 @@ struct GroupIconPicker: View {
                         .frame(height: Self.cell)
                         .background(
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(selected ? Color(nsColor: color.nsColor).opacity(0.35) : Color.primary.opacity(0.0001))
+                                .fill(selected ? tint.opacity(0.35) : Color.primary.opacity(0.0001))
                         )
                         .contentShape(Rectangle())
-                        .onTapGesture { onChange(GroupIcon(symbol: name, color: color)) }
+                        .onTapGesture {
+                            var next = current
+                            next.symbol = name
+                            onChange(next, true)
+                        }
                         .help(name)
                         .accessibilityLabel(name)
                         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)

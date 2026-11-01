@@ -115,26 +115,23 @@ private struct StatsView: View {
         let size = metric == nil ? WidgetSize.resolved(chosen, natural: .medium) : .small
         WidgetTile(size: size) {
             if let metric {
-                ZStack {
-                    ring(value(metric), metric.color, line: tile * 0.085)
-                    if tile >= 28 {
-                        Text("\(Int((value(metric) * 100).rounded()))")
-                            .font(.system(size: WidgetTypography.fontSize(11, tile: tile), weight: .semibold))
-                            .monospacedDigit()
-                            .foregroundStyle(.primary)
-                            .minimumScaleFactor(0.7)
-                    } else {
-                        Image(systemName: metric == .cpu ? "cpu" : "memorychip")
-                            .font(.system(size: WidgetTypography.fontSize(11, tile: tile)))
-                    }
-                }
-                .padding(tile * 0.08)
+                RingGauge(
+                    value: value(metric),
+                    color: metric.color,
+                    number: Int((value(metric) * 100).rounded()),
+                    symbol: metric == .cpu ? "cpu" : "memorychip",
+                    fullSymbol: metric == .cpu ? "cpu.fill" : "memorychip.fill"
+                )
             } else if size == .small {
                 rings.padding(tile * 0.08)
             } else {
-                HStack(spacing: tile * 0.12) {
-                    rings.frame(width: tile * 0.65, height: tile * 0.65)
-                    legend
+                HStack(spacing: tile * 0.1) {
+                    rings.frame(width: tile * 0.62, height: tile * 0.62)
+                    // Legend rows keep air above and below, like the rings.
+                    GeometryReader { geo in
+                        legend(in: CGSize(width: geo.size.width, height: geo.size.height * 0.8))
+                            .frame(width: geo.size.width, height: geo.size.height)
+                    }
                 }
                 .padding(.horizontal, tile * 0.09)
             }
@@ -168,33 +165,66 @@ private struct StatsView: View {
         .padding(line / 2)
     }
 
-    /// Two-column legend so CPU / RAM values share one vertical number column.
-    private var legend: some View {
-        let labelSize = WidgetTypography.fontSize(8, tile: tile)
-        let valueSize = WidgetTypography.fontSize(10, tile: tile)
-        return Grid(alignment: .leading, horizontalSpacing: tile * 0.05, verticalSpacing: tile * 0.06) {
-            GridRow {
-                Text(StatsMetric.cpu.label)
-                    .font(.system(size: labelSize, weight: .medium))
-                    .foregroundStyle(.secondary)
-                Text("\(Int((cpu * 100).rounded()))")
-                    .font(.system(size: valueSize, weight: .semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(StatsMetric.cpu.color)
-                    .gridColumnAlignment(.trailing)
-            }
-            GridRow {
-                Text(StatsMetric.memory.label)
-                    .font(.system(size: labelSize, weight: .medium))
-                    .foregroundStyle(.secondary)
-                Text("\(Int((memory * 100).rounded()))")
-                    .font(.system(size: valueSize, weight: .semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(StatsMetric.memory.color)
+    /// Two-column legend so CPU / RAM values share one vertical number
+    /// column. Font sizes come from measured text widths so the legend fits
+    /// its space at every tile size: never truncated, never squeezed. The
+    /// value column is sized for "100" so it does not jump at full load.
+    private func legend(in space: CGSize) -> some View {
+        let metrics = LegendMetrics(space: space, tile: tile)
+        return Grid(alignment: .leading, horizontalSpacing: metrics.columnSpacing, verticalSpacing: metrics.rowSpacing) {
+            ForEach([StatsMetric.cpu, .memory], id: \.label) { metric in
+                GridRow {
+                    Text(metric.label)
+                        .font(.system(size: metrics.labelSize, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                    Text("\(Int((value(metric) * 100).rounded()))")
+                        .font(.system(size: metrics.valueSize, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(metric.color)
+                        .fixedSize()
+                        .frame(width: metrics.valueWidth, alignment: .trailing)
+                        .gridColumnAlignment(.trailing)
+                }
             }
         }
-        .lineLimit(1)
-        .minimumScaleFactor(0.7)
-        .frame(maxWidth: .infinity, alignment: .trailing)
+        .frame(width: space.width, height: space.height, alignment: .trailing)
+    }
+}
+
+/// Font sizes for the System Stats legend, scaled down from the 32pt-tile
+/// design sizes only as far as needed to fit `space`.
+private struct LegendMetrics {
+    let labelSize: CGFloat
+    let valueSize: CGFloat
+    let valueWidth: CGFloat
+    let columnSpacing: CGFloat
+    let rowSpacing: CGFloat
+
+    init(space: CGSize, tile: CGFloat) {
+        let label = WidgetTypography.fontSize(8, tile: tile)
+        let value = WidgetTypography.fontSize(10, tile: tile)
+        let column = tile * 0.06
+        let row = tile * 0.06
+        let width = Self.width(of: [StatsMetric.cpu.label, StatsMetric.memory.label], size: label, weight: .medium, digits: false)
+            + column
+            + Self.width(of: ["100"], size: value, weight: .semibold, digits: true)
+        let height = 2 * NSFont.systemFont(ofSize: value).boundingRectForFont.height * 0.82 + row
+        let scale = min(1, space.width / max(width, 1), space.height / max(height, 1))
+        labelSize = label * scale
+        valueSize = value * scale
+        columnSpacing = column * scale
+        rowSpacing = row * scale
+        valueWidth = Self.width(of: ["100"], size: valueSize, weight: .semibold, digits: true)
+    }
+
+    /// Widest of `strings` in the system font (monospaced digits for
+    /// numbers), rounded up so SwiftUI's own measure never comes out wider.
+    static func width(of strings: [String], size: CGFloat, weight: NSFont.Weight, digits: Bool) -> CGFloat {
+        let font = digits
+            ? NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
+            : NSFont.systemFont(ofSize: size, weight: weight)
+        let widest = strings.map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
+        return widest.rounded(.up) + 1
     }
 }

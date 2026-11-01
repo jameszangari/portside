@@ -155,6 +155,85 @@ struct WidgetTile<Content: View>: View {
     }
 }
 
+/// One progress ring with a number in it (Battery, CPU, Memory), inside a
+/// small widget's chrome. The number is sized so two digits fit the ring's
+/// hole with a fixed gap. At 100 (or more) it shows `fullSymbol` instead of
+/// a squeezed third digit. Below 28pt the number gives way to `symbol`.
+struct RingGauge: View {
+    /// 0 to 1.
+    let value: Double
+    let color: Color
+    var trackColor: Color?
+    /// Nil shows "--".
+    let number: Int?
+    var numberColor: Color = .primary
+    let symbol: String
+    /// Shown in place of "100".
+    let fullSymbol: String
+    /// Small glyph in the tile's bottom-trailing corner, outside the ring
+    /// (Battery's charging bolt).
+    var cornerSymbol: String?
+    var cornerColor: Color = .green
+    @Environment(\.dockTileSize) private var tile
+
+    var body: some View {
+        let drawn = tile * (1 - 2 * IconMetrics.margin)
+        let line = max(2, drawn * 0.085)
+        let outer = drawn * (1 - 2 * 0.085)
+        // The circle the number's box must fit in: the hole minus a gap of
+        // about 6% of the tile on every side.
+        let fit = outer - 2 * line - 2 * max(2, drawn * 0.06)
+        ZStack {
+            Circle()
+                .stroke(trackColor ?? color.opacity(0.22), lineWidth: line)
+            Circle()
+                .trim(from: 0, to: max(min(value, 1), 0))
+                .stroke(color, style: StrokeStyle(lineWidth: line, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            if tile < 28 {
+                Image(systemName: symbol)
+                    .font(.system(size: WidgetTypography.fontSize(11, tile: tile)))
+            } else if let number, number >= 100 {
+                Image(systemName: fullSymbol)
+                    .resizable()
+                    .scaledToFit()
+                    .fontWeight(.semibold)
+                    .foregroundStyle(numberColor)
+                    // Square glyphs (chips) fill about the inscribed square;
+                    // wide ones (the battery) get extra width, since their
+                    // short height leaves room at the sides of the circle.
+                    .frame(width: fit * 0.84, height: fit * 0.68)
+            } else {
+                Text(number.map(String.init) ?? "--")
+                    .font(.system(size: Self.fontSize(fit: fit), weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(numberColor)
+                    .fixedSize()
+            }
+        }
+        .padding(line / 2)
+        .frame(width: outer, height: outer)
+        .frame(width: drawn, height: drawn)
+        .overlay(alignment: .bottomTrailing) {
+            if let cornerSymbol, tile >= 28 {
+                Image(systemName: cornerSymbol)
+                    .font(.system(size: drawn * 0.12, weight: .bold))
+                    .foregroundStyle(cornerColor)
+                    .padding(drawn * 0.04)
+            }
+        }
+    }
+
+    /// Largest point size whose two-digit box fits in a circle of
+    /// diameter `fit`. Box per point size, measured for SF semibold
+    /// monospaced digits: 0.62 em per digit, cap-height box 0.72 em.
+    private static func fontSize(fit: CGFloat) -> CGFloat {
+        let width: CGFloat = 0.62 * 2
+        let height: CGFloat = 0.72
+        return max(fit / (width * width + height * height).squareRoot(), 6)
+    }
+}
+
 /// The size choice, drawn like the iOS widget size row: one outline per
 /// size in its own aspect ratio, the current one highlighted. Used in a
 /// widget's right-click menu and in Settings > Widgets.

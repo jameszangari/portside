@@ -239,7 +239,7 @@ struct GroupPopoverView: View {
                 )
                 // Icon choice, shown while naming (so right after creating
                 // a group too). Picks apply at once.
-                GroupIconPicker(icon: group.icon) { dockModel.setGroupIcon(groupID: group.id, to: $0) }
+                GroupIconPicker(icon: group.icon) { dockModel.setGroupIcon(groupID: group.id, to: $0, persist: $1) }
                     .onExitCommand { groups.endRename(commit: false) }
                 Divider()
             } else {

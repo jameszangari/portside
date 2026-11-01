@@ -20,6 +20,19 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
+## Label text contrast (2026-11-01)
+
+- [x] Hover label text was `.primary` (white in dark mode) even on a white Solid dock. `DockLook.contentScheme` estimates the background's luminance from the chosen colors (solid stops, frosted or glass tint at its strength) over a system light/dark gray backdrop and picks the scheme whose text (black or white) has the higher WCAG contrast. Applied to content only (labels, strip dots and separators, group and stack grids, widget chrome follows), never to the background itself. `swift build` clean.
+- [ ] Hand test: Solid white and Solid black in dark and light mode; Frosted with a light tint; Glass with no tint (unchanged); hover label, running dots, group grid names.
+
+## Ring widget number spacing (2026-11-01)
+
+- [x] Battery, CPU, and Memory share `RingGauge` (WidgetProtocol.swift). Ring is larger and thinner relative to the chrome; the number's font size is computed so its box fits inside the ring's hole with a gap of about 6% of the tile (was a fixed size that touched the ring, with `minimumScaleFactor` for "100").
+- [x] At 100 the gauge shows a full symbol (`battery.100percent`, `cpu.fill`, `memorychip.fill`) instead of three digits; 99 and below show two digits. (A compressed-width "100" was tried first and dropped: it looked like a different font.) Battery's charging bolt moved from above the number to the tile's bottom-trailing corner, clear of the ring.
+- [x] Verified offscreen with `ImageRenderer` at 24 to 96pt tiles (100, 62, 13, 44, "--", charging); `swift build` clean.
+- [x] Regression fix: the System Stats Wide legend truncated "RAM" after widget chrome moved to the icon's visible width. Legend font sizes now come from measured text widths (`LegendMetrics`, value column sized for "100"), scaled down only as far as the space needs, with `fixedSize` text, so it never truncates. Verified offscreen at 28 to 96pt with 13/43 and 100/100.
+- [ ] Hand test: CPU, Memory, Battery at your dock size; Battery full (battery symbol) and at 99; charging bolt; System Stats Wide at small and large icon sizes; side docks.
+
 ## Distinct background styles + native Dock options (2026-11-01)
 
 - [x] Each background style keeps its own settings in one `background` object in dock.json, so switching styles loses nothing. Old `backgroundStyle` / `backgroundFrost` / `backgroundTint` migrate on load (read only, no longer written).
@@ -1980,4 +1993,7 @@ Status: done and hand-tested by James.
 - [ ] Hand-check: tile matches neighboring app icons at the user's size and icon style, with and without magnification; search field typing in the grid overlay; Escape in the search field cancels the rename; picker in the Settings popover.
 - [x] Picker spacing: the 13 swatches overflowed the 300pt picker (gray clipped past the card edge). Swatches are now 16pt in equal-width cells and the symbol grid uses flexible columns, so both span the picker width.
 - [x] Dark icon style background darkened to match native dark icons (gradient white 0.13 to 0.04, was 0.23 to 0.1; dimmer sheen and rim).
+- [x] More colors: a Custom swatch (last in the row) opens the palette editor from the Solid background (20 presets, Saturation, Tint, Shade; no Opacity, icons are opaque). Stored as `icon.custom`; picking a system swatch clears it. Slider drags save on release. `PaletteColorEditor` and `SettingsSlider` take compact label/value widths.
+- [ ] Hand-check the Custom editor's sliders in the dock overlay (overlay must be key while naming) and in the Settings popover.
+- [x] Settings > Groups: the group icon dims and shows a pencil on hover (and while its picker is open); a Change Icon... button sits before Ungroup and Delete and opens the same picker.
 - Known gap: Tinted uses the accent color as the tint (the system's tinted icon color is not public). Clear is an approximation of the system's glass icon look.
