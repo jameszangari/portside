@@ -20,6 +20,15 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
+## Activity icons (2026-11-01)
+
+- [x] `AppActivity.swift`: per-app activity from public APIs. Mic and audio output from CoreAudio process objects (macOS 14+), camera from CoreMediaIO, all property listeners (no polling, no permission prompt). Helper processes map to their app by parent pid or bundle id prefix.
+- [x] Chip on the icon's top-left (badges are top-right): camera green, mic orange, audio animated wave, Working pulsing dots. Priority camera > mic > audio > working. Strip tiles, running apps, group grid cells, group tiles (strongest member). Audio debounced (0.75s on, 2s off) so alert sounds and track gaps do not flicker.
+- [x] Working: CPU of the app plus its child processes, 2s sampler only while a watched app runs. Defaults T3 Code, Claude, Codex; per app via right-click Show Working Icon. Settings: General > Activity Icons, one toggle per kind. Persisted as `activityIcons`.
+- [x] `swift build` clean; `swift run` launches. Logs confirmed Spotifast detected as Playing audio and T3 Code as Working (about 15% CPU while an agent ran; idle Claude about 1 to 2%). Sampler costs about 9 to 17ms per 2s in a debug build.
+- [ ] Hand test: chips render and animate; mic (UAD, Voice Memos), camera (FaceTime, Zoom); T3/Claude/Codex go Working during an agent turn and clear within about 4s after; Ableton; Settings toggles; right-click Show Working Icon.
+- Known gaps: macOS has no public per-app camera owner, so camera goes to apps also using the mic (camera-only apps like Photo Booth get nothing; a mic app open during someone else's call shows green). Apps that keep audio running (Ableton Live) show the wave whenever open. Safari audio plays from a shared WebKit process with no link to Safari. Working is a CPU guess: scrolling a busy chat can trip it, an agent waiting on a slow tool may drop it. Thresholds (8% on, 4% off) need tuning from real use. `com.openai.codex` bundle id not verified (Codex not installed here). UAD Console may not use CoreAudio input and so may not show the mic.
+
 ## Label text contrast (2026-11-01)
 
 - [x] Hover label text was `.primary` (white in dark mode) even on a white Solid dock. `DockLook.contentScheme` estimates the background's luminance from the chosen colors (solid stops, frosted or glass tint at its strength) over a system light/dark gray backdrop and picks the scheme whose text (black or white) has the higher WCAG contrast. Applied to content only (labels, strip dots and separators, group and stack grids, widget chrome follows), never to the background itself. `swift build` clean.

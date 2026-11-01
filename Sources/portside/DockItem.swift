@@ -254,6 +254,7 @@ struct DockItemView: View {
     /// The app is hidden (Cmd-H); drawn translucent when that option is on.
     var isHidden = false
     @ObservedObject private var icons = IconCache.shared
+    @ObservedObject private var activity = AppActivity.shared
     @State private var hold = MenuHold()
     @Environment(\.dockEdge) private var edge
 
@@ -301,6 +302,7 @@ struct DockItemView: View {
                     .padding(-3)
             )
             .dockBadge(dockModel.showBadges ? badges.badge(for: app) : nil, iconSize: size, style: dockModel.badgeStyle)
+            .activityChip(running == nil ? nil : activity.activity(for: app), iconSize: size)
             .contentShape(Rectangle())
             .menuHold(hold) {
                 // Modifier state at click time; a tap gesture has no event.

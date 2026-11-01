@@ -37,6 +37,7 @@ struct GroupTileView: View {
     @ObservedObject var dockModel: DockModel
     @ObservedObject var badges: DockBadges
     @ObservedObject private var icons = IconCache.shared
+    @ObservedObject private var activity = AppActivity.shared
     @State private var hold = MenuHold()
     @Environment(\.dockEdge) private var edge
 
@@ -88,6 +89,7 @@ struct GroupTileView: View {
             }
         }
         .dockBadge(dockModel.showBadges ? badges.badge(forGroup: group) : nil, iconSize: size, style: dockModel.badgeStyle)
+        .activityChip(activity.activity(forGroup: group), iconSize: size)
         .contentShape(Rectangle())
         .menuHold(hold, onTap: onToggle)
         .magnifiedIcon(id: DockEntry.group(group).id)
@@ -397,6 +399,7 @@ private struct GroupAppCell: View {
     var isDropTarget = false
     let onLaunch: (PinnedApp, ((NSRunningApplication?) -> Void)?) -> Void
     @ObservedObject private var icons = IconCache.shared
+    @ObservedObject private var activity = AppActivity.shared
     @State private var hovered = false
     /// Token of this cell's drag (see `DragOutController`), nil when idle.
     @State private var dragToken: Int?
@@ -431,6 +434,7 @@ private struct GroupAppCell: View {
                         .padding(-3)
                 )
                 .dockBadge(dockModel.showBadges ? badges.badge(for: app) : nil, iconSize: iconSize, style: dockModel.badgeStyle)
+                .activityChip(running == nil ? nil : activity.activity(for: app), iconSize: iconSize)
                 // Where the bounce window goes (the hosting view fills the
                 // overlay, so global is overlay content space).
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in

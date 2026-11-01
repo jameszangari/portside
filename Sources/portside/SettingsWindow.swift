@@ -466,6 +466,15 @@ private struct GeneralSettings: View {
             }
 
             Section {
+                activityToggle(\.camera, "Camera", "Green, like the macOS camera dot. Shown on apps using the microphone while a camera is on.")
+                activityToggle(\.microphone, "Microphone", "Orange, like the macOS microphone dot.")
+                activityToggle(\.audio, "Playing audio", "An animated sound wave. Apps that keep their audio engine running (Ableton Live) show it whenever they are open.")
+                activityToggle(\.working, "Working", "Pulsing dots while the app and its child processes are busy. Turn it on per app with Show Working Icon in the app's right-click menu.")
+            } header: {
+                Text("Activity Icons")
+            }
+
+            Section {
                 HotkeyRecorderButton(
                     title: "Open Settings",
                     chord: dockModel.settingsHotkey,
@@ -513,6 +522,20 @@ private struct GeneralSettings: View {
                         .font(.system(size: 12))
                 }
             }
+        }
+    }
+
+    private func activityToggle(_ key: WritableKeyPath<ActivityIconSettings, Bool>, _ title: String, _ help: String) -> some View {
+        Toggle(isOn: Binding(
+            get: { dockModel.activityIcons[keyPath: key] },
+            set: {
+                var next = dockModel.activityIcons
+                next[keyPath: key] = $0
+                dockModel.setActivityIcons(next)
+            }
+        )) {
+            Text(title)
+            Text(help).helperStyle()
         }
     }
 }

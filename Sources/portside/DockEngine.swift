@@ -38,6 +38,7 @@ final class DockEngine {
     private var magnifySubscriptions: [AnyCancellable] = []
     private var bounceSettingSubscription: AnyCancellable?
     private var badgeSettingSubscription: AnyCancellable?
+    private var activitySettingSubscription: AnyCancellable?
     private let logger = Logger(subsystem: "com.james.portside", category: "DockEngine")
 
     private var pendingHide: DispatchWorkItem?
@@ -324,6 +325,11 @@ final class DockEngine {
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] on in self?.badges.setEnabled(on) }
+        activitySettingSubscription = dockModel.$activityIcons
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { AppActivity.shared.configure($0) }
 
         edgeTracker.onMouseEntered = { [weak self] event, screen in
             self?.handleEdgeEnter(event: event, screen: screen)
@@ -360,11 +366,15 @@ final class DockEngine {
             self?.flipKeys.start()
             // Next runloop turn, so nothing is added to the reveal path. The
             // read runs off the main thread and lands during the slide.
-            DispatchQueue.main.async { self?.badges.setVisible(true) }
+            DispatchQueue.main.async {
+                self?.badges.setVisible(true)
+                AppActivity.shared.setDockVisible(true)
+            }
         }
         dockPanel.onHidden = { [weak self] in
             self?.flipKeys.stop()
             self?.badges.setVisible(false)
+            AppActivity.shared.setDockVisible(false)
         }
         dockPanel.onPanelInteractive = { [weak self] in
             self?.logTiming(label: "panel interactive")
@@ -387,6 +397,7 @@ final class DockEngine {
     func start() {
         trash.start()
         badges.start(enabled: dockModel.showBadges)
+        AppActivity.shared.start(settings: dockModel.activityIcons)
         configureMagnifier()
         // Seed active screen from the cursor before the first layout.
         if let screen = DockScreen.screen(containing: NSEvent.mouseLocation) {
@@ -477,6 +488,7 @@ final class DockEngine {
         widgets.stopAll()
         trash.stop()
         badges.stop()
+        AppActivity.shared.stop()
         logger.info("engine stopped")
     }
 

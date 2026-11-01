@@ -352,6 +352,31 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    // MARK: - Activity icons
+
+    /// Small icons for apps using the mic or camera, playing audio, or
+    /// working (see `AppActivity`).
+    @Published private(set) var activityIcons = ActivityIconSettings()
+
+    func setActivityIcons(_ next: ActivityIconSettings) {
+        guard next != activityIcons else { return }
+        activityIcons = next
+        persist()
+    }
+
+    func watchesWorking(_ app: PinnedApp) -> Bool {
+        app.bundleIdentifier.map(activityIcons.workingApps.contains) ?? false
+    }
+
+    /// Right-click "Show Working Icon".
+    func setWatchesWorking(_ app: PinnedApp, _ on: Bool) {
+        guard let id = app.bundleIdentifier else { return }
+        var next = activityIcons
+        next.workingApps.removeAll { $0 == id }
+        if on { next.workingApps.append(id) }
+        setActivityIcons(next)
+    }
+
     // MARK: - Layout (where everything sits)
 
     /// The order of everything on the dock, left to right (top to bottom on
@@ -909,6 +934,7 @@ final class DockModel: Codable, ObservableObject {
         case hideNativeDock, nativeDockExplained, openSettingsOnLaunch
         case showTrash, trashAccessHintDismissed
         case showBadges, badgeColor, badgeCustomColor
+        case activityIcons
         case stacks, layout, widgetSizes
         case iconStyle, background, cornerRadius
         case showIndicators, dimHiddenApps, showRecents, recentApps
@@ -948,6 +974,7 @@ final class DockModel: Codable, ObservableObject {
         showBadges = (try? c.decodeIfPresent(Bool.self, forKey: .showBadges)) ?? true
         badgeColor = (try? c.decodeIfPresent(BadgeColor.self, forKey: .badgeColor)) ?? .macOS
         badgeCustomColor = (try? c.decodeIfPresent(PaletteColor.self, forKey: .badgeCustomColor)) ?? BadgeColor.defaultCustom
+        activityIcons = c.value(.activityIcons, or: ActivityIconSettings())
         stacks = (try? c.decodeIfPresent([FolderStack].self, forKey: .stacks)) ?? []
         layout = (try? c.decodeIfPresent([String].self, forKey: .layout)) ?? []
         widgetSizes = (try? c.decodeIfPresent([String: WidgetSize].self, forKey: .widgetSizes)) ?? [:]
@@ -1006,6 +1033,7 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(showBadges, forKey: .showBadges)
         try c.encode(badgeColor, forKey: .badgeColor)
         try c.encode(badgeCustomColor, forKey: .badgeCustomColor)
+        try c.encode(activityIcons, forKey: .activityIcons)
         try c.encode(stacks, forKey: .stacks)
         if !layout.isEmpty { try c.encode(layout, forKey: .layout) }
         if !widgetSizes.isEmpty { try c.encode(widgetSizes, forKey: .widgetSizes) }
@@ -1172,6 +1200,7 @@ final class DockModel: Codable, ObservableObject {
         autoHide = old.autoHide
         showTrash = old.showTrash
         showBadges = old.showBadges
+        activityIcons = old.activityIcons
         settingsHotkey = old.settingsHotkey
         openGroupsOnHover = old.openGroupsOnHover
         openSettingsOnLaunch = old.openSettingsOnLaunch

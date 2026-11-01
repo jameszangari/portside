@@ -126,6 +126,12 @@ enum AppTileMenu {
         }
         openAtLogin.state = AppLoginItem.isEnabled(for: app) ? .on : .off
         menu.addItem(openAtLogin)
+        if app.bundleIdentifier != nil, model.activityIcons.working {
+            let watched = model.watchesWorking(app)
+            let working = ClosureMenuItem("Show Working Icon") { model.setWatchesWorking(app, !watched) }
+            working.state = watched ? .on : .off
+            menu.addItem(working)
+        }
         menu.addItem(ClosureMenuItem("Show in Finder") {
             NSWorkspace.shared.activateFileViewerSelecting([app.url])
         })
