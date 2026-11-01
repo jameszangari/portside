@@ -124,8 +124,9 @@ struct StackTileView: View {
     }
 }
 
-/// View, sort and filter choices for a stack, as menu items (the tile's
-/// right-click menu). The open stack's header has the same choices in SwiftUI.
+/// View, sort and filter choices for a stack. Shared by the tile right-click
+/// menu and the open stack's `...` button (both AppKit, so checkbox items
+/// fire on the first click in the non-activating overlay).
 enum StackOptionsMenu {
     static func items(for stack: FolderStack, dockModel: DockModel) -> [NSMenuItem] {
         let id = stack.id
@@ -162,6 +163,52 @@ enum StackOptionsMenu {
             toggle("Show Hidden Files", stack.showHidden) { $0.showHidden.toggle() },
             toggle("Display as Folder", stack.showAsFolder) { $0.showAsFolder.toggle() },
         ]
+    }
+}
+
+/// Borderless ellipsis that pops an AppKit menu under itself. Uses the same
+/// `MenuKeyFocus` path as tile menus so Escape and arrows work.
+private struct StackOptionsMenuButton: NSViewRepresentable {
+    let menu: () -> NSMenu
+
+    func makeNSView(context: Context) -> StackOptionsMenuNSButton {
+        let button = StackOptionsMenuNSButton()
+        button.menuProvider = menu
+        return button
+    }
+
+    func updateNSView(_ button: StackOptionsMenuNSButton, context: Context) {
+        button.menuProvider = menu
+    }
+}
+
+private final class StackOptionsMenuNSButton: NSButton {
+    var menuProvider: (() -> NSMenu)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: nil)
+        isBordered = false
+        imagePosition = .imageOnly
+        imageScaling = .scaleProportionallyDown
+        target = self
+        action = #selector(showOptions)
+        setButtonType(.momentaryChange)
+        toolTip = "View and sort options"
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override var intrinsicContentSize: NSSize { NSSize(width: 18, height: 18) }
+
+    @objc private func showOptions() {
+        guard let menu = menuProvider?(), let window else { return }
+        let frame = window.convertToScreen(convert(bounds, to: nil))
+        // popUp wants the menu's top-left; place it just under the button.
+        let origin = NSPoint(x: frame.minX, y: frame.minY)
+        MenuKeyFocus.shared.popUp(menu, at: origin)
     }
 }
 
@@ -264,40 +311,19 @@ struct StackPopoverView: View {
     }
 
     private func header(_ stack: FolderStack) -> some View {
-        let id = stack.id
-        return HStack(spacing: 6) {
+        HStack(spacing: 6) {
             Text(stack.displayName)
                 .font(.system(size: 13, weight: .semibold))
                 .lineLimit(1)
-            Menu {
-                Picker("View as", selection: Binding(
-                    get: { stack.view },
-                    set: { mode in dockModel.updateStack(id: id) { $0.view = mode } }
-                )) {
-                    ForEach(StackViewMode.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.inline)
-                Picker("Sort by", selection: Binding(
-                    get: { stack.sort },
-                    set: { mode in dockModel.updateStack(id: id) { $0.sort = mode } }
-                )) {
-                    ForEach(StackSortMode.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.inline)
-                Toggle("Folders First", isOn: Binding(
-                    get: { stack.foldersFirst },
-                    set: { on in dockModel.updateStack(id: id) { $0.foldersFirst = on } }
-                ))
-                Toggle("Show Hidden Files", isOn: Binding(
-                    get: { stack.showHidden },
-                    set: { on in dockModel.updateStack(id: id) { $0.showHidden = on } }
-                ))
-            } label: {
-                Image(systemName: "ellipsis.circle")
+            // AppKit menu, not SwiftUI Menu+Toggle: Toggles in a SwiftUI Menu
+            // on the non-key overlay need a wake-up click before they fire.
+            StackOptionsMenuButton {
+                let menu = NSMenu()
+                menu.autoenablesItems = false
+                StackOptionsMenu.items(for: stack, dockModel: dockModel).forEach(menu.addItem)
+                return menu
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
+            .frame(width: 18, height: 18)
             .accessibilityLabel("View and sort options")
         }
     }

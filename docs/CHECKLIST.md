@@ -20,6 +20,14 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
+## Folders First first-click (2026-10-31)
+
+- [x] Cause: the open stack's `...` header used a SwiftUI `Menu` with `Toggle`s. On the non-key overlay, those toggles needed a wake-up click before Folders First / Show Hidden Files fired.
+- [x] Fix: `...` pops the same AppKit `StackOptionsMenu` as the tile right-click (via `StackOptionsMenuButton` + `MenuKeyFocus`), so checkbox items fire on the first click. Header now also includes Display as Folder.
+- [x] `swift build` passes.
+- [ ] Hand test: open a folder stack, click `...`, click Folders First once: items regroup immediately; click again to undo. Same for Show Hidden Files. Confirm Escape closes the menu and the dock does not hide while it is open.
+- README Features already covered; no new dock.json keys.
+
 ## Battery compact icon (2026-10-31)
 
 - [x] Below 28pt tile (same cutoff as CPU / Memory), Battery shows a state-aware SF Symbol (`battery.*.percent` or `.bolt` when charging/plugged) instead of the percentage digits. Hover still shows the named percent.
@@ -237,8 +245,8 @@ Status (2026-10-31): built, `swift build` clean, app launches and the existing D
 Already shipped: pin folder from Finder, grid popover, drop-in, FSEvents, import from native Dock.
 - [x] **Fan view:** icons rise from the tile in a curve (`StackFanView`), name pill beside each, first 10 then "N more in Finder". Bends right on Bottom and Left docks and left on a Right dock; names sit on the side away from a Left dock, otherwise to the left of the icons.
 - [x] **List view:** rows with icon, name, and a detail that follows the sort (date for the date sorts, kind otherwise). Scrolls past 320pt. Drop slot uses height only.
-- [x] **View picker:** tile right-click > View as (Grid, Fan, List), and the `...` button in the open stack's header. Persisted per stack as `view`.
-- [x] **Sort / filter:** Custom Order (default), Name, Date Added, Date Modified (newest first), Kind; Folders First; Show Hidden Files. Persisted per stack (`sort`, `foldersFirst`, `showHidden`). Changing one re-reads the folder, so the open stack updates live.
+- [x] **View picker:** tile right-click > View as (Grid, Fan, List), and the `...` button in the open stack's header (AppKit menu, same items as the tile). Persisted per stack as `view`.
+- [x] **Sort / filter:** Custom Order (default), Name, Date Added, Date Modified (newest first), Kind; Folders First; Show Hidden Files. Persisted per stack (`sort`, `foldersFirst`, `showHidden`). Changing one re-reads the folder, so the open stack updates live. Header `...` uses AppKit checkboxes so the first click fires (SwiftUI Menu Toggle did not).
 - [x] **Show as folder vs stack of icons:** Display as Folder (`showAsFolder`), and any empty folder, draws just the folder's own icon (the system's, so Downloads, Documents and so on keep their native artwork) at full tile size like an app icon, with no card or border. The mini-grid "stack of icons" look keeps its card.
 - [x] **Import:** native `showas`, `arrangement` and `displayas` map onto view, sort and Display as Folder when stacks import.
 - [x] Fixes found on the way: a file change refreshed a stack with the settings it had when first watched (stale `itemOrder`); a refresh queued during a read reused stale settings. Both now use the newest stack.
