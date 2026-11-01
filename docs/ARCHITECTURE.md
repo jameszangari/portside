@@ -61,7 +61,7 @@ Sources/portside/
   NativeDockController.swift  "Hide the macOS Dock" toggle, first-time dialog, alerts
   NativeDockImport.swift    Reads the native Dock (apps, position, size) and the import sheet
   LaunchAtLogin.swift       "Open Portside at login" via SMAppService.mainApp
-  SettingsWindow.swift      Settings window: sidebar and panes (General, Appearance, Widgets, Groups, System)
+  SettingsWindow.swift      Settings window: sidebar and panes (Dock, Appearance, Widgets, Groups, General)
   DockAppearance.swift      Icon style and dock background options, background modifier, icon style observer
   SeeThroughGlass.swift     Guarded private glass variant for see-through Clear Liquid Glass
   HotKey.swift              Global hotkeys (Carbon RegisterEventHotKey), chord model, Settings shortcut recorder

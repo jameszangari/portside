@@ -22,8 +22,8 @@ Full feature list. The [README](../README.md) keeps a short summary.
 - Drag an icon out of the dock to remove it, like the native Dock: the icon floats under the cursor for the whole drag (strip leaves a gap), a "Remove" label shows once it is clearly outside, and releasing it there removes it with a short poof (instant under Reduce Motion). Dragging back over the dock reorders as usual, and Escape puts it back. Works for app tiles, group tiles, and widgets (a group with apps in it asks first, see Groups); an app dragged out of an open group grid asks Remove from Group or Remove from Dock.
 - Drop files on an app tile to open them in that app, like the native Dock. Only tiles whose app can open the files highlight and accept the drop (Finder takes folders). A not-running pinned app launches with the bounce.
 - Running apps that are not pinned show after the pinned section.
-- Activity icons on a running app's top-left corner: a green camera or orange microphone (the macOS privacy dot colors), an animated sound wave while it plays audio, or pulsing dots while it is Working (busy CPU in the app or its child processes, on by default for T3 Code, Claude, Codex; per app via Show Working Icon in the right-click menu). One icon at a time in that order; group tiles show their strongest member. Each kind toggles in General > Activity Icons. Animations pause while the dock is hidden and stay still under Reduce Motion.
-- Native Dock options (General > Dock): Show indicators for open applications, Show suggested and recent apps (up to 3 recently quit apps after the running apps), Make hidden apps translucent (Cmd-H fades the icon).
+- Activity icons on a running app's top-left corner: a green camera or orange microphone (the macOS privacy dot colors), an animated sound wave while it plays audio, or pulsing dots while it is Working (busy CPU in the app or its child processes, on by default for T3 Code, Claude, Codex; per app via Show Working Icon in the right-click menu). One icon at a time in that order; group tiles show their strongest member. Each kind toggles in Dock > Activity Icons. Animations pause while the dock is hidden and stay still under Reduce Motion.
+- Native Dock options (Dock > Apps): Show indicators for open applications, Show suggested and recent apps (up to 3 recently quit apps after the running apps), Make hidden apps translucent (Cmd-H fades the icon).
 - Right-click menu: Keep in Dock or Remove from Dock, Add to Group, Open at Login (checkbox), Show in Finder, then for running apps Hide (Show if hidden) and Quit. Hold Option and Quit becomes Force Quit. Open at Login for other apps uses System Events (may ask for Automation once); Portside's own tile uses the same SMAppService path as Settings.
 - App tiles, group tiles, Portside's own tile and group cells: short click opens (or toggles the group); hold for 0.5s opens its menu (simultaneous with the tap, not exclusive); moving first starts a drag. Hover labels track the magnified icon's spring frames so they stay centered.
 - Dock menus take the keyboard while open (Escape closes them, arrows move through them) without taking focus from the frontmost app.
@@ -86,7 +86,7 @@ Full feature list. The [README](../README.md) keeps a short summary.
 
 ## Trash
 
-- Trash stays at the far end on Bottom, Left, and Right, with native empty/full icons, magnification, and a hover label. "Show Trash in dock" (General > Dock) applies live and defaults on.
+- Trash stays at the far end on Bottom, Left, and Right, with native empty/full icons, magnification, and a hover label. "Show Trash in dock" (Dock > Layout) applies live and defaults on.
 - Click opens Finder's Trash. Right-click or hold for Open and Empty Trash. Emptying asks for confirmation in Finder; empty or unreadable Trash disables the command.
 - Drop files and folders from Finder to move them to the Trash. Dragging a dock tile onto Trash asks first: Remove from Dock, Move to Trash (apps and folder stacks), or Cancel. State updates use directory events, with no polling.
 - Empty/full icon: prefers listing `~/.Trash` (Full Disk Access). If that is denied, uses Finder's trash count when Automation is already allowed. FSEvents watches the Trash folder (works without Full Disk Access). If neither read path works, the icon stays empty and a dismissible Settings hint links to Full Disk Access. Drops optimistically flip to full; Empty Trash flips to empty, then the watcher confirms.
@@ -94,7 +94,7 @@ Full feature list. The [README](../README.md) keeps a short summary.
 
 ## Settings window
 
-- System Settings-style layout: a sidebar with General, Appearance, Widgets, Groups, and System panes, and the selected pane on the right. Changes apply live.
+- System Settings-style layout: a sidebar with Dock, Appearance, Widgets, Groups, and General panes, and the selected pane on the right. Changes apply live. Dock holds position, Trash, auto-hide, motion, app options (indicators, recents, hidden apps) and activity icons; Appearance holds sizes, icon style, background and badges; General holds startup, the shortcut, hiding the macOS Dock, and import. Controls that only apply in some states (reveal and hide delays, magnified size, badge color) appear only then.
 - Fixed 760 x 560 window (wide and short); long panes scroll instead of growing the window. Always opens centered on the primary display (same spot every time).
 - While Settings is focused and auto-hide is on, the dock stays revealed for live preview; the toggle stays On. Leaving Settings (or closing it) restores normal auto-hide.
 - Sidebar shows the Portside icon and version (`v0.2.0`; hover for author and build hash) and a Check for Updates button.
@@ -103,9 +103,9 @@ Full feature list. The [README](../README.md) keeps a short summary.
 
 ## Native Dock
 
-- "Hide the macOS Dock" (Settings > System): keeps the native Dock from ever appearing while Portside runs, using the autohide-delay trick. Its exact prior settings are saved first and restored when you turn this off, quit, or stop Portside with Ctrl+C or `kill`. After a crash or `kill -9`, the next launch restores them first.
+- "Hide the macOS Dock" (Settings > General): keeps the native Dock from ever appearing while Portside runs, using the autohide-delay trick. Its exact prior settings are saved first and restored when you turn this off, quit, or stop Portside with Ctrl+C or `kill`. After a crash or `kill -9`, the next launch restores them first.
 - First launch (no `dock.json`): pinned apps, folder stacks, position, and icon size are taken from the native Dock (Finder first). If a Hide-the-Dock backup exists, position and size come from it instead of the live values.
-- "Import from macOS Dock..." (Settings > System > Import): a confirmation sheet shows what was found. Add missing apps (appended, nothing reordered) or replace the apps (groups and widgets stay; stacks merge or replace with apps), and optionally take the native position and icon size. Apps no longer on disk, spacers, and non-folder other tiles are skipped; folder stacks from `persistent-others` import. Your dock is copied to `dock.json.before-import` first, and "Undo last import" restores it. Read only: nothing in `com.apple.dock` is written.
+- "Import from macOS Dock..." (Settings > General > Import): a confirmation sheet shows what was found. Add missing apps (appended, nothing reordered) or replace the apps (groups and widgets stay; stacks merge or replace with apps), and optionally take the native position and icon size. Apps no longer on disk, spacers, and non-folder other tiles are skipped; folder stacks from `persistent-others` import. Your dock is copied to `dock.json.before-import` first, and "Undo last import" restores it. Read only: nothing in `com.apple.dock` is written.
 - "Restore macOS Dock" in the menu bar item, and `portside --restore-dock` (restores from the backup and exits, no UI).
 
 ## Branding
@@ -118,5 +118,5 @@ Full feature list. The [README](../README.md) keeps a short summary.
 
 - `scripts/build-app.sh` builds a signed `build/Portside.app` with the brand icon, version from `VERSION`, and the Calendar / Finder / System Events Automation usage strings. `--install` copies it to `~/Applications`.
 - App builds reuse a local code signing certificate after one-time setup, keeping the signing identity stable across rebuilds for macOS permission matching. Setup preserves the saved certificate fingerprint even when another certificate has the same name.
-- "Open Portside at login" (Settings > System > Startup) through `SMAppService`. macOS is the source of truth; the toggle shows its real status, links to Login Items when approval is needed, and is disabled under `swift run`.
-- "Open Settings when Portside launches" (Settings > System > Startup, `openSettingsOnLaunch`, off by default).
+- "Open Portside at login" (Settings > General > Startup) through `SMAppService`. macOS is the source of truth; the toggle shows its real status, links to Login Items when approval is needed, and is disabled under `swift run`.
+- "Open Settings when Portside launches" (Settings > General > Startup, `openSettingsOnLaunch`, off by default).
