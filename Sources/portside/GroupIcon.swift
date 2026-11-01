@@ -4,59 +4,86 @@ import os.log
 
 private let iconLogger = Logger(subsystem: "com.james.portside", category: "GroupIcon")
 
-/// A custom icon for a group tile: an SF Symbol on a squircle in one of the
-/// system colors, drawn to sit with the app icons around it. Nil on a group
+/// A custom icon for a group tile: an SF Symbol on a squircle in a
+/// palette color, drawn to sit with the app icons around it. Nil on a group
 /// means the default mini grid of member icons.
 struct GroupIcon: Codable, Hashable {
     var symbol: String
-    var color: GroupIconColor
-    /// A color from Portside's palette (presets plus Saturation, Tint and
-    /// Shade, like the Solid dock background). Overrides `color` when set.
-    var custom: PaletteColor?
+    /// Same color model and editor as the dock background. Opacity is
+    /// ignored: icons are opaque.
+    var color: PaletteColor
+    /// System follows the macOS icon style; Light and Dark pin this icon.
+    var theme: GroupIconTheme = .system
 
     static let defaultSymbol = "folder.fill"
+    static let defaultColor = PaletteColor.preset("Blue")
 
-    /// The color the artwork is drawn in (opaque).
-    var nsColor: NSColor {
-        guard let custom else { return color.nsColor }
-        let c = custom.resolved
-        return NSColor(srgbRed: c.red, green: c.green, blue: c.blue, alpha: 1)
+    init(symbol: String = GroupIcon.defaultSymbol, color: PaletteColor = GroupIcon.defaultColor, theme: GroupIconTheme = .system) {
+        self.symbol = symbol
+        self.color = color
+        self.theme = theme
     }
-}
 
-/// The standard macOS system colors. Stored by name so a saved dock.json
-/// stays readable, and resolved through `NSColor.system*` so they follow
-/// the system's light and dark variants.
-enum GroupIconColor: String, Codable, CaseIterable, Identifiable {
-    case red, orange, yellow, green, mint, teal, cyan, blue, indigo, purple, pink, brown, gray
-
-    var id: String { rawValue }
-
-    var title: String { rawValue.capitalized }
-
-    var nsColor: NSColor {
-        switch self {
-        case .red: .systemRed
-        case .orange: .systemOrange
-        case .yellow: .systemYellow
-        case .green: .systemGreen
-        case .mint: .systemMint
-        case .teal: .systemTeal
-        case .cyan: .systemCyan
-        case .blue: .systemBlue
-        case .indigo: .systemIndigo
-        case .purple: .systemPurple
-        case .pink: .systemPink
-        case .brown: .systemBrown
-        case .gray: .systemGray
+    /// The look this icon is drawn with.
+    var appearance: GroupIconAppearance {
+        switch theme {
+        case .system: .current
+        case .light: .init(variant: .regular, dark: false)
+        case .dark: .init(variant: .regular, dark: true)
         }
     }
 
-    /// An unknown name (edited by hand, or from a newer version) reads as
-    /// blue rather than failing the whole dock.json decode.
+    /// The color the artwork is drawn in (opaque).
+    var nsColor: NSColor {
+        let c = color.resolved
+        return NSColor(srgbRed: c.red, green: c.green, blue: c.blue, alpha: 1)
+    }
+
+    private enum CodingKeys: String, CodingKey { case symbol, color, custom, theme }
+
+    /// Earlier builds stored `color` as a system color name ("blue") plus an
+    /// optional `custom` palette color. Both read into the palette color.
     init(from decoder: Decoder) throws {
-        let raw = try decoder.singleValueContainer().decode(String.self)
-        self = GroupIconColor(rawValue: raw) ?? .blue
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        symbol = c.value(.symbol, or: Self.defaultSymbol)
+        theme = c.value(.theme, or: .system)
+        if let custom = try? c.decode(PaletteColor.self, forKey: .custom) {
+            color = custom
+        } else if let palette = try? c.decode(PaletteColor.self, forKey: .color) {
+            color = palette
+        } else if let name = try? c.decode(String.self, forKey: .color) {
+            color = PaletteColor.preset(name.capitalized)
+        } else {
+            color = Self.defaultColor
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(symbol, forKey: .symbol)
+        try c.encode(color, forKey: .color)
+        if theme != .system { try c.encode(theme, forKey: .theme) }
+    }
+}
+
+/// Per-icon override of the system icon style.
+enum GroupIconTheme: String, Codable, CaseIterable, Identifiable {
+    case system, light, dark
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+
+    /// An unknown value (newer build, hand edit) reads as System.
+    init(from decoder: Decoder) throws {
+        self = GroupIconTheme(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .system
+    }
+}
+
+extension PaletteColor {
+    /// A preset by name ("Blue"); Blue if there is none by that name.
+    static func preset(_ name: String) -> PaletteColor {
+        let rgba = presets.first { $0.name == name }?.color ?? presets.first { $0.name == "Blue" }!.color
+        return PaletteColor(base: rgba)
     }
 }
 
@@ -172,7 +199,7 @@ struct GroupIconArtwork: View {
     }
 
     var body: some View {
-        let look = GroupIconAppearance.current
+        let look = icon.appearance
         let shape = RoundedRectangle(cornerRadius: size * 0.225, style: .continuous)
         return shape
             .fill(background(look))
@@ -195,7 +222,7 @@ struct GroupIconArtwork: View {
     }
 
     private var tint: NSColor {
-        GroupIconAppearance.current.variant == .tinted ? .controlAccentColor : icon.nsColor
+        icon.appearance.variant == .tinted ? .controlAccentColor : icon.nsColor
     }
 
     private func background(_ look: GroupIconAppearance) -> LinearGradient {
@@ -248,89 +275,100 @@ struct GroupIconArtwork: View {
 
 // MARK: - Picker
 
-/// Color swatches plus a searchable SF Symbols grid. Changes apply as soon
-/// as they are picked; "Show Apps" goes back to the mini grid. The last
-/// swatch opens Portside's palette editor (the Solid background's presets
-/// and sliders) for any other color.
+/// Symbol and Color tabs under a live preview. Changes apply as soon as
+/// they are picked; "Remove Icon" goes back to the mini grid. The Color tab
+/// is the same `PaletteColorEditor` as the dock background.
 struct GroupIconPicker: View {
     let icon: GroupIcon?
     /// (new icon, persist). Slider drags send `false` until release.
     let onChange: (GroupIcon?, Bool) -> Void
 
+    enum Tab: String, CaseIterable, Identifiable {
+        case symbol = "Symbol", color = "Color"
+        var id: String { rawValue }
+    }
+
+    @State private var tab: Tab = .symbol
     @State private var query = ""
     @State private var results = SymbolCatalog.suggested
 
     static let width: CGFloat = 300
     private static let cell: CGFloat = 34
-    private static let swatch: CGFloat = 16
+    /// Both tabs take this height, so switching never resizes the popover.
+    private static let contentHeight: CGFloat = 312
 
-    private var color: GroupIconColor { icon?.color ?? .blue }
-    private var current: GroupIcon { icon ?? GroupIcon(symbol: GroupIcon.defaultSymbol, color: .blue) }
+    private var current: GroupIcon { icon ?? GroupIcon() }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            swatches
-            if let custom = icon?.custom {
-                PaletteColorEditor(color: custom, showsOpacity: false, labelWidth: 70, valueWidth: 40) { value, persist in
-                    var next = current
-                    next.custom = value
-                    onChange(next, persist)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                preview
+                Picker("Edit", selection: $tab) {
+                    ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                Button(role: .destructive) { onChange(nil, true) } label: {
+                    Label("Remove Icon", systemImage: "xmark.circle")
+                }
+                    .controlSize(.small)
+                    .disabled(icon == nil)
+                    .help("Remove the custom icon. The tile shows the group's apps again.")
+            }
+            HStack(spacing: 10) {
+                Text("Style")
+                    .foregroundStyle(.secondary)
+                Picker("Style", selection: Binding(
+                    get: { current.theme },
+                    set: { theme in
+                        var next = current
+                        next.theme = theme
+                        onChange(next, true)
+                    }
+                )) {
+                    ForEach(GroupIconTheme.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .help("System follows System Settings > Appearance > Icon and widget style")
+            }
+            Group {
+                switch tab {
+                case .symbol: symbolTab
+                case .color:
+                    PaletteColorEditor(color: current.color, showsOpacity: false, compact: true) { value, persist in
+                        var next = current
+                        next.color = value
+                        onChange(next, persist)
+                    }
                 }
             }
-            HStack(spacing: 6) {
-                TextField("Search symbols", text: $query)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Search symbols")
-                Button("Show Apps") { onChange(nil, true) }
-                    .disabled(icon == nil)
-                    .help("Use the grid of app icons instead")
-            }
-            symbolGrid
+            .frame(width: Self.width, height: Self.contentHeight, alignment: .top)
         }
         .frame(width: Self.width)
         .onChange(of: query) { _, text in results = SymbolCatalog.shared.search(text) }
     }
 
-    private var swatches: some View {
-        // Equal-width cells spread the swatches across the picker's width.
-        HStack(spacing: 0) {
-            ForEach(GroupIconColor.allCases) { option in
-                let selected = icon != nil && icon?.custom == nil && option == color
-                swatch(Circle().fill(Color(nsColor: option.nsColor)), selected: selected, title: option.title) {
-                    var next = current
-                    next.color = option
-                    next.custom = nil
-                    onChange(next, true)
-                }
-            }
-            // Custom: starts from the current color so the sliders adjust it.
-            swatch(Circle().fill(AngularGradient(
-                colors: [.red, .yellow, .green, .cyan, .blue, .purple, .red], center: .center)),
-                   selected: icon?.custom != nil, title: "Custom") {
-                guard icon?.custom == nil else { return }
-                var next = current
-                let c = current.color.nsColor.usingColorSpace(.sRGB) ?? .systemBlue
-                next.custom = PaletteColor(base: RGBAColor(red: c.redComponent, green: c.greenComponent, blue: c.blueComponent, alpha: 1))
-                onChange(next, true)
-            }
+    /// The tile as it will look, or the default grid hint when unset.
+    @ViewBuilder private var preview: some View {
+        if let icon {
+            GroupIconArtwork(icon: icon, size: 32)
+        } else {
+            RoundedRectangle(cornerRadius: 32 * 0.225, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                .overlay(Image(systemName: "square.grid.2x2").foregroundStyle(.secondary))
+                .frame(width: 32, height: 32)
+                .help("Showing the apps. Pick a symbol or color for a custom icon.")
         }
     }
 
-    private func swatch(_ fill: some View, selected: Bool, title: String, action: @escaping () -> Void) -> some View {
-        fill
-            .frame(width: Self.swatch, height: Self.swatch)
-            .overlay(
-                Circle()
-                    .strokeBorder(Color.primary.opacity(selected ? 0.9 : 0), lineWidth: 2)
-                    .padding(-3)
-            )
-            .frame(maxWidth: .infinity)
-            .frame(height: Self.swatch + 8)
-            .contentShape(Rectangle())
-            .onTapGesture(perform: action)
-            .help(title)
-            .accessibilityLabel(title)
-            .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    private var symbolTab: some View {
+        VStack(spacing: 8) {
+            TextField("Search symbols", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("Search symbols")
+            symbolGrid
+        }
     }
 
     private var symbolGrid: some View {
@@ -366,6 +404,5 @@ struct GroupIconPicker: View {
                 }
             }
         }
-        .frame(width: Self.width, height: 170)
     }
 }

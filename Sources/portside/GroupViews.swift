@@ -72,9 +72,16 @@ struct GroupTileView: View {
     private var icon: some View {
         Group {
             if let custom = group.icon {
-                GroupIconArtwork(icon: custom, size: size * (1 - 2 * IconMetrics.margin))
-                    .brightness(isExpanded ? 0.08 : 0)
-                    .animation(GroupPopoverMotion.present, value: isExpanded)
+                let drawn = size * (1 - 2 * IconMetrics.margin)
+                // Open: a ring just outside the squircle, so the artwork
+                // itself stays untouched like a native app icon.
+                GroupIconArtwork(icon: custom, size: drawn)
+                    .background(
+                        RoundedRectangle(cornerRadius: drawn * 0.225 + 3, style: .continuous)
+                            .strokeBorder(Color.white.opacity(isExpanded ? 0.28 : 0), lineWidth: 1)
+                            .padding(-3)
+                            .animation(GroupPopoverMotion.present, value: isExpanded)
+                    )
                     .frame(width: size, height: size)
             } else {
                 appGrid
@@ -253,6 +260,23 @@ struct GroupPopoverView: View {
                     .help("Click to rename")
                     .accessibilityAddTraits(.isButton)
                     .accessibilityHint("Click to rename")
+                    // Pencil beside the (still centered) title: opens the
+                    // name field with the icon picker under it.
+                    .overlay(alignment: .trailing) {
+                        Button {
+                            groups.beginRename(group.id, reason: "pencil clicked")
+                        } label: {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 20, height: 20)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .offset(x: 24)
+                        .help("Edit name and icon")
+                        .accessibilityLabel("Edit name and icon")
+                    }
             }
             // One flat grid, so a cell keeps its identity (and its drag)
             // when a reorder moves it to another row.

@@ -1996,4 +1996,16 @@ Status: done and hand-tested by James.
 - [x] More colors: a Custom swatch (last in the row) opens the palette editor from the Solid background (20 presets, Saturation, Tint, Shade; no Opacity, icons are opaque). Stored as `icon.custom`; picking a system swatch clears it. Slider drags save on release. `PaletteColorEditor` and `SettingsSlider` take compact label/value widths.
 - [ ] Hand-check the Custom editor's sliders in the dock overlay (overlay must be key while naming) and in the Settings popover.
 - [x] Settings > Groups: the group icon dims and shows a pencil on hover (and while its picker is open); a Change Icon... button sits before Ungroup and Delete and opens the same picker.
+- [x] One color system: `PaletteColorEditor` moved to its own file and is used for the dock background (solid colors, gradient stops, glass and frosted tints), badges, and group icons. Added a Hue slider (`hue` key, default 0), a live preview chip with an editable hex field (a typed color resets the adjustments), and Reset Adjustments. Group icons store a `PaletteColor`; old `color` names and `custom` values migrate on load (checked: 4 saved groups loaded).
+- [x] Group icon picker redesigned: live preview, Symbol / Color tabs at a fixed height (no popover jump), Show Apps.
+- [x] Solid Color fill no longer shows two Opacity sliders: the color's own opacity shows only for gradient stops (labeled Stop Opacity) or when a single color was left translucent (Color Opacity).
+- [ ] Hand-check: hex field typing in the dock overlay and Settings, Hue slider on gray presets (no effect, expected), Reset Adjustments, Color tab sliders in the dock overlay.
+- [x] Palette swatches in labeled sections: Brand (Portside Navy, Orange), Neutrals (6), macOS (12 system colors), and RGB (new: the 12-step wheel, FF0000 through FF0080). The group picker's Color tab scrolls (290pt). Saved colors are unaffected (stored as RGB, not preset names).
+- [x] No scrolling in the color picker: Brand and Neutrals share a row, macOS and RGB get one row of 12 each. The compact (group icon) editor uses 16pt swatches so every swatch and slider fits the 312pt tab; Settings uses the same rows at 22pt.
+- [ ] Hand-check the compact Color tab fits without clipping (Shade slider fully visible).
+- [x] Open group with a custom icon: no more brightening over the artwork. A 1pt white ring (28% opacity) sits 3pt outside the squircle instead (inside the tile's icon margin), so the icon stays exactly like a native app icon. The app-grid tile keeps its lighter fill when open.
+- [x] Per-icon Style (System / Light / Dark) in the icon picker, stored as `icon.theme` (omitted for System). Pencil button beside the open grid's title opens the name field and icon picker; the title stays centered.
+- [ ] Hand-check: Style switch on one group leaves others alone; pencil click in the grid on the first click.
+- [x] "Show Apps" renamed "Remove Icon" (xmark, destructive role) with a tooltip saying the tile goes back to the apps.
 - Known gap: Tinted uses the accent color as the tint (the system's tinted icon color is not public). Clear is an approximation of the system's glass icon look.
+- [x] Option "Open Settings when Portside launches" (System > Startup, off by default, `openSettingsOnLaunch`). Built, not hand-tested.

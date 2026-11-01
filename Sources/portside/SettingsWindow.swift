@@ -551,6 +551,10 @@ private struct SystemSettings: View {
 
             Section("Startup") {
                 LaunchAtLoginRow(launchAtLogin: launchAtLogin)
+                Toggle("Open Settings when Portside launches", isOn: Binding(
+                    get: { dockModel.openSettingsOnLaunch },
+                    set: { dockModel.setOpenSettingsOnLaunch($0) }
+                ))
             }
 
             Section("Import") {
@@ -858,8 +862,10 @@ private struct AppearanceSettings: View {
         )
     }
 
-    private func colorEditor(_ path: WritableKeyPath<DockBackground, PaletteColor>, showsOpacity: Bool) -> PaletteColorEditor {
-        PaletteColorEditor(color: dockModel.background[keyPath: path], showsOpacity: showsOpacity) { value, persist in
+    private func colorEditor(_ path: WritableKeyPath<DockBackground, PaletteColor>, showsOpacity: Bool,
+                             opacityTitle: String = "Opacity") -> PaletteColorEditor {
+        PaletteColorEditor(color: dockModel.background[keyPath: path], showsOpacity: showsOpacity,
+                           opacityTitle: opacityTitle) { value, persist in
             dockModel.updateBackground(persist: persist) { $0[keyPath: path] = value }
         }
     }
@@ -964,7 +970,13 @@ private struct AppearanceSettings: View {
                 ColorChip(color: solid.color.color)
             }
         }
-        colorEditor(editingEnd ? \.solid.endColor : \.solid.color, showsOpacity: true)
+        // Per-color opacity only matters for gradient stops (a fade); a
+        // single color uses the Opacity slider below. Still shown if a
+        // single color was left translucent, so it can be undone.
+        let stop = editingEnd ? solid.endColor : solid.color
+        colorEditor(editingEnd ? \.solid.endColor : \.solid.color,
+                    showsOpacity: solid.fill.isGradient || stop.opacity < 1,
+                    opacityTitle: solid.fill.isGradient ? "Stop Opacity" : "Color Opacity")
         if solid.fill == .linear {
             SettingsSlider(
                 title: "Angle",
@@ -977,108 +989,6 @@ private struct AppearanceSettings: View {
         }
         percentSlider("Opacity", \.solid.opacity)
         Toggle("Border", isOn: binding(\.solid.border))
-    }
-}
-
-// MARK: - Palette color editor
-
-/// Portside's own color picker: preset swatches plus Saturation, Tint,
-/// Shade and (optionally) Opacity sliders. Inline in the form, so it never
-/// needs the system color panel (which a non-activating app handles badly).
-struct PaletteColorEditor: View {
-    let color: PaletteColor
-    var showsOpacity = true
-    /// Narrower columns for compact hosts (the group icon picker).
-    var labelWidth = SettingsLayout.labelWidth
-    var valueWidth = SettingsLayout.valueWidth
-    /// (new color, persist)
-    let set: (PaletteColor, Bool) -> Void
-
-    private static let columns = Array(repeating: GridItem(.fixed(22), spacing: 8), count: 10)
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            LazyVGrid(columns: Self.columns, alignment: .leading, spacing: 8) {
-                ForEach(PaletteColor.presets, id: \.name) { preset in
-                    ColorChip(color: preset.color.color, size: 22, isSelected: color.base.sameRGB(as: preset.color)) {
-                        var next = color
-                        next.base = preset.color.withAlpha(1)
-                        set(next, true)
-                    }
-                    .help(preset.name)
-                    .accessibilityLabel(preset.name)
-                }
-            }
-            slider("Saturation", \.saturation)
-            slider("Tint", \.tint)
-            slider("Shade", \.shade)
-            if showsOpacity {
-                slider("Opacity", \.opacity)
-            }
-        }
-        .padding(.vertical, 2)
-    }
-
-    private func slider(_ title: String, _ path: WritableKeyPath<PaletteColor, Double>) -> SettingsSlider {
-        SettingsSlider(
-            title: title,
-            value: color[keyPath: path],
-            range: 0...1,
-            snap: 0.01,
-            format: { "\(Int(($0 * 100).rounded()))%" },
-            labelWidth: labelWidth,
-            valueWidth: valueWidth,
-            set: { value, persist in
-                var next = color
-                next[keyPath: path] = value
-                set(next, persist)
-            }
-        )
-    }
-}
-
-/// A round color sample over a checkerboard (so opacity shows). With an
-/// action it is a button; `isSelected` draws a ring.
-struct ColorChip: View {
-    let color: Color
-    var size: CGFloat = 22
-    var isSelected = false
-    var action: (() -> Void)?
-
-    var body: some View {
-        if let action {
-            Button(action: action) { chip }
-                .buttonStyle(.plain)
-        } else {
-            chip
-        }
-    }
-
-    private var chip: some View {
-        ZStack {
-            Checkerboard().clipShape(Circle())
-            Circle().fill(color)
-        }
-        .frame(width: size, height: size)
-        .overlay(Circle().strokeBorder(Color.primary.opacity(0.25), lineWidth: 1))
-        .padding(3)
-        .overlay(Circle().strokeBorder(Color.accentColor, lineWidth: isSelected ? 2 : 0))
-        .contentShape(Circle())
-    }
-}
-
-struct Checkerboard: View {
-    var body: some View {
-        Canvas { context, size in
-            let cell: CGFloat = 4
-            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
-            for row in 0..<Int(ceil(size.height / cell)) {
-                for col in 0..<Int(ceil(size.width / cell)) where (row + col).isMultiple(of: 2) {
-                    context.fill(Path(CGRect(x: CGFloat(col) * cell, y: CGFloat(row) * cell, width: cell, height: cell)),
-                                 with: .color(Color(white: 0.8)))
-                }
-            }
-        }
     }
 }
 

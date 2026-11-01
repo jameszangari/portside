@@ -55,7 +55,7 @@ Full feature list. The [README](../README.md) keeps a short summary.
 ## Groups
 
 - User-defined groups of apps shown as one tile that opens a grid.
-- Custom group icon: pick one of 13 macOS system colors (or Custom: the Solid background's palette presets with Saturation, Tint and Shade sliders) and any SF Symbol (searchable by name and keyword, about 7,200 symbols) to replace the mini app grid on the tile. The picker shows under the name field when a group is created or renamed, from the tile menu (Change Icon...), and from Settings > Groups (click the group's icon, which shows a pencil on hover, or the Change Icon... button next to Ungroup and Delete). "Show Apps" goes back to the grid. The artwork follows the system icon style (Default, Dark, Clear, Tinted) so it sits with the app icons.
+- Custom group icon: pick any SF Symbol (searchable by name and keyword, about 7,200 symbols) and a color from the shared palette editor (Symbol and Color tabs with a live preview) to replace the mini app grid on the tile. The picker shows under the name field when a group is created or renamed, from the tile menu (Change Icon...), and from Settings > Groups (click the group's icon, which shows a pencil on hover, or the Change Icon... button next to Ungroup and Delete). "Remove Icon" goes back to the app grid. Style per icon: System follows the macOS icon style (Default, Dark, Clear, Tinted) so it sits with the app icons; Light or Dark pins that one icon. A pencil beside the open grid's title jumps to the name and icon editor.
 - Inline naming on creation; rename from the open grid title (click it), the tile menu, or Settings. Ungroup and remove-from-group from context menus.
 - Removing a group that has apps ("Remove from Dock", or dragging its tile out) asks first: Ungroup Instead (default, apps return as normal tiles), Remove Group, or Cancel. Empty groups go without asking. The alert gives focus back to the previous app.
 - Optional open on hover, with configurable open delay and close grace.
@@ -66,6 +66,7 @@ Full feature list. The [README](../README.md) keeps a short summary.
 ## Appearance
 
 - Icons match the macOS icon style (Default, Dark, Clear, Tinted) like the native Dock, and refresh when you change it in System Settings. Or pick "Original" to show each app's own artwork.
+- One color picker for every color (background, tints, badges, group icons): preview and hex field, swatches in labeled Brand, Neutrals, macOS and RGB sections, Hue, Saturation, Tint, Shade, and Opacity where it applies, plus Reset Adjustments.
 - Dock background, three distinct styles that each keep their own settings, plus corner radius. Open group grids and hover labels use the same look.
   - Liquid Glass (default): the system glass with Strength and an optional tint color. Regular is the frosted system glass; Clear is see-through with refraction at the edges (falls back to the public clear glass if the private variant goes away).
   - Frosted: a blur material (Ultra Thin to Ultra Thick) with Strength, a tint with its own opacity, and an optional border.
@@ -117,3 +118,4 @@ Full feature list. The [README](../README.md) keeps a short summary.
 - `scripts/build-app.sh` builds a signed `build/Portside.app` with the brand icon, version from `VERSION`, and the Calendar / Finder / System Events Automation usage strings. `--install` copies it to `~/Applications`.
 - App builds reuse a local code signing certificate after one-time setup, keeping the signing identity stable across rebuilds for macOS permission matching. Setup preserves the saved certificate fingerprint even when another certificate has the same name.
 - "Open Portside at login" (Settings > System > Startup) through `SMAppService`. macOS is the source of truth; the toggle shows its real status, links to Login Items when approval is needed, and is disabled under `swift run`.
+- "Open Settings when Portside launches" (Settings > System > Startup, `openSettingsOnLaunch`, off by default).

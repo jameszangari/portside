@@ -202,6 +202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dockEngine = engine
         engine.onOpenSettings = { [weak self] in self?.openSettings() }
         engine.start()
+        if dockModel.openSettingsOnLaunch { openSettings() }
         // The native Dock's own shortcut. If macOS's "Turn Dock hiding
         // on/off" shortcut is enabled it may take the keypress first.
         hideHotKey = HotKey(keyCode: kVK_ANSI_D, modifiers: cmdKey | optionKey, name: "Cmd+Option+D") { [weak self] in

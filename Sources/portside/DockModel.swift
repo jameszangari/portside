@@ -580,6 +580,17 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    // MARK: - Startup
+
+    /// Open Settings when Portside launches. Off by default.
+    @Published private(set) var openSettingsOnLaunch: Bool = false
+
+    func setOpenSettingsOnLaunch(_ enabled: Bool) {
+        guard enabled != openSettingsOnLaunch else { return }
+        openSettingsOnLaunch = enabled
+        persist()
+    }
+
     // MARK: - Groups on hover
 
     /// Open a group's grid by hovering its tile (after `groupHoverDelay`).
@@ -839,7 +850,7 @@ final class DockModel: Codable, ObservableObject {
         }
         guard shouldPersist else { return }
         persist()
-        Self.logger.info("group icon \(group.name, privacy: .public): \(icon?.symbol ?? "apps", privacy: .public) \(icon?.custom == nil ? icon?.color.rawValue ?? "" : "custom", privacy: .public)")
+        Self.logger.info("group icon \(group.name, privacy: .public): \(icon?.symbol ?? "apps", privacy: .public) \(icon?.color.resolved.hex ?? "", privacy: .public)")
     }
 
     /// Remove the group and its apps from the dock.
@@ -895,7 +906,7 @@ final class DockModel: Codable, ObservableObject {
         case revealDelay, hideDelay, animationDuration, iconSize, iconGap, magnificationEnabled, magnifiedSize, edge, entries, widgetKinds
         case autoHide, openGroupsOnHover, groupHoverDelay, groupHoverCloseGrace
         case animateOpeningApplications
-        case hideNativeDock, nativeDockExplained
+        case hideNativeDock, nativeDockExplained, openSettingsOnLaunch
         case showTrash, trashAccessHintDismissed
         case showBadges, badgeColor, badgeCustomColor
         case stacks, layout, widgetSizes
@@ -941,6 +952,7 @@ final class DockModel: Codable, ObservableObject {
         layout = (try? c.decodeIfPresent([String].self, forKey: .layout)) ?? []
         widgetSizes = (try? c.decodeIfPresent([String: WidgetSize].self, forKey: .widgetSizes)) ?? [:]
         openGroupsOnHover = try c.decodeIfPresent(Bool.self, forKey: .openGroupsOnHover) ?? false
+        openSettingsOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .openSettingsOnLaunch) ?? false
         groupHoverDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverDelay) ?? Defaults.groupHoverDelay, to: Self.groupHoverDelayRange)
         groupHoverCloseGrace = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverCloseGrace) ?? Defaults.groupHoverCloseGrace, to: Self.groupHoverCloseGraceRange)
         // try? per key: an unknown enum value (from a newer build) falls back
@@ -998,6 +1010,7 @@ final class DockModel: Codable, ObservableObject {
         if !layout.isEmpty { try c.encode(layout, forKey: .layout) }
         if !widgetSizes.isEmpty { try c.encode(widgetSizes, forKey: .widgetSizes) }
         try c.encode(openGroupsOnHover, forKey: .openGroupsOnHover)
+        try c.encode(openSettingsOnLaunch, forKey: .openSettingsOnLaunch)
         try c.encode(groupHoverDelay, forKey: .groupHoverDelay)
         try c.encode(groupHoverCloseGrace, forKey: .groupHoverCloseGrace)
         try c.encode(iconStyle, forKey: .iconStyle)
@@ -1161,6 +1174,7 @@ final class DockModel: Codable, ObservableObject {
         showBadges = old.showBadges
         settingsHotkey = old.settingsHotkey
         openGroupsOnHover = old.openGroupsOnHover
+        openSettingsOnLaunch = old.openSettingsOnLaunch
         groupHoverDelay = old.groupHoverDelay
         groupHoverCloseGrace = old.groupHoverCloseGrace
         edge = old.edge

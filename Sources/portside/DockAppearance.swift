@@ -79,13 +79,17 @@ struct RGBAColor: Codable, Hashable {
     var color: Color { Color(.sRGB, red: red, green: green, blue: blue, opacity: alpha) }
 }
 
-/// A color picked from Portside's palette: a preset base adjusted with
-/// saturation, tint (toward white), shade (toward black), and opacity.
+/// A color picked from Portside's palette: a preset (or hex) base adjusted
+/// with hue, saturation, tint (toward white), shade (toward black), and
+/// opacity. One model for every color in Portside (dock background, tints,
+/// badges, group icons), edited with `PaletteColorEditor`.
 /// Stored as those parts so the editor reopens where the user left it.
 /// Also reads a plain `RGBAColor` (older dock.json) as base plus opacity.
 struct PaletteColor: Codable, Hashable {
     /// Alpha ignored; `opacity` is the alpha.
     var base: RGBAColor
+    /// 0 to 1, a turn around the color wheel from the base's hue.
+    var hue: Double = 0
     /// 0 to 1, a multiplier on the base's saturation.
     var saturation: Double = 1
     /// 0 to 1, mix toward white.
@@ -94,8 +98,9 @@ struct PaletteColor: Codable, Hashable {
     var shade: Double = 0
     var opacity: Double = 1
 
-    init(base: RGBAColor, saturation: Double = 1, tint: Double = 0, shade: Double = 0, opacity: Double = 1) {
+    init(base: RGBAColor, hue: Double = 0, saturation: Double = 1, tint: Double = 0, shade: Double = 0, opacity: Double = 1) {
         self.base = RGBAColor(red: base.red, green: base.green, blue: base.blue, alpha: 1)
+        self.hue = hue
         self.saturation = saturation
         self.tint = tint
         self.shade = shade
@@ -107,7 +112,7 @@ struct PaletteColor: Codable, Hashable {
         self.init(base: rgba, opacity: rgba.alpha)
     }
 
-    private enum CodingKeys: String, CodingKey { case base, saturation, tint, shade, opacity }
+    private enum CodingKeys: String, CodingKey { case base, hue, saturation, tint, shade, opacity }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -117,6 +122,7 @@ struct PaletteColor: Codable, Hashable {
         }
         self.init(
             base: base,
+            hue: unit(c.value(.hue, or: 0.0)),
             saturation: unit(c.value(.saturation, or: 1.0)),
             tint: unit(c.value(.tint, or: 0.0)),
             shade: unit(c.value(.shade, or: 0.0)),
@@ -127,6 +133,9 @@ struct PaletteColor: Codable, Hashable {
     /// The final color, with `opacity` as alpha.
     var resolved: RGBAColor {
         var r = base.red, g = base.green, b = base.blue
+        if hue > 0, hue < 1 {
+            (r, g, b) = Self.rotateHue(r, g, b, by: hue)
+        }
         if saturation < 1 {
             // Toward the color's own luminance (gray of the same lightness).
             let gray = 0.2126 * r + 0.7152 * g + 0.0722 * b
@@ -139,6 +148,33 @@ struct PaletteColor: Codable, Hashable {
         return RGBAColor(red: r, green: g, blue: b, alpha: opacity)
     }
 
+    /// True when any slider other than opacity moved off its default.
+    var isAdjusted: Bool { hue != 0 || saturation != 1 || tint != 0 || shade != 0 }
+
+    /// Same base and opacity, adjustments back to their defaults.
+    var unadjusted: PaletteColor { PaletteColor(base: base, opacity: opacity) }
+
+    /// Rotates hue in HSB, keeping saturation and brightness.
+    private static func rotateHue(_ r: Double, _ g: Double, _ b: Double, by turn: Double) -> (Double, Double, Double) {
+        let maxC = max(r, g, b), minC = min(r, g, b), delta = maxC - minC
+        guard delta > 0.0001 else { return (r, g, b) }
+        var h: Double
+        if maxC == r { h = (g - b) / delta } else if maxC == g { h = 2 + (b - r) / delta } else { h = 4 + (r - g) / delta }
+        h = (h / 6 + turn).truncatingRemainder(dividingBy: 1)
+        if h < 0 { h += 1 }
+        let sat = delta / maxC, v = maxC
+        let sector = h * 6, i = floor(sector), f = sector - i
+        let p = v * (1 - sat), q = v * (1 - sat * f), t = v * (1 - sat * (1 - f))
+        switch Int(i) % 6 {
+        case 0: return (v, t, p)
+        case 1: return (q, v, p)
+        case 2: return (p, v, t)
+        case 3: return (p, q, v)
+        case 4: return (t, p, v)
+        default: return (v, p, q)
+        }
+    }
+
     var color: Color { resolved.color }
     /// Same color, fully opaque (glass tints, badge fills).
     var opaqueColor: Color { resolved.withAlpha(1).color }
@@ -146,34 +182,81 @@ struct PaletteColor: Codable, Hashable {
     /// Brand navy (design/brand tokens).
     static let brandNavy = PaletteColor(base: RGBAColor(red: 0x10 / 255, green: 0x28 / 255, blue: 0x3F / 255, alpha: 1))
 
-    /// The editor's swatches, in display order.
-    static let presets: [(name: String, color: RGBAColor)] = [
-        ("White", RGBAColor(red: 1, green: 1, blue: 1, alpha: 1)),
-        ("Silver", RGBAColor(red: 0.80, green: 0.80, blue: 0.82, alpha: 1)),
-        ("Gray", RGBAColor(red: 0.56, green: 0.56, blue: 0.58, alpha: 1)),
-        ("Graphite", RGBAColor(red: 0.30, green: 0.30, blue: 0.32, alpha: 1)),
-        ("Charcoal", RGBAColor(red: 0.12, green: 0.12, blue: 0.13, alpha: 1)),
-        ("Black", RGBAColor(red: 0, green: 0, blue: 0, alpha: 1)),
-        ("Portside Navy", RGBAColor(red: 0x10 / 255, green: 0x28 / 255, blue: 0x3F / 255, alpha: 1)),
-        ("Portside Orange", RGBAColor(red: 0xF0 / 255, green: 0x6A / 255, blue: 0x42 / 255, alpha: 1)),
-        ("Brown", RGBAColor(red: 0.64, green: 0.52, blue: 0.37, alpha: 1)),
-        ("Red", RGBAColor(red: 0.92, green: 0.22, blue: 0.18, alpha: 1)),
-        ("Orange", RGBAColor(red: 1, green: 0.58, blue: 0, alpha: 1)),
-        ("Yellow", RGBAColor(red: 1, green: 0.80, blue: 0, alpha: 1)),
-        ("Green", RGBAColor(red: 0.20, green: 0.78, blue: 0.35, alpha: 1)),
-        ("Mint", RGBAColor(red: 0, green: 0.78, blue: 0.75, alpha: 1)),
-        ("Teal", RGBAColor(red: 0.19, green: 0.69, blue: 0.78, alpha: 1)),
-        ("Cyan", RGBAColor(red: 0.20, green: 0.68, blue: 0.90, alpha: 1)),
-        ("Blue", RGBAColor(red: 0, green: 0.48, blue: 1, alpha: 1)),
-        ("Indigo", RGBAColor(red: 0.35, green: 0.34, blue: 0.84, alpha: 1)),
-        ("Purple", RGBAColor(red: 0.69, green: 0.32, blue: 0.87, alpha: 1)),
-        ("Pink", RGBAColor(red: 1, green: 0.18, blue: 0.33, alpha: 1)),
+    typealias Preset = (name: String, color: RGBAColor)
+
+    /// The editor's swatches, in labeled sections, in display order.
+    static let presetSections: [(title: String, presets: [Preset])] = [
+        ("Brand", [
+            ("Portside Navy", rgb(0x10, 0x28, 0x3F)),
+            ("Portside Orange", rgb(0xF0, 0x6A, 0x42)),
+        ]),
+        ("Neutrals", [
+            ("White", RGBAColor(red: 1, green: 1, blue: 1, alpha: 1)),
+            ("Silver", RGBAColor(red: 0.80, green: 0.80, blue: 0.82, alpha: 1)),
+            ("Gray", RGBAColor(red: 0.56, green: 0.56, blue: 0.58, alpha: 1)),
+            ("Graphite", RGBAColor(red: 0.30, green: 0.30, blue: 0.32, alpha: 1)),
+            ("Charcoal", RGBAColor(red: 0.12, green: 0.12, blue: 0.13, alpha: 1)),
+            ("Black", RGBAColor(red: 0, green: 0, blue: 0, alpha: 1)),
+        ]),
+        // The macOS system colors (light variants).
+        ("macOS", [
+            ("Red", RGBAColor(red: 0.92, green: 0.22, blue: 0.18, alpha: 1)),
+            ("Orange", RGBAColor(red: 1, green: 0.58, blue: 0, alpha: 1)),
+            ("Yellow", RGBAColor(red: 1, green: 0.80, blue: 0, alpha: 1)),
+            ("Green", RGBAColor(red: 0.20, green: 0.78, blue: 0.35, alpha: 1)),
+            ("Mint", RGBAColor(red: 0, green: 0.78, blue: 0.75, alpha: 1)),
+            ("Teal", RGBAColor(red: 0.19, green: 0.69, blue: 0.78, alpha: 1)),
+            ("Cyan", RGBAColor(red: 0.20, green: 0.68, blue: 0.90, alpha: 1)),
+            ("Blue", RGBAColor(red: 0, green: 0.48, blue: 1, alpha: 1)),
+            ("Indigo", RGBAColor(red: 0.35, green: 0.34, blue: 0.84, alpha: 1)),
+            ("Purple", RGBAColor(red: 0.69, green: 0.32, blue: 0.87, alpha: 1)),
+            ("Pink", RGBAColor(red: 1, green: 0.18, blue: 0.33, alpha: 1)),
+            ("Brown", RGBAColor(red: 0.64, green: 0.52, blue: 0.37, alpha: 1)),
+        ]),
+        // The 12-step RGB color wheel: primaries, secondaries, tertiaries.
+        ("RGB", [
+            ("RGB Red", rgb(0xFF, 0x00, 0x00)),
+            ("RGB Orange", rgb(0xFF, 0x80, 0x00)),
+            ("RGB Yellow", rgb(0xFF, 0xFF, 0x00)),
+            ("RGB Chartreuse", rgb(0x80, 0xFF, 0x00)),
+            ("RGB Green", rgb(0x00, 0xFF, 0x00)),
+            ("RGB Spring Green", rgb(0x00, 0xFF, 0x80)),
+            ("RGB Cyan", rgb(0x00, 0xFF, 0xFF)),
+            ("RGB Azure", rgb(0x00, 0x80, 0xFF)),
+            ("RGB Blue", rgb(0x00, 0x00, 0xFF)),
+            ("RGB Violet", rgb(0x80, 0x00, 0xFF)),
+            ("RGB Magenta", rgb(0xFF, 0x00, 0xFF)),
+            ("RGB Rose", rgb(0xFF, 0x00, 0x80)),
+        ]),
     ]
+
+    /// Every swatch, flattened (lookups by name).
+    static let presets: [Preset] = presetSections.flatMap(\.presets)
+
+    private static func rgb(_ r: Int, _ g: Int, _ b: Int) -> RGBAColor {
+        RGBAColor(red: Double(r) / 255, green: Double(g) / 255, blue: Double(b) / 255, alpha: 1)
+    }
 }
 
 extension RGBAColor {
     func withAlpha(_ alpha: Double) -> RGBAColor {
         RGBAColor(red: red, green: green, blue: blue, alpha: alpha)
+    }
+
+    /// "#RRGGBB" (alpha ignored).
+    var hex: String {
+        func byte(_ v: Double) -> Int { Int((min(max(v, 0), 1) * 255).rounded()) }
+        return String(format: "#%02X%02X%02X", byte(red), byte(green), byte(blue))
+    }
+
+    /// Parses "#RGB" or "#RRGGBB" (the # is optional). Alpha is 1.
+    init?(hex text: String) {
+        var digits = text.trimmingCharacters(in: .whitespaces)
+        if digits.hasPrefix("#") { digits.removeFirst() }
+        if digits.count == 3 { digits = digits.map { "\($0)\($0)" }.joined() }
+        guard digits.count == 6, let value = UInt32(digits, radix: 16) else { return nil }
+        self.init(red: Double((value >> 16) & 0xFF) / 255, green: Double((value >> 8) & 0xFF) / 255,
+                  blue: Double(value & 0xFF) / 255, alpha: 1)
     }
 
     /// Same RGB within rounding (dock.json round trips, preset matching).

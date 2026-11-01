@@ -51,6 +51,7 @@ Sources/portside/
   GroupRemoval.swift        "Remove group?" confirmation alert and focus hand-back
   GroupViews.swift          Group tile and expanded grid views
   GroupIcon.swift           Custom group icon: model, SF Symbols catalog, artwork, picker
+  PaletteColorEditor.swift  The one color picker: preview, hex, presets, Hue/Saturation/Tint/Shade/Opacity
   OverlayPanel.swift        Reusable non-activating overlay panel
   LaunchBounce.swift        Native-style launch bounce animation
   RunningApps.swift         Running app tracking via NSWorkspace notifications
