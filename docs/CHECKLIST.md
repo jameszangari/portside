@@ -101,6 +101,7 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [x] Verified (ad-hoc `--package`): window bounds 200,120,740,708; icons at 270,150 and 270,415; screenshot matches the Chrome-style layout; volume icon shows.
 - Findings: Finder only saves window bounds after a close/reopen, and icon positions must be set after that reopen or they shift down by the toolbar height. `hdiutil -srcfolder` drops `.VolumeIcon.icns` and the main Finder pass deletes it, so it is copied last and parked off-window in a short second pass.
 - [x] Full `--notarize` DMG run: app and DMG both Accepted and stapled. Published as [v0.3.0](https://github.com/jameszangari/portside-dock/releases/tag/v0.3.0) with `Portside-0.3.0.dmg` (3.5 MB). The downloaded asset, quarantined, passes `spctl` as Notarized Developer ID; the app inside is 0.3.0, stapled, and accepted.
+- [x] [v0.4.0](https://github.com/jameszangari/portside-dock/releases/tag/v0.4.0) published with `Portside-0.4.0.dmg` (in-place Check for Updates, battery charge colors, settings sidebar widen, activity icons and related work on main).
 - [ ] Hand test: download from the release page, open the DMG, drag to Applications, launch with no Gatekeeper prompt.
 - Known gaps: needs Finder Automation permission for the terminal on first run. If your Finder shows the path bar or hidden files, you see them in the DMG window too (your Finder prefs, not baked into the DMG).
 
