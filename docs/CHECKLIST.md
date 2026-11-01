@@ -20,6 +20,14 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
+## In-place updates from Check for Updates (2026-11-01)
+
+- [x] `UpdateChecker` fetches the latest GitHub release (tag + `Portside-*.dmg` asset), compares with `AppInfo.version`.
+- [x] From an installed `Portside.app`, Check for Updates downloads the DMG, mounts it, `ditto`s the app aside, verifies `codesign`, then a helper waits for quit, replaces the bundle, and reopens. Quarantine is cleared on the staged and installed copies.
+- [x] Under `swift run` (no `.app` bundle) or when the DMG asset is missing: opens the release page and shows the status line, same as before.
+- [x] `swift build` clean.
+- [ ] Hand test: install `~/Applications/Portside.app` at 0.3.0 (or any older build), open Settings, Check for Updates after 0.4.0 is published; confirm Downloading / Installing / Restarting, then the new version in the sidebar. Fail the download (offline) and confirm the error + release page. From `swift run`, confirm it only opens the release page.
+
 ## Activity icons (2026-11-01)
 
 - [x] `AppActivity.swift`: per-app activity from public APIs. Mic and audio output from CoreAudio process objects (macOS 14+), camera from CoreMediaIO, all property listeners (no polling, no permission prompt). Helper processes map to their app by parent pid or bundle id prefix.

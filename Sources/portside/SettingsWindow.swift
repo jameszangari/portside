@@ -318,7 +318,7 @@ private struct SettingsSidebar: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.opacity)
             }
-            Button(checking ? "Checking..." : "Check for Updates", action: checkForUpdates)
+            Button(checking ? "Checking…" : "Check for Updates", action: checkForUpdates)
                 .controlSize(.small)
                 .disabled(checking)
         }
@@ -332,9 +332,34 @@ private struct SettingsSidebar: View {
         clearStatus = Task { @MainActor in
             checking = true
             let result = await UpdateChecker.check()
-            checking = false
-            withAnimation { status = result.message }
-            if case .available(_, let url) = result { NSWorkspace.shared.open(url) }
+            switch result {
+            case .available(let version, let page, let dmgURL):
+                // Installed .app: download the DMG and replace in place. Otherwise
+                // open the release page (swift run / missing asset).
+                if let dmgURL, UpdateChecker.canInstallInPlace {
+                    withAnimation { status = "Version \(version) is available." }
+                    do {
+                        try await UpdateChecker.downloadAndInstall(dmgURL: dmgURL) { phase in
+                            withAnimation { status = phase }
+                        }
+                        // terminate was requested; keep the button disabled.
+                        return
+                    } catch {
+                        checking = false
+                        withAnimation {
+                            status = "Couldn't install the update: \(error.localizedDescription)"
+                        }
+                        NSWorkspace.shared.open(page)
+                    }
+                } else {
+                    checking = false
+                    withAnimation { status = result.message }
+                    NSWorkspace.shared.open(page)
+                }
+            default:
+                checking = false
+                withAnimation { status = result.message }
+            }
             try? await Task.sleep(for: .seconds(6))
             guard !Task.isCancelled else { return }
             withAnimation { status = nil }

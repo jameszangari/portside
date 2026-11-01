@@ -66,4 +66,4 @@ build/Portside.app/Contents/MacOS/portside --restore-dock
 - `scripts/gen-version.sh` writes `Sources/portside/BuildInfo.swift` (generated, committed) with the version, short git hash, and dirty flag. Run it to refresh the hash before a build.
 - Cut a release with `scripts/release.sh patch|minor|major`. It is a dry run by default; add `--apply` to bump `VERSION`, make one "Release vX.Y.Z" commit, create an annotated tag, and run `scripts/build-app.sh --notarize`. It refuses on a dirty tree, checks Developer ID + notary setup, and never pushes.
 - Publish with `scripts/publish-release.sh --apply`: notarizes (again if needed), pushes the branch and tag, then creates (or updates) the GitHub release for `vX.Y.Z` with the stapled `Portside-X.Y.Z.dmg`. Dry run by default. Requires `gh` auth and HEAD to match the tag.
-- Tags use the `vX.Y.Z` format. The future update checker compares the latest release tag against this version.
+- Tags use the `vX.Y.Z` format. Check for Updates compares the latest release tag against this version and, from an installed `.app`, downloads `Portside-X.Y.Z.dmg` and replaces the bundle in place.
