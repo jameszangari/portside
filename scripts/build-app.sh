@@ -3,8 +3,8 @@
 # Usage: scripts/build-app.sh [--install]
 #   --install  also copy the app to ~/Applications/Portside.app. Refuses
 #              while that copy is running. Never touches /Applications.
-# Signing: ad-hoc by default. Set SIGN_IDENTITY to a codesigning identity
-# (for example a self-signed certificate's name) to sign with it instead.
+# Signing: run scripts/setup-signing.sh once for a stable local identity.
+# SIGN_IDENTITY overrides it; SIGN_IDENTITY=- explicitly uses ad-hoc signing.
 # `swift build` and `swift run portside` are unaffected by this script.
 set -euo pipefail
 
@@ -20,6 +20,25 @@ for arg in "$@"; do
            exit 2 ;;
     esac
 done
+
+identity="${SIGN_IDENTITY:-}"
+if [ -z "$identity" ]; then
+    identity_file="$HOME/Library/Application Support/com.james.portside/signing/identity.sha1"
+    if [ ! -f "$identity_file" ]; then
+        echo "build-app: run scripts/setup-signing.sh once to preserve macOS permissions across rebuilds." >&2
+        echo "Or set SIGN_IDENTITY to your code signing identity (SIGN_IDENTITY=- opts into ad-hoc signing)." >&2
+        exit 1
+    fi
+    identity="$(tr -d '[:space:]' < "$identity_file")"
+    if ! [[ "$identity" =~ ^[[:xdigit:]]{40}$ ]]; then
+        echo "build-app: invalid saved signing identity. Run scripts/setup-signing.sh." >&2
+        exit 1
+    fi
+    if ! security find-identity -v -p codesigning | grep -Fq "$identity"; then
+        echo "build-app: the saved signing identity is unavailable. Unlock your keychain and run scripts/setup-signing.sh." >&2
+        exit 1
+    fi
+fi
 
 version="$(tr -d '[:space:]' < VERSION)"
 if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -116,9 +135,9 @@ else
 fi
 plutil -lint "$plist" >/dev/null
 
-identity="${SIGN_IDENTITY:--}"
 if [ "$identity" = "-" ]; then
     echo "==> Signing ad-hoc"
+    echo "build-app: ad-hoc builds may ask for macOS permissions again after a rebuild." >&2
 else
     echo "==> Signing with '$identity'"
 fi

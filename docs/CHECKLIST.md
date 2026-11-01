@@ -22,6 +22,20 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 
 ## Remaining backlog (actionable)
 
+### Remember macOS folder permissions (2026-10-31)
+
+- [x] Signing review: reproduced and fixed setup silently replacing a saved fingerprint when a different valid certificate has the same name. Saved identities now take priority across the keychain search list; invalid or unavailable saved identities fail without rewriting the record.
+- [x] Eleven isolated setup/build-preflight checks pass, including same-name replacement rejection, saved-identity reuse with duplicate names, invalid/missing/unavailable identity handling, existing-certificate reuse, and refusing an untrusted existing certificate. These fixtures do not mutate the real keychain.
+- [x] Confirmed the real local certificate's user trust is limited to Code Signing, and both installed and freshly rebuilt apps use its saved fingerprint. Debug and release builds succeed.
+- [x] Strict signature verification passes for both app copies. Modifying a temporary app copy's Info.plist fails verification; re-signing that copy changes its code hash while satisfying the original app's certificate-based requirement. The signed app and `swift run portside` both launch successfully in icon-export mode; this does not verify the Downloads consent UI.
+- [x] Inspect both built and installed app signatures: both used a `cdhash` designated requirement with ad-hoc signing. No valid code signing identity existed.
+- [x] Add `scripts/setup-signing.sh`: create a local code signing identity once, grant codesign key access, trust it for code signing in the user account, and persist its fingerprint outside the repo. Reuse it on subsequent runs; stop if an existing identity is unavailable rather than replacing it.
+- [x] Default app builds to the saved signing identity, with explicit `SIGN_IDENTITY` override and explicit ad-hoc opt-out. Never silently fall back to ad-hoc signing.
+- [x] Create the local identity on this machine and confirm a second setup run reuses it.
+- [x] `swift build` and `scripts/build-app.sh` succeeded. The release bundle passes strict signature verification; its designated requirement now uses the bundle identifier and certificate fingerprint instead of a binary hash. Two different temporary executables signed with this identity had different code hashes but identical designated requirements. `swift run portside --export-icon` and the signed bundle's export command both launched and wrote PNGs successfully. Full permission UI behavior remains a hand test.
+- [ ] Human: install, Allow Downloads once for the new signing identity, quit/reopen twice, rebuild/reinstall, and confirm Downloads does not ask again. This requires the macOS consent UI; permissions remain managed by macOS.
+
+
 Ordered for daily-driver impact. One slice at a time; hand-test gate after each. Milestones A to E and most of F/P1/P2/P3 are already shipped; this is what is left.
 
 ### 0. Pending hand tests (clear before more features)

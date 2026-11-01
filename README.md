@@ -106,11 +106,13 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 
 **App bundle and startup**
 - `scripts/build-app.sh` builds a signed `build/Portside.app` with the brand icon, version from `VERSION`, and the Calendar / Finder / System Events Automation usage strings. `--install` copies it to `~/Applications`.
+- App builds reuse a local code signing certificate after one-time setup, keeping the signing identity stable across rebuilds for macOS permission matching. Setup preserves the saved certificate fingerprint even when another certificate has the same name.
 - "Open Portside at login" (Settings > System > Startup) through `SMAppService`. macOS is the source of truth; the toggle shows its real status, links to Login Items when approval is needed, and is disabled under `swift run`.
 
 ## Planned
 
 From `docs/CHECKLIST.md` Remaining backlog:
+- Hand-check Downloads permission retention across relaunches and rebuilds; signature stability is verified, macOS consent retention still needs confirmation.
 - Milestone F leftover: import plain file tiles from `persistent-others` (folders already import).
 - P3 leftovers: window list in the app menu; VoiceOver / keyboard navigation.
 - Side-dock widget layout; window previews on hover; profiles; update checker; Trash Option-click Empty and icon animation.
@@ -140,6 +142,7 @@ log stream --level info --predicate 'subsystem == "com.james.portside"'
 ## Build the app
 
 ```
+scripts/setup-signing.sh        # once: create/reuse a local signing certificate
 scripts/build-app.sh            # builds build/Portside.app
 scripts/build-app.sh --install  # also copies it to ~/Applications/Portside.app
 open build/Portside.app
@@ -147,7 +150,9 @@ open build/Portside.app
 
 - Runs `swift build -c release`, then assembles `Contents/MacOS/portside`, `Contents/Info.plist` (from the repo's `Info.plist` plus bundle keys and the version from `VERSION`), the app icon, and the SwiftPM resource bundle with the brand PNGs (in `Contents/Resources`, covered by the signature). The icon is `design/brand/icon-composer/AppIcon.icon` compiled by `xcrun actool` into `Assets.car` (Liquid Glass, `CFBundleIconName`) plus a flat `AppIcon.icns` for older macOS. If actool fails it prints why and copies `design/brand/approved-icon/icns/` instead; if that is missing too, the hidden `portside --export-icon <path.png>` flag renders one. No network.
 - `--install` copies to `~/Applications/Portside.app`, never `/Applications`. It refuses while that copy is running; quit Portside first. Without the flag nothing is installed.
-- Signing is ad-hoc by default. Ad-hoc signatures change on every build, so macOS may ask for Calendar permission again after each rebuild, and may treat each build as a new login item. To avoid that, create a self-signed code signing certificate in Keychain Access (Certificate Assistant > Create a Certificate, type Code Signing) and build with `SIGN_IDENTITY="Your Cert Name" scripts/build-app.sh`.
+- Run `scripts/setup-signing.sh` once. It creates a ten-year self-signed `Portside Local Development` certificate in your default user keychain and trusts it for code signing only. Only `/usr/bin/codesign` is granted access to the imported private key. Later runs reuse the existing identity. The certificate fingerprint is saved outside the repo; temporary key files are deleted on exit.
+- Builds use the saved fingerprint by default and fail if it is missing or unavailable, instead of silently switching identities. Setup also validates an existing fingerprint before looking up certificates by name and never replaces it automatically. `SIGN_IDENTITY="Your Cert Name" scripts/build-app.sh` overrides it. `SIGN_IDENTITY=- scripts/build-app.sh` explicitly uses ad-hoc signing, which may cause macOS to ask for permission again when the binary changes.
+- When switching from an ad-hoc build, allow Downloads and other requested permissions once for the newly signed app. Use the installed `~/Applications/Portside.app` for permission checks. `swift run` remains a separate development launch and does not use the local certificate.
 - Turn on "Open Portside at login" from the copy you keep (normally `~/Applications/Portside.app`). macOS remembers the path it was registered from.
 - `swift build` and `swift run portside` are unchanged and still work for development.
 
@@ -205,6 +210,8 @@ The Settings window controls:
 - Open Portside at login: not stored by Portside. macOS keeps it (System Settings > General > Login Items).
 
 The built app lives at `build/Portside.app` (ignored by git), and at `~/Applications/Portside.app` after `scripts/build-app.sh --install`.
+
+The local signing certificate and private key live in your default user keychain. Its fingerprint is stored at `~/Library/Application Support/com.james.portside/signing/identity.sha1`. Keep the same identity across rebuilds. Downloads and other macOS privacy decisions are managed by macOS, outside `dock.json`.
 
 ## Notes
 
@@ -275,6 +282,7 @@ scripts/
   gen-version.sh            Writes BuildInfo.swift from VERSION and git
   release.sh                Bumps VERSION, commits, and tags a release
   build-app.sh              Builds and signs build/Portside.app (--install to ~/Applications)
+  setup-signing.sh          Creates or reuses the stable local code signing identity
   check-tile-input.swift    Synthetic Accessibility check: clicks, hold menu, label centering
 design/brand/               Approved Portside sail icon, wordmarks, menu bar assets, and tokens; see its README
 ```
