@@ -1,7 +1,7 @@
 #!/bin/bash
 # Window-fit probe: measures how window managers and macOS resize windows
 # against the dock edge. Needs Accessibility for the terminal that runs it.
-# Usage: scripts/window-fit-probe/run.sh [rect|native|gap|dock|dock2|dock3|all]
+# Usage: scripts/window-fit-probe/run.sh [rect|native|gap|dock|dock2|dock3|fit|all]
 # The probe window takes focus for a few seconds. dock* modes toggle the
 # macOS Dock's autohide (the Dock flashes on screen); gap mode writes
 # Rectangle's screenEdgeGapBottom. Both are restored to their exact prior values.

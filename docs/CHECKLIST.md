@@ -20,6 +20,17 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
+## Windows respect Portside: Phase 2 (2026-11-01)
+
+- [x] `WindowFitter.swift`: while a reservation exists and Accessibility is granted, one `AXObserver` per regular app (window created, moved, resized), attached at start and on app launch (retried while the app finishes launching), removed on quit. Off when hiding is on.
+- [x] Fit rule: standard windows only, not fullscreen or minimized, centered on the dock's display, with the dock-side edge within 2pt of the screen edge. Bottom: height shrinks to the dock's top. Left: moves right and narrows. Right: narrows. Size is set before position. Skips results under 120pt.
+- [x] Settle: 60ms after the last event; 300ms after an animated burst (more than 4 events) or for a window fitted under 1s ago. First run used 60ms everywhere and Window > Fill snapped back three times: macOS re-applies Fill's frame for 150 to 300ms after its last AX event (probe `fillwait` mode: 60 and 150ms snap back, 300 and 600ms stick).
+- [x] Loop guard: our own writes re-trigger events, but the fitted frame is a no-op on the next check. Two refusals, or three resets in 2s, and the window is left alone.
+- [x] Off the main thread: observer run loop on its own thread, fitting on a serial queue, 0.25s AX messaging timeout, so a hung app cannot stall the dock.
+- [x] Verified (sandboxed dev build pinned, `scripts/window-fit-probe/run.sh fit`): bottom dock (68pt): Rectangle Maximize 1728x1084 -> 1728x1016 about 65ms after landing; Rectangle left half -> 864x1016; Window > Fill -> 1728x1016 once, 320ms after the animation; a hand-placed window overlapping the dock but not flush unchanged. Left dock (53pt): Maximize -> x 53, 1675 wide; left half -> 811 wide; Fill likewise. Fits take 1 to 11ms. `swift build` clean.
+- [ ] Hand test: quit the installed Portside, `swift run portside` from a terminal that has Accessibility (or grant Portside.app after a build), turn hiding off, then Rectangle Maximize / halves, Window > Fill, double-click a title bar, Raycast window commands on real apps (Safari, Finder, an Electron app). Each should stop at the dock after a short jump. Drag a window partly over the dock by hand: it stays. Turn hiding on: windows already fitted stay as they are (reflow is Phase 3).
+- Known gaps: one visible jump per maximize (about 65ms Rectangle, about 300ms after Fill). No Settings toggle or permission prompt yet (Phase 6); the installed app needs Accessibility granted by hand. Windows are not reflowed when hiding is toggled (Phase 3). Portside's own windows ignore the reservation (Phase 5). Not tested: multiple displays, Stage Manager, apps with minimum sizes.
+
 ## Windows respect Portside: Phase 1 (2026-11-01)
 
 - [x] `DockReservation.swift`: `Reservation` (edge, depth, display frame; `band`, `usableFrame`) and a small store with an `onChange(old, new)` callback for Phase 2.

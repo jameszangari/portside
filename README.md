@@ -20,7 +20,7 @@ Personal project for Apple Silicon. Builds a locally signed `.app`; not meant fo
 
 ## Features
 
-- **Reveal:** event-driven edge tracking, non-activating panel, slide animation, multi-display, file-drag reveal, notification badges
+- **Reveal:** event-driven edge tracking, non-activating panel, slide animation, multi-display, file-drag reveal, notification badges, windows fit clear of the pinned dock (Accessibility)
 - **Apps:** pin, reorder, drag-out remove, Finder drops, running apps, recent apps, indicator and hidden-app options, Open at Login, native modifier clicks, launch bounce
 - **Activity icons:** camera (green), microphone (orange), playing audio (animated wave), working (CPU-based, per app)
 - **Layout:** Bottom / Left / Right, live icon size and gap, magnification with shelf
@@ -40,6 +40,7 @@ From [docs/CHECKLIST.md](docs/CHECKLIST.md) remaining backlog:
 - Import plain file tiles from `persistent-others` (folders already import)
 - Window list in the app menu; VoiceOver / keyboard navigation
 - Side-dock widget layout; window previews; profiles; Trash Option-click Empty
+- Reserved space: reflow windows when hiding is toggled, Settings toggle and Accessibility prompt
 
 ## Quick start
 

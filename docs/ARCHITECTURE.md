@@ -20,6 +20,7 @@ How Portside is put together. See also [PLAN.md](PLAN.md) for the original miles
 - The system's Cmd+Option+D shortcut toggles the native Dock's auto-hide. While Portside hides the native Dock, it makes the native Dock appear until restore.
 - Opening Settings turns Portside into a regular app (visible in Cmd+Tab and the native Dock) until the window closes. While Settings is the key window, auto-hide is suppressed so the strip stays visible; the saved preference is unchanged.
 - Cmd+Option+D may conflict with the system's own "Turn Dock hiding on/off" shortcut. Disable that one in System Settings to use Portside's.
+- Reserved space uses public Accessibility only (`AXObserver`, `AXUIElementSetAttributeValue`), active while hiding is off and Accessibility is granted. No app can shrink `visibleFrame` for others, so windows land under the dock first and are fitted after they settle (60ms, or 300ms after an animation or a re-fit: macOS re-applies Window > Fill's frame for 150 to 300ms after its last event). AX calls block on the target app, so observers run on their own thread and fitting on a serial queue with 0.25s AX timeouts; the reveal path never waits on another app. A window that resets its size three times in 2s, or refuses the frame twice, is left alone.
 
 ## Project layout
 
@@ -32,6 +33,7 @@ Sources/portside/
   DockModel.swift           Codable settings and entries, persistence to dock.json
   DockEdge.swift            Bottom/Left/Right enum and DockScreen (active display)
   DockReservation.swift     Space the pinned dock takes from its edge (depth, band, usable frame)
+  WindowFitter.swift        Accessibility observers that fit other apps' flush windows clear of the pinned dock
   DockStrip.swift           SwiftUI strip: tiles, widgets, separator, reorder, drops
   DockItem.swift            App tile, icon cache, launch/activate
   DockBadges.swift          Notification badges: visible-only reads and the badge chip

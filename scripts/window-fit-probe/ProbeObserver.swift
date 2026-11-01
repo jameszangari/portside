@@ -6,7 +6,7 @@ import ApplicationServices
 // a fake 80pt reserved band. Run through run.sh, which restores any
 // com.apple.dock or Rectangle value it touches.
 //
-// Modes: rect, native, gap, dock, dock2, dock3, all (rect + native + gap).
+// Modes: rect, native, gap, dock, dock2, dock3, fit, all (rect + native + gap).
 setvbuf(stdout, nil, _IOLBF, 0)
 func now() -> Double { CACurrentMediaTime() }
 func log(_ s: String) { print(String(format: "OBS    %.4f ", now()) + s) }
@@ -47,6 +47,7 @@ var observer: AXObserver?
 enum H { static func handle(_ el: AXUIElement, _ note: String) {
     let f = frame(el)
     log("AX \(phase) \(note) x=\(Int(f.minX)) y=\(Int(f.minY)) w=\(Int(f.width)) h=\(Int(f.height)) bottomAX=\(Int(f.maxY))")
+    settleEvent(el)
     guard clampOn else { return }
     let limit = screenH - reserve
     if f.maxY >= screenH - 2, f.maxY > limit + 1, clampCount < 3 {
@@ -166,6 +167,42 @@ if mode == "dock3" {
     step(0.3) { report("S rectangle max with dock shown") }
     step(3.0) { phase = "S-dock-hidden"; run("/usr/bin/defaults", ["write", "com.apple.dock", "autohide", "-bool", "true"]); run("/usr/bin/killall", ["Dock"]); log("dock autohide true + killall") }
     step(0.3) { report("S after dock hidden") }
+}
+// fit: no probe clamping. Run with Portside pinned to check WindowFitter.
+if mode == "fit" {
+    step(0.6) { phase = "F1-reset"; reset(); _ = front() }
+    step(1.0) { phase = "F1-rect-max"; rectangle("maximize") }
+    step(0.3) { report("F1 rectangle maximize") }
+    step(0.6) { phase = "F2-reset"; reset(); _ = front() }
+    step(1.0) { phase = "F2-rect-left-half"; rectangle("left-half") }
+    step(0.3) { report("F2 rectangle left half") }
+    step(0.6) { phase = "F3-reset"; reset(); _ = front() }
+    step(1.5) { phase = "F3-fill"; pressMenu("Fill") }
+    step(0.3) { report("F3 window fill") }
+    step(0.6) { phase = "F4-overlap"; if let w = window() { setFrame(w, CGRect(x: 300, y: 700, width: 600, height: 380)) } }
+    step(0.6) { report("F4 overlap, not flush (expect unchanged)") }
+}
+// fillwait: Fill, then one clamp after DELAY ms of quiet (env DELAY, default
+// 60). Shows whether macOS snaps a just-Filled window back.
+var settleItem: DispatchWorkItem?
+var settleArmed = false
+func settleEvent(_ el: AXUIElement) {
+    guard settleArmed else { return }
+    settleItem?.cancel()
+    let delay = Double(ProcessInfo.processInfo.environment["DELAY"] ?? "60") ?? 60
+    let item = DispatchWorkItem {
+        settleArmed = false
+        let f = frame(el)
+        setSize(el, CGSize(width: f.width, height: screenH - reserve - f.minY))
+        log("SETTLE clamp after \(Int(delay))ms quiet")
+    }
+    settleItem = item
+    DispatchQueue.main.asyncAfter(deadline: .now() + delay / 1000, execute: item)
+}
+if mode == "fillwait" {
+    step(0.6) { phase = "W-reset"; reset(); _ = front() }
+    step(2.0) { phase = "W-fill"; settleArmed = true; pressMenu("Fill") }
+    step(0.3) { report("W after fill + settle clamp") }
 }
 step(0.5) { if let w = window() { log("final frame \(frame(w))") }; exit(0) }
 for (time, f) in steps { DispatchQueue.main.asyncAfter(deadline: .now() + time, execute: f) }

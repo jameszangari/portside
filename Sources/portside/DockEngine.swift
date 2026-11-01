@@ -36,6 +36,8 @@ final class DockEngine {
     let badges = DockBadges()
     /// Screen space the dock takes while hiding is off.
     let reservation = DockReservation()
+    /// Fits other apps' windows clear of the reservation.
+    private let windowFitter = WindowFitter()
     private var reservationUpdateQueued = false
     private var reservationObservers: [NSObjectProtocol] = []
     private let flipKeys = MagnifyFlipKeys()
@@ -108,6 +110,8 @@ final class DockEngine {
         self.edgeTracker = EdgeTracker(edge: dockModel.edge)
         hover.setEdge(dockModel.edge)
         hover.look = { [weak dockModel] in dockModel?.look }
+
+        reservation.onChange = { [weak windowFitter] _, new in windowFitter?.setReservation(new) }
 
         interactions.onResizingChanged = { [weak self] resizing in
             guard let self else { return }
