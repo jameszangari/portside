@@ -45,6 +45,7 @@ final class DragOutController {
     var isFromStrip: Bool { source == .strip }
     private var itemID = ""
     private var onCancel: (() -> Void)?
+    private var removable = true
     private var monitor: Any?
     private var pendingDismiss: DispatchWorkItem?
 
@@ -61,7 +62,9 @@ final class DragOutController {
     /// (the caller sizes it). `onCancel` runs on Escape: put the item back.
     /// Returns a token for the other calls, so a gesture that never saw its
     /// end cannot touch the next drag.
-    func begin(itemID: String, source: Source, label: String, preview: AnyView, size: CGFloat, onCancel: @escaping () -> Void) -> Int {
+    /// With `removable` false (Trash) leaving the dock never offers removal.
+    func begin(itemID: String, source: Source, label: String, preview: AnyView, size: CGFloat,
+               removable: Bool = true, onCancel: @escaping () -> Void) -> Int {
         if isDragging {
             finish(remove: false, reason: "a new drag started")
         }
@@ -74,6 +77,7 @@ final class DragOutController {
         isOutside = false
         self.source = source
         self.itemID = itemID
+        self.removable = removable
         self.onCancel = onCancel
         state.label = label
         state.look = look?()
@@ -99,7 +103,7 @@ final class DragOutController {
         guard !isCanceled(token) else { return false }
         let point = NSEvent.mouseLocation
         let region = source == .strip ? stripRegion?() : gridRegion?()
-        let outside = region.map { !$0.insetBy(dx: -Self.threshold, dy: -Self.threshold).contains(point) } ?? false
+        let outside = removable && (region.map { !$0.insetBy(dx: -Self.threshold, dy: -Self.threshold).contains(point) } ?? false)
         if outside != isOutside {
             isOutside = outside
             state.phase = outside ? .outside : .inside
@@ -245,7 +249,7 @@ struct DragOutView: View {
         // Label is in the layout (not offset outside a fixed frame) so the
         // overlay panel grows to fit and AppKit does not clip the text.
         VStack(spacing: 4) {
-            if state.phase == .outside {
+            if state.phase == .outside, !state.label.isEmpty {
                 DockLabel(title: state.label, look: state.look)
             }
             ZStack {

@@ -150,6 +150,9 @@ struct DockStrip: View {
     @State private var appSpringLoad = AppSpringLoad()
     /// Tile frames in the strip's root space, for hit-testing drops.
     @State private var tileFrames: [HoverTarget] = []
+    /// Every layout slot's frame (apps, widgets, separators, ...) in the
+    /// strip's root space, for placing a dragged item.
+    @State private var layoutFrames: [String: CGRect] = [:]
 
     private var spacing: CGFloat { dockModel.iconGap }
     private let alongPadding: CGFloat = 8
@@ -165,15 +168,13 @@ struct DockStrip: View {
     private static let separatorHitAlong: CGFloat = 9
 
     /// Largest tile that still fits everything on screen, ignoring `iconSize`.
-    private func maxTileSize(extrasCount: Int, showsTrash: Bool, stackCount: Int, edge: DockEdge) -> CGFloat {
+    private func maxTileSize(extrasCount: Int, showsTrash: Bool, stackCount: Int, separators: Int, edge: DockEdge) -> CGFloat {
         let apps = dockModel.entries.count + extrasCount + (showsTrash ? 1 : 0) + stackCount
-        let rightSection = !widgets.hosts.isEmpty || showsTrash || stackCount > 0
-        let separators = (extrasCount > 0 ? 1 : 0) + (rightSection ? 1 : 0)
         let items = apps + widgets.hosts.count + separators
         // Horizontal: widgets are N tiles wide with gaps inside them.
         // Vertical: every item is one tile tall.
-        let units = edge.isVertical ? widgets.hosts.count : widgets.hosts.reduce(0) { $0 + shownSize($1, edge: edge).rawValue }
-        let innerWidgetGaps = edge.isVertical ? 0 : units - widgets.hosts.count
+        let units = widgets.hosts.reduce(0) { $0 + shownSize($1, edge: edge).rawValue }
+        let innerWidgetGaps = units - widgets.hosts.count
         let fixed = alongPadding * 2 + separatorLength * CGFloat(separators)
             + spacing * CGFloat(max(items - 1, 0) + innerWidgetGaps)
         let widgetMargins = 2 * IconMetrics.margin * CGFloat(widgets.hosts.count)
@@ -198,88 +199,42 @@ struct DockStrip: View {
         let folderStacks = dockModel.stacks
         let insertingStack = stackInsertIndex != nil
         let insertingEntry = entryInsertIndex != nil
+        let runningVisible = !extras.isEmpty || showsSelf
+        let widgetByID = Dictionary(widgets.hosts.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        // Everything on the dock, in the order the user arranged it.
+        let items = dockModel.resolvedLayout().filter { id in
+            if id == DockModel.runningID { return runningVisible }
+            if id.hasPrefix("widget:") { return widgetByID[String(id.dropFirst("widget:".count))] != nil }
+            return true
+        }
+        let separatorCount = items.filter { $0.hasPrefix(DockModel.separatorPrefix) }.count + (runningVisible && items.contains(DockModel.runningID) ? 1 : 0)
         let maxTile = maxTileSize(
             extrasCount: extras.count + (showsSelf ? 1 : 0) + (insertingEntry ? 1 : 0),
             showsTrash: showsTrash,
             stackCount: folderStacks.count + (insertingStack ? 1 : 0),
+            separators: separatorCount,
             edge: edge
         )
         let tile = min(dockModel.iconSize, maxTile)
         let spacing = self.spacing
+        let entryByID = Dictionary(dockModel.entries.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let stackByID = Dictionary(folderStacks.map { ($0.hoverID, $0) }, uniquingKeysWith: { a, _ in a })
+        let gaps = insertionGaps(items: items)
         // Items align to the far side so icons line up with widgets.
         let stack = edge.isVertical
             ? AnyLayout(VStackLayout(alignment: edge == .left ? .trailing : .leading, spacing: spacing))
             : AnyLayout(HStackLayout(alignment: .top, spacing: spacing))
 
         stack {
-            ForEach(Array(dockModel.entries.enumerated()), id: \.element.id) { index, entry in
-                if entryInsertIndex == index {
-                    insertionGap(tile: tile)
-                }
-                pinnedSlot(entry, tile: tile, vertical: edge.isVertical)
+            if gaps.leading { insertionGap(tile: tile) }
+            ForEach(items, id: \.self) { id in
+                if gaps.before == id { insertionGap(tile: tile) }
+                slot(id, tile: tile, maxTile: maxTile, edge: edge, extras: extras, showsSelf: showsSelf,
+                     entryByID: entryByID, stackByID: stackByID, widgetByID: widgetByID)
+                    .layoutSlot(id)
+                if gaps.after == id { insertionGap(tile: tile) }
             }
-            if entryInsertIndex == dockModel.entries.count {
-                insertionGap(tile: tile)
-            }
-
-            if !extras.isEmpty || showsSelf {
-                separator(tile: tile, maxTile: maxTile, edge: edge)
-                    .magnifiedShift()
-                ForEach(extras, id: \.0.id) { app, running in
-                    DockItemView(app: app, running: running, isPinned: false, size: tile, dockModel: dockModel, bouncer: bouncer,
-                                 badges: badges, isDropTarget: dropTargetID == app.id)
-                        .opacity(dragging == app.id ? 0 : 1)
-                        .gesture(unpinnedGroupDropGesture(for: app, tile: tile))
-                }
-                if showsSelf {
-                    PortsideTileView(size: tile) { interactions.onOpenSettings?() }
-                }
-            }
-
-            // Widgets, folder stacks, then Trash at the far end (native order
-            // for stacks and Trash; widgets are Portside-only before them).
-            if !widgets.hosts.isEmpty || !folderStacks.isEmpty || showsTrash || insertingStack {
-                separator(tile: tile, maxTile: maxTile, edge: edge)
-                    .magnifiedShift()
-                ForEach(widgets.hosts) { host in
-                    host.view
-                        .environment(\.widgetSize, shownSize(host, edge: edge))
-                        // Same visible air as an app icon's built-in margin.
-                        .padding(edge.isVertical ? .vertical : .horizontal, tile * IconMetrics.margin)
-                        .magnifiedShift()
-                        .opacity(dragging == host.id ? 0 : 1)
-                        .gesture(widgetDragGesture(for: host, tile: tile))
-                        .appKitContextMenu(edge: edge) { widgetMenu(host, edge: edge) }
-                }
-                ForEach(Array(folderStacks.enumerated()), id: \.element.id) { index, folder in
-                    if stackInsertIndex == index {
-                        insertionGap(tile: tile)
-                    }
-                    StackTileView(
-                        stack: folder,
-                        size: tile,
-                        isExpanded: stacks.expandedID == folder.id,
-                        isDropTarget: dropTargetID == folder.hoverID,
-                        onToggle: { interactions.onStackTapped?(folder.id) },
-                        onOpen: { stacks.openFolder(folder.id) },
-                        onRemove: { dockModel.removeStack(id: folder.id) },
-                        contents: stacks.contents,
-                        dockModel: dockModel
-                    )
-                    .opacity(dragging == folder.hoverID ? 0 : 1)
-                    .gesture(stackDragGesture(for: folder, tile: tile, vertical: edge.isVertical))
-                }
-                if stackInsertIndex == folderStacks.count {
-                    insertionGap(tile: tile)
-                }
-                if showsTrash {
-                    TrashTileView(
-                        trash: trash,
-                        size: tile,
-                        isDropTarget: dropTargetID == TrashController.hoverID || dragOverTrash
-                    )
-                }
-            }
+            if gaps.trailing { insertionGap(tile: tile) }
         }
         .environment(\.dockTileSize, tile)
         .environment(\.dockIconGap, spacing)
@@ -308,10 +263,12 @@ struct DockStrip: View {
         // hover target frames to screen coordinates.
         .coordinateSpace(name: DockHover.space)
         .onPreferenceChange(HoverTargetsKey.self) { targets in
-            magnifier.updateTiles(targets)
+            // Widgets get hover labels but never grow.
+            magnifier.updateTiles(targets.filter { !$0.id.hasPrefix("widget:") })
             hover.updateTargets(targets)
             tileFrames = targets
         }
+        .onPreferenceChange(LayoutFramesKey.self) { layoutFrames = $0 }
         // Fills the hosting view, which is bigger than the strip only while
         // magnified tiles need room. The strip stays against the screen edge
         // and centered along it, so adding room never moves it.
@@ -329,7 +286,93 @@ struct DockStrip: View {
         return apps
     }
 
-    /// Pinned entry with reorder; spacers also shift under magnification.
+    /// Where the Finder-drop insertion gap shows, among the layout's ids.
+    /// A new app lands right after the entry before the gap (or before the
+    /// first entry), a new folder the same way among folders.
+    private func insertionGaps(items: [String]) -> (leading: Bool, before: String?, after: String?, trailing: Bool) {
+        if let k = entryInsertIndex {
+            let ids = dockModel.entries.map(\.id).filter { items.contains($0) }
+            if ids.isEmpty { return (true, nil, nil, false) }
+            return k == 0 ? (false, ids[0], nil, false) : (false, nil, ids[min(k, ids.count) - 1], false)
+        }
+        if let k = stackInsertIndex {
+            let ids = dockModel.stacks.map(\.hoverID).filter { items.contains($0) }
+            if k == 0 {
+                if let first = ids.first { return (false, first, nil, false) }
+                if items.contains(DockModel.trashID) { return (false, DockModel.trashID, nil, false) }
+                return (false, nil, nil, true)
+            }
+            return (false, nil, ids[min(k, ids.count) - 1], false)
+        }
+        return (false, nil, nil, false)
+    }
+
+    /// One item of the layout.
+    @ViewBuilder private func slot(
+        _ id: String, tile: CGFloat, maxTile: CGFloat, edge: DockEdge,
+        extras: [(PinnedApp, NSRunningApplication)], showsSelf: Bool,
+        entryByID: [String: DockEntry], stackByID: [String: FolderStack], widgetByID: [String: WidgetHost]
+    ) -> some View {
+        if let entry = entryByID[id] {
+            pinnedSlot(entry, tile: tile, vertical: edge.isVertical)
+        } else if id == DockModel.runningID {
+            // The unpinned running apps and, while Settings is open, Portside
+            // itself, behind their own separator, moving as one block.
+            let block = edge.isVertical
+                ? AnyLayout(VStackLayout(alignment: edge == .left ? .trailing : .leading, spacing: spacing))
+                : AnyLayout(HStackLayout(alignment: .top, spacing: spacing))
+            block {
+                separator(tile: tile, maxTile: maxTile, edge: edge, id: nil)
+                    .magnifiedShift()
+                ForEach(extras, id: \.0.id) { app, running in
+                    DockItemView(app: app, running: running, isPinned: false, size: tile, dockModel: dockModel, bouncer: bouncer,
+                                 badges: badges, isDropTarget: dropTargetID == app.id)
+                        .opacity(dragging == app.id ? 0 : 1)
+                        .gesture(unpinnedGroupDropGesture(for: app, tile: tile))
+                }
+                if showsSelf {
+                    PortsideTileView(size: tile) { interactions.onOpenSettings?() }
+                }
+            }
+        } else if id.hasPrefix(DockModel.separatorPrefix) {
+            separator(tile: tile, maxTile: maxTile, edge: edge, id: id)
+                .magnifiedShift()
+        } else if id.hasPrefix("widget:"), let host = widgetByID[String(id.dropFirst("widget:".count))] {
+            host.view
+                .environment(\.widgetSize, shownSize(host, edge: edge))
+                // Same visible air as an app icon's built-in margin.
+                .padding(edge.isVertical ? .vertical : .horizontal, tile * IconMetrics.margin)
+                .magnifiedShift()
+                .opacity(dragging == host.id ? 0 : 1)
+                .gesture(widgetDragGesture(for: host, tile: tile))
+                .appKitContextMenu(edge: edge) { widgetMenu(host, edge: edge) }
+        } else if let folder = stackByID[id] {
+            StackTileView(
+                stack: folder,
+                size: tile,
+                isExpanded: stacks.expandedID == folder.id,
+                isDropTarget: dropTargetID == folder.hoverID,
+                onToggle: { interactions.onStackTapped?(folder.id) },
+                onOpen: { stacks.openFolder(folder.id) },
+                onRemove: { dockModel.removeStack(id: folder.id) },
+                contents: stacks.contents,
+                dockModel: dockModel
+            )
+            .opacity(dragging == folder.hoverID ? 0 : 1)
+            .gesture(stackDragGesture(for: folder, tile: tile, vertical: edge.isVertical))
+        } else if id == DockModel.trashID {
+            TrashTileView(
+                trash: trash,
+                size: tile,
+                isDropTarget: dropTargetID == TrashController.hoverID || dragOverTrash
+            )
+            .opacity(dragging == DockModel.trashID ? 0 : 1)
+            .gesture(trashDragGesture(tile: tile, vertical: edge.isVertical))
+        }
+    }
+
+    /// The size a widget shows at here: always Small on a side dock, the
+    /// user's pick on the bottom.
     private func shownSize(_ host: WidgetHost, edge: DockEdge) -> WidgetSize {
         dockModel.widgetSize(for: host.id, natural: host.size, edge: edge)
     }
@@ -365,6 +408,7 @@ struct DockStrip: View {
         return menu
     }
 
+    /// Pinned entry with reorder; spacers also shift under magnification.
     @ViewBuilder private func pinnedSlot(_ entry: DockEntry, tile: CGFloat, vertical: Bool) -> some View {
         let body = entryView(entry, tile: tile)
             // Gap while dragging: the floating DragOut preview follows the
@@ -407,7 +451,7 @@ struct DockStrip: View {
     /// A thin line between sections. Nearly invisible like the native Dock;
     /// spacing around it grows slightly with icon gap, and the hit
     /// area stays wide so resize and the menu always work.
-    private func separator(tile: CGFloat, maxTile: CGFloat, edge: DockEdge) -> some View {
+    private func separator(tile: CGFloat, maxTile: CGFloat, edge: DockEdge, id: String?) -> some View {
         let vertical = edge.isVertical
         let hitExtra = max(0, (Self.separatorHitAlong - 1) / 2)
         return Rectangle()
@@ -421,7 +465,7 @@ struct DockStrip: View {
             .padding(vertical ? .vertical : .horizontal, -hitExtra)
             .modifier(ResizePointer(edge: edge, isResizing: resizeStart != nil))
             .gesture(resizeGesture(maxTile: maxTile, tile: tile, edge: edge))
-            .appKitContextMenu(edge: edge) { dividerMenu() }
+            .appKitContextMenu(edge: edge) { dividerMenu(separatorID: id) }
             .accessibilityLabel("Dock separator")
     }
 
@@ -440,7 +484,7 @@ struct DockStrip: View {
     }
 
     /// Divider right-click, in the native Dock's order.
-    private func dividerMenu() -> NSMenu {
+    private func dividerMenu(separatorID: String?) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.addItem(ClosureMenuItem(dockModel.autoHide ? "Turn Hiding Off" : "Turn Hiding On") {
@@ -467,6 +511,20 @@ struct DockStrip: View {
         }
         spacers.submenu = spacerMenu
         menu.addItem(spacers)
+        menu.addItem(ClosureMenuItem("Add Separator") { withAnimation(.easeOut(duration: 0.15)) { dockModel.addSeparator() } })
+        if let separatorID {
+            let vertical = dockModel.edge.isVertical
+            menu.addItem(ClosureMenuItem(vertical ? "Move Separator Up" : "Move Separator Left") {
+                moveSeparator(separatorID, by: -1)
+            })
+            menu.addItem(ClosureMenuItem(vertical ? "Move Separator Down" : "Move Separator Right") {
+                moveSeparator(separatorID, by: 1)
+            })
+            menu.addItem(ClosureMenuItem("Remove Separator") {
+                withAnimation(.easeOut(duration: 0.15)) { dockModel.removeSeparator(id: separatorID) }
+            })
+        }
+        menu.addItem(ClosureMenuItem("Reset Layout") { withAnimation(.easeOut(duration: 0.15)) { dockModel.resetLayout() } })
         menu.addItem(ClosureMenuItem("Dock Settings...") { interactions.onOpenSettings?() })
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem("Quit Portside") { NSApp.terminate(nil) })
@@ -513,16 +571,14 @@ struct DockStrip: View {
         DragGesture(minimumDistance: 4, coordinateSpace: .named(DockHover.space))
             .onChanged { value in
                 if dragToken == nil {
-                    let start = dockModel.entries.firstIndex { $0.id == entry.id } ?? 0
+                    let start = dockModel.layoutIndex(of: entry.id) ?? 0
                     dragging = entry.id
                     dragStartIndex = start
                     dragOutside = false
                     stripLogger.info("reorder started: \(entry.id, privacy: .public)")
                     dragToken = dragOut.begin(itemID: entry.id, source: .strip, label: "Remove",
                                               preview: preview(for: entry, tile: tile), size: tile) {
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            dockModel.move(entryID: entry.id, toIndex: start, persist: false)
-                        }
+                        returnToStart(entry.id)
                         dragging = nil
                         dragOutside = false
                         interactions.onDragOverGroupTile?(nil)
@@ -546,19 +602,11 @@ struct DockStrip: View {
                     }
                 }
 
-                let slot: Int
                 if outside || overTrash || dropGroup.targetsGroup {
                     // Outside, Trash, or aiming at a group: hold the start slot.
-                    slot = dragStartIndex
+                    returnToStart(entry.id)
                 } else {
-                    let position = vertical ? value.location.y : value.location.x
-                    slot = steppedSlot(ids: dockModel.entries.map(\.id), dragged: entry.id,
-                                       position: position, vertical: vertical)
-                }
-                if dockModel.entries.firstIndex(where: { $0.id == entry.id }) != slot {
-                    withAnimation(.easeOut(duration: 0.12)) {
-                        dockModel.move(entryID: entry.id, toIndex: slot, persist: false)
-                    }
+                    followCursor(entry.id, at: value.location, vertical: vertical)
                 }
             }
             .onEnded { _ in
@@ -693,10 +741,12 @@ struct DockStrip: View {
     /// Widgets do not reorder in the strip, but one dragged clearly out and
     /// released is turned off, like "Remove Widget" in its menu.
     private func widgetDragGesture(for host: WidgetHost, tile: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 4, coordinateSpace: .named(DockStrip.space))
-            .onChanged { _ in
+        DragGesture(minimumDistance: 4, coordinateSpace: .named(DockHover.space))
+            .onChanged { value in
+                let layoutID = "widget:" + host.id
                 if dragToken == nil {
                     dragging = host.id
+                    dragStartIndex = dockModel.layoutIndex(of: layoutID) ?? 0
                     dragOutside = false
                     let preview = host.view
                         .environment(\.widgetSize, shownSize(host, edge: dockModel.edge))
@@ -707,6 +757,7 @@ struct DockStrip: View {
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     dragToken = dragOut.begin(itemID: host.id, source: .strip, label: "Remove",
                                               preview: AnyView(preview), size: tile + 8) {
+                        returnToStart(layoutID)
                         dragging = nil
                         dragOutside = false
                     }
@@ -716,6 +767,11 @@ struct DockStrip: View {
                 if outside != dragOutside { dragOutside = outside }
                 let overTrash = isScreenPointOverTrash(NSEvent.mouseLocation)
                 if overTrash != dragOverTrash { dragOverTrash = overTrash }
+                if outside || overTrash {
+                    returnToStart(layoutID)
+                } else {
+                    followCursor(layoutID, at: value.location, vertical: dockModel.edge.isVertical)
+                }
             }
             .onEnded { _ in
                 guard let token = dragToken else { return }
@@ -731,11 +787,50 @@ struct DockStrip: View {
                     }
                     return
                 }
-                guard dragOut.end(token) else { return }
+                guard dragOut.end(token) else {
+                    dockModel.saveOrder()
+                    return
+                }
                 withAnimation(removalAnimation) {
                     dockModel.setWidget(host.id, enabled: false)
                 }
                 stripLogger.info("widget removed by dragging out: \(host.id, privacy: .public)")
+            }
+    }
+
+    /// Trash moves anywhere on the dock. It can't be dragged out or removed
+    /// here (Settings > Show Trash does that); outside the dock it just goes
+    /// back.
+    private func trashDragGesture(tile: CGFloat, vertical: Bool) -> some Gesture {
+        let id = DockModel.trashID
+        return DragGesture(minimumDistance: 4, coordinateSpace: .named(DockHover.space))
+            .onChanged { value in
+                if dragToken == nil {
+                    dragging = id
+                    dragStartIndex = dockModel.layoutIndex(of: id) ?? 0
+                    dragOutside = false
+                    let preview = Image(nsImage: trash.icon)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: tile * IconMetrics.fullBleedScale, height: tile * IconMetrics.fullBleedScale)
+                    dragToken = dragOut.begin(itemID: id, source: .strip, label: "", preview: AnyView(preview), size: tile,
+                                              removable: false) {
+                        returnToStart(id)
+                        dragging = nil
+                        dragOutside = false
+                    }
+                }
+                guard let token = dragToken, !dragOut.isCanceled(token) else { return }
+                _ = dragOut.update(token)
+                followCursor(id, at: value.location, vertical: vertical)
+            }
+            .onEnded { _ in
+                guard let token = dragToken else { return }
+                dragToken = nil
+                dragging = nil
+                dragOutside = false
+                _ = dragOut.end(token, deferResolution: false)
+                dockModel.saveOrder()
             }
     }
 
@@ -744,7 +839,7 @@ struct DockStrip: View {
         DragGesture(minimumDistance: 4, coordinateSpace: .named(DockHover.space))
             .onChanged { value in
                 if dragToken == nil {
-                    let start = dockModel.stacks.firstIndex { $0.id == stack.id } ?? 0
+                    let start = dockModel.layoutIndex(of: stack.hoverID) ?? 0
                     dragging = stack.hoverID
                     dragStartIndex = start
                     dragOutside = false
@@ -755,9 +850,7 @@ struct DockStrip: View {
                     .environment(\.dockEdge, .bottom)
                     dragToken = dragOut.begin(itemID: stack.hoverID, source: .strip, label: "Remove",
                                               preview: AnyView(preview), size: tile) {
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            dockModel.moveStack(id: stack.id, toIndex: start, persist: false)
-                        }
+                        returnToStart(stack.hoverID)
                         dragging = nil
                         dragOutside = false
                     }
@@ -768,17 +861,10 @@ struct DockStrip: View {
                 let overTrash = isPointOverTrash(value.location)
                 if overTrash != dragOverTrash { dragOverTrash = overTrash }
                 if outside || overTrash {
-                    dockModel.moveStack(id: stack.id, toIndex: dragStartIndex, persist: false)
+                    returnToStart(stack.hoverID)
                     return
                 }
-                let position = vertical ? value.location.y : value.location.x
-                let slot = steppedSlot(ids: dockModel.stacks.map(\.hoverID), dragged: stack.hoverID,
-                                       position: position, vertical: vertical)
-                if dockModel.stacks.firstIndex(where: { $0.id == stack.id }) != slot {
-                    withAnimation(.easeOut(duration: 0.12)) {
-                        dockModel.moveStack(id: stack.id, toIndex: slot, persist: false)
-                    }
-                }
+                followCursor(stack.hoverID, at: value.location, vertical: vertical)
             }
             .onEnded { _ in
                 guard let token = dragToken else { return }
@@ -799,26 +885,52 @@ struct DockStrip: View {
                     }
                     stripLogger.info("stack removed by dragging out: \(stack.displayName, privacy: .public)")
                 } else {
-                    dockModel.moveStack(id: stack.id, toIndex: dockModel.stacks.firstIndex { $0.id == stack.id } ?? 0, persist: true)
+                    dockModel.saveOrder()
                 }
             }
     }
 
-    /// Where a dragged tile belongs in `ids` (model order, hover ids): it
-    /// steps past a neighbor only once the cursor crosses that neighbor's
-    /// midpoint, using the tiles' real frames (`DockHover.space`, the same
-    /// space as the drag location). Spacers, separators, padding and tiles
-    /// of different widths all count correctly, a cursor in a gap or off the
-    /// strip's cross axis changes nothing, and a neighbor still sliding
-    /// aside can never pull the tile back.
-    private func steppedSlot(ids: [String], dragged: String, position: CGFloat, vertical: Bool) -> Int {
-        guard var slot = ids.firstIndex(of: dragged) else { return 0 }
+    /// The item whose slot a dragged item should take: it steps past a
+    /// neighbor only once the cursor crosses that neighbor's midpoint, using
+    /// the slots' real frames (`DockHover.space`, the same space as the drag
+    /// location). Spacers, separators, widgets and tiles of different widths
+    /// all count correctly, a cursor in a gap or off the strip's cross axis
+    /// changes nothing, and a neighbor still sliding aside can never pull
+    /// the item back.
+    private func steppedTarget(dragged: String, position: CGFloat, vertical: Bool) -> String {
+        let ids = dockModel.resolvedLayout().filter { layoutFrames[$0] != nil }
+        guard let from = ids.firstIndex(of: dragged) else { return dragged }
         func mid(_ id: String) -> CGFloat? {
-            tileFrames.first { $0.id == id }.map { vertical ? $0.frame.midY : $0.frame.midX }
+            layoutFrames[id].map { vertical ? $0.midY : $0.midX }
         }
+        var slot = from
         while slot > 0, let m = mid(ids[slot - 1]), position < m { slot -= 1 }
         while slot < ids.count - 1, let m = mid(ids[slot + 1]), position > m { slot += 1 }
-        return slot
+        return ids[slot]
+    }
+
+    /// Moves a dragged item with the cursor (saved on release).
+    private func followCursor(_ id: String, at location: CGPoint, vertical: Bool) {
+        let target = steppedTarget(dragged: id, position: vertical ? location.y : location.x, vertical: vertical)
+        withAnimation(.easeOut(duration: 0.12)) {
+            _ = dockModel.moveLayoutItem(id, toSlotOf: target, persist: false)
+        }
+    }
+
+    /// Back to where the drag began.
+    private func returnToStart(_ id: String) {
+        withAnimation(.easeOut(duration: 0.12)) {
+            _ = dockModel.moveLayoutItem(id, toIndex: dragStartIndex, persist: false)
+        }
+    }
+
+    /// Separator menu: step past the next visible neighbor.
+    private func moveSeparator(_ id: String, by step: Int) {
+        let visible = dockModel.resolvedLayout().filter { layoutFrames[$0] != nil }
+        guard let i = visible.firstIndex(of: id), visible.indices.contains(i + step) else { return }
+        withAnimation(.easeOut(duration: 0.15)) {
+            _ = dockModel.moveLayoutItem(id, toSlotOf: visible[i + step])
+        }
     }
 
     private func isPointOverTrash(_ point: CGPoint) -> Bool {
@@ -1287,5 +1399,24 @@ private struct FileDropDelegate: DropDelegate {
         withAnimation(.easeOut(duration: 0.12)) {
             entryInsertIndex = index
         }
+    }
+}
+
+/// Each layout slot's frame, by layout id.
+private struct LayoutFramesKey: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
+private extension View {
+    func layoutSlot(_ id: String) -> some View {
+        background(GeometryReader { geo in
+            Color.clear.preference(
+                key: LayoutFramesKey.self,
+                value: [id: geo.frame(in: .named(DockHover.space))]
+            )
+        })
     }
 }

@@ -12,7 +12,7 @@ final class CalendarWidget: DockWidget {
         let date = today.formatted(.dateTime.weekday(.wide).month().day())
         switch access {
         case .unknown: return "\(date) · Click to connect Calendar"
-        case .denied: return "\(date) · Calendar access denied"
+        case .denied: return "\(date) · Calendar access denied · Click for Settings"
         case .granted:
             guard let next else { return "\(date) · No upcoming events" }
             let time = next.isAllDay ? "All day" : next.start.formatted(.dateTime.hour().minute())
@@ -37,12 +37,13 @@ final class CalendarWidget: DockWidget {
     @Published private(set) var next: NextEvent?
     @Published private(set) var access: Access = .unknown
 
+    private var requestingAccess = false
     private var store: EKEventStore?
     private var changeObserver: NSObjectProtocol?
     private let logger = Logger(subsystem: "com.james.portside", category: "Widgets")
 
     func start() {
-        updateAccess()
+        refresh()
     }
 
     func stop() {
@@ -50,9 +51,11 @@ final class CalendarWidget: DockWidget {
             NotificationCenter.default.removeObserver(changeObserver)
         }
         changeObserver = nil
+        store = nil
     }
 
     func refresh() {
+        updateAccess()
         today = Date()
         guard access == .granted, let store else {
             next = nil
@@ -74,38 +77,79 @@ final class CalendarWidget: DockWidget {
     }
 
     func activate() {
-        if EKEventStore.authorizationStatus(for: .event) == .notDetermined {
+        guard !requestingAccess else { return }
+        refresh()
+        let status = EKEventStore.authorizationStatus(for: .event)
+        logger.info("calendar: click authorization=\(status.rawValue) bundled=\(Bundle.main.bundleURL.pathExtension == "app")")
+        switch status {
+        case .notDetermined, .writeOnly:
+            // A bare SPM process inherits its terminal's privacy identity.
+            // Its embedded usage string cannot fix the terminal's consent.
+            guard Bundle.main.bundleURL.pathExtension == "app" else {
+                showAccessHelp("Quit this development build and open the signed Portside.app. macOS assigns Calendar permission to the terminal when Portside runs through swift run.")
+                return
+            }
+            requestingAccess = true
+            let store = eventStore()
             logger.info("calendar: requesting access")
-            EKEventStore().requestFullAccessToEvents { [weak self] granted, error in
+            store.requestFullAccessToEvents { [weak self] granted, error in
                 DispatchQueue.main.async {
-                    self?.logger.info("calendar: access granted=\(granted) error=\(error?.localizedDescription ?? "none", privacy: .public)")
-                    self?.updateAccess()
+                    guard let self else { return }
+                    self.requestingAccess = false
+                    self.logger.info("calendar: access granted=\(granted) error=\(error?.localizedDescription ?? "none", privacy: .public)")
+                    self.refresh()
+                    if !granted {
+                        self.showAccessHelp(error?.localizedDescription
+                            ?? "Calendar access was not granted. Enable full Calendar access for Portside in System Settings > Privacy & Security > Calendars.")
+                    }
                 }
             }
-            return
+        case .fullAccess:
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.iCal") {
+                NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+            }
+        default:
+            openPrivacySettings()
         }
-        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.iCal") {
-            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    private func openPrivacySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") {
+            NSWorkspace.shared.open(url)
         }
+    }
+
+    private func showAccessHelp(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Calendar connection needs attention"
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Open Calendar Settings")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertSecondButtonReturn { openPrivacySettings() }
+    }
+
+    /// Keep the requesting store alive and reuse it for event reads.
+    private func eventStore() -> EKEventStore {
+        if let store { return store }
+        let store = EKEventStore()
+        self.store = store
+        changeObserver = NotificationCenter.default.addObserver(
+            forName: .EKEventStoreChanged, object: store, queue: .main
+        ) { [weak self] _ in self?.refresh() }
+        return store
     }
 
     private func updateAccess() {
         switch EKEventStore.authorizationStatus(for: .event) {
         case .fullAccess:
             access = .granted
-            if store == nil {
-                let store = EKEventStore()
-                self.store = store
-                changeObserver = NotificationCenter.default.addObserver(
-                    forName: .EKEventStoreChanged, object: store, queue: .main
-                ) { [weak self] _ in self?.refresh() }
-            }
-        case .notDetermined:
+            _ = eventStore()
+        case .notDetermined, .writeOnly:
             access = .unknown
         default:
             access = .denied
         }
-        refresh()
     }
 
     var body: some View {

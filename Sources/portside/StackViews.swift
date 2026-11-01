@@ -55,7 +55,29 @@ struct StackTileView: View {
         }
     }
 
-    private var icon: some View {
+    @ViewBuilder private var icon: some View {
+        if preview.isEmpty { folderIcon } else { gridIcon }
+    }
+
+    /// Just the folder's own icon (Downloads, Documents and so on keep their
+    /// native artwork), the same size as an app icon, with no card behind it.
+    private var folderIcon: some View {
+        Image(nsImage: icons.icon(for: stack.url))
+            .resizable()
+            .interpolation(.high)
+            .frame(width: size * IconMetrics.fullBleedScale, height: size * IconMetrics.fullBleedScale)
+            .frame(width: size, height: size)
+            .background(
+                RoundedRectangle(cornerRadius: size * 0.25, style: .continuous)
+                    .fill(Color.primary.opacity(isDropTarget ? 0.22 : 0))
+                    .padding(-3)
+            )
+            .contentShape(Rectangle())
+            .menuHold(hold, onTap: onToggle)
+            .magnifiedIcon(id: stack.hoverID)
+    }
+
+    private var gridIcon: some View {
         let shown = preview
         let columns = shown.count > 4 ? 3 : max(shown.isEmpty ? 1 : 2, shown.count > 1 ? 2 : 1)
         // Drawn at an app icon's visible size so spacing matches the icons.
@@ -72,23 +94,16 @@ struct StackTileView: View {
                     .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5)
             )
             .overlay {
-                if shown.isEmpty {
-                    Image(nsImage: icons.icon(for: stack.url))
-                        .resizable()
-                        .interpolation(.high)
-                        .padding(drawn * 0.14)
-                } else {
-                    LazyVGrid(columns: grid, alignment: .leading, spacing: gap) {
-                        ForEach(shown) { item in
-                            Image(nsImage: icons.icon(for: item.url))
-                                .resizable()
-                                .interpolation(.high)
-                                .frame(width: cell, height: cell)
-                        }
+                LazyVGrid(columns: grid, alignment: .leading, spacing: gap) {
+                    ForEach(shown) { item in
+                        Image(nsImage: icons.icon(for: item.url))
+                            .resizable()
+                            .interpolation(.high)
+                            .frame(width: cell, height: cell)
                     }
-                    .padding(inset)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
+                .padding(inset)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
             .background(
                 RoundedRectangle(cornerRadius: size * 0.25, style: .continuous)

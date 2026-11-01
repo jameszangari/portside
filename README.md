@@ -35,6 +35,7 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 
 **Apps**
 - Pinned apps with running indicators, updated from `NSWorkspace` notifications.
+- Drag any tile to any slot: apps, groups, spacers, widgets, folders, and Trash can sit anywhere, in any order. Separators are items too: right-click one for Add Separator, Move Separator, Remove Separator, and Reset Layout. Trash can move but not be dragged out.
 - Drag to reorder. Drag an .app from Finder onto the strip to pin it (a tile-sized insertion gap opens at the drop slot, same as folders).
 - Drag an icon out of the dock to remove it, like the native Dock: the icon floats under the cursor for the whole drag (strip leaves a gap), a "Remove" label shows once it is clearly outside, and releasing it there removes it with a short poof (instant under Reduce Motion). Dragging back over the dock reorders as usual, and Escape puts it back. Works for app tiles, group tiles, and widgets (a group with apps in it asks first, see Groups); an app dragged out of an open group grid asks Remove from Group or Remove from Dock.
 - Drop files on an app tile to open them in that app, like the native Dock. Only tiles whose app can open the files highlight and accept the drop (Finder takes folders). A not-running pinned app launches with the bounce.
@@ -58,10 +59,11 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 
 **Widgets**
 - Clock, Battery, Calendar, Weather, System Stats, plus optional CPU and Memory tiles.
+- Calendar connects from the signed app, explains failed requests, and opens Calendar privacy settings when access is denied. Permission changes are checked on click and refresh.
 - Enable, disable, and reorder in Settings, or toggle from the menu bar item.
 - Every widget has a square (Small) design: an analog clock face, a Calendar-icon date with a dot for the next event, text-free concentric CPU (outer, blue) and memory (inner, purple) rings, and the existing Weather and Battery tiles. Side docks always use Small, so the column stays one tile wide.
 - Hover labels show live readings: CPU / memory percentages, battery and charging state, weather temperature and location, clock date/time, and Calendar date/event or access status. Labels refresh with widget data. Click actions are unchanged.
-- CPU, Memory and Battery show one large number without a tiny label or percent sign. Hover for the named percentage. System Stats keeps concentric rings; Wide adds color-matched numbers. CPU and Memory start disabled and open Activity Monitor.
+- CPU, Memory and Battery show one large number without a tiny label or percent sign. Hover for the named percentage. System Stats keeps concentric rings; Wide adds color-matched numbers with neutral CPU / RAM labels. CPU and Memory start disabled and open Activity Monitor.
 - Widget text uses system typography. At small dock sizes, Clock Wide shows just the time and Calendar shows the date with a status symbol and a red bar matching the date text width; secondary details stay in hover labels. Weather keeps its symbol and larger temperature.
 - On the bottom dock, Clock, Calendar and System Stats can be Small or Wide. Pick with the iOS-style size row in the widget's right-click menu (with Remove Widget and Edit Widgets...) or in Settings > Widgets.
 
@@ -79,8 +81,8 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - Dock background: Liquid Glass (macOS 26 and later, the default), Frosted, or Solid, with a Frost (or Opacity) slider, an optional tint color, and corner radius. Open group grids use the same look. Widgets keep their own frosted card whatever the Frost setting. Accessibility Reduce Transparency turns glass into opaque frosted live; Reduce Motion is respected for slides, springs, and the poof.
 
 **Folder stacks**
-- Filesystem folders pin in the right section (after widgets, before Trash), separate from app groups. Drag a folder from Finder onto the dock to add one (an insertion gap opens at the drop slot, like the native Dock); reorder among stacks; drag out or Remove from Dock to unpin.
-- Tile shows a mini grid of the folder's contents (folder icon when empty, or always with Display as Folder). Click opens the stack as a Grid, Fan, or List; click an item to open it. Fan curves up from the tile with a name beside each icon (first 10, then "N more in Finder"). Menu: Open, Show in Finder, View as, Sort by, Folders First, Show Hidden Files, Display as Folder, Remove from Dock. The open stack's ... button has the same view, sort, and filter choices. Settings are per stack.
+- Filesystem folders pin in the right section by default (after widgets and a separator, before Trash; drag to put it anywhere), separate from app groups. Drag a folder from Finder onto the dock to add one (an insertion gap opens at the drop slot, like the native Dock); reorder among stacks; drag out or Remove from Dock to unpin.
+- Tile shows a mini grid of the folder's contents (the folder's own icon, with no card, when empty or with Display as Folder). Click opens the stack as a Grid, Fan, or List; click an item to open it. Fan curves up from the tile with a name beside each icon (first 10, then "N more in Finder"). Menu: Open, Show in Finder, View as, Sort by, Folders First, Show Hidden Files, Display as Folder, Remove from Dock. The open stack's ... button has the same view, sort, and filter choices. Settings are per stack.
 - Sort by Custom Order (default: name, plus the slots you drop items into), Name, Date Added, Date Modified (newest first), or Kind. Drops choose a slot only in Custom Order with Grid or List; otherwise the item just lands in the folder.
 - Drop files or apps onto a stack (or into its open grid) to move them into the folder (copy if move fails). Dragging over a stack tile opens its grid immediately. In the open grid, an insertion gap follows the cursor so you choose the slot; order is kept in dock.json. Contents update via FSEvents (no polling).
 - Native Dock folder tiles from `persistent-others` import on first launch and via Import from macOS Dock, with their view (fan, grid, list), sort (name, date added, date modified, kind), and Display as Folder choice. Plain file tiles are still skipped.
@@ -117,6 +119,7 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 ## Planned
 
 From `docs/CHECKLIST.md` Remaining backlog:
+- Hand-check Calendar consent and reconnection in the signed app after the development-launch regression.
 - Hand-check Downloads permission retention across relaunches and rebuilds; signature stability is verified, macOS consent retention still needs confirmation.
 - Milestone F leftover: import plain file tiles from `persistent-others` (folders already import).
 - P3 leftovers: window list in the app menu; VoiceOver / keyboard navigation.
@@ -132,6 +135,8 @@ From `docs/CHECKLIST.md` Remaining backlog:
 swift build
 swift run portside
 ```
+
+Use `swift run` for launch smoke tests only. Quit it afterward and open the signed app with `open build/Portside.app` for Calendar testing and daily use. macOS can attribute a bare executable's Calendar request to its terminal instead of Portside.
 
 Restore the native Dock from the backup without starting the app:
 
@@ -206,6 +211,7 @@ The Settings window controls:
 - Show Trash in dock (`showTrash`, default `true`); dismissed Full Disk Access hint (`trashAccessHintDismissed`, default `false`)
 - Show notification badges (`showBadges`, default `true`); badge color (`badgeColor`: `macOS`, `accent`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `graphite` or `custom`, default `macOS`); custom badge color (`badgeCustomColor`, sRGB `{ red, green, blue, alpha }`, used when `badgeColor` is `custom`)
 - Widget sizes (`widgetSizes`: `{ kind: 1 | 2 }`, bottom dock only; 1 is Small, 2 is Wide; written only for widgets not at their own size)
+- Layout (`layout`, written only once you move something: ordered ids such as an app's id, `group:<id>`, `spacer:<id>`, `widget:<kind>`, `stack:<id>`, `trash`, `running`, `separator:<id>`; missing items are slotted in beside their own kind)
 - Folder stacks (`stacks`: `{ id, path, itemOrder?, view?, sort?, foldersFirst?, showHidden?, showAsFolder? }[]`, right section before Trash; `itemOrder` is child filenames for Custom Order placement; `view` is `grid` (default), `fan`, or `list`; `sort` is `manual` (default), `name`, `dateAdded`, `dateModified`, or `kind`; the rest are written only when on)
 - Magnification (`magnificationEnabled`) and Magnified size (`magnifiedSize`, points, 16 to 128, default 64)
 - Reveal delay, hide delay, animation duration (with reset to defaults)

@@ -171,11 +171,16 @@ private struct StatsView: View {
     }
 
     private func legend(_ metric: StatsMetric) -> some View {
-        Text("\(Int((value(metric) * 100).rounded()))")
-            .fixedSize()
-            .font(.system(size: max(11, tile * 0.30), weight: .semibold))
-            .monospacedDigit()
-            .foregroundStyle(metric.color)
-            .frame(maxWidth: .infinity, alignment: .trailing)
+        HStack(spacing: tile * 0.05) {
+            Text(metric.label)
+                .font(.system(size: max(8, tile * 0.12), weight: .medium))
+                .foregroundStyle(.secondary)
+            Text("\(Int((value(metric) * 100).rounded()))")
+                .font(.system(size: max(10, tile * 0.18), weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(metric.color)
+        }
+        .fixedSize()
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }

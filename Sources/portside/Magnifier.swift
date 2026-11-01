@@ -229,7 +229,9 @@ final class Magnifier: ObservableObject {
     /// content space. Unmagnified frames pass through unchanged.
     func displayFrame(id: String, base: CGRect) -> CGRect {
         guard layout.focus != nil else { return base }
-        return presentedFrame(base: base, scale: layout.scales[id] ?? 1, shift: layout.shifts[id] ?? 0)
+        // Items that don't magnify (widgets) still slide aside.
+        let shift = layout.shifts[id] ?? layout.shift(atCenter: edge.isVertical ? base.midY : base.midX)
+        return presentedFrame(base: base, scale: layout.scales[id] ?? 1, shift: shift)
     }
 
     func presentedFrame(base: CGRect, scale: CGFloat, shift: CGFloat) -> CGRect {

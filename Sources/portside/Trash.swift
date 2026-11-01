@@ -412,6 +412,7 @@ struct TrashTileView: View {
         Image(nsImage: trash.icon)
             .resizable()
             .interpolation(.high)
+            .frame(width: size * IconMetrics.fullBleedScale, height: size * IconMetrics.fullBleedScale)
             .frame(width: size, height: size)
             .background(
                 RoundedRectangle(cornerRadius: size * 0.25, style: .continuous)

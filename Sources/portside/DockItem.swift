@@ -10,6 +10,10 @@ private let itemLogger = Logger(subsystem: "com.james.portside", category: "Dock
 /// the same visible spacing, and icon gap 0 is the tightest the icons sit.
 enum IconMetrics {
     static let margin: CGFloat = 100.0 / 1024
+    /// The folder and Trash images fill nearly their whole frame (about 2 to
+    /// 4% margin against an app icon's 10%). Drawn at this scale inside the
+    /// tile they match an app icon's visible size and edge spacing.
+    static let fullBleedScale: CGFloat = 0.86
 }
 
 /// App icons, rendered once per app into a single bitmap that every tile

@@ -20,6 +20,30 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
+## System Stats Wide labels (2026-10-31)
+
+- [x] Wide System Stats legend: smaller color-matched numbers (~0.18× tile) with neutral CPU / RAM labels (~0.12× tile) beside them. Single CPU / Memory tiles and Small System Stats unchanged.
+- [x] Swift 6.4.2 / Xcode 27.2: `swift build` and `scripts/build-app.sh --install` pass; strict signature verification passes. Opened `~/Applications/Portside.app`; only that process is running.
+- [ ] Hand-check Wide System Stats at the current icon size.
+- README Features updated; no new setting or backlog feature.
+
+## Calendar date bar width (2026-10-31)
+
+- [x] Compact Calendar red bar takes its width from the date text layout instead of a fixed fraction of the tile. Single- and double-digit dates use the same layout rule in Small and Wide.
+- [x] Swift 6.4.2 / Xcode 27.2: `swift build` and `scripts/build-app.sh --install` pass; strict signature verification passes. Opened `~/Applications/Portside.app`; only that process is running.
+- [ ] Hand-check the bar against the date at the current icon size. Larger tiles keep their weekday header.
+- README Features and Planned reviewed; no new setting or backlog feature.
+
+## Calendar connection regression (2026-10-31)
+
+- [x] Reproduced from actual click logs: two requests returned `granted=false error=none`, leaving “Click to connect Calendar” unchanged. The running executable was `.build/out/Products/Debug/portside`, left behind by the typography verification.
+- [x] TCC logs attribute the Calendar request to `com.t3tools.t3code`, not the signed Portside app. This is a launch-context regression, not a swallowed widget click. Do not leave `swift run` running after smoke tests.
+- [x] Calendar now explains the signed-app requirement before an unbundled permission request, retains its requesting EventKit store, prevents concurrent requests, and shows failed-request recovery. Denied/restricted clicks open Calendar privacy settings; write-only access can request full access.
+- [x] Recheck authorization on refresh and click so external permission changes do not leave stale event/access state. No new timers, private APIs, settings, or persistence keys.
+- [x] Swift 6.4.2 / Xcode 27.2: `swift build` and `scripts/build-app.sh` pass; strict signature verification passes. `swift run portside` launched without reported errors and exited cleanly on SIGTERM. Opened `build/Portside.app` through Launch Services and verified it is the only Portside process; widget/engine startup logs are healthy. Signed app left running for the human consent test.
+- [ ] Human: click Calendar in the signed app, approve access if prompted, confirm event/no-event label, then click again to open Calendar. If denied, click to open Calendars privacy settings, enable access, and click again.
+- Test limitation: macOS TCC attribution and consent require the actual launched app and human permission UI; a mocked EventKit unit test would not reproduce this regression. Captured request/TCC logs are the regression evidence.
+
 ## Widget typography follow-up (2026-10-31)
 
 Supersedes the inline labels from the activity widget pass below.
@@ -58,6 +82,11 @@ Supersedes the inline labels from the activity widget pass below.
 - [x] `swift build` and `scripts/build-app.sh` succeeded. The release bundle passes strict signature verification; its designated requirement now uses the bundle identifier and certificate fingerprint instead of a binary hash. Two different temporary executables signed with this identity had different code hashes but identical designated requirements. `swift run portside --export-icon` and the signed bundle's export command both launched and wrote PNGs successfully. Full permission UI behavior remains a hand test.
 - [ ] Human: install, Allow Downloads once for the new signing identity, quit/reopen twice, rebuild/reinstall, and confirm Downloads does not ask again. This requires the macOS consent UI; permissions remain managed by macOS.
 
+### Release compiler warnings (2026-10-31)
+
+- [x] Explicitly discard layout-move results inside three animation closures so `withAnimation` returns `Void` without unused-result warnings.
+- [x] `swift build` and `scripts/build-app.sh` succeeded without these warnings; bundle assembly and signing completed. `swift run portside` stayed running until stopped with Ctrl+C, with no launch error reported.
+- README Features and Planned reviewed: no user-facing feature or setting changed in this compiler-warning cleanup.
 
 Ordered for daily-driver impact. One slice at a time; hand-test gate after each. Milestones A to E and most of F/P1/P2/P3 are already shipped; this is what is left.
 
@@ -91,12 +120,14 @@ Status (2026-10-31): built. Settings always centers on the primary display; Icon
 - [x] **Icon gap slider:** Settings > General > Dock, under Icon size. Range 0 to 8pt, default 6. Live apply, persisted as `iconGap` in `dock.json`. Strip, multi-unit widgets, hover slop, and magnifier slot math all use it on Bottom/Left/Right.
 - [x] **Icon gap vs separators:** icon gap now spaces only tiles (apps, groups, folders, widgets, Trash). Section separator air per side is `5 + iconGap` (separator pads itself by a constant 5), so it tracks the gap. Hit target stays at least 9pt so resize/menu work at gap 0.
 - [x] **Same minimum spacing for every item:** app icons carry a built-in transparent margin (100/1024 of the tile per side, measured on system icons), so at gap 0 they never touch. Widgets now pad by that margin along the dock, and group/folder tiles draw their rounded square at the icon's visible size (`IconMetrics.margin` in DockItem.swift). Gap 0 = app-icon spacing everywhere; fit-to-screen math includes the widget margins.
+- [x] **Separator between widgets and folders/Trash:** the right section now reads widgets | folders and Trash. The extra separator shows only when widgets exist and a folder, Trash, or a folder-drop gap follows; fit-to-screen math counts it. Same resize and menu behavior as the other separators.
+- [x] **Even right edge:** the system folder and Trash images have only a 4% / 2% transparent margin (app icons 10%, measured), so Trash hugged the dock edge and the folder sat tight against its neighbors. Both are now drawn at `IconMetrics.fullBleedScale` (0.86) inside the tile, matching an app icon's visible size and edge spacing.
 
 #### Hand test
 - [ ] 1. Close Settings if open. Menu bar > Settings: window opens centered on the main display. Close. Separator > Dock Settings: same spot and size. Move the window, close, reopen: back to that center (not where you left it).
 - [ ] 2. Open Settings while the cursor is near a screen edge or (if available) on another display: still primary-center, not under the cursor.
 - [ ] 3. General > Icon gap: drag 0 to 8 while the dock is visible; tiles tighten/loosen live. At 0, widgets, groups, folders and Trash sit as far apart as app icons do (none touch). At 0 and 8, space around each separator stays the same. Default 6 matches the previous look. Relaunch: value kept.
-- [ ] 4. Switch to Left and Right: same gap along the column. Reveal timing unchanged. Separator still draggable / right-clickable at gap 0.
+- [ ] 4. With widgets, a folder and Trash showing: a separator sits between the widgets and the folder, none between folder and Trash. Hide the widgets or Trash: no stray separator. Switch to Left and Right: same gap along the column. Reveal timing unchanged. Separator still draggable / right-clickable at gap 0.
 
 ### 2. App groups (gaps vs native feel)
 
@@ -119,6 +150,50 @@ Already shipped: create/rename from menus and Settings, Finder drop into group, 
 - [ ] 4. Open a group; drag a member to a new slot inside the grid: order updates, no alert. Drag a member clearly out: Remove from Group / Remove from Dock alert as before.
 - [ ] 5. Reveal timing unchanged.
 
+### 2b. Free layout (move anything anywhere)
+
+Status (2026-10-31): built, `swift build` clean, app launches (also with a hand-edited test layout containing a stale id, which loaded fine). Synthetic mouse input can't reveal the dock, so the drags are untested. Hand test pending.
+
+- [x] **One order for everything:** `layout` in `dock.json` is a list of ids: apps, groups and spacers (their entry ids), `widget:<kind>`, `stack:<id>`, `trash`, `running` (the unpinned running apps plus Portside's own tile, with their separator, moving as one block), and `separator:<id>`. Empty (the default) means the old look, so nothing moves until you move something. `DockModel.resolvedLayout()` drops stale ids and slots new items beside their own kind (a new app after the previous app, a widget after the previous widget, a folder before Trash), so a saved layout never goes stale. The per-kind arrays (`entries`, `stacks`, `widgetKinds`) are kept in the same relative order, so Settings, import and groups still see a sane list.
+- [x] **Drag any tile to any slot:** apps, groups, spacers, widgets, folders and Trash. A dragged item steps past a neighbor when the cursor crosses its midpoint, using the real slot frames (`LayoutFramesKey`), same rule as the reorder fix. Drag out still removes apps, groups, spacers, widgets and folders; Trash only moves (it never offers removal, `removable: false` in DragOut). Escape puts the item back; saved on release.
+- [x] **Separators are items:** divider right-click now has Add Separator (at the end), Move Separator Left/Right (Up/Down on side docks), Remove Separator, and Reset Layout. Dragging a separator still resizes the icons.
+- [x] **Finder-drop gap:** a new app lands right after the entry before the gap (or before the first entry); a new folder likewise among folders. Settings widget reordering keeps a saved layout in step.
+- [x] Fit-to-screen counts every separator in the layout.
+
+#### Hand test
+- [ ] 1. Drag an app to the far right, past the widgets and Trash. Then drag a widget in between two apps, a folder to the very start, and Trash to the middle. Each follows the cursor without flicker; relaunch keeps the order.
+- [ ] 2. Drag Trash out of the dock and release: it goes back, no poof and no label. Escape mid-drag puts any item back.
+- [ ] 3. Drag an app onto Trash / a group tile: still asks / joins as before. Drag a widget out: still removed.
+- [ ] 4. Right-click a separator: Add Separator adds one at the end; Move Separator Left/Right shifts it; Remove Separator deletes it. Reset Layout restores apps, widgets, folders, Trash.
+- [ ] 5. Pin a new app from Finder with a custom layout: the dashed gap shows where it will land and it lands there.
+- [ ] 6. Left and Right docks: same drags along the column; reveal timing unchanged.
+
+Known gaps (layout):
+- Separators move through the menu, not by dragging (their drag resizes the icons).
+- With a custom layout the "Move" order in Settings > Widgets and the dock can differ only if you reorder in one place; the last change wins in both.
+
+### 2c. Square widgets and widget sizes
+
+Status (2026-10-31): built, `swift build` clean, app launches. The three new square designs were rendered offscreen at 48pt and checked (clock face reads the right time, text fits). Menu and Settings picker untested by hand.
+
+- [x] **Square (1:1) design for every widget:** Clock is an analog face (12 ticks, hour and minute hands, orange center); Calendar is weekday over date like the Calendar icon, with a dot in the next event's color; System Stats is concentric rings (CPU outer blue, memory inner purple, round caps from 12 o'clock) with both percents inside in the ring colors; its Wide design is the same rings beside a CPU/MEM legend. Both rendered offscreen at 48pt and fit. Weather and Battery were already square. Tooltips carry the detail the square drops (full date, next event, both percents).
+- [x] **Side docks always Small:** the left/right column is one tile wide (it was as wide as the Wide widgets). Fit-to-screen math uses each widget's shown size.
+- [x] **Size per widget on the bottom dock (iOS-style):** right-click a widget for Remove Widget, Edit Widgets..., and a size row of outlines (square, wide) with the current one highlighted (`WidgetSizePicker`, a SwiftUI view inside an NSMenu item). The same picker sits on each enabled row in Settings > Widgets. Saved as `widgetSizes` (only non-default sizes); default stays each widget's own design.
+
+- [x] **Widget hover labels:** widgets are hover targets now, so the native-style label names what a click opens (`DockWidget.hoverTitle`: Activity Monitor for System Stats, Battery Settings for Battery, else the widget name). They stay out of the magnifier's tiles (never grow), and a widget slid aside by magnification keeps its label on it. The old AppKit tooltips are gone.
+
+#### Hand test
+- [ ] 1. Switch to a Left or Right dock: every widget is square and the column is one tile wide. Clock shows a face with the right time; Calendar shows weekday + date; Stats shows both bars.
+- [ ] 2. Bottom dock: right-click Clock. The menu shows Remove Widget, Edit Widgets..., and two size outlines. Click the square: menu closes, Clock turns into the face. Click Wide again from the menu: back to the digital clock. Relaunch keeps it.
+- [ ] 3. Weather and Battery menus show no size row (they only have Small).
+- [ ] 4. Settings > Widgets: size outlines appear on Clock, Calendar and System Stats rows and change the dock live.
+- [ ] 5. Dragging a Small widget around (free layout) still works; the floating preview is square.
+- [ ] 6. Hover each widget: label shows Clock / Calendar / Weather / Activity Monitor / Battery Settings, like an app's label. With magnification on, widgets don't grow and the label stays on the widget.
+- [ ] 7. System Stats rings: outer blue (CPU) and inner purple (memory) track the numbers over a few seconds.
+
+Known gaps:
+- No Extra Wide (3-tile) or taller sizes yet; every design is one tile tall.
+
 ### 3. Folder stacks (P2 leftovers)
 
 Status (2026-10-31): built, `swift build` clean, app launches and the existing Downloads stack loads. Hand test pending.
@@ -128,7 +203,7 @@ Already shipped: pin folder from Finder, grid popover, drop-in, FSEvents, import
 - [x] **List view:** rows with icon, name, and a detail that follows the sort (date for the date sorts, kind otherwise). Scrolls past 320pt. Drop slot uses height only.
 - [x] **View picker:** tile right-click > View as (Grid, Fan, List), and the `...` button in the open stack's header. Persisted per stack as `view`.
 - [x] **Sort / filter:** Custom Order (default), Name, Date Added, Date Modified (newest first), Kind; Folders First; Show Hidden Files. Persisted per stack (`sort`, `foldersFirst`, `showHidden`). Changing one re-reads the folder, so the open stack updates live.
-- [x] **Show as folder vs stack of icons:** Display as Folder (`showAsFolder`) draws the folder's own icon on the tile.
+- [x] **Show as folder vs stack of icons:** Display as Folder (`showAsFolder`), and any empty folder, draws just the folder's own icon (the system's, so Downloads, Documents and so on keep their native artwork) at full tile size like an app icon, with no card or border. The mini-grid "stack of icons" look keeps its card.
 - [x] **Import:** native `showas`, `arrangement` and `displayas` map onto view, sort and Display as Folder when stacks import.
 - [x] Fixes found on the way: a file change refreshed a stack with the settings it had when first watched (stale `itemOrder`); a refresh queued during a read reused stale settings. Both now use the newest stack.
 - [ ] Milestone F leftover: import plain file tiles from `persistent-others` (folders already import)
@@ -139,7 +214,7 @@ Already shipped: pin folder from Finder, grid popover, drop-in, FSEvents, import
 - [ ] 3. View as List: rows with a kind (or date) on the right; scrolls when long. Click opens.
 - [ ] 4. Open the stack and use the `...` button in its header: pick Sort by Date Modified, then Name: the order changes live while open. Does the menu open and close without the dock hiding?
 - [ ] 5. Folders First and Show Hidden Files: items regroup / dotfiles appear and disappear.
-- [ ] 6. Display as Folder: tile shows the plain folder icon; turn off: mini grid returns.
+- [ ] 6. Display as Folder: tile shows the plain folder icon at the same size as the app icons, with no background or border (Downloads shows its native Downloads icon); turn off: mini grid returns.
 - [ ] 7. Drop a file into the open stack: Custom Order + Grid or List shows the dashed slot; Fan or any other sort just drops in.
 - [ ] 8. Quit and relaunch: view, sort and filters are kept per stack.
 - [ ] 9. Try the Fan on a Left and a Right dock; reveal timing unchanged.
@@ -1754,3 +1829,13 @@ Status: done and hand-tested by James.
 - Logs: `/usr/bin/log stream --level info --predicate 'subsystem == "com.james.portside"'` (use the full path; zsh has a `log` builtin).
 - `Info.plist` at the repo root is not used by the SPM executable; the accessory policy is set in code instead.
 - Panel is 316x80 for the 5 placeholder tiles, centered horizontally on the primary display.
+
+## Follow-up: widget contrast and side label tail
+
+- [x] Replace the compact System Stats percentage stack's negative spacing with a positive gap proportional to the tile size (4%), so the CPU and memory rows stay separated on side docks. Wide layout unchanged. Planned features reviewed; no backlog change.
+- [x] Increase the compact rings' diameter, reduce their stroke and inter-ring gap, and narrow the centered text with a slightly smaller bold font so the percentages have clearance from the inner ring.
+- [x] `swift build` succeeded after the clearance changes; `swift run portside` launched without a reported error and was stopped with Ctrl+C. Wide ring geometry is unchanged.
+- [ ] Hand-check the percentage gap and inner-ring clearance at the user's icon size on Left and Right, including three-digit percentages.
+- [x] System Stats percentages use larger, heavier white text and the wide legend uses brighter, larger labels for contrast against its dark widget card. The bottom layout is unchanged.
+- [ ] Verify on-device at the user's icon size, especially the two percentages in the compact side-dock tile.
+- [ ] Verify hover label tail points toward the dock on both Left and Right; the path maps the bottom tail to the inner edge for each side orientation.

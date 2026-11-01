@@ -285,6 +285,146 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    // MARK: - Layout (where everything sits)
+
+    /// The order of everything on the dock, left to right (top to bottom on
+    /// a side dock): item ids from `entries` (apps, groups, spacers),
+    /// `widget:<kind>`, `stack:<id>`, `trash`, `running` (the unpinned
+    /// running apps), and `separator:<id>`. Empty means the default look:
+    /// apps, running apps, widgets, folders, Trash, with separators between
+    /// the sections. Items that appear later are slotted in next to their
+    /// own kind, so a saved layout never goes stale.
+    @Published private(set) var layout: [String] = []
+
+    static let trashID = "trash"
+    static let runningID = "running"
+    static let separatorPrefix = "separator:"
+
+    /// `layout` checked against what exists now: stale ids dropped, new items
+    /// placed beside their own kind, the default when nothing was saved.
+    func resolvedLayout() -> [String] {
+        let entryIDs = entries.map(\.id)
+        let widgetIDs = widgetKinds.map { "widget:" + $0 }
+        let stackIDs = stacks.map(\.hoverID)
+        guard !layout.isEmpty else {
+            var list = entryIDs + [Self.runningID]
+            let rightSection = !widgetIDs.isEmpty || !stackIDs.isEmpty || showTrash
+            if rightSection { list.append(Self.separatorPrefix + "default-1") }
+            list += widgetIDs
+            if !widgetIDs.isEmpty && (!stackIDs.isEmpty || showTrash) { list.append(Self.separatorPrefix + "default-2") }
+            list += stackIDs
+            if showTrash { list.append(Self.trashID) }
+            return list
+        }
+        var valid = Set(entryIDs + widgetIDs + stackIDs)
+        valid.insert(Self.runningID)
+        if showTrash { valid.insert(Self.trashID) }
+        var seen = Set<String>()
+        var list = layout.filter { (valid.contains($0) || $0.hasPrefix(Self.separatorPrefix)) && seen.insert($0).inserted }
+
+        func place(_ id: String, after previous: String?, before next: String?, fallback: Int) {
+            guard !list.contains(id) else { return }
+            if let previous, let i = list.firstIndex(of: previous) {
+                list.insert(id, at: i + 1)
+            } else if let next, let i = list.firstIndex(of: next) {
+                list.insert(id, at: i)
+            } else {
+                list.insert(id, at: min(fallback, list.count))
+            }
+        }
+        for (i, id) in entryIDs.enumerated() {
+            place(id, after: i > 0 ? entryIDs[i - 1] : nil,
+                  before: entryIDs.dropFirst(i + 1).first { list.contains($0) }, fallback: 0)
+        }
+        place(Self.runningID, after: entryIDs.last, before: nil, fallback: 0)
+        for (i, id) in widgetIDs.enumerated() {
+            let next = (stackIDs + (showTrash ? [Self.trashID] : [])).first { list.contains($0) }
+            place(id, after: i > 0 ? widgetIDs[i - 1] : nil, before: next, fallback: list.count)
+        }
+        for (i, id) in stackIDs.enumerated() {
+            place(id, after: i > 0 ? stackIDs[i - 1] : nil,
+                  before: showTrash ? Self.trashID : nil, fallback: list.count)
+        }
+        if showTrash { place(Self.trashID, after: nil, before: nil, fallback: list.count) }
+        return list
+    }
+
+    func layoutIndex(of id: String) -> Int? {
+        resolvedLayout().firstIndex(of: id)
+    }
+
+    /// Moves an item to a slot (index in `resolvedLayout()`). Returns whether
+    /// anything moved. Saved only with `persist` (a drag saves on release).
+    @discardableResult
+    func moveLayoutItem(_ id: String, toIndex index: Int, persist shouldPersist: Bool = true) -> Bool {
+        var list = resolvedLayout()
+        guard let from = list.firstIndex(of: id) else { return false }
+        let item = list.remove(at: from)
+        let to = min(max(index, 0), list.count)
+        list.insert(item, at: to)
+        guard list != resolvedLayout() else { return false }
+        commitLayout(list, persist: shouldPersist)
+        return true
+    }
+
+    /// Moves an item into the slot another item holds (after it when moving
+    /// toward the end, before it when moving toward the start).
+    @discardableResult
+    func moveLayoutItem(_ id: String, toSlotOf other: String, persist shouldPersist: Bool = true) -> Bool {
+        let list = resolvedLayout()
+        guard id != other, let target = list.firstIndex(of: other) else { return false }
+        return moveLayoutItem(id, toIndex: target, persist: shouldPersist)
+    }
+
+    func addSeparator() {
+        var list = resolvedLayout()
+        list.append(Self.separatorPrefix + UUID().uuidString)
+        commitLayout(list, persist: true)
+    }
+
+    func removeSeparator(id: String) {
+        var list = resolvedLayout()
+        guard list.contains(id), id.hasPrefix(Self.separatorPrefix) else { return }
+        list.removeAll { $0 == id }
+        commitLayout(list, persist: true)
+    }
+
+    /// Back to the default arrangement (apps, running apps, widgets, folders,
+    /// Trash). The order of apps, widgets and folders among themselves stays.
+    func resetLayout() {
+        guard !layout.isEmpty else { return }
+        layout = []
+        persist()
+    }
+
+    /// Stores `list` and keeps the per-kind arrays in the same order.
+    private func commitLayout(_ list: [String], persist shouldPersist: Bool) {
+        layout = list
+        let rank = Dictionary(list.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { a, _ in a })
+        let sortedEntries = entries.sorted { (rank[$0.id] ?? .max) < (rank[$1.id] ?? .max) }
+        if sortedEntries.map(\.id) != entries.map(\.id) { entries = sortedEntries }
+        let sortedStacks = stacks.sorted { (rank[$0.hoverID] ?? .max) < (rank[$1.hoverID] ?? .max) }
+        if sortedStacks.map(\.id) != stacks.map(\.id) { stacks = sortedStacks }
+        let sortedKinds = widgetKinds.sorted { (rank["widget:" + $0] ?? .max) < (rank["widget:" + $1] ?? .max) }
+        if sortedKinds != widgetKinds { widgetKinds = sortedKinds }
+        if shouldPersist { persist() }
+    }
+
+    /// An order changed somewhere else (Settings widget list, stack moves):
+    /// keep a saved layout in step by refilling that kind's slots in the new
+    /// order.
+    private func syncLayout(toOrderOf ids: [String]) {
+        guard !layout.isEmpty else { return }
+        var list = resolvedLayout()
+        let set = Set(ids)
+        var queue = ids.filter { list.contains($0) }[...]
+        for i in list.indices where set.contains(list[i]) {
+            guard let next = queue.popFirst() else { break }
+            list[i] = next
+        }
+        layout = list
+    }
+
     // MARK: - Folder stacks
 
     /// Filesystem folder stacks in the right section (before Trash), in order.
@@ -318,6 +458,7 @@ final class DockModel: Codable, ObservableObject {
         list.insert(item, at: min(max(index, 0), list.count))
         guard list != stacks else { return }
         stacks = list
+        syncLayout(toOrderOf: list.map(\.hoverID))
         if shouldPersist { persist() }
     }
 
@@ -469,6 +610,7 @@ final class DockModel: Codable, ObservableObject {
         kinds.move(fromOffsets: source, toOffset: destination)
         guard kinds != widgetKinds else { return }
         widgetKinds = kinds
+        syncLayout(toOrderOf: kinds.map { "widget:" + $0 })
         persist()
     }
 
@@ -479,6 +621,7 @@ final class DockModel: Codable, ObservableObject {
         var kinds = widgetKinds
         kinds.swapAt(index, index + offset)
         widgetKinds = kinds
+        syncLayout(toOrderOf: kinds.map { "widget:" + $0 })
         persist()
     }
 
@@ -518,6 +661,7 @@ final class DockModel: Codable, ObservableObject {
         let entry = list.remove(at: from)
         list.insert(entry, at: to)
         entries = list
+        syncLayout(toOrderOf: list.map(\.id))
         if shouldPersist { persist() }
     }
 
@@ -671,7 +815,7 @@ final class DockModel: Codable, ObservableObject {
         case hideNativeDock, nativeDockExplained
         case showTrash, trashAccessHintDismissed
         case showBadges, badgeColor, badgeCustomColor
-        case stacks, widgetSizes
+        case stacks, layout, widgetSizes
         case iconStyle, backgroundStyle, backgroundFrost, backgroundTint, cornerRadius
         /// Before Milestone D: a flat list of apps. Read only, for migration.
         case pinnedApps
@@ -707,6 +851,7 @@ final class DockModel: Codable, ObservableObject {
         badgeColor = (try? c.decodeIfPresent(BadgeColor.self, forKey: .badgeColor)) ?? .macOS
         badgeCustomColor = (try? c.decodeIfPresent(RGBAColor.self, forKey: .badgeCustomColor)) ?? BadgeColor.defaultCustom
         stacks = (try? c.decodeIfPresent([FolderStack].self, forKey: .stacks)) ?? []
+        layout = (try? c.decodeIfPresent([String].self, forKey: .layout)) ?? []
         widgetSizes = (try? c.decodeIfPresent([String: WidgetSize].self, forKey: .widgetSizes)) ?? [:]
         openGroupsOnHover = try c.decodeIfPresent(Bool.self, forKey: .openGroupsOnHover) ?? false
         groupHoverDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverDelay) ?? Defaults.groupHoverDelay, to: Self.groupHoverDelayRange)
@@ -743,6 +888,7 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(badgeColor, forKey: .badgeColor)
         try c.encode(badgeCustomColor, forKey: .badgeCustomColor)
         try c.encode(stacks, forKey: .stacks)
+        if !layout.isEmpty { try c.encode(layout, forKey: .layout) }
         if !widgetSizes.isEmpty { try c.encode(widgetSizes, forKey: .widgetSizes) }
         try c.encode(openGroupsOnHover, forKey: .openGroupsOnHover)
         try c.encode(groupHoverDelay, forKey: .groupHoverDelay)
@@ -904,6 +1050,7 @@ final class DockModel: Codable, ObservableObject {
         entries = old.entries
         stacks = old.stacks
         widgetKinds = old.widgetKinds
+        layout = old.layout
         widgetSizes = old.widgetSizes
         persist()
         try? FileManager.default.removeItem(at: Self.beforeImportURL)
