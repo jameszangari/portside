@@ -146,15 +146,11 @@ struct PortsideApp: App {
             }
             .keyboardShortcut("q")
         } label: {
-            // Temporary: icon plus text so the item is easy to spot and to
-            // find in Bartender's item list. Back to icon only before release.
-            HStack(spacing: 4) {
-                // Template image (brand mark, black with alpha): macOS tints
-                // it for light, dark, and tinted menu bars.
-                Image(nsImage: BrandAssets.menuBarIcon)
-                Text("Portside")
-            }
-            .accessibilityLabel("Portside")
+            // Template image (brand mark, black with alpha): macOS tints it
+            // for light, dark, and tinted menu bars. Icon only, so menu bar
+            // managers like Bartender see a standard-width item.
+            Image(nsImage: BrandAssets.menuBarIcon)
+                .accessibilityLabel("Portside")
         }
     }
 }
