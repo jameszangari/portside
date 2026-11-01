@@ -445,6 +445,20 @@ private struct GeneralSettings: View {
             }
 
             Section {
+                HotkeyRecorderButton(
+                    title: "Open Settings",
+                    chord: dockModel.settingsHotkey,
+                    defaultChord: .settingsDefault,
+                    onChange: { dockModel.setSettingsHotkey($0) }
+                )
+            } header: {
+                Text("Keyboard")
+            } footer: {
+                Text("Works from any app. Default ⌘⇧D; distinct from ⌥⌘D (Dock hiding). Clear removes it; the menu bar Settings… item still uses ⌘,.")
+                    .footerStyle()
+            }
+
+            Section {
                 SettingsSlider(
                     title: "Reveal delay",
                     value: dockModel.revealDelay,

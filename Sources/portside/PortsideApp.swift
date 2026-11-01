@@ -1,4 +1,5 @@
 import Carbon.HIToolbox
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -178,6 +179,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var dockEngine: DockEngine?
     private var settings: SettingsWindowController?
     private var hideHotKey: HotKey?
+    private var settingsHotKey: HotKey?
+    private var settingsHotKeyObserver: AnyCancellable?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // An SPM executable has no bundle, so LSUIElement in Info.plist is
@@ -203,6 +206,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // on/off" shortcut is enabled it may take the keypress first.
         hideHotKey = HotKey(keyCode: kVK_ANSI_D, modifiers: cmdKey | optionKey, name: "Cmd+Option+D") { [weak self] in
             self?.toggleAutoHide()
+        }
+        // Re-register whenever Settings changes the chord (including Clear).
+        settingsHotKeyObserver = dockModel.$settingsHotkey
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] chord in
+                self?.registerSettingsHotKey(chord)
+            }
+    }
+
+    private func registerSettingsHotKey(_ chord: HotkeyChord?) {
+        settingsHotKey = nil
+        guard let chord else { return }
+        settingsHotKey = HotKey(chord: chord, name: "Open Settings \(chord.displayString)") { [weak self] in
+            self?.openSettings()
         }
     }
 

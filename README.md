@@ -100,6 +100,7 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - While Settings is focused and auto-hide is on, the dock stays revealed for live preview; the toggle stays On. Leaving Settings (or closing it) restores normal auto-hide.
 - Sidebar shows the Portside icon and version (`v0.2.0`; hover for author and build hash) and a Check for Updates button.
 - Drag widget rows to reorder them.
+- Global hotkey to open Settings (General > Keyboard), default ⌘⇧D, customizable, clearable. Menu bar Settings… still uses ⌘,.
 
 **Native Dock**
 - "Hide the macOS Dock" (Settings > System): keeps the native Dock from ever appearing while Portside runs, using the autohide-delay trick. Its exact prior settings are saved first and restored when you turn this off, quit, or stop Portside with Ctrl+C or `kill`. After a crash or `kill -9`, the next launch restores them first.
@@ -209,6 +210,7 @@ It is deleted after a verified restore. If it exists when Portside starts, Ports
 
 The Settings window controls:
 - Position, auto-hide, icon size, icon gap (`iconGap`, points, 0 to 8, default 6), "Animate opening applications"
+- Open Settings hotkey (`settingsHotkey`: `{ keyCode, modifiers }` Carbon values, default Command-Shift-D; `null` means cleared; missing key keeps the default)
 - Show Trash in dock (`showTrash`, default `true`); dismissed Full Disk Access hint (`trashAccessHintDismissed`, default `false`)
 - Show notification badges (`showBadges`, default `true`); badge color (`badgeColor`: `macOS`, `accent`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `graphite` or `custom`, default `macOS`); custom badge color (`badgeCustomColor`, sRGB `{ red, green, blue, alpha }`, used when `badgeColor` is `custom`)
 - Widget sizes (`widgetSizes`: `{ kind: 1 | 2 }`, bottom dock only; 1 is Small, 2 is Wide; written only for widgets not at their own size)
@@ -275,7 +277,7 @@ Sources/portside/
   LaunchAtLogin.swift       "Open Portside at login" via SMAppService.mainApp
   SettingsWindow.swift      Settings window: sidebar and panes (General, Appearance, Widgets, Groups, System)
   DockAppearance.swift      Icon style and dock background options, background modifier, icon style observer
-  HotKey.swift              Global hotkey through Carbon RegisterEventHotKey
+  HotKey.swift              Global hotkeys (Carbon RegisterEventHotKey), chord model, Settings shortcut recorder
   BackgroundCursor.swift    Guarded SkyLight call for the resize cursor
   AppIcon.swift             App icon: system-rendered in Portside.app, bundled PNGs under swift run, PNG export
   BrandAssets.swift         Safe resource bundle lookup (no Bundle.module), menu bar template icon

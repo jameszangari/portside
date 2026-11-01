@@ -20,6 +20,16 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
+## Open Settings hotkey (2026-10-31)
+
+- [x] Customizable global hotkey opens Settings from any app (Carbon `RegisterEventHotKey`, same path as Cmd+Option+D).
+- [x] Default: Command-Shift-D (`⌘⇧D`). Distinct from Cmd+Option+D (Dock hiding / system shortcut) and from the local menu's Cmd+,
+- [x] Settings > General > Keyboard: record, Reset to default, Clear. Persisted as `settingsHotkey` in dock.json (`null` = cleared; older files without the key keep the default).
+- [x] AppDelegate re-registers live when the chord changes. Menu bar Settings… still shows Cmd+, (local menu shortcut).
+- [x] `swift build` passes on Swift 6.4.2 / Xcode 27.2.
+- [ ] Hand test: with another app frontmost, press ⌘⇧D and confirm Settings opens; change the shortcut in General > Keyboard and confirm the new combo works and the old one does not; Clear, confirm none fires; Reset restores ⌘⇧D; relaunch and confirm it persists.
+- Known gap: if a system or app shortcut claims the same combo, macOS may take it first (same as Cmd+Option+D).
+
 ## Folders First first-click (2026-10-31)
 
 - [x] Cause: the open stack's `...` header used a SwiftUI `Menu` with `Toggle`s. On the non-key overlay, those toggles needed a wake-up click before Folders First / Show Hidden Files fired.

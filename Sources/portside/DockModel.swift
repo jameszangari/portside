@@ -234,6 +234,24 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    // MARK: - Keyboard
+
+    /// Global shortcut that opens Settings. Nil means none is registered.
+    /// Default is Command-Shift-D (see `HotkeyChord.settingsDefault`).
+    @Published private(set) var settingsHotkey: HotkeyChord? = .settingsDefault
+
+    func setSettingsHotkey(_ chord: HotkeyChord?) {
+        let next: HotkeyChord?
+        if let chord {
+            next = chord.isRegisterable ? chord : settingsHotkey
+        } else {
+            next = nil
+        }
+        guard next != settingsHotkey else { return }
+        settingsHotkey = next
+        persist()
+    }
+
     // MARK: - Trash
 
     /// "Show Trash in dock": the Trash tile at the far end of the dock.
@@ -817,6 +835,7 @@ final class DockModel: Codable, ObservableObject {
         case showBadges, badgeColor, badgeCustomColor
         case stacks, layout, widgetSizes
         case iconStyle, backgroundStyle, backgroundFrost, backgroundTint, cornerRadius
+        case settingsHotkey
         /// Before Milestone D: a flat list of apps. Read only, for migration.
         case pinnedApps
     }
@@ -864,6 +883,16 @@ final class DockModel: Codable, ObservableObject {
         backgroundTint = (try? c.decodeIfPresent(RGBAColor.self, forKey: .backgroundTint)) ?? nil
         let radius = (try? c.decodeIfPresent(CGFloat.self, forKey: .cornerRadius)) ?? Defaults.cornerRadius
         cornerRadius = min(max(radius, Self.cornerRadiusRange.lowerBound), Self.cornerRadiusRange.upperBound)
+        if c.contains(.settingsHotkey) {
+            // Explicit null in JSON means the user cleared it. Missing key =
+            // older file, keep the default.
+            settingsHotkey = try c.decodeIfPresent(HotkeyChord.self, forKey: .settingsHotkey)
+            if let chord = settingsHotkey, !chord.isRegisterable {
+                settingsHotkey = .settingsDefault
+            }
+        } else {
+            settingsHotkey = .settingsDefault
+        }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -898,6 +927,13 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(backgroundFrost, forKey: .backgroundFrost)
         try c.encodeIfPresent(backgroundTint, forKey: .backgroundTint)
         try c.encode(cornerRadius, forKey: .cornerRadius)
+        // Always write the key: null means cleared, object means set. Older
+        // files without the key keep the default on load.
+        if let settingsHotkey {
+            try c.encode(settingsHotkey, forKey: .settingsHotkey)
+        } else {
+            try c.encodeNil(forKey: .settingsHotkey)
+        }
     }
 
     // MARK: - Persistence
@@ -1043,6 +1079,7 @@ final class DockModel: Codable, ObservableObject {
         autoHide = old.autoHide
         showTrash = old.showTrash
         showBadges = old.showBadges
+        settingsHotkey = old.settingsHotkey
         openGroupsOnHover = old.openGroupsOnHover
         groupHoverDelay = old.groupHoverDelay
         groupHoverCloseGrace = old.groupHoverCloseGrace
