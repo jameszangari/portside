@@ -388,7 +388,7 @@ Known gaps (stacks):
 ### 6. Enhancements (after parity gaps above)
 - [ ] Window previews on hover (reuse B.5 overlay)
 - [ ] Profiles (saved layouts / pin sets)
-- [ ] Update checker (GitHub release tag vs AppInfo.version; replace Check for Updates placeholder)
+- [x] Update checker (GitHub release tag vs AppInfo.version; replace Check for Updates placeholder)
 - [ ] Trash polish: Option-click Empty without warning; empty/full icon animation
 - [ ] More widget kinds (only if daily drive asks for them)
 

@@ -177,8 +177,8 @@ private final class SettingsNSWindow: NSWindow {
 /// Shared sizes so every pane lines up.
 enum SettingsLayout {
     /// Wide and short: a sidebar plus a scrolling pane.
-    static let windowSize = NSSize(width: 760, height: 560)
-    static let sidebarWidth: CGFloat = 200
+    static let windowSize = NSSize(width: 830, height: 560)
+    static let sidebarWidth: CGFloat = 270
     /// Label column for slider rows.
     static let labelWidth: CGFloat = 136
     /// Value column for slider rows ("150 ms", "Instant").
@@ -270,6 +270,7 @@ struct SettingsView: View {
 private struct SettingsSidebar: View {
     @Binding var selection: SettingsTab
     @State private var status: String?
+    @State private var checking = false
     @State private var clearStatus: Task<Void, Never>?
 
     var body: some View {
@@ -307,27 +308,34 @@ private struct SettingsSidebar: View {
     }
 
     private var updates: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button("Check for Updates", action: checkForUpdates)
+        VStack(alignment: .leading, spacing: 6) {
+            // Message sits above the button; the button stays pinned to the corner.
+            if let status {
+                Text(status)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity)
+            }
+            Button(checking ? "Checking..." : "Check for Updates", action: checkForUpdates)
                 .controlSize(.small)
-            // Fixed height so the message never moves the button.
-            Text(status ?? " ")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .frame(height: 28, alignment: .topLeading)
+                .disabled(checking)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
-        .padding(.bottom, 8)
+        .padding(.bottom, 12)
     }
 
     private func checkForUpdates() {
         clearStatus?.cancel()
         clearStatus = Task { @MainActor in
+            checking = true
             let result = await UpdateChecker.check()
+            checking = false
             withAnimation { status = result.message }
-            try? await Task.sleep(for: .seconds(4))
+            if case .available(_, let url) = result { NSWorkspace.shared.open(url) }
+            try? await Task.sleep(for: .seconds(6))
             guard !Task.isCancelled else { return }
             withAnimation { status = nil }
         }

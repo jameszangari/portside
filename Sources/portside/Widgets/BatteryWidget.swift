@@ -79,8 +79,20 @@ private struct BatteryView: View {
 
     private var color: Color {
         guard let percent else { return .secondary }
-        if isCharging || onAC { return .green }
-        return percent <= 20 ? .red : .primary
+        return Self.scaleColor(Double(min(max(percent, 0), 100)) / 100)
+    }
+
+    /// Red at 0, amber at 0.5, green at 1, blended linearly in RGB between stops.
+    private static func scaleColor(_ t: Double) -> Color {
+        let red = (r: 0.93, g: 0.23, b: 0.20)
+        let amber = (r: 1.00, g: 0.72, b: 0.10)
+        let green = (r: 0.20, g: 0.78, b: 0.35)
+        let (from, to, f) = t < 0.5 ? (red, amber, t / 0.5) : (amber, green, (t - 0.5) / 0.5)
+        return Color(
+            red: from.r + (to.r - from.r) * f,
+            green: from.g + (to.g - from.g) * f,
+            blue: from.b + (to.b - from.b) * f
+        )
     }
 
     /// Same compact threshold as CPU / Memory gauges: icon instead of digits.
