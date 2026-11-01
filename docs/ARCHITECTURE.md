@@ -53,7 +53,8 @@ Sources/portside/
   TrashDrop.swift           Confirm when a dock tile is dropped on Trash
   FolderStack.swift         Folder stack model and FSEvents contents
   StackController.swift     Stack open/close, drag-open, deposit into folder
-  StackViews.swift          Stack tile and grid popover
+  StackViews.swift          Stack tile, grid/list popover, and fan
+  StackItemDrag.swift       Drag a stack item out as a file (AppKit dragging session)
   DragOut.swift             Drag an item out to remove it: "Remove" label, poof, Escape
   DockHover.swift           Hover target frames and label placement
   Magnifier.swift           Dock magnification: per-tile scale and shift from the cursor, shelf widening, panel room

@@ -245,19 +245,19 @@ struct StackPopoverView: View {
 
     var body: some View {
         if let stack = dockModel.stacks.first(where: { $0.id == stackID }) {
-            content(stack)
-                .scaleEffect(appeared ? 1 : GroupPopoverMotion.collapsedScale, anchor: edge.growthAnchor)
-                .opacity(appeared ? 1 : 0)
-                .padding(edge.nearSide, DockHover.labelGap)
-                .background(Color.black.opacity(0.01))
+            let layout = layout(of: stack)
+            presented(stack, layout: layout)
+                .padding(edge.nearSide, layout == .fan ? StackFanView.tileGap : DockHover.labelGap)
+                // The fan has no card: its empty space passes clicks through.
+                .background(layout == .fan ? Color.clear : Color.black.opacity(0.01))
                 .coordinateSpace(name: Self.dropSpace)
                 .onPreferenceChange(StackCellFramesKey.self) { cellFrames = $0 }
                 .onDrop(of: [.fileURL], delegate: StackGridDropDelegate(
                     insertIndex: $insertIndex,
                     cellFrames: cellFrames,
                     itemCount: stacks.contents.items(for: stack).count,
-                    appendOnly: stack.view == .fan || stack.sort != .manual,
-                    isList: stack.view == .list,
+                    appendOnly: layout == .fan || stack.sort != .manual,
+                    isList: layout == .list,
                     onDeposit: onDeposit,
                     onDragOverGrid: onDragOverGrid
                 ))
@@ -277,11 +277,27 @@ struct StackPopoverView: View {
         }
     }
 
-    private func content(_ stack: FolderStack) -> some View {
+    /// The native fan only rises from a bottom dock; beside a side dock the
+    /// stack opens as a list instead.
+    private func layout(of stack: FolderStack) -> StackViewMode {
+        stack.view == .fan && edge != .bottom ? .list : stack.view
+    }
+
+    @ViewBuilder private func presented(_ stack: FolderStack, layout: StackViewMode) -> some View {
+        if layout == .fan {
+            fanBody(stack: stack, items: stacks.contents.items(for: stack))
+        } else {
+            content(stack, layout: layout)
+                .scaleEffect(appeared ? 1 : GroupPopoverMotion.collapsedScale, anchor: edge.growthAnchor)
+                .opacity(appeared ? 1 : 0)
+        }
+    }
+
+    private func content(_ stack: FolderStack, layout: StackViewMode) -> some View {
         let items = stacks.contents.items(for: stack)
-        // Fan and sorted stacks pick each item's position themselves, so a
-        // drop only needs to land in the folder.
-        let positioned = stack.view != .fan && stack.sort == .manual
+        // Sorted stacks pick each item's position themselves, so a drop only
+        // needs to land in the folder.
+        let positioned = stack.sort == .manual
         let gapAt = positioned ? insertIndex : nil
         let slotCount = items.count + (gapAt != nil ? 1 : 0)
         let columns = GroupPopoverView.columns(for: max(slotCount, 1))
@@ -293,10 +309,9 @@ struct StackPopoverView: View {
                     .foregroundStyle(.secondary)
                     .frame(minWidth: 160, minHeight: 48)
             } else {
-                switch stack.view {
+                switch layout {
                 case .grid: gridBody(items: items, gapAt: gapAt, columns: columns)
-                case .list: listBody(items: items, gapAt: gapAt, sort: stack.sort)
-                case .fan: fanBody(stack: stack, items: items)
+                case .list, .fan: listBody(items: items, gapAt: gapAt, sort: stack.sort)
                 }
             }
         }
@@ -340,7 +355,8 @@ struct StackPopoverView: View {
                         ForEach(rows[row]) { slot in
                             switch slot {
                             case .item(let item):
-                                StackItemCell(item: item, iconSize: Self.iconSize, width: Self.cellWidth, onOpen: onOpen)
+                                StackItemCell(item: item, iconSize: Self.iconSize, width: Self.cellWidth,
+                                              dragSource: stacks.itemDrag, onOpen: onOpen)
                             case .gap(let id):
                                 stackGridInsertionGap(id: id)
                             }
@@ -358,7 +374,8 @@ struct StackPopoverView: View {
                 ForEach(gridSlots(items: items, insertAt: gapAt)) { slot in
                     switch slot {
                     case .item(let item):
-                        StackListRow(item: item, sort: sort, width: Self.listWidth, onOpen: onOpen)
+                        StackListRow(item: item, sort: sort, width: Self.listWidth,
+                                     dragSource: stacks.itemDrag, onOpen: onOpen)
                     case .gap(let id):
                         stackGridInsertionGap(id: id)
                             .frame(width: Self.listWidth, height: StackListRow.height)
@@ -370,12 +387,17 @@ struct StackPopoverView: View {
     }
 
     private func fanBody(stack: FolderStack, items: [StackItem]) -> some View {
-        StackFanView(
-            items: Array(items.prefix(StackFanView.limit)),
-            extra: max(items.count - StackFanView.limit, 0),
-            folderURL: stack.url,
-            edge: edge,
-            onOpen: onOpen,
+        // The top row is always the Finder row, so items get one row fewer.
+        let fit = StackFanView.rowLimit(height: DockScreen.visibleFrame.height) - 1
+        return StackFanView(
+            items: Array(items.prefix(fit)),
+            extra: max(items.count - fit, 0),
+            appeared: appeared,
+            dragSource: stacks.itemDrag,
+            onOpen: { item in
+                onOpen(item)
+                stacks.collapse(reason: "item opened")
+            },
             onOpenFolder: { stacks.openFolder(stackID) }
         )
     }
@@ -529,6 +551,7 @@ private struct StackItemCell: View {
     let item: StackItem
     let iconSize: CGFloat
     let width: CGFloat
+    let dragSource: StackItemDragSource
     let onOpen: (StackItem) -> Void
     @ObservedObject private var icons = IconCache.shared
     @State private var hovered = false
@@ -557,6 +580,7 @@ private struct StackItemCell: View {
         })
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
+        .stackItemDrag(url: item.url, iconSize: iconSize, source: dragSource)
         .onTapGesture { onOpen(item) }
         .accessibilityLabel(item.name)
         .accessibilityAddTraits(.isButton)
@@ -569,6 +593,7 @@ private struct StackListRow: View {
     let item: StackItem
     let sort: StackSortMode
     let width: CGFloat
+    let dragSource: StackItemDragSource
     let onOpen: (StackItem) -> Void
     @ObservedObject private var icons = IconCache.shared
     @State private var hovered = false
@@ -611,103 +636,161 @@ private struct StackListRow: View {
         })
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
+        .stackItemDrag(url: item.url, iconSize: 32, source: dragSource)
         .onTapGesture { onOpen(item) }
         .accessibilityLabel(item.name)
         .accessibilityAddTraits(.isButton)
     }
 }
 
-/// The native Dock's fan: icons rise from the tile in a gentle curve, each
-/// with its name beside it. The first item sits nearest the tile.
-private struct StackFanView: View {
-    static let limit = 10
-    private static let iconSize: CGFloat = 40
-    private static let step: CGFloat = 46
-    private static let labelWidth: CGFloat = 150
-    private static let arc: CGFloat = 56
+/// The native Dock's fan (bottom dock only): no card, just rows rising from
+/// the tile along a shallow arc that bends right. Each row tilts with the
+/// arc, its name in a dark pill left of the icon. The first item sits on the
+/// tile; the top row opens the folder ("Open in Finder", or "N More in
+/// Finder" when the rest do not fit). Rows fly out of the tile one after
+/// another and fall back into it on close.
+///
+/// The bottom row's icon is centered in the view, so the overlay (which
+/// centers content on the tile) puts it right over the tile. The empty half
+/// on the right is transparent and lets clicks through.
+struct StackFanView: View {
+    /// Space between the dock tile and the bottom row.
+    static let tileGap: CGFloat = 6
+    private static let iconSize: CGFloat = 48
+    /// Distance between rows, measured along the arc.
+    private static let step: CGFloat = 54
+    /// The arc's radius: rows follow one circle, so a short fan barely bends
+    /// and a tall one bends and tilts more.
+    private static let radius: CGFloat = 1500
+    private static let labelWidth: CGFloat = 220
+    private static let labelGap: CGFloat = 8
+    private static let maxRows = 15
 
     let items: [StackItem]
-    /// Items past `limit`, summed into one "more in Finder" row.
+    /// Items that did not fit, summed into the top row.
     let extra: Int
-    let folderURL: URL
-    let edge: DockEdge
+    let appeared: Bool
+    let dragSource: StackItemDragSource
     let onOpen: (StackItem) -> Void
     let onOpenFolder: () -> Void
     @ObservedObject private var icons = IconCache.shared
 
-    private var count: Int { items.count + (extra > 0 ? 1 : 0) }
+    /// Rows (items plus the Finder row) that fit a screen this tall.
+    static func rowLimit(height: CGFloat) -> Int {
+        let room = height * 0.85 - 80
+        return min(max(Int(room / step), 2), maxRows)
+    }
 
-    /// Sideways shift of row `index`: none at the tile, most at the top. The
-    /// fan bends away from a side dock and toward the right on the bottom.
-    private func shift(_ index: Int) -> CGFloat {
-        let t = count > 1 ? CGFloat(index) / CGFloat(count - 1) : 0
-        let bend = Self.arc * pow(t, 1.6)
-        return edge == .right ? Self.arc - bend : bend
+    private static var rowWidth: CGFloat { labelWidth + labelGap + iconSize }
+    /// Icon center to the row's far (label) end.
+    private static var reach: CGFloat { rowWidth - iconSize / 2 }
+    private static var pivot: UnitPoint { UnitPoint(x: reach / rowWidth, y: 0.5) }
+
+    private var rowCount: Int { items.count + 1 }
+    private static func angle(_ index: Int) -> CGFloat { CGFloat(index) * step / radius }
+
+    private var height: CGFloat {
+        let top = Self.angle(rowCount - 1)
+        // Room above the top icon for its tilted label to rise into.
+        let above = max(Self.iconSize / 2, Self.reach * sin(top) + 12)
+        return Self.iconSize / 2 + Self.radius * sin(top) + above
+    }
+
+    /// Top-left of row `index`'s frame, before its tilt, in this view.
+    private func origin(_ index: Int) -> CGSize {
+        let a = Self.angle(index)
+        let centerX = Self.reach + Self.radius * (1 - cos(a))
+        let centerY = height - Self.iconSize / 2 - Self.radius * sin(a)
+        return CGSize(width: centerX - Self.reach, height: centerY - Self.iconSize / 2)
     }
 
     var body: some View {
-        let height = CGFloat(max(count - 1, 0)) * Self.step + Self.iconSize
-        let rowWidth = Self.iconSize + 8 + Self.labelWidth
-        // Names go on the side facing away from the screen edge.
-        let labelsLeft = edge != .left
         ZStack(alignment: .topLeading) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                row(icon: icons.icon(for: item.url), title: item.name, labelsLeft: labelsLeft) { onOpen(item) }
-                    .offset(x: shift(index), y: height - Self.iconSize - CGFloat(index) * Self.step)
+                placed(index) {
+                    FanRow(title: item.name, iconSize: Self.iconSize, labelWidth: Self.labelWidth,
+                           labelGap: Self.labelGap, action: { onOpen(item) }) {
+                        Image(nsImage: icons.icon(for: item.url))
+                            .resizable()
+                            .interpolation(.high)
+                    }
+                    .stackItemDrag(url: item.url, iconSize: Self.iconSize, source: dragSource)
+                }
             }
-            if extra > 0 {
-                row(icon: icons.icon(for: folderURL), title: "\(extra) more in Finder", labelsLeft: labelsLeft, action: onOpenFolder)
-                    .offset(x: shift(items.count), y: height - Self.iconSize - CGFloat(items.count) * Self.step)
+            placed(items.count) {
+                FanRow(title: extra > 0 ? "\(extra) More in Finder" : "Open in Finder",
+                       iconSize: Self.iconSize, labelWidth: Self.labelWidth,
+                       labelGap: Self.labelGap, action: onOpenFolder) {
+                    Image(systemName: "arrow.forward.circle.fill")
+                        .resizable()
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, Color(white: 0.15, opacity: 0.85))
+                        .padding(Self.iconSize * 0.16)
+                }
             }
         }
-        .frame(width: rowWidth + Self.arc, height: height, alignment: .topLeading)
+        .frame(width: Self.reach * 2, height: height, alignment: .topLeading)
     }
 
-    private func row(icon: NSImage, title: String, labelsLeft: Bool, action: @escaping () -> Void) -> some View {
-        FanRow(icon: icon, title: title, iconSize: Self.iconSize, labelWidth: Self.labelWidth,
-               labelsLeft: labelsLeft, action: action)
+    /// Row `index` on the arc once open; tucked into the tile while closed.
+    private func placed<Row: View>(_ index: Int, @ViewBuilder row: () -> Row) -> some View {
+        let open = origin(index)
+        let tucked = CGSize(width: origin(0).width, height: origin(0).height + Self.iconSize * 0.6)
+        return row()
+            .frame(width: Self.rowWidth, height: Self.iconSize)
+            .scaleEffect(appeared ? 1 : 0.3, anchor: Self.pivot)
+            .rotationEffect(.radians(appeared ? Self.angle(index) : 0), anchor: Self.pivot)
+            .opacity(appeared ? 1 : 0)
+            .offset(appeared ? open : tucked)
+            .animation(animation(index), value: appeared)
+    }
+
+    private func animation(_ index: Int) -> Animation? {
+        guard GroupPopoverMotion.shouldAnimate else { return nil }
+        if appeared {
+            return .spring(duration: 0.3, bounce: 0.12).delay(Double(index) * 0.012)
+        }
+        // No stagger on close: it has to finish before the overlay goes away.
+        return .easeIn(duration: GroupPopoverMotion.dismissDuration * 0.9)
     }
 }
 
-private struct FanRow: View {
-    let icon: NSImage
+private struct FanRow<Icon: View>: View {
     let title: String
     let iconSize: CGFloat
     let labelWidth: CGFloat
-    let labelsLeft: Bool
+    let labelGap: CGFloat
     let action: () -> Void
+    @ViewBuilder let icon: () -> Icon
     @State private var hovered = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            if labelsLeft { label; image } else { image; label }
+        HStack(spacing: labelGap) {
+            Spacer(minLength: 0)
+            label
+            icon()
+                .frame(width: iconSize, height: iconSize)
+                .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
         }
-        .frame(height: iconSize)
-        .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture(perform: action)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(title)
         .accessibilityAddTraits(.isButton)
     }
 
-    private var image: some View {
-        Image(nsImage: icon)
-            .resizable()
-            .interpolation(.high)
-            .frame(width: iconSize, height: iconSize)
-            .scaleEffect(hovered ? 1.08 : 1)
-            .animation(.easeOut(duration: 0.1), value: hovered)
-    }
-
     private var label: some View {
         Text(title)
-            .font(.system(size: 12))
+            .font(.system(size: 13))
             .foregroundStyle(.white)
             .lineLimit(1)
             .truncationMode(.middle)
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 7)
             .padding(.vertical, 3)
-            .background(Color(white: 0.12, opacity: hovered ? 0.95 : 0.78), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .frame(width: labelWidth, alignment: labelsLeft ? .trailing : .leading)
+            .background(
+                hovered ? Color.accentColor : Color(white: 0.1, opacity: 0.78),
+                in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+            )
+            .frame(maxWidth: labelWidth, alignment: .trailing)
     }
 }

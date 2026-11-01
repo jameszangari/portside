@@ -19,6 +19,8 @@ final class StackController: ObservableObject {
     var onDragOverGrid: ((Bool, String) -> Void)?
 
     let contents = StackContents()
+    /// Files dragged out of the open stack to other apps.
+    let itemDrag = StackItemDragSource()
     private let overlay = OverlayPanel()
     private let dockModel: DockModel
     private let hover: DockHover
@@ -43,6 +45,13 @@ final class StackController: ObservableObject {
             self.onMouseEntered?()
         }
         overlay.onMouseExited = { [weak self] in self?.onMouseExited?() }
+        // Like the native Dock: the stack closes once a dragged file leaves
+        // it, so the dock tiles and windows under it are free to take it.
+        itemDrag.onMoved = { [weak self] point in
+            guard let self, self.expandedID != nil, !self.isClosing,
+                  !self.overlay.containsScreenPoint(point) else { return }
+            self.collapse(reason: "item dragged out")
+        }
 
         dockModel.$stacks
             .receive(on: DispatchQueue.main)
