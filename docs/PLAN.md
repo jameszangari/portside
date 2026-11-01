@@ -242,6 +242,18 @@ Features that make Portside feel like the real Dock. Ordered by daily-driver imp
 - Assigning apps to Spaces from the menu
 - The recents section
 
+### Windows respect Portside (reserved space)
+
+Goal: with Portside's hiding off, Rectangle Maximize, Window > Fill and tiling stop at the dock's edge, like the native Dock. No public API lets an app shrink `NSScreen.visibleFrame`, so Portside fits windows itself through Accessibility (event-driven, no polling).
+
+- **Phase 0 (done):** measurements, see CHECKLIST "Windows respect Portside: Phase 0".
+- **Phase 1:** `DockReservation`: reserved depth per edge on the dock's display (panel thickness plus its screen margin, magnification excluded). Active only when hiding is off. Recomputed on hiding, icon size, edge, and display changes.
+- **Phase 2:** `WindowFitter`: AX permission flow; per-app `AXObserver` (window created, moved, resized), apps from `RunningApps`. Fit only windows flush with the screen edge (within 2pt). Coalesce per window: one cancelable work item about 60ms after the last event, then set size and position together (fixing on the first event loses to Rectangle's follow-up move and to Fill's animation). Skip Portside, fullscreen, non-resizable, and windows that refuse; one retry, then leave the window alone.
+- **Phase 3:** toggle reflow, matching macOS: hiding turned off shrinks windows flush with the screen edge; hiding turned on grows windows flush with the reserved edge back to the screen edge.
+- **Phase 4 (dropped):** Rectangle gap sync. Rectangle caches `screenEdgeGapBottom` and does not pick up a `defaults write` while running.
+- **Phase 5:** Portside's own Settings and overlays place themselves inside the usable frame.
+- **Phase 6:** Settings toggle "Keep windows clear of the dock" (`reserveSpace`), docs.
+
 ---
 
 ## 9. Enhancements

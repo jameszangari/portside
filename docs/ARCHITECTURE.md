@@ -96,6 +96,7 @@ scripts/
   ensure-codesign-key-access.sh  Native Okay consent + Touch ID, then silent key unlock
   SigningConsent.swift      Stock NSAlert + LocalAuthentication for build consent
   check-tile-input.swift    Synthetic Accessibility check: clicks, hold menu, label centering
+  window-fit-probe/         Probe window + AX observer: how Rectangle, Window > Fill and Dock hiding resize windows (run.sh)
 Portside.entitlements       Hardened Runtime entitlements for Developer ID / notarized builds
 design/brand/               Approved Portside sail icon, wordmarks, menu bar assets, and tokens; see its README
 ```

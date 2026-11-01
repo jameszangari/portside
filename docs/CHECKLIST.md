@@ -20,6 +20,19 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
+## Windows respect Portside: Phase 0 (2026-11-01)
+
+Plan in PLAN.md section 8, "Windows respect Portside". Measured with `scripts/window-fit-probe/run.sh` (probe window plus AX observer; one 1728x1117 display, menu bar 33pt, Rectangle 2.0.4). No Portside code changed.
+
+- [x] Accessibility: the agent's terminal is trusted, so `AXObserver` on another app works. Notifications attach only after the app finishes launching (`-25204` before that; retry).
+- [x] Rectangle Maximize: one moved + one resized notification, about 52 to 75ms after the `open rectangle://` call (includes spawning `open`), same moment the window changes. Lands at `visibleFrame` (bottom flush with the screen while the macOS Dock is hidden).
+- [x] Fixing on the first event loses: size set in about 1 to 3ms, but Rectangle's next move pushes the window back 40pt into the band (bottom 1077, band starts 1037). Reproduced twice. So wait until events go quiet, then set size and position together.
+- [x] Window > Fill (macOS 27): animated, about 360ms, 39 resized notifications (no moved), about 8ms apart, last one flush with the screen edge. Clamping mid-animation is overwritten by the next frame. Same fix: coalesce.
+- [x] Rectangle `screenEdgeGapBottom`: written while Rectangle runs, Maximize ignored it (still full height). Rectangle caches its settings, so gap sync would need a Rectangle relaunch each toggle. Phase 4 dropped.
+- [x] macOS Dock hiding toggled (autohide only; exact `autohide = 1`, `autohide-delay = 1000000` restored and checked after every run): Dock reserves 54pt at tilesize 34. Shown: a Filled window and a Rectangle-maximized window both shrank to the new `visibleFrame` (the apps reflow themselves, no WM involved). Hidden again: the Filled window grew back. A window overlapping the band but not flush with the edge was left alone. Rectangle Maximize with the Dock shown lands 1pt short (h 1029 vs 1030), and that window did not grow back. Phase 3 copies this with a 2pt tolerance.
+- [ ] Not measured: Raycast window commands, edge-drag tiling, apps with their own minimum height, multiple displays, Stage Manager.
+- New untracked: `scripts/window-fit-probe/` (ProbeTarget.swift, ProbeObserver.swift, run.sh). Not part of the SPM target.
+
 ## In-place updates from Check for Updates (2026-11-01)
 
 - [x] `UpdateChecker` fetches the latest GitHub release (tag + `Portside-*.dmg` asset), compares with `AppInfo.version`.
