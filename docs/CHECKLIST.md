@@ -20,6 +20,15 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
+## Settings focus pins dock (2026-10-31)
+
+- [x] While Settings is the key window and auto-hide is on, DockEngine suppresses auto-hide (edge tracker off, panel stays revealed) without flipping `dockModel.autoHide` or the Settings toggle.
+- [x] Resigning key (another app, miniaturize) or closing Settings restores effective auto-hide from the saved preference and rearms hide if the cursor is outside.
+- [x] Preference changes while Settings is focused still apply live; turning auto-hide on stays suppressed until Settings loses focus.
+- [x] `swift build` passes on Swift 6.4.2 / Xcode 27.2.
+- [ ] Hand test: auto-hide on, open Settings, confirm dock stays up and the General toggle still reads On; Cmd+Tab away and confirm hide resumes; return to Settings and confirm it pins again; close Settings and confirm normal auto-hide.
+- README Features / Notes updated; no new dock.json keys.
+
 ## System Stats Wide labels (2026-10-31)
 
 - [x] Wide System Stats legend: smaller color-matched numbers (~0.18× tile) with neutral CPU / RAM labels (~0.12× tile) beside them. Single CPU / Memory tiles and Small System Stats unchanged.

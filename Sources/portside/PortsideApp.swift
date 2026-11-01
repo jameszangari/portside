@@ -232,6 +232,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let dockEngine else { return }
         let controller = settings ?? SettingsWindowController(dockModel: dockModel, layout: dockEngine.layout, nativeDock: nativeDock, trash: dockEngine.trash, badges: dockEngine.badges)
         controller.onActivationPolicyChanged = { [weak dockEngine] in dockEngine?.activationPolicyChanged() }
+        controller.onKeyFocusChanged = { [weak dockEngine] focused in
+            dockEngine?.settingsKeyFocusChanged(focused)
+        }
         settings = controller
         controller.show()
     }

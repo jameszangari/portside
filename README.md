@@ -97,6 +97,7 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 **Settings window**
 - System Settings-style layout: a sidebar with General, Appearance, Widgets, Groups, and System panes, and the selected pane on the right. Changes apply live.
 - Fixed 760 x 560 window (wide and short); long panes scroll instead of growing the window. Always opens centered on the primary display (same spot every time).
+- While Settings is focused and auto-hide is on, the dock stays revealed for live preview; the toggle stays On. Leaving Settings (or closing it) restores normal auto-hide.
 - Sidebar shows the Portside icon and version (`v0.2.0`; hover for author and build hash) and a Check for Updates button.
 - Drag widget rows to reorder them.
 
@@ -232,7 +233,7 @@ The local signing certificate and private key live in your default user keychain
 - Notification badges read each app's badge from LaunchServices (`_LSASNCreateWithPid`, `_LSCopyApplicationInformationItem`), the store the Dock itself draws from. `LaunchServicesBadges.swift` loads them with `dlopen`/`dlsym`; if they are missing, badges turn off and Settings says so. No other private APIs are used.
 - The native Dock is modified only while "Hide the macOS Dock" is on: Portside writes `autohide` and `autohide-delay` in `com.apple.dock` (public CFPreferences, then `killall Dock`) and restores every saved value on the way out. With the option off, no `com.apple.dock` settings are touched and both docks can react to the same edge. Portside is separate from the third-party Dockset app.
 - The system's Cmd+Option+D shortcut toggles the native Dock's auto-hide. While Portside hides the native Dock, it makes the native Dock appear until restore.
-- Opening Settings turns Portside into a regular app (visible in Cmd+Tab and the native Dock) until the window closes.
+- Opening Settings turns Portside into a regular app (visible in Cmd+Tab and the native Dock) until the window closes. While Settings is the key window, auto-hide is suppressed so the strip stays visible; the saved preference is unchanged.
 - Cmd+Option+D may conflict with the system's own "Turn Dock hiding on/off" shortcut. Disable that one in System Settings to use Portside's.
 
 ## Project layout

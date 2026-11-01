@@ -69,6 +69,10 @@ final class DockEngine {
     /// True while an edge enter was skipped because a mouse button was down
     /// (window drag). Cleared on exit, reveal, or a successful mouse-up check.
     private var revealSuppressedForButtonHold = false
+    /// Settings is the key window. While true, auto-hide is suppressed so
+    /// live Settings changes stay visible on the strip; the saved
+    /// `dockModel.autoHide` preference is not changed.
+    private var settingsIsKey = false
 
     /// Timestamp (CACurrentMediaTime) of the mouseEntered that started the
     /// current reveal, used for the enter -> animation start -> interactive logs.
@@ -282,7 +286,7 @@ final class DockEngine {
             .removeDuplicates()
             .dropFirst()
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] on in self?.applyAutoHide(on) }
+            .sink { [weak self] _ in self?.applyEffectiveAutoHide(reason: "preference") }
         IconCache.shared.setStyle(dockModel.iconStyle)
         IconCache.shared.startObservingTheme()
         // Next main loop turn, like the edge: @Published emits from willSet.
@@ -395,7 +399,7 @@ final class DockEngine {
             }
             dockModel.syncReduceTransparency()
         }
-        if dockModel.autoHide {
+        if effectiveAutoHide {
             edgeTracker.start()
             logger.info("engine started, panel hidden, edge tracker armed on \(NSScreen.screens.count) screen(s)")
         } else {
@@ -404,24 +408,43 @@ final class DockEngine {
         }
     }
 
-    /// Turn auto-hide on or off, live. Off: the edge window goes away (no
-    /// tracking at all) and the panel stays revealed. On: the edge window
-    /// comes back and the panel hides once the cursor is outside it.
-    private func applyAutoHide(_ on: Bool) {
+    /// Auto-hide as applied right now: the saved preference, unless Settings
+    /// is focused (then the dock stays revealed for live preview).
+    private var effectiveAutoHide: Bool {
+        dockModel.autoHide && !settingsIsKey
+    }
+
+    /// Settings became or resigned the key window. Pin or release auto-hide
+    /// without writing `dockModel.autoHide`.
+    func settingsKeyFocusChanged(_ focused: Bool) {
+        guard settingsIsKey != focused else { return }
+        settingsIsKey = focused
+        applyEffectiveAutoHide(reason: focused ? "settings focused" : "settings unfocused")
+    }
+
+    /// Turn effective auto-hide on or off, live. Off: the edge window goes
+    /// away (no tracking at all) and the panel stays revealed. On: the edge
+    /// window comes back and the panel hides once the cursor is outside it.
+    private func applyEffectiveAutoHide(reason: String) {
         pendingHide?.cancel()
         pendingHide = nil
         pendingReveal?.cancel()
         pendingReveal = nil
+        let on = effectiveAutoHide
         if on {
             edgeTracker.start()
-            logger.info("auto-hide on, edge tracker armed")
+            logger.info("auto-hide on (\(reason, privacy: .public)), edge tracker armed")
             rearmHideIfCursorOutside(source: "auto-hide on")
         } else {
             edgeTracker.stop()
             revealRequestedAt = CACurrentMediaTime()
             revealTrigger = "mouseEntered"
             dockPanel.show(animated: true)
-            logger.info("auto-hide off, panel stays revealed")
+            if settingsIsKey, dockModel.autoHide {
+                logger.info("auto-hide suppressed (\(reason, privacy: .public)), panel stays revealed")
+            } else {
+                logger.info("auto-hide off (\(reason, privacy: .public)), panel stays revealed")
+            }
         }
     }
 
@@ -438,6 +461,7 @@ final class DockEngine {
         pendingReveal?.cancel()
         pendingReveal = nil
         revealSuppressedForButtonHold = false
+        settingsIsKey = false
         removeMouseUpMonitor()
         hover.clear()
         magnifier.reset()
@@ -499,7 +523,7 @@ final class DockEngine {
     private func considerRevealAfterButtonUp() {
         guard revealSuppressedForButtonHold else { return }
         revealSuppressedForButtonHold = false
-        guard dockModel.autoHide, !dockPanel.isRevealedOrRevealing else { return }
+        guard effectiveAutoHide, !dockPanel.isRevealedOrRevealing else { return }
         guard NSEvent.pressedMouseButtons == 0 else { return }
         let location = NSEvent.mouseLocation
         guard edgeTracker.containsScreenPoint(location) else { return }
@@ -524,7 +548,7 @@ final class DockEngine {
         hover.setEdge(edge)
         dockPanel.setEdge(edge)
         edgeTracker.setEdge(edge)
-        if !dockModel.autoHide {
+        if !effectiveAutoHide {
             dockPanel.show(animated: true)
         }
         logger.info("dock moved to the \(edge.rawValue, privacy: .public) edge")
@@ -674,7 +698,7 @@ final class DockEngine {
     }
 
     private func handleExit(source: String, trigger: String = "mouseExited") {
-        guard dockModel.autoHide else { return }
+        guard effectiveAutoHide else { return }
         // A drag moving between the edge zone, the panel and the strip, or
         // a tracking-area exit that slips through during the drag.
         if isDragOverDock {
@@ -697,7 +721,7 @@ final class DockEngine {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.pendingHide = nil
-            guard self.dockModel.autoHide else { return }
+            guard self.effectiveAutoHide else { return }
             if self.menuIsOpen {
                 self.logger.info("hide timer fired but a menu is open, staying revealed")
                 return

@@ -5,11 +5,19 @@ import SwiftUI
 /// and its own dock); closing it hands focus back to the app that was
 /// frontmost before and returns Portside to an accessory app.
 ///
+/// While Settings is the key window, DockEngine temporarily suppresses
+/// auto-hide so the strip stays visible for live preview. Losing key
+/// status (another app, miniaturize) or closing restores the saved
+/// auto-hide preference without flipping the Settings toggle.
+///
 /// Every control writes straight to `DockModel`, which persists and
 /// publishes, so the dock updates live (like a controlled input in React).
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// The activation policy changed (regular while open, accessory after).
     var onActivationPolicyChanged: (() -> Void)?
+    /// Settings became or resigned the key window. Used to pin the dock
+    /// visible while auto-hide is on and Settings is focused.
+    var onKeyFocusChanged: ((Bool) -> Void)?
 
     private let dockModel: DockModel
     private let layout: DockLayout
@@ -121,7 +129,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.setFrame(frame, display: false)
     }
 
+    func windowDidBecomeKey(_ notification: Notification) {
+        onKeyFocusChanged?(true)
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        onKeyFocusChanged?(false)
+    }
+
     func windowWillClose(_ notification: Notification) {
+        onKeyFocusChanged?(false)
         if let activationObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(activationObserver)
         }
