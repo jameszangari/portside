@@ -139,6 +139,9 @@ if [ "$identity" = "-" ]; then
     echo "==> Signing ad-hoc"
     echo "build-app: ad-hoc builds may ask for macOS permissions again after a rebuild." >&2
 else
+    # Widen the key partition list before codesign so macOS does not keep
+    # asking for the login password. Uses a GUI password dialog once if needed.
+    "$root/scripts/ensure-codesign-key-access.sh"
     echo "==> Signing with '$identity'"
 fi
 codesign --force --deep --sign "$identity" "$app"

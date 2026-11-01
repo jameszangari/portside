@@ -4,6 +4,9 @@ umask 077
 
 name="Portside Local Development"
 state="$HOME/Library/Application Support/com.james.portside/signing"
+root="$(cd "$(dirname "$0")/.." && pwd)"
+ensure_access="$root/scripts/ensure-codesign-key-access.sh"
+
 if [ -f "$state/identity.sha1" ]; then
     saved_identity="$(tr -d '[:space:]' < "$state/identity.sha1")"
     if ! [[ "$saved_identity" =~ ^[[:xdigit:]]{40}$ ]]; then
@@ -16,6 +19,7 @@ if [ -f "$state/identity.sha1" ]; then
         exit 1
     fi
     echo "Reusing the saved Portside signing identity."
+    "$ensure_access"
     exit 0
 fi
 
@@ -32,6 +36,7 @@ if [ -n "$matches" ]; then
     printf '%s\n' "$matches" > "$state/identity.sha1.tmp"
     mv "$state/identity.sha1.tmp" "$state/identity.sha1"
     echo "Reusing '$name' from your default keychain."
+    "$ensure_access"
     exit 0
 fi
 
@@ -77,7 +82,11 @@ if ! security find-identity -v -p codesigning "$keychain" | grep -Fq "$fingerpri
     echo "setup-signing: macOS has not accepted the identity. Check its Code Signing trust in Keychain Access, then run this script again." >&2
     exit 1
 fi
+
 mkdir -p "$state"
 printf '%s\n' "$fingerprint" > "$state/identity.sha1.tmp"
 mv "$state/identity.sha1.tmp" "$state/identity.sha1"
+
+# -T alone is not enough on modern macOS. Widen the partition list via GUI if needed.
+"$ensure_access"
 echo "Ready. scripts/build-app.sh will reuse this identity on future builds."
