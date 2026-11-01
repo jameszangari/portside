@@ -272,6 +272,15 @@ private struct SettingsSidebar: View {
     @State private var status: String?
     @State private var checking = false
     @State private var clearStatus: Task<Void, Never>?
+    /// Set when a check finds a newer release; the button becomes Install Update.
+    @State private var pendingUpdate: PendingUpdate?
+    @State private var confirmingInstall = false
+
+    private struct PendingUpdate {
+        let version: String
+        let releaseURL: URL
+        let dmgURL: URL
+    }
 
     var body: some View {
         List(selection: Binding(get: { selection }, set: { if let tab = $0 { selection = tab } })) {
@@ -318,13 +327,29 @@ private struct SettingsSidebar: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.opacity)
             }
-            Button(checking ? "Checking…" : "Check for Updates", action: checkForUpdates)
-                .controlSize(.small)
-                .disabled(checking)
+            if pendingUpdate != nil {
+                Button(checking ? "Installing…" : "Install Update") { confirmingInstall = true }
+                    .controlSize(.small)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(checking)
+            } else {
+                Button(checking ? "Checking…" : "Check for Updates", action: checkForUpdates)
+                    .controlSize(.small)
+                    .disabled(checking)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
         .padding(.bottom, 12)
+        .alert(
+            "Install Portside \(pendingUpdate?.version ?? "")?",
+            isPresented: $confirmingInstall
+        ) {
+            Button("Quit and Install", action: installUpdate)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Portside will quit, replace itself with the new version, and reopen. Your settings are kept.")
+        }
     }
 
     private func checkForUpdates() {
@@ -332,38 +357,51 @@ private struct SettingsSidebar: View {
         clearStatus = Task { @MainActor in
             checking = true
             let result = await UpdateChecker.check()
+            checking = false
             switch result {
             case .available(let version, let page, let dmgURL):
-                // Installed .app: download the DMG and replace in place. Otherwise
-                // open the release page (swift run / missing asset).
+                // Installed .app: offer Install Update. Otherwise (swift run or
+                // a release without a DMG) open the release page.
                 if let dmgURL, UpdateChecker.canInstallInPlace {
-                    withAnimation { status = "Version \(version) is available." }
-                    do {
-                        try await UpdateChecker.downloadAndInstall(dmgURL: dmgURL, version: version) { phase in
-                            withAnimation { status = phase }
-                        }
-                        // terminate was requested; keep the button disabled.
-                        return
-                    } catch {
-                        checking = false
-                        withAnimation {
-                            status = "Couldn't install the update: \(error.localizedDescription)"
-                        }
-                        NSWorkspace.shared.open(page)
-                    }
-                } else {
-                    checking = false
-                    withAnimation { status = result.message }
-                    NSWorkspace.shared.open(page)
+                    pendingUpdate = PendingUpdate(version: version, releaseURL: page, dmgURL: dmgURL)
+                    withAnimation { status = "New version \(version) found." }
+                    return
                 }
+                withAnimation { status = result.message }
+                NSWorkspace.shared.open(page)
             default:
-                checking = false
                 withAnimation { status = result.message }
             }
-            try? await Task.sleep(for: .seconds(6))
-            guard !Task.isCancelled else { return }
-            withAnimation { status = nil }
+            await clearStatusLater()
         }
+    }
+
+    private func installUpdate() {
+        guard let update = pendingUpdate else { return }
+        clearStatus?.cancel()
+        clearStatus = Task { @MainActor in
+            checking = true
+            do {
+                try await UpdateChecker.downloadAndInstall(dmgURL: update.dmgURL, version: update.version) { phase in
+                    withAnimation { status = phase }
+                }
+                // terminate was requested; keep the button disabled.
+            } catch {
+                checking = false
+                pendingUpdate = nil
+                withAnimation {
+                    status = "Couldn't install the update: \(error.localizedDescription)"
+                }
+                NSWorkspace.shared.open(update.releaseURL)
+                await clearStatusLater()
+            }
+        }
+    }
+
+    private func clearStatusLater() async {
+        try? await Task.sleep(for: .seconds(6))
+        guard !Task.isCancelled else { return }
+        withAnimation { status = nil }
     }
 }
 

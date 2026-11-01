@@ -76,7 +76,7 @@ build/Portside.app/Contents/MacOS/portside --restore-dock
 - A helper waits for Portside to quit (up to 60s, else it cancels), renames the installed app aside, renames the new one into place, and deletes the old one. If the second rename fails, the old app is put back. The path never changes, so Open at Login keeps pointing at the right copy.
 - The folder must be writable (`~/Applications` is; `/Applications` may not be for a standard user); otherwise the update stops before downloading.
 - Settings > General > Updates lists any other Portside.app copies with their versions (Show in Finder, Move to Trash), since Open at Login or Spotlight can launch a stale one.
-- Hidden test commands (no UI): `portside --install-update <dmg> [--expect-version X.Y.Z] [--no-relaunch]` runs the same stage, verify, and swap path from a local DMG against the bundle the binary lives in. `portside --resave-settings` loads and saves dock.json through the normal path. Run them with `CFFIXED_USER_HOME=/tmp/somewhere` to keep your real preferences and logs out of it.
+- Hidden test commands (no UI): `portside --install-update <dmg> [--expect-version X.Y.Z] [--no-relaunch]` runs the same stage, verify, and swap path from a local DMG against the bundle the binary lives in. `portside --resave-settings` loads and saves dock.json through the normal path. `portside --check-updates` prints whether a GitHub token was found and the result of a real update check. Run them with `CFFIXED_USER_HOME=/tmp/somewhere` to keep your real preferences and logs out of it.
 
 ### When the GitHub repo becomes public
 

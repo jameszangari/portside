@@ -24,6 +24,9 @@ enum PortsideMain {
         if CommandLine.arguments.contains("--resave-settings") {
             exit(resaveSettingsCommand())
         }
+        if CommandLine.arguments.contains("--check-updates") {
+            exit(checkUpdatesCommand())
+        }
         NativeDock.recoverIfNeeded()
         installSignalHandlers()
         PortsideApp.main()
@@ -57,6 +60,22 @@ enum PortsideMain {
             FileHandle.standardError.write(Data("portside: \(error.localizedDescription)\n".utf8))
             return 1
         }
+    }
+
+    /// `portside --check-updates`: run the same check as the Settings button
+    /// and print the result. Hidden; no UI, no install.
+    private static func checkUpdatesCommand() -> Int32 {
+        print("token available: \(GitHubAuth.hasAnyToken)")
+        let done = DispatchSemaphore(value: 0)
+        var result = UpdateCheckResult.notConfigured
+        Task.detached {
+            result = await UpdateChecker.check()
+            done.signal()
+        }
+        done.wait()
+        print(result.message)
+        if case .failed = result { return 1 }
+        return 0
     }
 
     /// `portside --export-icon <path.png>`: writes the app icon as a 1024px

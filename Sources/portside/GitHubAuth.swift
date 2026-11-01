@@ -70,8 +70,11 @@ enum GitHubAuth {
     /// `gh` stores tokens as `go-keyring-base64:<base64>` (go-keyring). Decode that;
     /// plain values (older hosts) are returned as-is.
     private static func ghCLIToken() -> String? {
-        for raw in readAllKeychainData(service: ghService) {
-            if let token = decodeKeyringValue(raw) { return token }
+        for account in keychainAccounts(service: ghService) {
+            if let raw = readKeychain(service: ghService, account: account),
+               let token = decodeKeyringValue(raw) {
+                return token
+            }
         }
         return nil
     }
@@ -103,23 +106,20 @@ enum GitHubAuth {
         return String(data: data, encoding: .utf8)
     }
 
-    private static func readAllKeychainData(service: String) -> [String] {
+    /// Account names for a service. The macOS file keychain rejects
+    /// `kSecReturnData` with `kSecMatchLimitAll` (errSecParam), so list
+    /// attributes here and read each password with a single match.
+    private static func keychainAccounts(service: String) -> [String] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecReturnData as String: true,
+            kSecReturnAttributes as String: true,
             kSecMatchLimit as String: kSecMatchLimitAll,
         ]
         var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess else { return [] }
-        if let data = item as? Data, let s = String(data: data, encoding: .utf8) {
-            return [s]
-        }
-        if let many = item as? [Data] {
-            return many.compactMap { String(data: $0, encoding: .utf8) }
-        }
-        return []
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let rows = item as? [[String: Any]] else { return [] }
+        return rows.compactMap { $0[kSecAttrAccount as String] as? String }
     }
 
     enum AuthError: LocalizedError {

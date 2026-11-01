@@ -28,7 +28,7 @@ Personal project for Apple Silicon. Builds a locally signed `.app`; not meant fo
 - **Groups and stacks:** app groups with grids and optional custom icons (SF Symbol + palette color); folder stacks (grid / fan / list) with FSEvents; Trash tile
 - **Appearance:** match macOS icon style or Original; Liquid Glass / Frosted / Solid (color or gradient) background, each with its own strength; one color picker everywhere (Brand, Neutrals, macOS and RGB presets, hex, hue, saturation, tint, shade, opacity)
 - **Native Dock:** hide via autohide-delay (save/restore), import apps and folders, open at login via `SMAppService`, optional Settings on launch
-- **Settings:** sidebar panes, live apply, global hotkey (default ⌘⇧D), Check for Updates (in-place install from the GitHub release DMG)
+- **Settings:** sidebar panes, live apply, global hotkey (default ⌘⇧D), Check for Updates (Install Update with a quit-and-install confirmation, in-place from the GitHub release DMG)
 
 Full detail: [docs/FEATURES.md](docs/FEATURES.md).
 
