@@ -62,12 +62,12 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 
 **Groups**
 - User-defined groups of apps shown as one tile that opens a grid.
-- Inline naming on creation, rename, ungroup, and remove-from-group from context menus.
+- Inline naming on creation; rename from the open grid title (click it), the tile menu, or Settings. Ungroup and remove-from-group from context menus.
 - Removing a group that has apps ("Remove from Dock", or dragging its tile out) asks first: Ungroup Instead (default, apps return as normal tiles), Remove Group, or Cancel. Empty groups go without asking. The alert gives focus back to the previous app.
 - Optional open on hover, with configurable open delay and close grace.
-- Dragging a file or app over a group tile opens its grid immediately. Drop an app on the tile or into the grid to add it (a dashed tile-sized gap follows the cursor so you choose the slot). Drop a file on a member that can open it (it highlights) to open it there. The grid closes when the drag leaves both the tile and the grid.
+- Dragging a file or app over a group tile opens its grid immediately. Drop an app from Finder, or drag a dock app (pinned or unpinned running) onto the tile or into the grid to add it (a dashed tile-sized gap follows the cursor so you choose the slot). Drop a file on a member that can open it (it highlights) to open it there. The grid closes when the drag leaves both the tile and the grid.
 - Resting a file drag on a running app tile for about 600ms brings that app forward (native spring-load).
-- Dragging a member out of the open grid asks Remove from Group (stays on the dock next to the group) or Remove from Dock, or Cancel.
+- Drag a member inside the open grid to reorder it. Dragging a member out asks Remove from Group (stays on the dock next to the group) or Remove from Dock, or Cancel.
 
 **Appearance**
 - Icons match the macOS icon style (Default, Dark, Clear, Tinted) like the native Dock, and refresh when you change it in System Settings. Or pick "Original" to show each app's own artwork.
@@ -111,7 +111,6 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 ## Planned
 
 From `docs/CHECKLIST.md` Remaining backlog:
-- Groups: drag strip icons into a group, click title to rename, reorder members inside the grid.
 - Folder stacks: fan and list views, per-stack view/sort/filter, show-as-folder vs stack icon.
 - Milestone F leftover: import plain file tiles from `persistent-others` (folders already import).
 - P3 leftovers: window list in the app menu; VoiceOver / keyboard navigation.

@@ -62,11 +62,25 @@ Status (2026-10-31): built. Settings always centers on the primary display; Icon
 - [ ] 4. Switch to Left and Right: same gap along the column. Reveal timing unchanged. Separator still draggable / right-clickable at gap 0.
 
 ### 2. App groups (gaps vs native feel)
+
+Status (2026-10-31): built. Finder drop-in and menu rename were already shipped; strip drag-in, title-click rename, and in-grid reorder added. `swift build` clean. Hand test pending.
+
 Already shipped: create/rename from menus and Settings, Finder drop into group, drag member out, open on hover.
-Still open:
-- [ ] **Drag strip icon into a group:** drag a pinned (or unpinned running) app tile onto a group tile or into an open group grid; insertion gap chooses the slot; remove from strip / add to group in one drop. Escape cancels.
-- [ ] **Click group card title to rename:** tap the title in the open group popover to edit inline (same key-focus-while-editing rules as creation rename). Return / Escape commits or cancels; focus returns to the previous app.
-- [ ] **Reorder inside a group:** drag a member within the open grid to a new slot (same dashed gap as Finder add). Persist order in the group; no remove-from-group prompt when the drop stays inside the grid.
+- [x] **Drag strip icon into a group:** drag a pinned or unpinned running app onto a group tile (opens the grid) or into the open grid; dashed insertion gap chooses the slot; drop adds and removes from the strip. Escape cancels. `DockModel.addToGroup` / `GroupController.finishStripAppDrop`.
+- [x] **Click group card title to rename:** tap the title in the open group popover for the same inline rename as creation (Return commits, Escape cancels, key focus only while editing).
+- [x] **Reorder inside a group:** drag a member within the open grid; dashed gap follows; release inside moves with `moveInGroup` (no remove prompt). Release clearly outside still asks Remove from Group / Remove from Dock.
+- [x] **Reorder cleanup (glitchy drags):** causes and fixes. Needs hand test.
+  - Strip: the slot came from `x / (tile + spacing)`, which ignores the 8pt padding, spacers, separators and widths, so tiles flipped under the cursor. Now `steppedSlot` uses the tiles' real frames: a tile passes a neighbor only when the cursor crosses that neighbor's midpoint, so a neighbor still sliding aside can't pull it back.
+  - Drag locations were in the `strip` space while Trash / group hit tests used `dockRoot` frames (offset by the strip padding). Reorder, folder and unpinned-app drags now use `dockRoot`.
+  - Folders: a cursor in the gap between two folders sent the dragged one to the last slot, and the move wasn't animated. Fixed with the same stepped slot and the same 0.12s ease.
+  - Group grid: the dragged member was removed from the grid layout, which destroyed the view owning the gesture, so `onEnded` never ran (DragOut's "mouse up without a gesture end" fallback closed it without saving the move). Now the grid is one flat `LazyVGrid`, the dragged cell stays as a dashed placeholder, order changes live (`GroupController.reorderSlot`), and release saves. Out and back, or Escape, restores the start order.
+
+#### Hand test
+- [ ] 1. Open a group. Click its title: rename field appears; type a name, Return. Escape cancels. Frontmost app keeps focus after.
+- [ ] 2. Drag a pinned app onto a group tile: grid opens; drop on the tile or into a chosen gap; app leaves the strip and lands in the group. Escape mid-drag puts it back.
+- [ ] 3. Drag an unpinned running app onto a group the same way.
+- [ ] 4. Open a group; drag a member to a new slot inside the grid: order updates, no alert. Drag a member clearly out: Remove from Group / Remove from Dock alert as before.
+- [ ] 5. Reveal timing unchanged.
 
 ### 3. Folder stacks (P2 leftovers)
 Already shipped: pin folder from Finder, grid popover, drop-in, FSEvents, import from native Dock.

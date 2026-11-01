@@ -38,6 +38,11 @@ final class GroupController: ObservableObject {
     @Published private(set) var editingID: String?
     /// The name field's text while editing.
     @Published var draftName = ""
+    /// Slot where a strip-dragged app (or in-grid reorder) would land in the
+    /// open group. The popover draws the same dashed gap as a Finder drop.
+    @Published private(set) var memberInsertIndex: Int?
+    /// App id being dragged into or within the open group (hides that cell).
+    @Published private(set) var draggingMemberID: String?
 
     /// Cursor entered or left the open group's panel.
     var onMouseEntered: (() -> Void)?
@@ -81,6 +86,8 @@ final class GroupController: ObservableObject {
     private var dragTileGroupID: String?
     /// A file drag is over the open grid right now.
     private(set) var isDragOverGrid = false
+    /// Member cell frames in overlay content (SwiftUI global) space.
+    private var memberContentFrames: [String: CGRect] = [:]
     /// The open grid came from hovering, so the next click on its tile
     /// keeps it open instead of toggling it shut.
     private var openedByHover = false
@@ -138,10 +145,11 @@ final class GroupController: ObservableObject {
         expandedID == nil ? nil : overlay.hitFrame
     }
 
-    /// An item drag started or ended. A drag that starts on the strip (a
-    /// tile, including a group tile) closes any open grid, like a click
-    /// elsewhere. A drag from inside the grid keeps it; when that ends, a
-    /// hover-opened grid gets its normal grace close if the cursor left it.
+    /// An item drag started or ended. A drag that starts on the strip closes
+    /// any open grid (a strip app drag reopens one via `dragOverGroupTileChanged`
+    /// when the cursor rests on a group tile). A drag from inside the grid
+    /// keeps it; when that ends, a hover-opened grid gets its normal grace
+    /// close if the cursor left it.
     func itemDragChanged(_ dragging: Bool, fromStrip: Bool) {
         isItemDragging = dragging
         if dragging {
@@ -149,9 +157,11 @@ final class GroupController: ObservableObject {
             pendingHoverOpen = nil
             cancelHoverClose()
             if fromStrip, expandedID != nil {
+                clearMemberInsert()
                 collapse(reason: "item drag started on the strip")
             }
         } else {
+            clearMemberInsert()
             scheduleHoverCloseIfHoverOpened()
         }
     }
@@ -413,6 +423,105 @@ final class GroupController: ObservableObject {
     private func cancelHoverClose() {
         pendingHoverClose?.cancel()
         pendingHoverClose = nil
+    }
+
+    // MARK: - Member frames / insert slot (Finder, strip drag, reorder)
+
+    /// The open grid reports each member cell's frame in overlay content space.
+    func setMemberContentFrames(_ frames: [String: CGRect]) {
+        memberContentFrames = frames.filter { !$0.key.hasPrefix("group-insert") }
+    }
+
+    /// Update the dashed insert gap from a screen point (strip app drag).
+    func updateMemberInsert(atScreen point: NSPoint, hidingAppID: String?) {
+        guard expandedID != nil,
+              let content = overlay.contentPoint(fromScreen: point) else {
+            clearMemberInsert()
+            return
+        }
+        updateMemberInsert(atContent: content, hidingAppID: hidingAppID)
+    }
+
+    /// Update the dashed insert gap from overlay content coordinates (grid reorder).
+    func updateMemberInsert(atContent point: CGPoint, hidingAppID: String?) {
+        draggingMemberID = hidingAppID
+        let frames = memberContentFrames.filter { $0.key != hidingAppID }.map(\.value)
+        let index = Self.slotIndex(frames: frames, at: point)
+        if memberInsertIndex != index {
+            memberInsertIndex = index
+        }
+    }
+
+    /// Where a grid member being dragged belongs among `ids` (group order):
+    /// it steps past a neighbor only once the cursor crosses that
+    /// neighbor's midpoint in reading order. Uses the cells' real frames, so
+    /// a neighbor still sliding aside can never pull the member back.
+    func reorderSlot(ids: [String], dragged: String, at point: CGPoint) -> Int {
+        guard var slot = ids.firstIndex(of: dragged) else { return 0 }
+        func precedes(_ id: String) -> Bool {
+            guard let f = memberContentFrames[id] else { return false }
+            return point.y < f.minY || (point.y <= f.maxY && point.x < f.midX)
+        }
+        func follows(_ id: String) -> Bool {
+            guard let f = memberContentFrames[id] else { return false }
+            return point.y > f.maxY || (point.y >= f.minY && point.x > f.midX)
+        }
+        while slot > 0, precedes(ids[slot - 1]) { slot -= 1 }
+        while slot < ids.count - 1, follows(ids[slot + 1]) { slot += 1 }
+        return slot
+    }
+
+    func clearMemberInsert() {
+        if memberInsertIndex != nil { memberInsertIndex = nil }
+        if draggingMemberID != nil { draggingMemberID = nil }
+    }
+
+    /// Reading-order index 0...count from cell midpoints (same rules as the
+    /// Finder drop gap in the grid).
+    static func slotIndex(frames: [CGRect], at point: CGPoint) -> Int {
+        let ordered = frames.sorted { a, b in
+            if abs(a.minY - b.minY) < 4 { return a.minX < b.minX }
+            return a.minY < b.minY
+        }
+        if ordered.isEmpty { return 0 }
+        for (i, frame) in ordered.enumerated() {
+            if point.y < frame.midY - frame.height * 0.45 { return i }
+            if abs(point.y - frame.midY) <= frame.height * 0.55, point.x < frame.midX {
+                return i
+            }
+        }
+        return ordered.count
+    }
+
+    /// Finish a strip app drag: add to the open group (or the group tile under
+    /// the cursor) at the insert slot. Returns true if the drop was consumed.
+    @discardableResult
+    func finishStripAppDrop(_ app: PinnedApp) -> Bool {
+        let point = NSEvent.mouseLocation
+        let insert = memberInsertIndex
+        let hiding = draggingMemberID
+        defer { clearMemberInsert() }
+
+        if let groupID = expandedID {
+            let overGrid = containsScreenPoint(point)
+            let overTile = hover.screenFrame(forTargetID: "group:" + groupID)?.contains(point) == true
+            if overGrid || overTile {
+                let at = insert ?? dockModel.groups.first(where: { $0.id == groupID })?.apps.count ?? 0
+                dockModel.addToGroup(app, groupID: groupID, at: at)
+                logger.info("strip drop: added \(app.displayName, privacy: .public) to group at \(at)")
+                // Keep a drag-opened grid from closing the moment the drag ends.
+                cancelHoverClose()
+                openedByHover = false
+                return true
+            }
+        }
+        if let groupID = dragTileGroupID {
+            dockModel.addToGroup(app, groupID: groupID)
+            logger.info("strip drop: added \(app.displayName, privacy: .public) onto group tile")
+            return true
+        }
+        _ = hiding
+        return false
     }
 
     // MARK: - Drag open (file / app drags)

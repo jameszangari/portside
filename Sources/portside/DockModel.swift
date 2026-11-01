@@ -533,6 +533,22 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    /// Reorder a member inside its group. `toIndex` is among the current
+    /// members (the app is removed first, then inserted). No-op if the app
+    /// is not in that group.
+    func moveInGroup(appID: String, groupID: String, toIndex: Int, persist shouldPersist: Bool = true) {
+        guard let gi = entries.firstIndex(where: { $0.group?.id == groupID }),
+              var group = entries[gi].group,
+              let from = group.apps.firstIndex(where: { $0.id == appID }) else { return }
+        let app = group.apps.remove(at: from)
+        let to = min(max(toIndex, 0), group.apps.count)
+        group.apps.insert(app, at: to)
+        var list = entries
+        list[gi] = .group(group)
+        entries = list
+        if shouldPersist { persist() }
+    }
+
     /// Take an app out of its group and put it back on the dock right after
     /// the group. A group left empty is removed.
     func removeFromGroup(_ app: PinnedApp, groupID: String) {

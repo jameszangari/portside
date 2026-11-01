@@ -177,6 +177,7 @@ struct GroupPopoverView: View {
                 // Card plus bridge take file drags; the shadow does not.
                 .coordinateSpace(name: Self.dropSpace)
                 .onPreferenceChange(GroupCellFramesKey.self) { cellFrames = $0 }
+                .onPreferenceChange(GroupCellContentFramesKey.self) { groups.setMemberContentFrames($0) }
                 .onDrop(of: [.fileURL], delegate: GroupFileDropDelegate(
                     session: fileDrop, targetID: $dropTargetID, insertIndex: $insertIndex,
                     cellFrames: cellFrames, itemCount: group.apps.count,
@@ -210,11 +211,12 @@ struct GroupPopoverView: View {
     }
 
     private func content(_ group: FolderGroup) -> some View {
-        let slots = gridSlots(apps: group.apps, insertAt: insertIndex)
+        let slots = gridSlots(
+            apps: group.apps,
+            insertAt: effectiveInsertIndex,
+            hiding: groups.draggingMemberID
+        )
         let columns = Self.columns(for: max(slots.count, 1))
-        let rows = stride(from: 0, to: slots.count, by: columns).map {
-            Array(slots[$0..<min($0 + columns, slots.count)])
-        }
         return VStack(spacing: 10) {
             if groups.editingID == group.id {
                 GroupNameField(
@@ -226,37 +228,45 @@ struct GroupPopoverView: View {
                 Text(group.name)
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        groups.beginRename(group.id, reason: "title clicked")
+                    }
+                    .help("Click to rename")
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityHint("Click to rename")
             }
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(rows.indices, id: \.self) { row in
-                    HStack(spacing: 4) {
-                        ForEach(rows[row]) { slot in
-                            switch slot {
-                            case .app(let app):
-                                GroupAppCell(
-                                    app: app,
-                                    groupID: group.id,
-                                    running: runningApps.runningInstance(of: app),
-                                    iconSize: Self.iconSize,
-                                    width: Self.cellWidth,
-                                    dockModel: dockModel,
-                                    groups: groups,
-                                    bouncer: groups.bouncer,
-                                    badges: badges,
-                                    isDropTarget: dropTargetID == app.id,
-                                    onLaunch: onLaunch
-                                )
-                            case .gap(let id):
-                                groupGridInsertionGap(id: id)
-                            }
-                        }
+            // One flat grid, so a cell keeps its identity (and its drag)
+            // when a reorder moves it to another row.
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.fixed(Self.cellWidth), spacing: 4), count: columns),
+                alignment: .leading, spacing: 6
+            ) {
+                ForEach(slots) { slot in
+                    switch slot {
+                    case .app(let app):
+                        GroupAppCell(
+                            app: app,
+                            groupID: group.id,
+                            running: runningApps.runningInstance(of: app),
+                            iconSize: Self.iconSize,
+                            width: Self.cellWidth,
+                            dockModel: dockModel,
+                            groups: groups,
+                            bouncer: groups.bouncer,
+                            badges: badges,
+                            isDropTarget: dropTargetID == app.id,
+                            onLaunch: onLaunch
+                        )
+                    case .gap(let id):
+                        groupGridInsertionGap(id: id)
                     }
                 }
             }
         }
         .padding(12)
         .overlay {
-            if insertIndex != nil {
+            if effectiveInsertIndex != nil {
                 RoundedRectangle(cornerRadius: dockModel.cornerRadius, style: .continuous)
                     .strokeBorder(Color.accentColor.opacity(0.8), lineWidth: 2)
             }
@@ -264,8 +274,11 @@ struct GroupPopoverView: View {
         .dockBackground(dockModel.look, shadow: true)
     }
 
-    private func gridSlots(apps: [PinnedApp], insertAt: Int?) -> [GridSlot] {
-        var slots = apps.map { GridSlot.app($0) }
+    /// Finder drop, strip app drop, or in-grid reorder.
+    private var effectiveInsertIndex: Int? { insertIndex ?? groups.memberInsertIndex }
+
+    private func gridSlots(apps: [PinnedApp], insertAt: Int?, hiding: String?) -> [GridSlot] {
+        var slots = apps.filter { $0.id != hiding }.map { GridSlot.app($0) }
         if let insertAt {
             slots.insert(.gap("group-insert-gap"), at: min(max(insertAt, 0), slots.count))
         }
@@ -282,10 +295,11 @@ struct GroupPopoverView: View {
             .frame(width: Self.cellWidth, height: Self.iconSize + 28)
             .accessibilityHidden(true)
             .background(GeometryReader { proxy in
-                Color.clear.preference(
-                    key: GroupCellFramesKey.self,
-                    value: [id: proxy.frame(in: .named(Self.dropSpace))]
-                )
+                Color.clear
+                    .preference(key: GroupCellFramesKey.self,
+                                value: [id: proxy.frame(in: .named(Self.dropSpace))])
+                    .preference(key: GroupCellContentFramesKey.self,
+                                value: [id: proxy.frame(in: .global)])
             })
     }
 
@@ -343,6 +357,10 @@ private struct GroupAppCell: View {
     /// Token of this cell's drag (see `DragOutController`), nil when idle.
     @State private var dragToken: Int?
     @State private var dragging = false
+    /// Where the member sat when its drag began.
+    @State private var dragStartIndex = 0
+    /// True while the cursor is clearly outside the grid (release removes).
+    @State private var dragOutsideGrid = false
     @State private var hold = MenuHold()
 
     private var bounceKey: String { LaunchBouncer.gridKey(groupID: groupID, appID: app.id) }
@@ -389,14 +407,27 @@ private struct GroupAppCell: View {
         .padding(.vertical, 6)
         .frame(width: width)
         .background(GeometryReader { proxy in
-            Color.clear.preference(key: GroupCellFramesKey.self,
-                                   value: [app.id: proxy.frame(in: .named(GroupPopoverView.dropSpace))])
+            Color.clear
+                .preference(key: GroupCellFramesKey.self,
+                            value: [app.id: proxy.frame(in: .named(GroupPopoverView.dropSpace))])
+                .preference(key: GroupCellContentFramesKey.self,
+                            value: [app.id: proxy.frame(in: .global)])
         })
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.primary.opacity(hovered ? 0.12 : 0))
         )
-        .opacity(dragging ? 0 : 1)
+        .opacity(dragging || groups.draggingMemberID == app.id ? 0 : 1)
+        // The dragged member stays in the grid as the dashed slot it will
+        // land in, so the layout (and this view's gesture) never changes.
+        .overlay {
+            if dragging {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.4), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.08)))
+                    .allowsHitTesting(false)
+            }
+        }
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .menuHold(hold) {
@@ -416,28 +447,66 @@ private struct GroupAppCell: View {
 }
 
 extension GroupAppCell {
-    /// Dragging a member clearly out of the grid asks: remove from group, or
-    /// remove from the dock. Released inside the grid, nothing changes.
+    private var groupAppIDs: [String] {
+        dockModel.groups.first { $0.id == groupID }?.apps.map(\.id) ?? []
+    }
+
+    /// Moves this member in the group (saved on release, not here).
+    private func moveMember(to index: Int) {
+        guard groupAppIDs.firstIndex(of: app.id) != index else { return }
+        withAnimation(GroupPopoverMotion.shouldAnimate ? .easeOut(duration: 0.12) : nil) {
+            dockModel.moveInGroup(appID: app.id, groupID: groupID, toIndex: index, persist: false)
+        }
+    }
+
+    /// Drag within the grid reorders live (the dragged cell shows a dashed
+    /// slot, like the strip). Drag clearly out asks Remove from Group or
+    /// Remove from Dock; out and back leaves the order as it started.
     private var dragOutGesture: some Gesture {
         DragGesture(minimumDistance: 4, coordinateSpace: .global)
-            .onChanged { _ in
+            .onChanged { value in
                 let dragOut = groups.dragOut
                 if dragToken == nil {
                     dragging = true
+                    dragOutsideGrid = false
+                    dragStartIndex = groupAppIDs.firstIndex(of: app.id) ?? 0
+                    let start = dragStartIndex
                     let icon = icons.icon(for: app.url)
                     dragToken = dragOut.begin(
                         itemID: app.id, source: .grid, label: "Remove",
                         preview: AnyView(Image(nsImage: icon).resizable().interpolation(.high).frame(width: iconSize, height: iconSize)),
                         size: iconSize
-                    ) { dragging = false }
+                    ) {
+                        // Escape: back where it started.
+                        moveMember(to: start)
+                        dragging = false
+                        dragOutsideGrid = false
+                        groups.clearMemberInsert()
+                    }
                 }
-                if let dragToken { dragOut.update(dragToken) }
+                guard let dragToken else { return }
+                let outside = dragOut.update(dragToken)
+                dragOutsideGrid = outside
+                if outside {
+                    moveMember(to: dragStartIndex)
+                } else {
+                    moveMember(to: groups.reorderSlot(ids: groupAppIDs, dragged: app.id, at: value.location))
+                }
             }
             .onEnded { _ in
                 guard let token = dragToken else { return }
                 dragToken = nil
                 dragging = false
-                // Keep the overlay up until the alert returns (poof or cancel).
+                let outside = dragOutsideGrid
+                dragOutsideGrid = false
+                groups.clearMemberInsert()
+                if !outside {
+                    // Inside: keep the new order. Never ask to remove.
+                    _ = groups.dragOut.end(token, deferResolution: false)
+                    dockModel.saveOrder()
+                    return
+                }
+                // Outside: keep the overlay up until the alert returns.
                 guard groups.dragOut.end(token, deferResolution: true) else { return }
                 DispatchQueue.main.async { finishMemberDragOut() }
             }
@@ -466,6 +535,14 @@ extension GroupAppCell {
 
 /// Member cell frames in the grid's drop space, by app id.
 private struct GroupCellFramesKey: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
+/// Member cell frames in overlay content space (SwiftUI global), for strip drops.
+private struct GroupCellContentFramesKey: PreferenceKey {
     static let defaultValue: [String: CGRect] = [:]
     static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
         value.merge(nextValue()) { $1 }

@@ -227,6 +227,8 @@ struct DockStrip: View {
                 ForEach(extras, id: \.0.id) { app, running in
                     DockItemView(app: app, running: running, isPinned: false, size: tile, dockModel: dockModel, bouncer: bouncer,
                                  badges: badges, isDropTarget: dropTargetID == app.id)
+                        .opacity(dragging == app.id ? 0 : 1)
+                        .gesture(unpinnedGroupDropGesture(for: app, tile: tile))
                 }
                 if showsSelf {
                     PortsideTileView(size: tile) { interactions.onOpenSettings?() }
@@ -472,7 +474,7 @@ struct DockStrip: View {
     /// tile goes back to its starting slot and a release removes it, like
     /// "Remove from Dock" in its menu. Escape puts it back.
     private func reorderGesture(for entry: DockEntry, tile: CGFloat, vertical: Bool) -> some Gesture {
-        DragGesture(minimumDistance: 4, coordinateSpace: .named(DockStrip.space))
+        DragGesture(minimumDistance: 4, coordinateSpace: .named(DockHover.space))
             .onChanged { value in
                 if dragToken == nil {
                     let start = dockModel.entries.firstIndex { $0.id == entry.id } ?? 0
@@ -487,6 +489,8 @@ struct DockStrip: View {
                         }
                         dragging = nil
                         dragOutside = false
+                        interactions.onDragOverGroupTile?(nil)
+                        groups.clearMemberInsert()
                     }
                 }
                 guard let token = dragToken, !dragOut.isCanceled(token) else { return }
@@ -494,16 +498,31 @@ struct DockStrip: View {
                 if outside != dragOutside { dragOutside = outside }
                 let overTrash = isPointOverTrash(value.location)
                 if overTrash != dragOverTrash { dragOverTrash = overTrash }
+
+                // App tiles can be dropped into a group (tile or open grid).
+                let dropGroup = stripDropGroup(at: value.location, entry: entry)
+                if case .app = entry {
+                    interactions.onDragOverGroupTile?(dropGroup.tileID)
+                    if dropGroup.overGrid {
+                        groups.updateMemberInsert(atScreen: NSEvent.mouseLocation, hidingAppID: nil)
+                    } else if dropGroup.tileID == nil {
+                        groups.clearMemberInsert()
+                    }
+                }
+
                 let slot: Int
-                if outside || overTrash {
-                    // Outside or over Trash: hold the starting slot until release.
+                if outside || overTrash || dropGroup.targetsGroup {
+                    // Outside, Trash, or aiming at a group: hold the start slot.
                     slot = dragStartIndex
                 } else {
                     let position = vertical ? value.location.y : value.location.x
-                    slot = Int((position / (tile + spacing)).rounded(.down))
+                    slot = steppedSlot(ids: dockModel.entries.map(\.id), dragged: entry.id,
+                                       position: position, vertical: vertical)
                 }
-                withAnimation(.easeOut(duration: 0.12)) {
-                    dockModel.move(entryID: entry.id, toIndex: slot, persist: false)
+                if dockModel.entries.firstIndex(where: { $0.id == entry.id }) != slot {
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        dockModel.move(entryID: entry.id, toIndex: slot, persist: false)
+                    }
                 }
             }
             .onEnded { _ in
@@ -512,8 +531,11 @@ struct DockStrip: View {
                 let canceled = dragOut.isCanceled(token)
                 let overTrash = dragOverTrash
                 dragOverTrash = false
+                interactions.onDragOverGroupTile?(nil)
+
                 // Drop on Trash always asks; never remove or trash silently.
                 if overTrash {
+                    groups.clearMemberInsert()
                     _ = dragOut.end(token, deferResolution: false)
                     dragging = nil
                     dragOutside = false
@@ -528,6 +550,22 @@ struct DockStrip: View {
                     }
                     return
                 }
+
+                // App dropped on a group tile or into an open group grid.
+                if case .app(let app) = entry, groups.finishStripAppDrop(app) {
+                    _ = dragOut.end(token, deferResolution: false)
+                    dragging = nil
+                    dragOutside = false
+                    // addToGroup already removed it from the strip and saved.
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        // Snap any live-reorder ghost slot closed.
+                        dockModel.saveOrder()
+                    }
+                    stripLogger.info("added to group by dragging: \(app.displayName, privacy: .public)")
+                    return
+                }
+                groups.clearMemberInsert()
+
                 var deferred = false
                 if case .group(let group) = entry, GroupRemoval.needsConfirmation(group) { deferred = true }
                 let remove = dragOut.end(token, deferResolution: deferred)
@@ -558,6 +596,61 @@ struct DockStrip: View {
                 dockModel.saveOrder()
                 let index = dockModel.entries.firstIndex { $0.id == entry.id } ?? -1
                 stripLogger.info("reorder ended: \(entry.id, privacy: .public) at slot \(index)")
+            }
+    }
+
+    /// Whether a strip drag is over a group tile and/or the open group grid.
+    private func stripDropGroup(at point: CGPoint, entry: DockEntry) -> (tileID: String?, overGrid: Bool, targetsGroup: Bool) {
+        guard case .app = entry else { return (nil, false, false) }
+        return stripDropGroup(at: point)
+    }
+
+    private func stripDropGroup(at point: CGPoint) -> (tileID: String?, overGrid: Bool, targetsGroup: Bool) {
+        let tileID = tileFrames.first {
+            $0.id.hasPrefix("group:") && $0.frame.contains(point)
+        }.map { String($0.id.dropFirst("group:".count)) }
+        let overGrid = groups.containsScreenPoint(NSEvent.mouseLocation)
+        return (tileID, overGrid, tileID != nil || overGrid)
+    }
+
+    /// Unpinned running apps: drag onto a group (or into its open grid) to
+    /// add them. Dragging elsewhere does nothing (they are not on the dock).
+    private func unpinnedGroupDropGesture(for app: PinnedApp, tile: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .named(DockHover.space))
+            .onChanged { value in
+                if dragToken == nil {
+                    dragging = app.id
+                    dragToken = dragOut.begin(
+                        itemID: app.id, source: .strip, label: "Add to Group",
+                        preview: preview(for: .app(app), tile: tile), size: tile
+                    ) {
+                        dragging = nil
+                        interactions.onDragOverGroupTile?(nil)
+                        groups.clearMemberInsert()
+                    }
+                }
+                guard let token = dragToken, !dragOut.isCanceled(token) else { return }
+                _ = dragOut.update(token)
+                let dropGroup = stripDropGroup(at: value.location)
+                interactions.onDragOverGroupTile?(dropGroup.tileID)
+                if dropGroup.overGrid {
+                    groups.updateMemberInsert(atScreen: NSEvent.mouseLocation, hidingAppID: nil)
+                } else if dropGroup.tileID == nil {
+                    groups.clearMemberInsert()
+                }
+            }
+            .onEnded { _ in
+                guard let token = dragToken else { return }
+                dragToken = nil
+                interactions.onDragOverGroupTile?(nil)
+                dragging = nil
+                if groups.finishStripAppDrop(app) {
+                    _ = dragOut.end(token, deferResolution: false)
+                    stripLogger.info("unpinned app added to group: \(app.displayName, privacy: .public)")
+                    return
+                }
+                groups.clearMemberInsert()
+                _ = dragOut.end(token, deferResolution: false)
             }
     }
 
@@ -611,7 +704,7 @@ struct DockStrip: View {
 
     /// Reorder folder stacks among themselves, or drag out to remove.
     private func stackDragGesture(for stack: FolderStack, tile: CGFloat, vertical: Bool) -> some Gesture {
-        DragGesture(minimumDistance: 4, coordinateSpace: .named(DockStrip.space))
+        DragGesture(minimumDistance: 4, coordinateSpace: .named(DockHover.space))
             .onChanged { value in
                 if dragToken == nil {
                     let start = dockModel.stacks.firstIndex { $0.id == stack.id } ?? 0
@@ -641,19 +734,14 @@ struct DockStrip: View {
                     dockModel.moveStack(id: stack.id, toIndex: dragStartIndex, persist: false)
                     return
                 }
-                let hits = tileFrames.filter { $0.id.hasPrefix("stack:") }
                 let position = vertical ? value.location.y : value.location.x
-                let slot: Int
-                if let hit = hits.enumerated().first(where: {
-                    $0.element.frame.contains(value.location)
-                }) {
-                    slot = hit.offset
-                } else if let first = hits.first, (vertical ? position < first.frame.minY : position < first.frame.minX) {
-                    slot = 0
-                } else {
-                    slot = max(hits.count - 1, 0)
+                let slot = steppedSlot(ids: dockModel.stacks.map(\.hoverID), dragged: stack.hoverID,
+                                       position: position, vertical: vertical)
+                if dockModel.stacks.firstIndex(where: { $0.id == stack.id }) != slot {
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        dockModel.moveStack(id: stack.id, toIndex: slot, persist: false)
+                    }
                 }
-                dockModel.moveStack(id: stack.id, toIndex: slot, persist: false)
             }
             .onEnded { _ in
                 guard let token = dragToken else { return }
@@ -677,6 +765,23 @@ struct DockStrip: View {
                     dockModel.moveStack(id: stack.id, toIndex: dockModel.stacks.firstIndex { $0.id == stack.id } ?? 0, persist: true)
                 }
             }
+    }
+
+    /// Where a dragged tile belongs in `ids` (model order, hover ids): it
+    /// steps past a neighbor only once the cursor crosses that neighbor's
+    /// midpoint, using the tiles' real frames (`DockHover.space`, the same
+    /// space as the drag location). Spacers, separators, padding and tiles
+    /// of different widths all count correctly, a cursor in a gap or off the
+    /// strip's cross axis changes nothing, and a neighbor still sliding
+    /// aside can never pull the tile back.
+    private func steppedSlot(ids: [String], dragged: String, position: CGFloat, vertical: Bool) -> Int {
+        guard var slot = ids.firstIndex(of: dragged) else { return 0 }
+        func mid(_ id: String) -> CGFloat? {
+            tileFrames.first { $0.id == id }.map { vertical ? $0.frame.midY : $0.frame.midX }
+        }
+        while slot > 0, let m = mid(ids[slot - 1]), position < m { slot -= 1 }
+        while slot < ids.count - 1, let m = mid(ids[slot + 1]), position > m { slot += 1 }
+        return slot
     }
 
     private func isPointOverTrash(_ point: CGPoint) -> Bool {
