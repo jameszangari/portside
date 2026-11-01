@@ -20,6 +20,15 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
+## Windows respect Portside: Phase 5 (2026-11-01)
+
+- [x] Survey of Portside's own windows: only Settings places itself on screen (centered on the primary display). Hover labels, group and stack grids, and the panel are part of the dock and keep using `visibleFrame`. Settings is fixed-size, so Rectangle can only move it; no fitting needed.
+- [x] Settings centers in `DockReservation.usableFrame` (visible frame minus the pinned dock), like windows centered against the native Dock. `DockReservation` now also posts `dockReservationDidChange`; an open Settings window still at its placed position re-centers, so opening at launch (before the dock is measured) and toggling hiding both land right. A window you moved stays put.
+- [x] Found and fixed: Settings always sat 16pt below center. The toolbar attaches after placement and adds 32pt below the placed frame. Placement now re-centers once with the real size on the next main loop turn, and "still placed" compares the top-left corner.
+- [x] Verified (sandboxed, Settings on launch, AX frame): hiding on, center y 575 (visible area 33 to 1117); hiding off, center y 541 (usable area 33 to 1049). `swift build` clean.
+- [x] Gap tweak (James, screenshot): fitted windows stopped about 10pt above the dock's visible top, because the depth included the panel's transparent far-side padding (`farInset`, 10pt). `reservedDepth` is now the visible dock edge plus a 4pt gap (default size: 68pt -> 62pt).
+- [ ] Hand test: open Settings with hiding on and off; it sits centered above the dock. Move it, toggle hiding: it stays where you put it.
+
 ## Settings hang on the General pane (2026-11-01)
 
 - [x] Reported as a memory leak; it was a hang. Footprint was 84MB (normal). Hang report `portside_2026-11-01-113239_M4MX.hang`: the dev build's main thread sat 54s inside `UpdatesAuthSection`'s `@State` initial value -> `GitHubAuth.hasAnyToken` -> `token()` -> `readKeychain` (`kSecReturnData`) on the `gh:github.com` item, waiting on securityd. A rebuilt binary is not on that item's access list, so reading the secret waits on a keychain access approval. Force quit by James at 11:32:25.

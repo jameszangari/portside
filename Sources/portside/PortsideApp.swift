@@ -290,6 +290,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onKeyFocusChanged = { [weak dockEngine] focused in
             dockEngine?.settingsKeyFocusChanged(focused)
         }
+        controller.usableFrame = { [weak dockEngine] screen in
+            dockEngine?.reservation.usableFrame(of: screen) ?? screen.visibleFrame
+        }
         settings = controller
         controller.show()
     }

@@ -18,6 +18,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// Settings became or resigned the key window. Used to pin the dock
     /// visible while auto-hide is on and Settings is focused.
     var onKeyFocusChanged: ((Bool) -> Void)?
+    /// A screen's visible frame minus the pinned dock (`DockReservation`).
+    var usableFrame: ((NSScreen) -> NSRect)?
 
     private let dockModel: DockModel
     private let layout: DockLayout
@@ -32,6 +34,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// not reliably do that.
     private var previousApp: NSRunningApplication?
     private var activationObserver: NSObjectProtocol?
+    private var reservationObserver: NSObjectProtocol?
+    /// Top-left corner `placeCentered` last set. While the window is still
+    /// there, a reservation change re-centers it; once moved, it stays put.
+    private var placedTopLeft: NSPoint?
 
     init(dockModel: DockModel, layout: DockLayout, nativeDock: NativeDockController, trash: TrashController, badges: DockBadges) {
         self.dockModel = dockModel
@@ -53,6 +59,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         if !window.isVisible || window.isMiniaturized {
             if window.isMiniaturized { window.deminiaturize(nil) }
             placeCentered(window)
+        }
+        if reservationObserver == nil {
+            // At launch Settings can open before the dock is measured.
+            reservationObserver = NotificationCenter.default.addObserver(
+                forName: .dockReservationDidChange, object: nil, queue: .main
+            ) { [weak self] _ in
+                guard let self, let window = self.window, window.isVisible,
+                      self.isAtPlacedPosition(window) else { return }
+                self.placeCentered(window, size: window.frame.size)
+            }
         }
         launchAtLogin.refresh()
         trash.refresh(reason: "Settings opened")
@@ -82,6 +98,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // activate() is cooperative and the system can decline it. The
         // window must still come up on top, where one click makes it key.
         window.orderFrontRegardless()
+        // The toolbar attaches during the first layout and adds its height
+        // below the placed frame; center again with the real size.
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window, self.isAtPlacedPosition(window) else { return }
+            self.placeCentered(window, size: window.frame.size)
+        }
     }
 
     private func makeWindow() -> NSWindow {
@@ -112,21 +134,30 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         return window
     }
 
-    /// Dead center of the primary display's visible area (menu bar
-    /// excluded). Uses the fixed Settings size, not the live frame, so a
+    /// Dead center of the primary display's visible area (menu bar and a
+    /// pinned Portside excluded, like the native Dock). Uses the fixed Settings size, not the live frame, so a
     /// stray resize cannot shift the next open. NSWindow.center() sits
     /// higher than center on purpose, so it is not used.
-    private func placeCentered(_ window: NSWindow) {
+    private func placeCentered(_ window: NSWindow, size: NSSize? = nil) {
         guard let screen = NSScreen.screens.first else { return }
-        window.setContentSize(SettingsLayout.windowSize)
-        let size = window.frame.size
-        let area = screen.visibleFrame
+        let size = size ?? {
+            window.setContentSize(SettingsLayout.windowSize)
+            return window.frame.size
+        }()
+        let area = usableFrame?(screen) ?? screen.visibleFrame
         let frame = NSRect(
             x: (area.midX - size.width / 2).rounded(),
             y: (area.midY - size.height / 2).rounded(),
             width: size.width, height: size.height
         )
         window.setFrame(frame, display: false)
+        placedTopLeft = NSPoint(x: window.frame.minX, y: window.frame.maxY)
+    }
+
+    /// Still where `placeCentered` put it. Compares the top-left corner: the
+    /// toolbar attaches after placement and grows the window downward.
+    private func isAtPlacedPosition(_ window: NSWindow) -> Bool {
+        placedTopLeft == NSPoint(x: window.frame.minX, y: window.frame.maxY)
     }
 
     func windowDidBecomeKey(_ notification: Notification) {

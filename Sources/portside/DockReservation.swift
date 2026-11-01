@@ -43,6 +43,11 @@ struct Reservation: Equatable {
     }
 }
 
+extension Notification.Name {
+    /// `DockReservation.current` changed. Posted on the main thread.
+    static let dockReservationDidChange = Notification.Name("com.james.portside.dockReservationDidChange")
+}
+
 /// Holds the current `Reservation` (nil while the dock auto-hides) and
 /// reports changes. `DockEngine` feeds it; it decides nothing on its own.
 ///
@@ -70,6 +75,7 @@ final class DockReservation {
             logger.info("reservation off (\(reason, privacy: .public))")
         }
         onChange?(old, next)
+        NotificationCenter.default.post(name: .dockReservationDidChange, object: self)
     }
 
     /// `screen.visibleFrame` minus the reserved band, if the dock is on it.

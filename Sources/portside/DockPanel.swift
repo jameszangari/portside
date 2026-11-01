@@ -219,12 +219,16 @@ final class DockPanel {
 
     private var panelSize: NSSize { revealedFrame.size }
 
+    /// Space left between the dock's visible edge and fitted windows.
+    private let reservedGap: CGFloat = 4
+
     /// How far the pinned dock reaches in from its screen edge: the base
-    /// panel's thickness, magnification room excluded (the native Dock's
+    /// panel's thickness without its transparent far-side padding, plus a
+    /// small gap. Magnification room is excluded (the native Dock's
     /// reservation leaves magnification out too).
     var reservedDepth: CGFloat {
         let size = basePanelSize
-        return edge.isVertical ? size.width : size.height
+        return (edge.isVertical ? size.width : size.height) - farInset + reservedGap
     }
 
     /// The revealed frame plus the magnification room. The base frame is
