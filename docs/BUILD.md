@@ -67,3 +67,13 @@ build/Portside.app/Contents/MacOS/portside --restore-dock
 - Cut a release with `scripts/release.sh patch|minor|major`. It is a dry run by default; add `--apply` to bump `VERSION`, make one "Release vX.Y.Z" commit, create an annotated tag, and run `scripts/build-app.sh --notarize`. It refuses on a dirty tree, checks Developer ID + notary setup, and never pushes.
 - Publish with `scripts/publish-release.sh --apply`: notarizes (again if needed), pushes the branch and tag, then creates (or updates) the GitHub release for `vX.Y.Z` with the stapled `Portside-X.Y.Z.dmg`. Dry run by default. Requires `gh` auth and HEAD to match the tag.
 - Tags use the `vX.Y.Z` format. Check for Updates compares the latest release tag against this version and, from an installed `.app`, downloads `Portside-X.Y.Z.dmg` and replaces the bundle in place.
+- The GitHub repo is **private** today, so update checks need a token (`GitHubAuth`: Settings > General > Updates, or a logged-in `gh` CLI token) and asset downloads use the API URL. Expected visibility lives in one word at [`docs/github-visibility`](github-visibility) (`private` or `public`). `scripts/check-repo-visibility.sh` compares that file to live `gh repo view` (one API call, no polling) and is run by every `publish-release.sh` dry run and `--apply`, so a visibility flip fails the publish until you update the marker and the code below.
+
+### When the GitHub repo becomes public
+
+1. Set `docs/github-visibility` to `public`.
+2. Make auth optional in `UpdateChecker` / `GitHubAuth`: unauthenticated `/releases/latest` and `browser_download_url` work for public repos; keep the token path as a fallback or remove it.
+3. Hide or remove the Settings > General > Updates token UI once nothing needs it.
+4. Soften the 404 copy that currently assumes a private repo.
+5. Update the private-repo notes in `docs/FEATURES.md`, `docs/DATA.md`, and this section.
+6. Run `scripts/check-repo-visibility.sh` (or a publish dry run) and confirm it prints `public`.

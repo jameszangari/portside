@@ -26,6 +26,7 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [x] From an installed `Portside.app`, Check for Updates downloads the DMG, mounts it, `ditto`s the app aside, verifies `codesign`, then a helper waits for quit, replaces the bundle, and reopens. Quarantine is cleared on the staged and installed copies.
 - [x] Under `swift run` (no `.app` bundle) or when the DMG asset is missing: opens the release page and shows the status line, same as before.
 - [x] Root cause of "no releases published yet" on a published private repo: unauthenticated `/releases/latest` returns 404. Fixed with `GitHubAuth` (Portside keychain token, or decoded `gh` `go-keyring-base64` token) and API asset downloads (`Accept: application/octet-stream`). Settings > General > Updates to save/clear a PAT. Clearer 404 copy when unauthenticated.
+- [x] Monitor for a public flip without polling: `docs/github-visibility` (`private` today) plus `scripts/check-repo-visibility.sh`, wired into every `publish-release.sh`. Remediation steps in `docs/BUILD.md` "When the GitHub repo becomes public".
 - [x] `swift build` clean.
 - [ ] Hand test: with `gh auth login` already done, Check for Updates on 0.4.0+ should say up to date (allow keychain access if macOS asks). Save a PAT in General > Updates and confirm Clear. From an older installed `.app`, confirm download/install/relaunch. From `swift run`, confirm release page only.
 

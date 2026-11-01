@@ -4,6 +4,10 @@ import Security
 /// GitHub credentials for private-repo update checks. Prefers a Portside-owned
 /// token in the keychain; falls back to a logged-in GitHub CLI (`gh`) token so
 /// a personal install works with no extra setup.
+///
+/// Reminder: the repo is private today (`docs/github-visibility`). If it ever
+/// goes public, follow docs/BUILD.md "When the GitHub repo becomes public"
+/// (auth becomes optional; publish-release will fail until that file says public).
 enum GitHubAuth {
     private static let portsideService = "com.james.portside.github-token"
     private static let portsideAccount = "token"

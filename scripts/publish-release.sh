@@ -64,12 +64,23 @@ if [ -z "$remote_url" ]; then
     exit 1
 fi
 
+# One gh call; fails loud if docs/github-visibility disagrees with GitHub
+# (catches a private→public flip before you ship another update).
+visibility_line=""
+if visibility_out="$(scripts/check-repo-visibility.sh 2>&1)"; then
+    visibility_line="$visibility_out"
+else
+    echo "$visibility_out" >&2
+    exit 1
+fi
+
 if [ "$apply" = false ]; then
     echo "DRY RUN (nothing will change; pass --apply to publish)"
     echo
     echo "  Branch:   $branch at $head_short"
     echo "  Tag:      $tag at $tag_short"
     echo "  Disk img: $dmg (rebuilt and notarized on --apply)"
+    echo "  $visibility_line"
     if [ "$head_matches_tag" = false ]; then
         echo "  HEAD:     does not match $tag; --apply would refuse (git checkout $tag)"
     fi
@@ -80,6 +91,7 @@ if [ "$apply" = false ]; then
     fi
     echo
     echo "With --apply it would run:"
+    echo "  scripts/check-repo-visibility.sh"
     echo "  scripts/build-app.sh --notarize"
     echo "  git push -u origin HEAD"
     echo "  git push origin $tag"
@@ -104,6 +116,7 @@ if [ -n "$dirty" ]; then
     exit 1
 fi
 
+echo "==> $visibility_line"
 echo "==> Building notarized .dmg (Developer ID + notarytool + staple)"
 scripts/build-app.sh --notarize
 if [ ! -f "$dmg" ]; then
