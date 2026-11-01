@@ -34,6 +34,10 @@ final class DockEngine {
     let trash = TrashController()
     /// Notification badges from LaunchServices. Shared with Settings.
     let badges = DockBadges()
+    /// Screen space the dock takes while hiding is off.
+    let reservation = DockReservation()
+    private var reservationUpdateQueued = false
+    private var reservationObservers: [NSObjectProtocol] = []
     private let flipKeys = MagnifyFlipKeys()
     private var magnifySubscriptions: [AnyCancellable] = []
     private var bounceSettingSubscription: AnyCancellable?
@@ -114,10 +118,11 @@ final class DockEngine {
             }
         }
 
-        interactions.onContentSizeChanged = { [weak dockPanel, weak bouncer] size in
+        interactions.onContentSizeChanged = { [weak self, weak dockPanel, weak bouncer] size in
             dockPanel?.contentSizeChanged(size)
             // The panel recenters when it resizes, which moves every tile.
             bouncer?.tilesChanged()
+            self?.queueReservationUpdate(reason: "dock resized")
         }
 
         dragOut.stripRegion = { [weak dockPanel] in dockPanel?.screenFrame }
@@ -291,7 +296,10 @@ final class DockEngine {
             .removeDuplicates()
             .dropFirst()
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.applyEffectiveAutoHide(reason: "preference") }
+            .sink { [weak self] _ in
+                self?.applyEffectiveAutoHide(reason: "preference")
+                self?.queueReservationUpdate(reason: "hiding preference")
+            }
         IconCache.shared.setStyle(dockModel.iconStyle)
         IconCache.shared.startObservingTheme()
         // Next main loop turn, like the edge: @Published emits from willSet.
@@ -414,6 +422,12 @@ final class DockEngine {
             }
             dockModel.syncReduceTransparency()
         }
+        for name in [NSApplication.didChangeScreenParametersNotification, .dockScreenDidChange] {
+            reservationObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.queueReservationUpdate(reason: "screen changed")
+            })
+        }
+        queueReservationUpdate(reason: "engine started")
         if effectiveAutoHide {
             edgeTracker.start()
             logger.info("engine started, panel hidden, edge tracker armed on \(NSScreen.screens.count) screen(s)")
@@ -489,6 +503,9 @@ final class DockEngine {
         trash.stop()
         badges.stop()
         AppActivity.shared.stop()
+        reservationObservers.forEach(NotificationCenter.default.removeObserver)
+        reservationObservers = []
+        reservation.update(active: false, edge: dockModel.edge, depth: 0, screenFrame: .zero, reason: "engine stopped")
         logger.info("engine stopped")
     }
 
@@ -568,6 +585,30 @@ final class DockEngine {
             dockPanel.show(animated: true)
         }
         logger.info("dock moved to the \(edge.rawValue, privacy: .public) edge")
+        queueReservationUpdate(reason: "edge changed")
+    }
+
+    // MARK: - Reserved space
+
+    /// Recompute the reservation on the next main loop turn. Edge, size,
+    /// and screen changes arrive in bursts (an edge change re-measures the
+    /// strip); one pass after the burst avoids reporting stale depths.
+    private func queueReservationUpdate(reason: String) {
+        guard !reservationUpdateQueued else { return }
+        reservationUpdateQueued = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.reservationUpdateQueued = false
+            // The saved preference, not `effectiveAutoHide`: Settings pinning
+            // the dock for live preview should not move other apps' windows.
+            self.reservation.update(
+                active: !self.dockModel.autoHide,
+                edge: self.dockPanel.edge,
+                depth: self.dockPanel.reservedDepth,
+                screenFrame: DockScreen.frame,
+                reason: reason
+            )
+        }
     }
 
     // MARK: - Magnification

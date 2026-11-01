@@ -31,6 +31,7 @@ Sources/portside/
   DockPanel.swift           Non-activating NSPanel, slide animation, panel tracking, multi-display relocate
   DockModel.swift           Codable settings and entries, persistence to dock.json
   DockEdge.swift            Bottom/Left/Right enum and DockScreen (active display)
+  DockReservation.swift     Space the pinned dock takes from its edge (depth, band, usable frame)
   DockStrip.swift           SwiftUI strip: tiles, widgets, separator, reorder, drops
   DockItem.swift            App tile, icon cache, launch/activate
   DockBadges.swift          Notification badges: visible-only reads and the badge chip

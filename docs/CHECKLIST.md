@@ -20,6 +20,16 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
+## Windows respect Portside: Phase 1 (2026-11-01)
+
+- [x] `DockReservation.swift`: `Reservation` (edge, depth, display frame; `band`, `usableFrame`) and a small store with an `onChange(old, new)` callback for Phase 2.
+- [x] Depth is `DockPanel.reservedDepth`: the base panel's thickness, magnification room excluded (the native Dock leaves magnification out too). Rounded up to whole points.
+- [x] Active only while the saved hiding preference is off. Settings pinning the dock for live preview does not reserve (it would move other apps' windows every time Settings is focused).
+- [x] `DockEngine` recomputes on the hiding preference, dock resize (icon size, items, widgets), edge change, display change, and screen parameter changes, coalesced to one pass per main loop turn so an edge change does not report the old edge's depth. Off on engine stop. Logged under category `DockReservation`.
+- [x] `swift build` clean. Sandboxed launches (`CFFIXED_USER_HOME`, so your dock.json and the macOS Dock were untouched): hiding off, bottom: "reserved 70pt on the bottom edge of 1728x1117"; hiding off, left: 55pt; hiding on: nothing reserved. No faults. `usableFrame` math checked for bottom, left, right, another display, and a larger native reservation (all pass).
+- [ ] Hand test: with `log stream --level info --predicate 'subsystem == "com.james.portside" AND category == "DockReservation"'` running, turn hiding off and on (Cmd+Option+D), change icon size, move the dock to Left/Right; each logs one line with a sensible depth. Nothing moves yet (no consumer until Phase 2).
+- Known gaps: live toggles not exercised by the agent (the installed Portside owns the hotkey). The reservation follows the dock's active display only, like the native Dock.
+
 ## Windows respect Portside: Phase 0 (2026-11-01)
 
 Plan in PLAN.md section 8, "Windows respect Portside". Measured with `scripts/window-fit-probe/run.sh` (probe window plus AX observer; one 1728x1117 display, menu bar 33pt, Rectangle 2.0.4). No Portside code changed.

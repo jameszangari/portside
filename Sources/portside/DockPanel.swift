@@ -219,6 +219,14 @@ final class DockPanel {
 
     private var panelSize: NSSize { revealedFrame.size }
 
+    /// How far the pinned dock reaches in from its screen edge: the base
+    /// panel's thickness, magnification room excluded (the native Dock's
+    /// reservation leaves magnification out too).
+    var reservedDepth: CGFloat {
+        let size = basePanelSize
+        return edge.isVertical ? size.width : size.height
+    }
+
     /// The revealed frame plus the magnification room. The base frame is
     /// placed (and clamped to the screen) first, so the shelf never moves
     /// when room is added; the room may run past the screen's sides.
