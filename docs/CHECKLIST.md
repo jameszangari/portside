@@ -30,6 +30,48 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] Hand test: with another app frontmost, press ⌘⇧D and confirm Settings opens; change the shortcut in General > Keyboard and confirm the new combo works and the old one does not; Clear, confirm none fires; Reset restores ⌘⇧D; relaunch and confirm it persists.
 - Known gap: if a system or app shortcut claims the same combo, macOS may take it first (same as Cmd+Option+D).
 
+## Release as a .dmg (2026-10-31)
+
+- [x] Releases ship `build/dist/Portside-X.Y.Z.dmg` instead of a zip. `release.sh`, `publish-release.sh`, and `build-app.sh --package` / `--notarize` all use it.
+- [x] New `scripts/make-dmg.sh`: drag-to-install window (540x560 pt, icon view, toolbar hidden), `Portside.app` on top, orange down arrow, `Applications` symlink in a rounded drop zone. Background rendered by `scripts/DMGBackground.swift` at 1x and 2x, merged into a Retina TIFF. Sail volume icon. Compressed UDZO.
+- [x] `--notarize` order: sign app, notarize + staple app, build DMG, sign DMG, notarize + staple DMG, `spctl --type open`. Users who copy the app out still get a stapled app.
+- [x] `verify_dmg` mounts the result and checks the app signature, the Applications link, and the saved layout.
+- [x] Verified (ad-hoc `--package`): window bounds 200,120,740,708; icons at 270,150 and 270,415; screenshot matches the Chrome-style layout; volume icon shows.
+- Findings: Finder only saves window bounds after a close/reopen, and icon positions must be set after that reopen or they shift down by the toolbar height. `hdiutil -srcfolder` drops `.VolumeIcon.icns` and the main Finder pass deletes it, so it is copied last and parked off-window in a short second pass.
+- [ ] Full `--notarize` DMG run: in progress; blocked on the keychain prompt for the Developer ID key (see report).
+- Known gaps: needs Finder Automation permission for the terminal on first run. If your Finder shows the path bar or hidden files, you see them in the DMG window too (your Finder prefs, not baked into the DMG).
+
+## Developer ID + notarization (2026-10-31)
+
+- [x] Developer ID Application cert installed (James Zangari / WNZ8H4UHQE). G2 intermediate (`devidg2.der`) required for the identity to show as valid.
+- [x] `scripts/setup-notary.sh` + keychain profile `portside-notary` stored (app-specific password).
+- [x] `Portside.entitlements` for Hardened Runtime: `com.apple.security.automation.apple-events` (Trash, Open at Login) and `com.apple.security.personal-information.calendars` (Calendar widget; without it EventKit is denied with no prompt).
+- [x] Verified: all five scripts pass `bash -n`; bad args exit 2; release/publish dry runs change nothing. Local-cert `build-app.sh` and `--notarize` both exit 0. The release zip, unpacked and quarantined like a browser download, is Developer ID signed with runtime flag, stapled, has both entitlements, and `spctl` accepts it as Notarized Developer ID.
+- [x] `scripts/build-app.sh --notarize`: Developer ID sign (runtime + timestamp), notarytool submit, staple, re-zip. Local `--install` still uses the Portside Local Development cert.
+- [x] `release.sh` / `publish-release.sh` use `--notarize` for the GitHub asset.
+- [x] `scripts/build-app.sh --notarize` Accepted, stapled (with CDN retry), `spctl`: `accepted` / `Notarized Developer ID` / James Zangari (WNZ8H4UHQE). Zip at `build/dist/Portside-0.2.0.zip`.
+- [ ] Hand test: open the stapled `build/Portside.app`; confirm Calendar / Empty Trash / Open at Login still work under Hardened Runtime. Then cut/publish a real GitHub release when ready.
+- README Build / Versioning / layout updated. No dock.json keys.
+
+## Versioned .app on each GitHub release (2026-10-31)
+
+- [x] Goal: every release tag ships a downloadable `Portside.app` (zipped).
+- [x] `scripts/build-app.sh --package` writes `build/dist/Portside-X.Y.Z.zip` via `ditto -c -k --keepParent`, then unpacks and `codesign --verify --deep --strict`.
+- [x] `scripts/release.sh --apply` still commits and tags, then runs `--package`. Signing identity is checked before the commit. Still never pushes.
+- [x] New `scripts/publish-release.sh`: dry run by default; `--apply` pushes HEAD and `vX.Y.Z`, then `gh release create` (or `gh release upload --clobber` if the release already exists) with the zip. Refuses unless HEAD matches the tag.
+- [x] Dry runs of `release.sh patch` and `publish-release.sh` print the zip path and change nothing.
+- [x] `scripts/build-app.sh --package` produced `build/dist/Portside-0.2.0.zip` (3.3M); unpack + `codesign --verify --deep --strict` passed; Info.plist version 0.2.0.
+- [ ] Human publish when ready: next cut is `scripts/release.sh patch --apply` then `scripts/publish-release.sh --apply` (preferred), or check out `v0.2.0`, package from that commit, and publish that tag. Do not attach a zip built from a newer commit to an older tag.
+- README Versioning / Build / layout updated. No dock.json keys. Not a user-facing dock feature.
+
+## Faster SPM builds (2026-10-31)
+
+- [x] Cause: Xcode 26/27 Explicitly Built Modules. Clean/cold debug spent most wall time in "Planning deferred tasks" and SDK PCM generation; `.build/out/SDKExplicitPrecompiledModules` had grown to ~800MB / ~800 variants.
+- [x] Fix: `scripts/swift-env.sh` defaults `SWIFT_ENABLE_EXPLICIT_MODULES=NO`. `scripts/build-app.sh` sources it. README and AGENTS.md document `source scripts/swift-env.sh` before `swift build` / `swift run`.
+- [x] Measured (M4 Max, Xcode 27.2): clean debug ~27s -> ~9s; touch-one-file ~2.5s either way; clean release ~19s either way. Parallel SwiftPM on the same `.build` serializes on a lock (one contested `build-app.sh` hit 64s).
+- [ ] No hand test beyond build timing. Product behavior unchanged.
+- README build section and project layout updated; not a dock feature.
+
 ## Folders First first-click (2026-10-31)
 
 - [x] Cause: the open stack's `...` header used a SwiftUI `Menu` with `Toggle`s. On the non-key overlay, those toggles needed a wake-up click before Folders First / Show Hidden Files fired.

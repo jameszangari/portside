@@ -13,7 +13,7 @@ Dockset feels laggy because its edge reveal uses repeating polling timers (about
 
 ## Hard rules
 1. Never hand-write an .xcodeproj or project.pbxproj. SPM only. (The previous agent looped on this.)
-2. Run `swift build` after every batch of changes and read the real output. Run `swift run` yourself to catch launch crashes. A clean build is not proof it works.
+2. Run `swift build` after every batch of changes and read the real output. Run `swift run` yourself to catch launch crashes. A clean build is not proof it works. Source `scripts/swift-env.sh` first (or export `SWIFT_ENABLE_EXPLICIT_MODULES=NO`) so clean/cold debug builds stay fast on Xcode 26/27. Never run two SwiftPM commands against this repo's `.build` in parallel; they serialize on a lock and look hung.
 3. If you repeat the same action twice with the same result, stop and rethink.
 4. Public APIs only through Milestone E. Private APIs (CoreDock, SkyLight, badges) only in Milestone F, behind dlopen/dlsym guards so an OS update degrades gracefully instead of crashing.
 5. No polling timers in the reveal/hide path. Allowed timers: one cancelable hide-delay timer, widget refresh, running-app cache refresh.

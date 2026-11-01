@@ -133,10 +133,15 @@ From `docs/CHECKLIST.md` Remaining backlog:
 - macOS 14 or later (`Package.swift` targets `.macOS(.v14)`). Developed on macOS 27 with Xcode 27 on an M4 Max.
 - Swift toolchain with `swift-tools-version` 5.10 support (Xcode command line tools are enough).
 
+Faster SPM builds on Xcode 26/27: turn off Explicitly Built Modules (large planning/PCM overhead on clean debug for this package). `scripts/build-app.sh` does this already; for plain `swift build` / `swift run`:
+
 ```
+source scripts/swift-env.sh   # once per shell; sets SWIFT_ENABLE_EXPLICIT_MODULES=NO
 swift build
 swift run portside
 ```
+
+Measured on an M4 Max with Xcode 27.2: clean debug ~27s default vs ~9s with that env; incremental stays ~1 to 3s either way. Release compile is ~19s either way. If `.build` grows past several hundred MB (SDK PCM cache), `swift package clean` resets it. Do not run two SwiftPM builds in this repo at once; they wait on one `.build` lock.
 
 Use `swift run` for launch smoke tests only. Quit it afterward and open the signed app with `open build/Portside.app` for Calendar testing and daily use. macOS can attribute a bare executable's Calendar request to its terminal instead of Portside.
 
@@ -155,13 +160,18 @@ log stream --level info --predicate 'subsystem == "com.james.portside"'
 ## Build the app
 
 ```
-scripts/setup-signing.sh        # once: create/reuse a local signing certificate
-scripts/build-app.sh            # builds build/Portside.app
-scripts/build-app.sh --install  # also copies it to ~/Applications/Portside.app
+scripts/setup-signing.sh           # once: local cert for day-to-day ~/Applications installs
+scripts/setup-notary.sh            # once: Apple notarytool keychain profile (Developer ID releases)
+scripts/build-app.sh               # builds build/Portside.app (local cert)
+scripts/build-app.sh --install     # also copies it to ~/Applications/Portside.app
+scripts/build-app.sh --package     # also writes build/dist/Portside-X.Y.Z.dmg
+scripts/build-app.sh --notarize    # Developer ID sign + notary + staple + .dmg (for GitHub)
 open build/Portside.app
 ```
 
-- Runs `swift build -c release`, then assembles `Contents/MacOS/portside`, `Contents/Info.plist` (from the repo's `Info.plist` plus bundle keys and the version from `VERSION`), the app icon, and the SwiftPM resource bundle with the brand PNGs (in `Contents/Resources`, covered by the signature). The icon is `design/brand/icon-composer/AppIcon.icon` compiled by `xcrun actool` into `Assets.car` (Liquid Glass, `CFBundleIconName`) plus a flat `AppIcon.icns` for older macOS. If actool fails it prints why and copies `design/brand/approved-icon/icns/` instead; if that is missing too, the hidden `portside --export-icon <path.png>` flag renders one. No network.
+- Runs `swift build -c release`, then assembles `Contents/MacOS/portside`, `Contents/Info.plist` (from the repo's `Info.plist` plus bundle keys and the version from `VERSION`), the app icon, and the SwiftPM resource bundle with the brand PNGs (in `Contents/Resources`, covered by the signature). The icon is `design/brand/icon-composer/AppIcon.icon` compiled by `xcrun actool` into `Assets.car` (Liquid Glass, `CFBundleIconName`) plus a flat `AppIcon.icns` for older macOS. If actool fails it prints why and copies `design/brand/approved-icon/icns/` instead; if that is missing too, the hidden `portside --export-icon <path.png>` flag renders one.
+- Default signing uses the local Portside cert (no network). `--notarize` uses your **Developer ID Application** identity with Hardened Runtime (`Portside.entitlements`), submits via `notarytool` profile `portside-notary`, staples the ticket, then builds the DMG, signs it, notarizes and staples it too. Needs network and `scripts/setup-notary.sh` once.
+- `--package` builds `build/dist/Portside-X.Y.Z.dmg` with `scripts/make-dmg.sh`: a drag-to-install window with `Portside.app` on top, an orange arrow, and an `Applications` shortcut in a drop zone, plus the sail volume icon. The script drives Finder to save the layout, so the first run asks to let your terminal control Finder (Automation). It then mounts the DMG and re-verifies the app signature. Release publishes use the notarized DMG from `--notarize`.
 - `--install` copies to `~/Applications/Portside.app`, never `/Applications`. It refuses while that copy is running; quit Portside first. Without the flag nothing is installed.
 - Run `scripts/setup-signing.sh` once. It creates a ten-year self-signed `Portside Local Development` certificate in your default user keychain and trusts it for code signing only. Only `/usr/bin/codesign` is granted access to the imported private key. `scripts/build-app.sh` (and setup) call `scripts/ensure-codesign-key-access.sh` before signing: a native alert (Okay / Not Now) may appear once, then the system Touch ID or password sheet. No custom password field and no sudo. Later builds reuse the identity silently. The certificate fingerprint is saved outside the repo; temporary key files are deleted on exit.
 - Builds use the saved fingerprint by default and fail if it is missing or unavailable, instead of silently switching identities. Setup also validates an existing fingerprint before looking up certificates by name and never replaces it automatically. `SIGN_IDENTITY="Your Cert Name" scripts/build-app.sh` overrides it. `SIGN_IDENTITY=- scripts/build-app.sh` explicitly uses ad-hoc signing, which may cause macOS to ask for permission again when the binary changes.
@@ -180,7 +190,8 @@ build/Portside.app/Contents/MacOS/portside --restore-dock
 
 - `VERSION` at the repo root is the single source of truth. Edit the version only there (or let the release script do it).
 - `scripts/gen-version.sh` writes `Sources/portside/BuildInfo.swift` (generated, committed) with the version, short git hash, and dirty flag. Run it to refresh the hash before a build.
-- Cut a release with `scripts/release.sh patch|minor|major`. It is a dry run by default; add `--apply` to bump `VERSION`, make one "Release vX.Y.Z" commit, and create an annotated tag. It refuses on a dirty tree and never pushes; it prints the `git push` and `gh release create` commands to run.
+- Cut a release with `scripts/release.sh patch|minor|major`. It is a dry run by default; add `--apply` to bump `VERSION`, make one "Release vX.Y.Z" commit, create an annotated tag, and run `scripts/build-app.sh --notarize`. It refuses on a dirty tree, checks Developer ID + notary setup, and never pushes.
+- Publish with `scripts/publish-release.sh --apply`: notarizes (again if needed), pushes the branch and tag, then creates (or updates) the GitHub release for `vX.Y.Z` with the stapled `Portside-X.Y.Z.dmg`. Dry run by default. Requires `gh` auth and HEAD to match the tag.
 - Tags use the `vX.Y.Z` format. The future update checker compares the latest release tag against this version.
 
 ## How it works
@@ -225,7 +236,7 @@ The Settings window controls:
 - Import from macOS Dock and Undo last import (nothing new stored in `dock.json`; imported apps, spacers, position, and icon size land in `entries`, `edge`, and `iconSize`). Entries may include `{ type: "spacer", spacer: { id, size } }` (`regular` or `small`).
 - Open Portside at login: not stored by Portside. macOS keeps it (System Settings > General > Login Items).
 
-The built app lives at `build/Portside.app` (ignored by git), and at `~/Applications/Portside.app` after `scripts/build-app.sh --install`.
+The built app lives at `build/Portside.app` (ignored by git), the versioned release disk image at `build/dist/Portside-X.Y.Z.dmg`, and the installed copy at `~/Applications/Portside.app` after `scripts/build-app.sh --install`.
 
 The local signing certificate and private key live in your default user keychain. Its fingerprint is stored at `~/Library/Application Support/com.james.portside/signing/identity.sha1`. Keep the same identity across rebuilds. Downloads and other macOS privacy decisions are managed by macOS, outside `dock.json`.
 
@@ -295,12 +306,18 @@ Sources/portside/
   Support/                  Bundled resources: AppIcon-<px>.png (actool's flat render of AppIcon.icon) and MenuBarIcon-<px>.png
 Sources/AppLoginItemList/   C helper: read session Open at Login list (LSSharedFileList)
 scripts/
+  swift-env.sh              Shared SPM env (disables Explicitly Built Modules by default)
   gen-version.sh            Writes BuildInfo.swift from VERSION and git
-  release.sh                Bumps VERSION, commits, and tags a release
-  build-app.sh              Builds and signs build/Portside.app (--install to ~/Applications)
+  release.sh                Bumps VERSION, commits, tags, and notarizes Portside-X.Y.Z.dmg
+  publish-release.sh        Notarizes if needed, pushes the tag, GitHub release with the .dmg
+  setup-notary.sh           Stores notarytool keychain profile (portside-notary)
+  build-app.sh              Builds and signs build/Portside.app (--install, --package, --notarize)
+  make-dmg.sh               Builds the drag-to-Applications DMG (layout, background, volume icon)
+  DMGBackground.swift       Renders the DMG background (arrow + drop zone) at 1x and 2x
   setup-signing.sh          Creates or reuses the stable local code signing identity
   ensure-codesign-key-access.sh  Native Okay consent + Touch ID, then silent key unlock
   SigningConsent.swift      Stock NSAlert + LocalAuthentication for build consent
   check-tile-input.swift    Synthetic Accessibility check: clicks, hold menu, label centering
+Portside.entitlements       Hardened Runtime entitlements for Developer ID / notarized builds
 design/brand/               Approved Portside sail icon, wordmarks, menu bar assets, and tokens; see its README
 ```

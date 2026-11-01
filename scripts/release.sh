@@ -1,10 +1,14 @@
 #!/bin/bash
 # Cuts a release: bumps VERSION, regenerates BuildInfo.swift, makes one
-# commit "Release vX.Y.Z" and an annotated tag vX.Y.Z. Never pushes.
+# commit "Release vX.Y.Z", creates an annotated tag vX.Y.Z, and builds a
+# notarized build/dist/Portside-X.Y.Z.dmg (Developer ID Portside.app).
+# Never pushes.
 #
 # Usage: scripts/release.sh patch|minor|major [--dry-run | --apply]
 #   --dry-run  (default) print what would happen, change nothing
-#   --apply    actually bump, commit, and tag (refuses on a dirty tree)
+#   --apply    actually bump, commit, tag, and package (refuses on a dirty tree)
+#
+# Publish afterwards with scripts/publish-release.sh (push + GitHub release).
 set -euo pipefail
 
 usage() {
@@ -42,6 +46,7 @@ case "$bump" in
 esac
 next="$major.$minor.$patch"
 tag="v$next"
+dmg="build/dist/Portside-$next.dmg"
 branch="$(git rev-parse --abbrev-ref HEAD)"
 head="$(git rev-parse --short HEAD)"
 
@@ -52,12 +57,25 @@ fi
 
 dirty="$(git status --porcelain)"
 
+# Developer ID + notary must exist before --apply commits a tag we cannot easily undo.
+preflight_signing() {
+    if ! security find-identity -v -p codesigning | grep -q 'Developer ID Application:'; then
+        echo "release: install a Developer ID Application certificate before --apply." >&2
+        exit 1
+    fi
+    if ! xcrun notarytool history --keychain-profile "${NOTARY_PROFILE:-portside-notary}" >/dev/null 2>&1; then
+        echo "release: run scripts/setup-notary.sh once before --apply." >&2
+        exit 1
+    fi
+}
+
 if [ "$apply" = false ]; then
     echo "DRY RUN (nothing will change; pass --apply to release)"
     echo
     echo "  Branch:   $branch at $head"
     echo "  Version:  $current -> $next ($bump)"
     echo "  Tag:      $tag (annotated)"
+    echo "  Disk img: $dmg (notarized Portside.app inside)"
     if [ -n "$dirty" ]; then
         echo "  Tree:     DIRTY, --apply would refuse. Uncommitted changes:"
         echo "$dirty" | sed 's/^/              /'
@@ -71,6 +89,7 @@ if [ "$apply" = false ]; then
     echo "  git add VERSION Sources/portside/BuildInfo.swift"
     echo "  git commit -m \"Release $tag\""
     echo "  git tag -a $tag -m \"Release $tag\""
+    echo "  scripts/build-app.sh --notarize"
     echo
     echo "It never pushes. Afterwards you would run:"
 else
@@ -79,15 +98,24 @@ else
         echo "$dirty" >&2
         exit 1
     fi
+    preflight_signing
     echo "$next" > VERSION
     scripts/gen-version.sh --release
     git add VERSION Sources/portside/BuildInfo.swift
     git commit -q -m "Release $tag"
     git tag -a "$tag" -m "Release $tag"
     echo "Committed \"Release $tag\" ($(git rev-parse --short HEAD)) on $branch and tagged $tag."
+    echo "==> Building notarized .dmg for $tag"
+    scripts/build-app.sh --notarize
+    if [ ! -f "$dmg" ]; then
+        echo "release: expected $dmg after build-app --notarize" >&2
+        exit 1
+    fi
     echo "Nothing was pushed. To publish, run:"
 fi
 
+echo "  scripts/publish-release.sh --apply"
+echo "  # or manually:"
 echo "  git push"
 echo "  git push origin $tag"
-echo "  gh release create $tag --verify-tag --title \"Portside $tag\" --generate-notes"
+echo "  gh release create $tag --verify-tag --title \"Portside $tag\" --generate-notes \"$dmg\""
