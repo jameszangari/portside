@@ -407,7 +407,7 @@ private struct DockSettings: View {
                 }
             }
 
-            Section("Auto-hide") {
+            Section {
                 Toggle(isOn: Binding(
                     get: { dockModel.autoHide },
                     set: { dockModel.setAutoHide($0) }
@@ -436,6 +436,13 @@ private struct DockSettings: View {
                         format: milliseconds,
                         set: { dockModel.setHideDelay($0, persist: $1) }
                     )
+                }
+            } header: {
+                Text("Auto-hide")
+            } footer: {
+                if dockModel.autoHide {
+                    Text("Auto-hide is paused while Settings is open so you can preview the dock.")
+                        .footerStyle()
                 }
             }
 
