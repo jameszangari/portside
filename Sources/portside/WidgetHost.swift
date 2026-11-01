@@ -60,9 +60,9 @@ private struct WidgetContainer<W: DockWidget>: View {
 
     var body: some View {
         widget.body
+            .dockHoverTarget(id: "widget:" + widget.id, title: widget.hoverTitle)
             .contentShape(Rectangle())
             .onTapGesture { widget.activate() }
-            .help(widget.name)
     }
 }
 
@@ -74,12 +74,23 @@ enum WidgetCatalog {
         (WeatherWidget.kind, { WeatherWidget() }),
         (SystemStatsWidget.kind, { SystemStatsWidget() }),
         (BatteryWidget.kind, { BatteryWidget() }),
+        (CPUWidget.kind, { CPUWidget() }),
+        (MemoryWidget.kind, { MemoryWidget() }),
     ]
 
-    static var defaultKinds: [String] { factories.map(\.kind) }
+    static var allKinds: [String] { factories.map(\.kind) }
+
+    static var defaultKinds: [String] {
+        allKinds.filter { $0 != CPUWidget.kind && $0 != MemoryWidget.kind }
+    }
 
     static func make(_ kind: String) -> (any DockWidget)? {
         factories.first { $0.kind == kind }?.make()
+    }
+
+    /// A widget's own (widest) design.
+    static func naturalSize(_ kind: String) -> WidgetSize {
+        make(kind)?.size ?? .small
     }
 
     /// Name and icon for menus, without keeping an instance around.

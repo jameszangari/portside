@@ -8,6 +8,10 @@ import os.log
 final class WeatherWidget: DockWidget {
     static let kind = "weather"
     let name = "Weather"
+    var hoverTitle: String {
+        let reading = temperature.map { "\(Int($0.rounded()))°\(usesFahrenheit ? "F" : "C")" } ?? "Loading"
+        return "\(place ?? "Weather") · \(reading)"
+    }
     let icon = Image(systemName: "cloud.sun")
     let size = WidgetSize.small
     let refreshInterval: TimeInterval = 15 * 60
@@ -128,10 +132,9 @@ private struct WeatherView: View {
                     .symbolRenderingMode(.multicolor)
                     .font(.system(size: tile * 0.3))
                 Text(temperature.map { "\(Int($0.rounded()))°" } ?? "--")
-                    .font(.system(size: tile * 0.22, weight: .semibold, design: .rounded))
+                    .font(.system(size: max(11, tile * 0.32), weight: .semibold))
                     .monospacedDigit()
             }
         }
-        .help(place.map { "Weather in \($0)" } ?? "Weather")
     }
 }

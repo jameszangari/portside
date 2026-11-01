@@ -20,6 +20,29 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
+## Widget typography follow-up (2026-10-31)
+
+Supersedes the inline labels from the activity widget pass below.
+
+- [x] James approved the widget appearance and requested a commit.
+- [x] Remove CPU / RAM micro-labels and percent suffixes from gauges. Single gauges use one larger system-font number; combined Small keeps only concentric rings, while Wide has color-matched numbers.
+- [x] Larger system typography for Battery and Weather. Clock drops its secondary date below 48pt. Calendar below 44pt uses a date and status symbol, with no tiny weekday or event text.
+- [x] Hover titles carry live readings and Calendar access/event details. Hover target registration now lives in the observed widget container, so published refreshes update the visible label without a new timer.
+- [x] `swift build` passes. Rendered all widgets at 31pt, 48pt and 64pt, including 100% readings and a negative temperature; CPU / Memory hover reading assertions pass.
+- [x] `swift run portside` launched without reported errors; the updated development build is left running for review, with the installed copy stopped first.
+- [ ] Hand test at 31pt: inspect every tile, hover for details, hold over CPU for a refresh, and click to confirm the existing destination opens. Check Small / Wide and side positions.
+- Known gap: sub-28pt layouts and long Calendar event titles still need broader overflow work. No settings or persistence keys changed.
+
+## Activity widget readability (2026-10-31)
+
+- [x] Keep System Stats concentric rings: CPU outside in blue, RAM inside in purple. Thicker strokes and explicit metric labels replace unlabeled percentages.
+- [x] Wide layout uses larger percentages beside a labeled legend. Optional CPU and Memory square widgets show a single labeled gauge and open Activity Monitor; both start disabled and appear in Settings and the menu bar widget list.
+- [x] Existing widget kinds and size preferences stay intact. New tiles use `cpu` and `memory` in the existing `widgetKinds` array.
+- [x] `swift build` passes on Swift 6.4.2 / Xcode 27.2. A temporary SwiftUI rendering harness checked 48pt and 64pt layouts including 100% values and verified distinct CPU / Memory widget IDs.
+- [x] `swift run portside` launched and remained running without reported errors, then exited cleanly with Ctrl+C. Reopened the installed copy after the check.
+- [ ] Hand test: enable CPU and Memory in Settings > Widgets; compare with System Stats in Small and Wide; click each to open Activity Monitor; relaunch and confirm selection persists.
+- Known gap: combined Small labels remain small at low icon sizes. Prefer Wide or the separate gauges for readability. GPU, disk and network metrics are not added in this slice.
+
 ## Remaining backlog (actionable)
 
 ### Remember macOS folder permissions (2026-10-31)

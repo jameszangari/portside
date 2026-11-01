@@ -127,7 +127,7 @@ private struct WidgetsMenu: View {
 
     var body: some View {
         Menu("Widgets") {
-            ForEach(WidgetCatalog.defaultKinds, id: \.self) { kind in
+            ForEach(WidgetCatalog.allKinds, id: \.self) { kind in
                 if let info = WidgetCatalog.info(kind) {
                     Toggle(isOn: Binding(
                         get: { dockModel.widgetKinds.contains(kind) },

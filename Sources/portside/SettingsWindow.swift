@@ -799,7 +799,7 @@ private struct WidgetSettings: View {
     @State private var dragging: String?
 
     private var available: [String] {
-        WidgetCatalog.defaultKinds.filter { !dockModel.widgetKinds.contains($0) }
+        WidgetCatalog.allKinds.filter { !dockModel.widgetKinds.contains($0) }
     }
 
     var body: some View {
@@ -825,7 +825,7 @@ private struct WidgetSettings: View {
                     row(kind, enabled: false)
                 }
             } footer: {
-                Text("Drag to reorder. Order runs left to right, or top to bottom on a side dock.").footerStyle()
+                Text("Drag to reorder. Order runs left to right, or top to bottom on a side dock. Size applies to the bottom dock; side docks always show Small (square) widgets.").footerStyle()
             }
         }
     }
@@ -842,6 +842,17 @@ private struct WidgetSettings: View {
                         .foregroundStyle(enabled ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                         .frame(width: 20)
                     Text(info.name)
+                    let natural = WidgetCatalog.naturalSize(kind)
+                    let sizes = WidgetSize.choices(upTo: natural)
+                    if enabled, sizes.count > 1 {
+                        Spacer()
+                        WidgetSizePicker(
+                            sizes: sizes,
+                            selection: dockModel.widgetSize(for: kind, natural: natural, edge: .bottom)
+                        ) { size in
+                            withAnimation(.easeOut(duration: 0.15)) { dockModel.setWidgetSize(kind, size) }
+                        }
+                    }
                 }
             }
             .toggleStyle(.switch)

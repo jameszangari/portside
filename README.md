@@ -57,8 +57,13 @@ Portside is a personal project for macOS on Apple Silicon. It builds into a loca
 - Magnification on every position: app and group tiles grow under the cursor with a smooth falloff to their neighbors, away from the screen edge (up on the bottom, sideways on the sides), past a shelf that keeps its thickness while it lengthens. Near the ends of a long dock the shelf stays on screen. Widgets and separators keep their size. Magnified size 16 to 128pt, set live in Settings. Hold Control-Shift over the dock to flip it for a moment. Labels, right-click and press-and-hold follow the magnified icon, and a launch bounce plays at the magnified size. Off during drags and while a group grid or menu is up. Under Reduce Motion the size follows the cursor without the spring.
 
 **Widgets**
-- Clock, Battery, Calendar, Weather, System Stats.
+- Clock, Battery, Calendar, Weather, System Stats, plus optional CPU and Memory tiles.
 - Enable, disable, and reorder in Settings, or toggle from the menu bar item.
+- Every widget has a square (Small) design: an analog clock face, a Calendar-icon date with a dot for the next event, text-free concentric CPU (outer, blue) and memory (inner, purple) rings, and the existing Weather and Battery tiles. Side docks always use Small, so the column stays one tile wide.
+- Hover labels show live readings: CPU / memory percentages, battery and charging state, weather temperature and location, clock date/time, and Calendar date/event or access status. Labels refresh with widget data. Click actions are unchanged.
+- CPU, Memory and Battery show one large number without a tiny label or percent sign. Hover for the named percentage. System Stats keeps concentric rings; Wide adds color-matched numbers. CPU and Memory start disabled and open Activity Monitor.
+- Widget text uses system typography. At small dock sizes, Clock Wide shows just the time and Calendar shows the date with a status symbol and a red bar matching the date text width; secondary details stay in hover labels. Weather keeps its symbol and larger temperature.
+- On the bottom dock, Clock, Calendar and System Stats can be Small or Wide. Pick with the iOS-style size row in the widget's right-click menu (with Remove Widget and Edit Widgets...) or in Settings > Widgets.
 
 **Groups**
 - User-defined groups of apps shown as one tile that opens a grid.
@@ -115,6 +120,7 @@ From `docs/CHECKLIST.md` Remaining backlog:
 - Hand-check Downloads permission retention across relaunches and rebuilds; signature stability is verified, macOS consent retention still needs confirmation.
 - Milestone F leftover: import plain file tiles from `persistent-others` (folders already import).
 - P3 leftovers: window list in the app menu; VoiceOver / keyboard navigation.
+- Very small widget layouts below 28pt and side-dock overflow remain part of the side-dock layout work.
 - Side-dock widget layout; window previews on hover; profiles; update checker; Trash Option-click Empty and icon animation.
 
 ## Requirements and build
@@ -199,10 +205,11 @@ The Settings window controls:
 - Position, auto-hide, icon size, icon gap (`iconGap`, points, 0 to 8, default 6), "Animate opening applications"
 - Show Trash in dock (`showTrash`, default `true`); dismissed Full Disk Access hint (`trashAccessHintDismissed`, default `false`)
 - Show notification badges (`showBadges`, default `true`); badge color (`badgeColor`: `macOS`, `accent`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `graphite` or `custom`, default `macOS`); custom badge color (`badgeCustomColor`, sRGB `{ red, green, blue, alpha }`, used when `badgeColor` is `custom`)
+- Widget sizes (`widgetSizes`: `{ kind: 1 | 2 }`, bottom dock only; 1 is Small, 2 is Wide; written only for widgets not at their own size)
 - Folder stacks (`stacks`: `{ id, path, itemOrder?, view?, sort?, foldersFirst?, showHidden?, showAsFolder? }[]`, right section before Trash; `itemOrder` is child filenames for Custom Order placement; `view` is `grid` (default), `fan`, or `list`; `sort` is `manual` (default), `name`, `dateAdded`, `dateModified`, or `kind`; the rest are written only when on)
 - Magnification (`magnificationEnabled`) and Magnified size (`magnifiedSize`, points, 16 to 128, default 64)
 - Reveal delay, hide delay, animation duration (with reset to defaults)
-- Widgets: on/off and order
+- Widgets: on/off and order (`widgetKinds`; optional `cpu` and `memory` alongside `systemStats`, no new keys)
 - Groups: rename, ungroup, delete, open on hover, open delay, close grace
 - Appearance: icon style (`iconStyle`: `matchSystem` or `original`), background (`backgroundStyle`: `glass`, `frosted`, or `solid`), `backgroundFrost` (0 to 1), `backgroundTint` (sRGB `red`, `green`, `blue`, `alpha`; absent when off), `cornerRadius` (points)
 - Hide the macOS Dock (`hideNativeDock`, plus `nativeDockExplained` once the first-time dialog was confirmed)
@@ -275,7 +282,7 @@ Sources/portside/
     BatteryWidget.swift     Battery percent and charging state
     CalendarWidget.swift    Date and next event
     WeatherWidget.swift     Temperature and conditions (Open-Meteo)
-    SystemStatsWidget.swift CPU and memory usage
+    SystemStatsWidget.swift Combined concentric rings and separate CPU / Memory gauges
   Support/                  Bundled resources: AppIcon-<px>.png (actool's flat render of AppIcon.icon) and MenuBarIcon-<px>.png
 Sources/AppLoginItemList/   C helper: read session Open at Login list (LSSharedFileList)
 scripts/

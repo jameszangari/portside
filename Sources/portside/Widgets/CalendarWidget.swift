@@ -8,6 +8,17 @@ import os.log
 final class CalendarWidget: DockWidget {
     static let kind = "calendar"
     let name = "Calendar"
+    var hoverTitle: String {
+        let date = today.formatted(.dateTime.weekday(.wide).month().day())
+        switch access {
+        case .unknown: return "\(date) · Click to connect Calendar"
+        case .denied: return "\(date) · Calendar access denied"
+        case .granted:
+            guard let next else { return "\(date) · No upcoming events" }
+            let time = next.isAllDay ? "All day" : next.start.formatted(.dateTime.hour().minute())
+            return "\(date) · \(next.title) · \(time)"
+        }
+    }
     let icon = Image(systemName: "calendar")
     let size = WidgetSize.medium
     let refreshInterval: TimeInterval = 60
@@ -107,31 +118,66 @@ private struct CalendarView: View {
     let next: CalendarWidget.NextEvent?
     let access: CalendarWidget.Access
     @Environment(\.dockTileSize) private var tile
+    @Environment(\.widgetSize) private var chosen
 
     var body: some View {
+        if WidgetSize.resolved(chosen, natural: .medium) == .small {
+            square
+        } else {
+            wide
+        }
+    }
+
+    private var dateFace: some View {
+        VStack(spacing: 1) {
+            if tile >= 44 {
+                Text(today, format: .dateTime.weekday(.abbreviated))
+                    .font(.system(size: max(10, tile * 0.18), weight: .medium))
+                    .foregroundStyle(.red)
+            }
+            Text(today, format: .dateTime.day())
+                .font(.system(size: max(14, tile * 0.46), weight: .medium))
+                .monospacedDigit()
+                .padding(.top, tile < 44 ? 3 : 0)
+                .overlay(alignment: .top) {
+                    if tile < 44 {
+                        Capsule().fill(.red).frame(height: 2)
+                    }
+                }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if let next {
+                Circle().fill(next.color).frame(width: 4, height: 4).offset(x: 5)
+            }
+        }
+    }
+
+    private var square: some View {
+        WidgetTile(size: .small) { dateFace }
+    }
+
+    private var wide: some View {
         WidgetTile(size: .medium) {
             HStack(spacing: tile * 0.1) {
-                VStack(spacing: 0) {
-                    Text(today, format: .dateTime.weekday(.abbreviated))
-                        .font(.system(size: tile * 0.17, weight: .bold))
-                        .foregroundStyle(.red)
-                        .textCase(.uppercase)
-                    Text(today, format: .dateTime.day())
-                        .font(.system(size: tile * 0.4, weight: .regular, design: .rounded))
+                dateFace.frame(width: tile * 0.65)
+                if tile < 44 {
+                    Image(systemName: access == .granted ? (next == nil ? "calendar" : "calendar.badge.clock") : "calendar.badge.exclamationmark")
+                        .font(.system(size: tile * 0.46, weight: .regular))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                } else {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(primaryLine)
+                            .font(.system(size: max(11, tile * 0.20), weight: .medium))
+                        Text(secondaryLine)
+                            .font(.system(size: max(11, tile * 0.18)))
+                            .foregroundStyle(.secondary)
+                    }
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(width: tile * 0.7)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(primaryLine)
-                        .font(.system(size: tile * 0.17, weight: .semibold))
-                    Text(secondaryLine)
-                        .font(.system(size: tile * 0.15))
-                        .foregroundStyle(next.map { _ in Color.secondary } ?? Color.secondary)
-                }
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, tile * 0.08)
+            .padding(.horizontal, tile * 0.10)
         }
     }
 
@@ -145,8 +191,8 @@ private struct CalendarView: View {
 
     private var secondaryLine: String {
         switch access {
-        case .unknown: return "Click to connect"
-        case .denied: return "Enable in Settings"
+        case .unknown: return "Connect"
+        case .denied: return "Settings"
         case .granted:
             guard let next else { return "Next 24 hours" }
             if next.isAllDay { return "All day" }

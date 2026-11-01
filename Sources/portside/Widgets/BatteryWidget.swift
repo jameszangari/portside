@@ -8,6 +8,10 @@ import os.log
 final class BatteryWidget: DockWidget {
     static let kind = "battery"
     let name = "Battery"
+    var hoverTitle: String {
+        guard let percent else { return "Battery · Unavailable" }
+        return "Battery \(percent)%" + (isCharging ? " · Charging" : onAC ? " · Plugged in" : "")
+    }
     let icon = Image(systemName: "battery.75percent")
     let size = WidgetSize.small
     let refreshInterval: TimeInterval = 300
@@ -90,13 +94,13 @@ private struct BatteryView: View {
                     .stroke(color, style: StrokeStyle(lineWidth: tile * 0.08, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                 VStack(spacing: 0) {
-                    if isCharging || onAC {
+                    if tile >= 48 && (isCharging || onAC) {
                         Image(systemName: "bolt.fill")
                             .font(.system(size: tile * 0.16))
                             .foregroundStyle(.green)
                     }
                     Text(percent.map { "\($0)" } ?? "--")
-                        .font(.system(size: tile * 0.24, weight: .semibold, design: .rounded))
+                        .font(.system(size: max(11, tile * 0.34), weight: .semibold))
                         .monospacedDigit()
                 }
             }

@@ -3,11 +3,19 @@ import Darwin
 import SwiftUI
 
 /// CPU and memory usage from Mach host statistics (public APIs).
-final class SystemStatsWidget: DockWidget {
-    static let kind = "systemStats"
-    let name = "System Stats"
+class SystemStatsWidget: DockWidget {
+    class var kind: String { "systemStats" }
+    var name: String { "System Stats" }
+    var hoverTitle: String {
+        let cpuText = "CPU \(Int((cpu * 100).rounded()))%"
+        let memoryText = "Memory \(Int((memory * 100).rounded()))%"
+        if metric == .cpu { return cpuText }
+        if metric == .memory { return memoryText }
+        return "\(cpuText) · \(memoryText)"
+    }
     let icon = Image(systemName: "cpu")
-    let size = WidgetSize.medium
+    var size: WidgetSize { .medium }
+    fileprivate var metric: StatsMetric? { nil }
     let refreshInterval: TimeInterval = 3
 
     @Published private(set) var cpu: Double = 0
@@ -34,7 +42,7 @@ final class SystemStatsWidget: DockWidget {
     }
 
     var body: some View {
-        StatsView(cpu: cpu, memory: memory)
+        StatsView(cpu: cpu, memory: memory, metric: metric)
     }
 
     // MARK: - Mach
@@ -70,39 +78,104 @@ final class SystemStatsWidget: DockWidget {
     }
 }
 
+/// Optional single-metric tiles use the same public sampling and click action.
+final class CPUWidget: SystemStatsWidget {
+    override class var kind: String { "cpu" }
+    override var name: String { "CPU" }
+    override var size: WidgetSize { .small }
+    fileprivate override var metric: StatsMetric? { .cpu }
+}
+
+final class MemoryWidget: SystemStatsWidget {
+    override class var kind: String { "memory" }
+    override var name: String { "Memory" }
+    override var size: WidgetSize { .small }
+    fileprivate override var metric: StatsMetric? { .memory }
+}
+
+fileprivate enum StatsMetric {
+    case cpu, memory
+
+    var label: String { self == .cpu ? "CPU" : "RAM" }
+    var color: Color {
+        self == .cpu
+            ? Color(red: 0.2, green: 0.72, blue: 1)
+            : Color(red: 0.86, green: 0.45, blue: 1)
+    }
+}
+
 private struct StatsView: View {
     let cpu: Double
     let memory: Double
+    let metric: StatsMetric?
     @Environment(\.dockTileSize) private var tile
+    @Environment(\.widgetSize) private var chosen
 
     var body: some View {
-        WidgetTile(size: .medium) {
-            VStack(alignment: .leading, spacing: tile * 0.08) {
-                row("CPU", cpu, .blue)
-                row("MEM", memory, .purple)
+        let size = metric == nil ? WidgetSize.resolved(chosen, natural: .medium) : .small
+        WidgetTile(size: size) {
+            if let metric {
+                ZStack {
+                    ring(value(metric), metric.color, line: tile * 0.085)
+                    if tile >= 28 {
+                        Text("\(Int((value(metric) * 100).rounded()))")
+                            .font(.system(size: max(11, tile * 0.34), weight: .semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(.primary)
+                    } else {
+                        Image(systemName: metric == .cpu ? "cpu" : "memorychip")
+                            .font(.system(size: tile * 0.34))
+                    }
+                }
+                .padding(tile * 0.08)
+            } else if size == .small {
+                rings.padding(tile * 0.08)
+            } else {
+                HStack(spacing: tile * 0.12) {
+                    rings.frame(width: tile * 0.65, height: tile * 0.65)
+                    VStack(spacing: tile * 0.10) {
+                        legend(.cpu)
+                        legend(.memory)
+                    }
+                }
+                .padding(.horizontal, tile * 0.09)
             }
-            .padding(.horizontal, tile * 0.16)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(metric.map { $0 == .cpu ? "CPU usage" : "Memory used" } ?? "System Stats")
+        .accessibilityValue(metric.map { percent(value($0)) } ?? "CPU \(percent(cpu)), memory \(percent(memory))")
     }
 
-    private func row(_ label: String, _ value: Double, _ color: Color) -> some View {
-        HStack(spacing: tile * 0.08) {
-            Text(label)
-                .font(.system(size: tile * 0.17, weight: .semibold, design: .rounded))
-                .foregroundStyle(.secondary)
-                .frame(width: tile * 0.42, alignment: .leading)
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.primary.opacity(0.12))
-                    Capsule().fill(color).frame(width: geo.size.width * value)
-                }
-            }
-            .frame(height: tile * 0.1)
-            Text("\(Int((value * 100).rounded()))%")
-                .font(.system(size: tile * 0.17, weight: .medium, design: .rounded))
-                .monospacedDigit()
-                .frame(width: tile * 0.5, alignment: .trailing)
+    private func value(_ metric: StatsMetric) -> Double { metric == .cpu ? cpu : memory }
+    private func percent(_ value: Double) -> String { "\(Int((value * 100).rounded()))%" }
+
+    private var rings: some View {
+        let line = tile * 0.075
+        return ZStack {
+            ring(cpu, StatsMetric.cpu.color, line: line)
+            ring(memory, StatsMetric.memory.color, line: line)
+                .padding(line + tile * 0.035)
         }
-        .lineLimit(1)
+        .aspectRatio(1, contentMode: .fit)
+    }
+
+    private func ring(_ value: Double, _ color: Color, line: CGFloat) -> some View {
+        ZStack {
+            Circle().stroke(color.opacity(0.22), lineWidth: line)
+            Circle()
+                .trim(from: 0, to: max(min(value, 1), 0))
+                .stroke(color, style: StrokeStyle(lineWidth: line, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .padding(line / 2)
+    }
+
+    private func legend(_ metric: StatsMetric) -> some View {
+        Text("\(Int((value(metric) * 100).rounded()))")
+            .fixedSize()
+            .font(.system(size: max(11, tile * 0.30), weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(metric.color)
+            .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }

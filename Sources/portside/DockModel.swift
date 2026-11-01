@@ -438,7 +438,7 @@ final class DockModel: Codable, ObservableObject {
         var kinds = widgetKinds.filter { $0 != kind }
         if enabled {
             // Keep catalog order so re-enabling puts it back where it was.
-            let order = WidgetCatalog.defaultKinds
+            let order = WidgetCatalog.allKinds
             let position = order.firstIndex(of: kind) ?? order.count
             let insertAt = kinds.firstIndex { (order.firstIndex(of: $0) ?? order.count) > position } ?? kinds.count
             kinds.insert(kind, at: insertAt)
@@ -448,6 +448,22 @@ final class DockModel: Codable, ObservableObject {
     }
 
     /// Reorder enabled widgets (Settings list drag).
+    /// Per-widget size on the bottom dock, by kind. Only sizes that differ
+    /// from the widget's own design are stored. Side docks always use Small.
+    @Published private(set) var widgetSizes: [String: WidgetSize] = [:]
+
+    func setWidgetSize(_ kind: String, _ size: WidgetSize) {
+        let stored: WidgetSize? = size == WidgetCatalog.naturalSize(kind) ? nil : size
+        guard widgetSizes[kind] != stored else { return }
+        widgetSizes[kind] = stored
+        persist()
+    }
+
+    /// What a widget shows at on `edge`.
+    func widgetSize(for kind: String, natural: WidgetSize, edge: DockEdge) -> WidgetSize {
+        edge.isVertical ? .small : WidgetSize.resolved(widgetSizes[kind], natural: natural)
+    }
+
     func moveWidgets(fromOffsets source: IndexSet, toOffset destination: Int) {
         var kinds = widgetKinds
         kinds.move(fromOffsets: source, toOffset: destination)
@@ -655,7 +671,7 @@ final class DockModel: Codable, ObservableObject {
         case hideNativeDock, nativeDockExplained
         case showTrash, trashAccessHintDismissed
         case showBadges, badgeColor, badgeCustomColor
-        case stacks
+        case stacks, widgetSizes
         case iconStyle, backgroundStyle, backgroundFrost, backgroundTint, cornerRadius
         /// Before Milestone D: a flat list of apps. Read only, for migration.
         case pinnedApps
@@ -691,6 +707,7 @@ final class DockModel: Codable, ObservableObject {
         badgeColor = (try? c.decodeIfPresent(BadgeColor.self, forKey: .badgeColor)) ?? .macOS
         badgeCustomColor = (try? c.decodeIfPresent(RGBAColor.self, forKey: .badgeCustomColor)) ?? BadgeColor.defaultCustom
         stacks = (try? c.decodeIfPresent([FolderStack].self, forKey: .stacks)) ?? []
+        widgetSizes = (try? c.decodeIfPresent([String: WidgetSize].self, forKey: .widgetSizes)) ?? [:]
         openGroupsOnHover = try c.decodeIfPresent(Bool.self, forKey: .openGroupsOnHover) ?? false
         groupHoverDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverDelay) ?? Defaults.groupHoverDelay, to: Self.groupHoverDelayRange)
         groupHoverCloseGrace = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverCloseGrace) ?? Defaults.groupHoverCloseGrace, to: Self.groupHoverCloseGraceRange)
@@ -726,6 +743,7 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(badgeColor, forKey: .badgeColor)
         try c.encode(badgeCustomColor, forKey: .badgeCustomColor)
         try c.encode(stacks, forKey: .stacks)
+        if !widgetSizes.isEmpty { try c.encode(widgetSizes, forKey: .widgetSizes) }
         try c.encode(openGroupsOnHover, forKey: .openGroupsOnHover)
         try c.encode(groupHoverDelay, forKey: .groupHoverDelay)
         try c.encode(groupHoverCloseGrace, forKey: .groupHoverCloseGrace)
@@ -886,6 +904,7 @@ final class DockModel: Codable, ObservableObject {
         entries = old.entries
         stacks = old.stacks
         widgetKinds = old.widgetKinds
+        widgetSizes = old.widgetSizes
         persist()
         try? FileManager.default.removeItem(at: Self.beforeImportURL)
         importLogger.info("import: undone, restored \(old.entries.count) entries, \(old.stacks.count) stacks from dock.json.before-import")

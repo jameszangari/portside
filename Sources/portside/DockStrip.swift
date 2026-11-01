@@ -172,7 +172,7 @@ struct DockStrip: View {
         let items = apps + widgets.hosts.count + separators
         // Horizontal: widgets are N tiles wide with gaps inside them.
         // Vertical: every item is one tile tall.
-        let units = edge.isVertical ? widgets.hosts.count : widgets.hosts.reduce(0) { $0 + $1.size.rawValue }
+        let units = edge.isVertical ? widgets.hosts.count : widgets.hosts.reduce(0) { $0 + shownSize($1, edge: edge).rawValue }
         let innerWidgetGaps = edge.isVertical ? 0 : units - widgets.hosts.count
         let fixed = alongPadding * 2 + separatorLength * CGFloat(separators)
             + spacing * CGFloat(max(items - 1, 0) + innerWidgetGaps)
@@ -243,14 +243,13 @@ struct DockStrip: View {
                     .magnifiedShift()
                 ForEach(widgets.hosts) { host in
                     host.view
+                        .environment(\.widgetSize, shownSize(host, edge: edge))
                         // Same visible air as an app icon's built-in margin.
                         .padding(edge.isVertical ? .vertical : .horizontal, tile * IconMetrics.margin)
                         .magnifiedShift()
                         .opacity(dragging == host.id ? 0 : 1)
                         .gesture(widgetDragGesture(for: host, tile: tile))
-                        .contextMenu {
-                            Button("Remove Widget") { dockModel.setWidget(host.id, enabled: false) }
-                        }
+                        .appKitContextMenu(edge: edge) { widgetMenu(host, edge: edge) }
                 }
                 ForEach(Array(folderStacks.enumerated()), id: \.element.id) { index, folder in
                     if stackInsertIndex == index {
@@ -331,6 +330,41 @@ struct DockStrip: View {
     }
 
     /// Pinned entry with reorder; spacers also shift under magnification.
+    private func shownSize(_ host: WidgetHost, edge: DockEdge) -> WidgetSize {
+        dockModel.widgetSize(for: host.id, natural: host.size, edge: edge)
+    }
+
+    /// Widget right-click, laid out like the iOS widget menu: actions, then
+    /// the size row (bottom dock only; side docks are always Small).
+    private func widgetMenu(_ host: WidgetHost, edge: DockEdge) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let remove = ClosureMenuItem("Remove Widget") {
+            withAnimation(removalAnimation) { dockModel.setWidget(host.id, enabled: false) }
+        }
+        remove.image = NSImage(systemSymbolName: "minus.circle", accessibilityDescription: nil)
+        menu.addItem(remove)
+        let edit = ClosureMenuItem("Edit Widgets...") { interactions.onOpenSettings?() }
+        edit.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: nil)
+        menu.addItem(edit)
+        let sizes = WidgetSize.choices(upTo: host.size)
+        if !edge.isVertical, sizes.count > 1 {
+            menu.addItem(.separator())
+            let item = NSMenuItem()
+            let picker = WidgetSizePicker(sizes: sizes, selection: shownSize(host, edge: edge)) { [weak menu] size in
+                menu?.cancelTracking()
+                withAnimation(.easeOut(duration: 0.15)) { dockModel.setWidgetSize(host.id, size) }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 4)
+            let view = NSHostingView(rootView: picker)
+            view.frame.size = view.fittingSize
+            item.view = view
+            menu.addItem(item)
+        }
+        return menu
+    }
+
     @ViewBuilder private func pinnedSlot(_ entry: DockEntry, tile: CGFloat, vertical: Bool) -> some View {
         let body = entryView(entry, tile: tile)
             // Gap while dragging: the floating DragOut preview follows the
@@ -665,6 +699,7 @@ struct DockStrip: View {
                     dragging = host.id
                     dragOutside = false
                     let preview = host.view
+                        .environment(\.widgetSize, shownSize(host, edge: dockModel.edge))
                         .environment(\.dockTileSize, tile)
                         .environment(\.dockIconGap, spacing)
                         .environment(\.dockEdge, .bottom)

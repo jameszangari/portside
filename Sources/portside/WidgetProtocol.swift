@@ -1,8 +1,31 @@
 import SwiftUI
 
 /// Widget width in dock tiles. Height is always one tile.
-enum WidgetSize: Int, Codable {
+enum WidgetSize: Int, Codable, Comparable, Identifiable {
     case small = 1, medium = 2, large = 3
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .small: "Small"
+        case .medium: "Wide"
+        case .large: "Extra Wide"
+        }
+    }
+
+    static func < (a: WidgetSize, b: WidgetSize) -> Bool { a.rawValue < b.rawValue }
+
+    /// Sizes a widget can be shown at: square, plus its own design if wider.
+    static func choices(upTo natural: WidgetSize) -> [WidgetSize] {
+        natural == .small ? [.small] : [.small, natural]
+    }
+
+    /// The size a widget draws at: the dock's choice, never wider than the
+    /// widget's own design.
+    static func resolved(_ chosen: WidgetSize?, natural: WidgetSize) -> WidgetSize {
+        min(chosen ?? natural, natural)
+    }
 }
 
 /// A dock widget plugin.
@@ -17,6 +40,8 @@ protocol DockWidget: ObservableObject, Identifiable {
     static var kind: String { get }
     var id: String { get }
     var name: String { get }
+    /// Hover label: what a click opens ("Activity Monitor"). Defaults to `name`.
+    var hoverTitle: String { get }
     /// SF Symbol shown in menus that list widgets.
     var icon: Image { get }
     var size: WidgetSize { get }
@@ -41,6 +66,7 @@ protocol DockWidget: ObservableObject, Identifiable {
 
 extension DockWidget {
     var id: String { Self.kind }
+    var hoverTitle: String { name }
     var alignsRefreshToInterval: Bool { false }
     func start() {}
     func stop() {}
@@ -58,6 +84,10 @@ private struct DockTileSizeKey: EnvironmentKey {
     static let defaultValue: CGFloat = 48
 }
 
+private struct WidgetSizeKey: EnvironmentKey {
+    static let defaultValue: WidgetSize? = nil
+}
+
 private struct DockIconGapKey: EnvironmentKey {
     static let defaultValue: CGFloat = DockMetrics.spacing
 }
@@ -67,6 +97,13 @@ extension EnvironmentValues {
     var dockTileSize: CGFloat {
         get { self[DockTileSizeKey.self] }
         set { self[DockTileSizeKey.self] = newValue }
+    }
+
+    /// The size the dock shows this widget at (nil: the widget's own size).
+    /// Side docks always pass `.small`; on the bottom it is the user's pick.
+    var widgetSize: WidgetSize? {
+        get { self[WidgetSizeKey.self] }
+        set { self[WidgetSizeKey.self] = newValue }
     }
 
     /// Gap between strip tiles (and inside multi-unit widgets).
@@ -95,5 +132,55 @@ struct WidgetTile<Content: View>: View {
                     .overlay(shape.fill(Color.white.opacity(0.08)))
             }
             .clipShape(RoundedRectangle(cornerRadius: tile * 0.22, style: .continuous))
+    }
+}
+
+/// The size choice, drawn like the iOS widget size row: one outline per
+/// size in its own aspect ratio, the current one highlighted. Used in a
+/// widget's right-click menu and in Settings > Widgets.
+struct WidgetSizePicker: View {
+    let sizes: [WidgetSize]
+    let selection: WidgetSize
+    let onSelect: (WidgetSize) -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(sizes) { size in
+                Button { onSelect(size) } label: {
+                    WidgetSizeIcon(size: size)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(Color.primary.opacity(size == selection ? 0.16 : 0))
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(size.title)
+                .accessibilityLabel(size.title)
+                .accessibilityAddTraits(size == selection ? .isSelected : [])
+            }
+        }
+    }
+}
+
+/// A rounded outline in the size's aspect ratio with a small mark in the
+/// corner, like the iOS size icons.
+private struct WidgetSizeIcon: View {
+    let size: WidgetSize
+
+    var body: some View {
+        let height: CGFloat = 16
+        let width = height * CGFloat(size.rawValue) + 4 * CGFloat(size.rawValue - 1)
+        RoundedRectangle(cornerRadius: 4, style: .continuous)
+            .strokeBorder(Color.primary.opacity(0.85), lineWidth: 1.5)
+            .frame(width: width, height: height)
+            .overlay(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(Color.primary.opacity(0.85))
+                    .frame(width: 4, height: 4)
+                    .padding(3.5)
+            }
     }
 }
