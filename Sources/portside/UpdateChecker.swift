@@ -9,7 +9,7 @@ enum UpdateCheckResult: Equatable {
     /// Repo URL couldn't be turned into an API URL.
     case notConfigured
     case upToDate
-    /// `dmgURL` is the GitHub asset to install when present.
+    /// `dmgURL` is the GitHub asset to install when present (API asset URL when private).
     case available(version: String, releaseURL: URL, dmgURL: URL?)
     case failed(String)
 
@@ -26,6 +26,9 @@ enum UpdateCheckResult: Equatable {
 /// Asks GitHub for the latest release of `AppInfo.repoURL`, compares its tag
 /// with `AppInfo.version`, and can download the release DMG and replace the
 /// running `.app` in place. One request per click; nothing runs in the background.
+///
+/// The GitHub repo is private, so checks and downloads need a token
+/// (`GitHubAuth`: Portside keychain entry, or a logged-in `gh` CLI token).
 enum UpdateChecker {
     private struct Release: Decodable {
         let tag_name: String
@@ -34,6 +37,8 @@ enum UpdateChecker {
 
         struct Asset: Decodable {
             let name: String
+            /// API URL; required for private-repo downloads (with a Bearer token).
+            let url: URL
             let browser_download_url: URL
         }
     }
@@ -56,20 +61,29 @@ enum UpdateChecker {
               let api = URL(string: "https://api.github.com/repos/\(parts[0])/\(parts[1])/releases/latest") else {
             return .notConfigured
         }
+        let token = GitHubAuth.token()
         var request = URLRequest(url: api, timeoutInterval: 10)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("Portside/\(AppInfo.version)", forHTTPHeaderField: "User-Agent")
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-                return .failed(http.statusCode == 404 ? "no releases published yet." : "GitHub returned \(http.statusCode).")
+                return .failed(httpFailure(http.statusCode, authenticated: token != nil))
             }
             let release = try JSONDecoder().decode(Release.self, from: data)
             let latest = release.tag_name.hasPrefix("v") ? String(release.tag_name.dropFirst()) : release.tag_name
             guard isNewer(latest, than: AppInfo.version) else { return .upToDate }
-            let dmg = release.assets.first { $0.name == "Portside-\(latest).dmg" }
+            let asset = release.assets.first { $0.name == "Portside-\(latest).dmg" }
                 ?? release.assets.first { $0.name.hasPrefix("Portside-") && $0.name.hasSuffix(".dmg") }
-            return .available(version: latest, releaseURL: release.html_url, dmgURL: dmg?.browser_download_url)
+            // Private repos need the API asset URL + token; public can use either.
+            let dmgURL: URL? = {
+                guard let asset else { return nil }
+                return token != nil ? asset.url : asset.browser_download_url
+            }()
+            return .available(version: latest, releaseURL: release.html_url, dmgURL: dmgURL)
         } catch {
             return .failed(error.localizedDescription)
         }
@@ -141,9 +155,33 @@ enum UpdateChecker {
 
     // MARK: - Private
 
+    private static func httpFailure(_ code: Int, authenticated: Bool) -> String {
+        switch code {
+        case 401, 403:
+            return "GitHub auth failed. Check the token in Settings > General."
+        case 404:
+            if authenticated {
+                return "no releases published yet."
+            }
+            return "the GitHub repo is private (or has no releases). Add a token in Settings > General, or sign in with the GitHub CLI (gh auth login)."
+        default:
+            return "GitHub returned \(code)."
+        }
+    }
+
     private static func downloadDMG(from url: URL) async throws -> URL {
         var request = URLRequest(url: url, timeoutInterval: 120)
         request.setValue("Portside/\(AppInfo.version)", forHTTPHeaderField: "User-Agent")
+        // API asset URLs need octet-stream + Bearer; browser URLs are fine with either.
+        let isAPIAsset = url.host == "api.github.com"
+        if isAPIAsset {
+            request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+        }
+        if let token = GitHubAuth.token() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        } else if isAPIAsset {
+            throw UpdateError.authRequired
+        }
         let (tempURL, response) = try await URLSession.shared.download(for: request)
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             throw UpdateError.downloadFailed(http.statusCode)
@@ -218,6 +256,7 @@ enum UpdateChecker {
 private enum UpdateError: LocalizedError {
     case notInstalledApp
     case dmgMissingApp
+    case authRequired
     case downloadFailed(Int)
     case commandFailed(String, String)
 
@@ -227,6 +266,8 @@ private enum UpdateError: LocalizedError {
             "this build isn't an installed Portside.app (use the .app from a release or build-app.sh)."
         case .dmgMissingApp:
             "the download didn't contain Portside.app."
+        case .authRequired:
+            "a GitHub token is required to download from this private repo."
         case .downloadFailed(let code):
             "download failed (HTTP \(code))."
         case .commandFailed(_, let detail):

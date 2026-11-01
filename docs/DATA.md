@@ -47,3 +47,5 @@ It is deleted after a verified restore. If it exists when Portside starts, Ports
 The built app lives at `build/Portside.app` (ignored by git), the versioned release disk image at `build/dist/Portside-X.Y.Z.dmg`, and the installed copy at `~/Applications/Portside.app` after `scripts/build-app.sh --install`.
 
 The local signing certificate and private key live in your default user keychain. Its fingerprint is stored at `~/Library/Application Support/com.james.portside/signing/identity.sha1`. Keep the same identity across rebuilds. Downloads and other macOS privacy decisions are managed by macOS, outside `dock.json`.
+
+An optional GitHub personal access token for Check for Updates (private repo) is stored in the keychain as service `com.james.portside.github-token`, never in `dock.json`. If that is empty, Portside also tries the GitHub CLI's `gh:github.com` keychain entry.

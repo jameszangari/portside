@@ -510,6 +510,70 @@ private struct DockSettings: View {
     }
 }
 
+// MARK: - Updates auth
+
+/// Optional GitHub token for Check for Updates while the repo is private.
+/// Portside also reuses a logged-in GitHub CLI token from the keychain.
+private struct UpdatesAuthSection: View {
+    @State private var draft = ""
+    @State private var status: String?
+    @State private var hasSaved = GitHubAuth.hasPortsideToken
+    @State private var hasAny = GitHubAuth.hasAnyToken
+
+    var body: some View {
+        Section {
+            SecureField("Personal access token", text: $draft)
+                .textContentType(.password)
+            HStack {
+                Button("Save Token") { save() }
+                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if hasSaved {
+                    Button("Clear Saved Token", role: .destructive) { clear() }
+                }
+            }
+            if let status {
+                Text(status).helperStyle()
+            } else {
+                Text(hasAny
+                     ? "A GitHub token is available (saved here or from the GitHub CLI)."
+                     : "No token found. Check for Updates needs one while the repo is private.")
+                    .helperStyle()
+            }
+        } header: {
+            Text("Updates")
+        } footer: {
+            Text("Fine-grained: Contents read on portside-dock. Classic: repo scope. Tokens stay in the keychain, not dock.json.")
+                .footerStyle()
+        }
+        .onAppear {
+            hasSaved = GitHubAuth.hasPortsideToken
+            hasAny = GitHubAuth.hasAnyToken
+        }
+    }
+
+    private func save() {
+        do {
+            try GitHubAuth.savePortsideToken(draft)
+            draft = ""
+            hasSaved = GitHubAuth.hasPortsideToken
+            hasAny = GitHubAuth.hasAnyToken
+            status = "Token saved in the keychain."
+        } catch {
+            status = "Couldn't save: \(error.localizedDescription)"
+        }
+    }
+
+    private func clear() {
+        GitHubAuth.clearPortsideToken()
+        draft = ""
+        hasSaved = false
+        hasAny = GitHubAuth.hasAnyToken
+        status = hasAny
+            ? "Cleared. Still using the GitHub CLI token."
+            : "Cleared. Add a token or run gh auth login."
+    }
+}
+
 // MARK: - General
 
 /// App-level settings: startup, the Settings shortcut, hiding the macOS
@@ -552,6 +616,8 @@ private struct GeneralSettings: View {
                 Text("Opens Settings from any app. Default ⌘⇧D. The menu bar Settings… item always uses ⌘,.")
                     .footerStyle()
             }
+
+            UpdatesAuthSection()
 
             Section("macOS Dock") {
                 Toggle(isOn: Binding(
