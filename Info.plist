@@ -11,7 +11,7 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Portside asks Finder to empty the Trash, and System Events to add or remove apps from Open at Login.</string>
+	<string>Portside asks Finder to empty the Trash, System Events to add or remove apps from Open at Login, Spotify or Music for the Now Playing widget, and Terminal or iTerm to bring an agent's tab forward from the Agents widget.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Portside shows your next event in the dock's Calendar widget.</string>
 	<key>NSCalendarsUsageDescription</key>

@@ -26,6 +26,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let trash: TrashController
     private let badges: DockBadges
     private let nativeDock: NativeDockController
+    private let widgets: WidgetStore
     /// Read from the system each time the window opens.
     private let launchAtLogin = LaunchAtLogin()
     private var window: NSWindow?
@@ -39,7 +40,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// there, a reservation change re-centers it; once moved, it stays put.
     private var placedTopLeft: NSPoint?
 
-    init(dockModel: DockModel, layout: DockLayout, nativeDock: NativeDockController, trash: TrashController, badges: DockBadges) {
+    init(dockModel: DockModel, layout: DockLayout, nativeDock: NativeDockController, trash: TrashController, badges: DockBadges, widgets: WidgetStore) {
+        self.widgets = widgets
         self.dockModel = dockModel
         self.layout = layout
         self.nativeDock = nativeDock
@@ -109,7 +111,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private func makeWindow() -> NSWindow {
         let hosting = NSHostingController(rootView: SettingsView(
             dockModel: dockModel, layout: layout, nativeDock: nativeDock,
-            launchAtLogin: launchAtLogin, trash: trash, badges: badges
+            launchAtLogin: launchAtLogin, trash: trash, badges: badges, widgets: widgets
         ))
         // Fixed size, like System Settings: panes scroll instead of growing
         // the window. The toolbar carries the pane title.
@@ -208,7 +210,15 @@ private final class SettingsNSWindow: NSWindow {
 /// Shared sizes so every pane lines up.
 enum SettingsLayout {
     /// Wide and short: a sidebar plus a scrolling pane.
-    static let windowSize = NSSize(width: 830, height: 560)
+    static let windowSize: NSSize = {
+        #if DEBUG
+        // Debug builds: taller window for full-pane screenshots.
+        if let height = ProcessInfo.processInfo.environment["PORTSIDE_SETTINGS_HEIGHT"].flatMap(Double.init) {
+            return NSSize(width: 830, height: height)
+        }
+        #endif
+        return NSSize(width: 830, height: 560)
+    }()
     static let sidebarWidth: CGFloat = 270
     /// Label column for slider rows.
     static let labelWidth: CGFloat = 136
@@ -270,8 +280,20 @@ struct SettingsView: View {
     let launchAtLogin: LaunchAtLogin
     let trash: TrashController
     @ObservedObject var badges: DockBadges
+    let widgets: WidgetStore
 
-    @State private var tab: SettingsTab = .dock
+    @State private var tab: SettingsTab = Self.initialTab
+
+    /// Debug builds: `PORTSIDE_SETTINGS_TAB=widgets` opens that pane, for
+    /// screenshots of a sandboxed run.
+    private static var initialTab: SettingsTab {
+        #if DEBUG
+        if let name = ProcessInfo.processInfo.environment["PORTSIDE_SETTINGS_TAB"], let tab = SettingsTab(rawValue: name) {
+            return tab
+        }
+        #endif
+        return .dock
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -283,7 +305,7 @@ struct SettingsView: View {
                 switch tab {
                 case .dock: DockSettings(dockModel: dockModel, trash: trash)
                 case .appearance: AppearanceSettings(dockModel: dockModel, layout: layout, badges: badges)
-                case .widgets: WidgetSettings(dockModel: dockModel)
+                case .widgets: WidgetSettings(dockModel: dockModel, widgets: widgets)
                 case .groups: GroupSettings(dockModel: dockModel)
                 case .general: GeneralSettings(dockModel: dockModel, layout: layout, nativeDock: nativeDock, launchAtLogin: launchAtLogin)
                 }
@@ -1283,94 +1305,173 @@ private struct AppearanceSettings: View {
 
 private struct WidgetSettings: View {
     @ObservedObject var dockModel: DockModel
-    /// Widget being dragged in the list, nil when no drag is in progress.
-    @State private var dragging: String?
-
-    private var available: [String] {
-        WidgetCatalog.allKinds.filter { !dockModel.widgetKinds.contains($0) }
-    }
+    /// Live widgets, for the row previews.
+    @ObservedObject var widgets: WidgetStore
 
     var body: some View {
         Form {
-            Section {
-                // A grouped Form ignores .onMove, so enabled rows reorder
-                // live under the drag with onDrag/onDrop instead.
-                ForEach(dockModel.widgetKinds, id: \.self) { kind in
-                    row(kind, enabled: true)
-                        .contentShape(Rectangle())
-                        .onDrag {
-                            dragging = kind
-                            return NSItemProvider(object: kind as NSString)
-                        }
-                        .onDrop(of: [.text], delegate: WidgetReorderDelegate(
-                            target: kind, dragging: $dragging, dockModel: dockModel
-                        ))
-                        .accessibilityAction(named: "Move Up") { dockModel.moveWidget(kind, by: -1) }
-                        .accessibilityAction(named: "Move Down") { dockModel.moveWidget(kind, by: 1) }
-                }
-
-                ForEach(available, id: \.self) { kind in
-                    row(kind, enabled: false)
-                }
-            } footer: {
-                Text("Drag to reorder. Order runs left to right, or top to bottom on a side dock. Size applies to the bottom dock; side docks always show Small (square) widgets.").footerStyle()
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func row(_ kind: String, enabled: Bool) -> some View {
-        if let info = WidgetCatalog.info(kind) {
-            Toggle(isOn: Binding(
-                get: { enabled },
-                set: { dockModel.setWidget(kind, enabled: $0) }
-            )) {
-                HStack(spacing: 8) {
-                    info.icon
-                        .foregroundStyle(enabled ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                        .frame(width: 20)
-                    Text(info.name)
-                    let natural = WidgetCatalog.naturalSize(kind)
-                    let sizes = WidgetSize.choices(upTo: natural)
-                    if enabled, sizes.count > 1 {
-                        Spacer()
-                        WidgetSizePicker(
-                            sizes: sizes,
-                            selection: dockModel.widgetSize(for: kind, natural: natural, edge: .bottom)
-                        ) { size in
-                            withAnimation(.easeOut(duration: 0.15)) { dockModel.setWidgetSize(kind, size) }
-                        }
+            // Fixed catalog order, grouped: turning a widget off or on never
+            // moves its row. Dock order is set by dragging in the dock.
+            ForEach(Array(WidgetCatalog.groups.enumerated()), id: \.offset) { index, group in
+                Section {
+                    ForEach(group.kinds, id: \.self) { kind in
+                        WidgetRow(kind: kind, dockModel: dockModel, host: widgets.hosts.first { $0.id == kind })
+                    }
+                } header: {
+                    Text(group.title)
+                } footer: {
+                    if index == WidgetCatalog.groups.count - 1 {
+                        Text("Drag widgets in the dock to reorder them. Sizes apply to the bottom dock; side docks always show Small widgets.").footerStyle()
                     }
                 }
             }
-            .toggleStyle(.switch)
+
+            if dockModel.widgetKinds.contains(AgentStatusWidget.kind) {
+                AgentHooksSection()
+            }
+
+            if dockModel.widgetKinds.contains(UsageWidget.kind) {
+                Section {
+                    ForEach(AgentProvider.all) { provider in
+                        Toggle(isOn: Binding(
+                            get: { dockModel.usageProviders.contains(provider.id) },
+                            set: { dockModel.setUsageProvider(provider.id, enabled: $0) }
+                        )) {
+                            Text("\(provider.name) by \(provider.vendor)")
+                            Text(provider.id == "claude"
+                                 ? "5-hour and weekly limits, from your Claude Code sign-in."
+                                 : "5-hour and weekly limits, from Codex's local session logs.").helperStyle()
+                        }
+                        .toggleStyle(.switch)
+                    }
+                } header: {
+                    Text("AI Usage Providers")
+                } footer: {
+                    Text("Refreshes every 5 minutes. The first two selected show on the tile; hover for reset times.").footerStyle()
+                }
+            }
         }
     }
 }
 
-/// Moves the dragged widget into the hovered row's slot as the drag
-/// passes over it, so the list shows the new order before the drop.
-private struct WidgetReorderDelegate: DropDelegate {
-    let target: String
-    @Binding var dragging: String?
-    let dockModel: DockModel
+/// One widget: a live preview (the tile itself, at the chosen size) or a
+/// dimmed placeholder when off, the name, the size choice, and the switch.
+/// Every row is the same height.
+private struct WidgetRow: View {
+    let kind: String
+    @ObservedObject var dockModel: DockModel
+    let host: WidgetHost?
 
-    func dropEntered(info: DropInfo) {
-        guard let dragging, dragging != target,
-              let from = dockModel.widgetKinds.firstIndex(of: dragging),
-              let to = dockModel.widgetKinds.firstIndex(of: target) else { return }
-        withAnimation(.easeInOut(duration: 0.15)) {
-            dockModel.moveWidgets(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
+    /// Preview tile size: three units fit in `previewWidth`.
+    static let previewTile: CGFloat = 26
+    static let previewGap: CGFloat = 3
+    static var previewWidth: CGFloat { previewTile * 3 + previewGap * 2 }
+
+    var body: some View {
+        if let info = WidgetCatalog.info(kind) {
+            let enabled = host != nil
+            let natural = WidgetCatalog.naturalSize(kind)
+            let sizes = WidgetSize.choices(upTo: natural)
+            let size = dockModel.widgetSize(for: kind, natural: natural, edge: .bottom)
+            HStack(spacing: 12) {
+                Group {
+                    if let host {
+                        host.previewView
+                            .environment(\.widgetSize, size)
+                    } else {
+                        WidgetTile(size: .small) {
+                            info.icon
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                        .opacity(0.6)
+                    }
+                }
+                .environment(\.dockTileSize, Self.previewTile)
+                .environment(\.dockIconGap, Self.previewGap)
+                .allowsHitTesting(false)
+                .frame(width: Self.previewWidth, alignment: .leading)
+                .accessibilityHidden(true)
+
+                Text(info.name)
+                    .foregroundStyle(enabled ? .primary : .secondary)
+                Spacer()
+                if sizes.count > 1 {
+                    WidgetSizePicker(sizes: sizes, selection: size) { size in
+                        withAnimation(.easeOut(duration: 0.15)) { dockModel.setWidgetSize(kind, size) }
+                    }
+                    .opacity(enabled ? 1 : 0.45)
+                }
+                Toggle(info.name, isOn: Binding(
+                    get: { enabled },
+                    set: { dockModel.setWidget(kind, enabled: $0) }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
+            }
+            .frame(height: 34)
         }
     }
+}
 
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: dragging == nil ? .forbidden : .move)
+/// Install / remove the hooks the Agents widget reads. Status is re-read
+/// when the section appears and after each action.
+private struct AgentHooksSection: View {
+    @State private var statuses: [String: AgentHooks.Status] = [:]
+    @State private var error: String?
+
+    private var found: [AgentHooks.Target] {
+        AgentHooks.targets.filter { statuses[$0.id] != .notFound }
     }
 
-    func performDrop(info: DropInfo) -> Bool {
-        dragging = nil
-        return true
+    private var installed: Bool {
+        !found.isEmpty && found.allSatisfy { statuses[$0.id] == .installed }
+    }
+
+    var body: some View {
+        Section("Agent Hooks") {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(found.isEmpty ? "No agents found" : installed ? "Installed" : "Not installed")
+                    Text(detail).helperStyle()
+                }
+                Spacer()
+                if installed {
+                    Button("Remove Hooks") { run(AgentHooks.uninstall) }
+                } else {
+                    Button("Install Hooks") { run(AgentHooks.install) }
+                        .disabled(found.isEmpty)
+                }
+            }
+            if let error {
+                Text(error).helperStyle().foregroundStyle(.red)
+            }
+        }
+        .onAppear(perform: reload)
+    }
+
+    private var detail: String {
+        if found.isEmpty {
+            return "Install Claude Code or Codex. The Agents widget reads their hooks."
+        }
+        let names = found.map(\.name).joined(separator: " and ")
+        return installed
+            ? "\(names) report to the Agents widget. Restart open sessions to pick up changes."
+            : "Lets \(names) report working and done to the Agents widget. Adds tagged entries to their settings (backed up first); other hooks are kept."
+    }
+
+    private func reload() {
+        statuses = Dictionary(uniqueKeysWithValues: AgentHooks.targets.map { ($0.id, AgentHooks.status($0)) })
+    }
+
+    private func run(_ action: () throws -> Void) {
+        do {
+            try action()
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+        reload()
     }
 }
 

@@ -52,6 +52,13 @@ final class WidgetHost: Identifiable {
     private static func makeView<W: DockWidget>(_ widget: W) -> AnyView {
         AnyView(WidgetContainer(widget: widget))
     }
+
+    /// The same tile, live, without hover labels or clicks (Settings).
+    var previewView: AnyView { WidgetHost.makePreview(widget) }
+
+    private static func makePreview<W: DockWidget>(_ widget: W) -> AnyView {
+        AnyView(WidgetPreviewContainer(widget: widget))
+    }
 }
 
 /// Observes the widget object so only this subtree re-renders on refresh.
@@ -66,6 +73,14 @@ private struct WidgetContainer<W: DockWidget>: View {
     }
 }
 
+private struct WidgetPreviewContainer<W: DockWidget>: View {
+    @ObservedObject var widget: W
+
+    var body: some View {
+        widget.body
+    }
+}
+
 /// All available widgets, in default display order.
 enum WidgetCatalog {
     static let factories: [(kind: String, make: () -> any DockWidget)] = [
@@ -74,14 +89,27 @@ enum WidgetCatalog {
         (WeatherWidget.kind, { WeatherWidget() }),
         (SystemStatsWidget.kind, { SystemStatsWidget() }),
         (BatteryWidget.kind, { BatteryWidget() }),
+        (NowPlayingWidget.kind, { NowPlayingWidget() }),
+        (AgentStatusWidget.kind, { AgentStatusWidget() }),
+        (UsageWidget.kind, { UsageWidget() }),
         (CPUWidget.kind, { CPUWidget() }),
         (MemoryWidget.kind, { MemoryWidget() }),
     ]
 
     static var allKinds: [String] { factories.map(\.kind) }
 
+    /// Settings sections. Every kind appears exactly once.
+    static let groups: [(title: String, kinds: [String])] = [
+        ("Time & Weather", [ClockWidget.kind, CalendarWidget.kind, WeatherWidget.kind]),
+        ("System", [SystemStatsWidget.kind, CPUWidget.kind, MemoryWidget.kind, BatteryWidget.kind]),
+        ("Media", [NowPlayingWidget.kind]),
+        ("AI Agents", [AgentStatusWidget.kind, UsageWidget.kind]),
+    ]
+
+    /// Opt-in widgets stay out of a fresh dock.
     static var defaultKinds: [String] {
-        allKinds.filter { $0 != CPUWidget.kind && $0 != MemoryWidget.kind }
+        let optIn = [CPUWidget.kind, MemoryWidget.kind, NowPlayingWidget.kind, AgentStatusWidget.kind, UsageWidget.kind]
+        return allKinds.filter { !optIn.contains($0) }
     }
 
     static func make(_ kind: String) -> (any DockWidget)? {
@@ -105,8 +133,10 @@ enum WidgetCatalog {
 final class WidgetStore: ObservableObject {
     @Published private(set) var hosts: [WidgetHost] = []
     private var cancellable: AnyCancellable?
+    private weak var dockModel: DockModel?
 
     init(dockModel: DockModel) {
+        self.dockModel = dockModel
         cancellable = dockModel.$widgetKinds.sink { [weak self] kinds in
             self?.sync(kinds)
         }
@@ -118,6 +148,9 @@ final class WidgetStore: ObservableObject {
             if let existing = hosts.first(where: { $0.id == kind }) {
                 next.append(existing)
             } else if let widget = WidgetCatalog.make(kind) {
+                if let dockModel, let configurable = widget as? DockModelWidget {
+                    configurable.attach(dockModel)
+                }
                 let host = WidgetHost(widget: widget)
                 host.start()
                 next.append(host)

@@ -27,6 +27,28 @@ enum PortsideMain {
         if CommandLine.arguments.contains("--check-updates") {
             exit(checkUpdatesCommand())
         }
+        #if DEBUG
+        if let index = CommandLine.arguments.firstIndex(of: "--render-widget-previews"), index + 1 < CommandLine.arguments.count {
+            exit(MainActor.assumeIsolated { WidgetPreviews.render(to: CommandLine.arguments[index + 1]) })
+        }
+        #endif
+        if CommandLine.arguments.contains("--print-usage") {
+            exit(UsageFetcher.printAll())
+        }
+        // Same as Settings > Widgets > Agent Hooks.
+        for (flag, action) in [("--install-agent-hooks", AgentHooks.install), ("--remove-agent-hooks", AgentHooks.uninstall)]
+        where CommandLine.arguments.contains(flag) {
+            do {
+                try action()
+                for target in AgentHooks.targets {
+                    print("\(target.name): \(AgentHooks.status(target))")
+                }
+                exit(0)
+            } catch {
+                print("portside: \(error.localizedDescription)")
+                exit(1)
+            }
+        }
         NativeDock.recoverIfNeeded()
         installSignalHandlers()
         PortsideApp.main()
@@ -285,7 +307,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// panel itself stays non-activating.
     func openSettings() {
         guard let dockEngine else { return }
-        let controller = settings ?? SettingsWindowController(dockModel: dockModel, layout: dockEngine.layout, nativeDock: nativeDock, trash: dockEngine.trash, badges: dockEngine.badges)
+        let controller = settings ?? SettingsWindowController(dockModel: dockModel, layout: dockEngine.layout, nativeDock: nativeDock, trash: dockEngine.trash, badges: dockEngine.badges, widgets: dockEngine.widgets)
         controller.onActivationPolicyChanged = { [weak dockEngine] in dockEngine?.activationPolicyChanged() }
         controller.onKeyFocusChanged = { [weak dockEngine] focused in
             dockEngine?.settingsKeyFocusChanged(focused)

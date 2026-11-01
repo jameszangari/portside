@@ -55,6 +55,7 @@ final class DockModel: Codable, ObservableObject {
 
     enum Defaults {
         static let revealDelay: TimeInterval = 0.0
+        static let usageProviders = ["claude", "codex"]
         static let hideDelay: TimeInterval = 0.3
         static let animationDuration: TimeInterval = 0.15
         static let groupHoverDelay: TimeInterval = 0.05
@@ -702,7 +703,6 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
-    /// Reorder enabled widgets (Settings list drag).
     /// Per-widget size on the bottom dock, by kind. Only sizes that differ
     /// from the widget's own design are stored. Side docks always use Small.
     @Published private(set) var widgetSizes: [String: WidgetSize] = [:]
@@ -714,29 +714,22 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    /// Providers the Usage widget tracks (`AgentProvider` ids), in order.
+    @Published var usageProviders: [String] = DockModel.Defaults.usageProviders
+
+    func setUsageProvider(_ id: String, enabled: Bool) {
+        var next = usageProviders.filter { $0 != id }
+        if enabled {
+            next.append(id)
+            next.sort { (Self.Defaults.usageProviders.firstIndex(of: $0) ?? 99) < (Self.Defaults.usageProviders.firstIndex(of: $1) ?? 99) }
+        }
+        usageProviders = next
+        persist()
+    }
+
     /// What a widget shows at on `edge`.
     func widgetSize(for kind: String, natural: WidgetSize, edge: DockEdge) -> WidgetSize {
         edge.isVertical ? .small : WidgetSize.resolved(widgetSizes[kind], natural: natural)
-    }
-
-    func moveWidgets(fromOffsets source: IndexSet, toOffset destination: Int) {
-        var kinds = widgetKinds
-        kinds.move(fromOffsets: source, toOffset: destination)
-        guard kinds != widgetKinds else { return }
-        widgetKinds = kinds
-        syncLayout(toOrderOf: kinds.map { "widget:" + $0 })
-        persist()
-    }
-
-    /// Move one enabled widget earlier (-1) or later (+1).
-    func moveWidget(_ kind: String, by offset: Int) {
-        guard let index = widgetKinds.firstIndex(of: kind),
-              widgetKinds.indices.contains(index + offset) else { return }
-        var kinds = widgetKinds
-        kinds.swapAt(index, index + offset)
-        widgetKinds = kinds
-        syncLayout(toOrderOf: kinds.map { "widget:" + $0 })
-        persist()
     }
 
     private static let logger = Logger(subsystem: "com.james.portside", category: "DockModel")
@@ -948,7 +941,7 @@ final class DockModel: Codable, ObservableObject {
         case showTrash, trashAccessHintDismissed
         case showBadges, badgeColor, badgeCustomColor
         case activityIcons
-        case stacks, layout, widgetSizes
+        case stacks, layout, widgetSizes, usageProviders
         case iconStyle, background, cornerRadius
         case showIndicators, dimHiddenApps, showRecents, recentApps
         /// Before per-style backgrounds. Read only, for migration.
@@ -992,6 +985,7 @@ final class DockModel: Codable, ObservableObject {
         stacks = (try? c.decodeIfPresent([FolderStack].self, forKey: .stacks)) ?? []
         layout = (try? c.decodeIfPresent([String].self, forKey: .layout)) ?? []
         widgetSizes = (try? c.decodeIfPresent([String: WidgetSize].self, forKey: .widgetSizes)) ?? [:]
+        usageProviders = (try? c.decodeIfPresent([String].self, forKey: .usageProviders)) ?? Defaults.usageProviders
         openGroupsOnHover = try c.decodeIfPresent(Bool.self, forKey: .openGroupsOnHover) ?? false
         openSettingsOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .openSettingsOnLaunch) ?? false
         groupHoverDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverDelay) ?? Defaults.groupHoverDelay, to: Self.groupHoverDelayRange)
@@ -1053,6 +1047,7 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(stacks, forKey: .stacks)
         if !layout.isEmpty { try c.encode(layout, forKey: .layout) }
         if !widgetSizes.isEmpty { try c.encode(widgetSizes, forKey: .widgetSizes) }
+        if usageProviders != Defaults.usageProviders { try c.encode(usageProviders, forKey: .usageProviders) }
         try c.encode(openGroupsOnHover, forKey: .openGroupsOnHover)
         try c.encode(openSettingsOnLaunch, forKey: .openSettingsOnLaunch)
         try c.encode(groupHoverDelay, forKey: .groupHoverDelay)

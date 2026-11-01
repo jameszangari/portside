@@ -14,7 +14,8 @@ import os.log
 final class DockEngine {
     let dockModel: DockModel
     private let runningApps: RunningApps
-    private let widgets: WidgetStore
+    /// Live widgets; Settings previews them.
+    let widgets: WidgetStore
     /// Shared with the Settings window for the icon size fit limit.
     let layout: DockLayout
 

@@ -16,9 +16,9 @@ enum WidgetSize: Int, Codable, Comparable, Identifiable {
 
     static func < (a: WidgetSize, b: WidgetSize) -> Bool { a.rawValue < b.rawValue }
 
-    /// Sizes a widget can be shown at: square, plus its own design if wider.
+    /// Sizes a widget can be shown at: square up to its own design.
     static func choices(upTo natural: WidgetSize) -> [WidgetSize] {
-        natural == .small ? [.small] : [.small, natural]
+        [.small, .medium, .large].filter { $0 <= natural }
     }
 
     /// The size a widget draws at: the dock's choice, never wider than the
@@ -62,6 +62,12 @@ protocol DockWidget: ObservableObject, Identifiable {
     func activate()
 
     @ViewBuilder var body: Body { get }
+}
+
+/// A widget with its own settings in dock.json. Gets the model once,
+/// before `start()`.
+protocol DockModelWidget: AnyObject {
+    func attach(_ model: DockModel)
 }
 
 extension DockWidget {
@@ -121,6 +127,39 @@ extension EnvironmentValues {
     var dockIconGap: CGFloat {
         get { self[DockIconGapKey.self] }
         set { self[DockIconGapKey.self] = newValue }
+    }
+}
+
+/// One spacing rule for widget content, so every widget and size reads
+/// the same:
+/// - Content sits `inset` from the chrome's top and bottom; a square item
+///   (art, gauge, icon) is `itemSide` tall.
+/// - Rows with a text column: margins and gaps are all `inset`, and the text
+///   takes what is left.
+/// - Rows without text: items are spaced evenly (`EvenRow`), the same gap
+///   at both edges and between items.
+enum WidgetLayout {
+    static func drawn(_ tile: CGFloat) -> CGFloat { tile * (1 - 2 * IconMetrics.margin) }
+    static func inset(_ tile: CGFloat) -> CGFloat { drawn(tile) * 0.12 }
+    static func itemSide(_ tile: CGFloat) -> CGFloat { drawn(tile) - 2 * inset(tile) }
+}
+
+/// Items spaced evenly across the tile: equal space before, between and
+/// after them (CSS `justify-content: space-evenly`).
+struct EvenRow<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Spacer(minLength: 0)
+            Group(subviews: content) { items in
+                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                    if index > 0 { Spacer(minLength: 0) }
+                    item
+                }
+            }
+            Spacer(minLength: 0)
+        }
     }
 }
 
