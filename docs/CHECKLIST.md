@@ -2183,4 +2183,5 @@ Status: done and hand-tested by James.
 - [x] On a left or right dock, Fan opens as a List (the native fan only exists on a bottom dock).
 - [x] `swift build` clean; dev launch with an isolated home stayed up (installed copy left running).
 - [ ] Hand test: drag from the Downloads grid into Mail/Slack/Finder/Desktop; onto an app tile in the dock; Escape mid-drag; drag and drop back into the grid. Fan: arc, tilt, labels, hover, open item, Open in Finder / N More, open and close motion.
+- [x] Stack tile "Show in Finder" now opens the folder itself in Finder (was: revealed it selected in its parent, via `activateFileViewerSelecting`, which also may not come forward from the never-active dock). Uses `NSWorkspace.open` with Finder, like Open. Verified the call opens `~/Downloads/` frontmost; hand test pending from the dock.
 - Known gaps: fan geometry (arc radius, row spacing, tilt, hover color) is matched by eye, not measured against the native Dock. The drag image is centered on the press point rather than keeping the icon's exact offset. Single item only (no multi-select).

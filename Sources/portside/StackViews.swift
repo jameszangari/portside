@@ -34,9 +34,7 @@ struct StackTileView: View {
                 let menu = NSMenu()
                 menu.autoenablesItems = false
                 menu.addItem(ClosureMenuItem("Open") { onOpen() })
-                menu.addItem(ClosureMenuItem("Show in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([stack.url])
-                })
+                menu.addItem(ClosureMenuItem("Show in Finder") { StackFinder.show(stack.url) })
                 if let dockModel {
                     menu.addItem(.separator())
                     StackOptionsMenu.items(for: stack, dockModel: dockModel).forEach(menu.addItem)
@@ -121,6 +119,25 @@ struct StackTileView: View {
         Color.clear
             .frame(width: 4, height: 4)
             .magnifiedIndicator(id: stack.hoverID)
+    }
+}
+
+/// Opens a stack's folder in a Finder window showing its contents, even when
+/// another app is the default for folders.
+enum StackFinder {
+    static func show(_ folder: URL) {
+        guard let finder = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") else {
+            NSWorkspace.shared.open(folder)
+            return
+        }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.open([folder], withApplicationAt: finder, configuration: config) { _, error in
+            if let error {
+                Logger(subsystem: "com.james.portside", category: "Stacks")
+                    .error("show in Finder failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 }
 
