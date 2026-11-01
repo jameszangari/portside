@@ -167,7 +167,7 @@ final class DockModel: Codable, ObservableObject {
     /// translucent.
     @Published private(set) var dimHiddenApps = false
     /// Native "Show suggested and recent apps in Dock".
-    @Published private(set) var showRecents = false
+    @Published private(set) var showRecents = true
     /// Most recent first. Apps that quit while not pinned, like the native
     /// Dock's recents section.
     @Published private(set) var recentApps: [PinnedApp] = []
@@ -1010,7 +1010,7 @@ final class DockModel: Codable, ObservableObject {
         }
         showIndicators = c.value(.showIndicators, or: true)
         dimHiddenApps = c.value(.dimHiddenApps, or: false)
-        showRecents = c.value(.showRecents, or: false)
+        showRecents = c.value(.showRecents, or: true)
         recentApps = Array(c.value(.recentApps, or: [PinnedApp]()).prefix(Self.recentAppsLimit))
         let radius = (try? c.decodeIfPresent(CGFloat.self, forKey: .cornerRadius)) ?? Defaults.cornerRadius
         cornerRadius = min(max(radius, Self.cornerRadiusRange.lowerBound), Self.cornerRadiusRange.upperBound)

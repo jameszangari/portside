@@ -46,7 +46,7 @@ It is deleted after a verified restore. If it exists when Portside starts, Ports
   - `glass`: `variant` (`regular` or `clear`), `strength`, `tint` (absent when off), `savedTint` (the tint kept while off, restored when turned back on)
   - `frosted`: `material` (`ultraThin`, `thin`, `regular`, `thick`, `ultraThick`), `strength`, `tint` (absent when off), `savedTint` (as for glass), `border`
   - `solid`: `fill` (`color`, `linear`, `radial`), `color`, `endColor`, `angle` (degrees, 0 to 359), `opacity`, `border`
-- Native Dock options: `showIndicators` (default true), `showRecents` (default false), `recentApps` (up to 3 `PinnedApp`, most recent first; absent when empty), `dimHiddenApps` (default false)
+- Native Dock options: `showIndicators` (default true), `showRecents` (default true, like macOS), `recentApps` (up to 3 `PinnedApp`, most recent first; absent when empty), `dimHiddenApps` (default false)
 - Open Settings on launch (`openSettingsOnLaunch`, default `false`)
 - Hide the macOS Dock (`hideNativeDock`, plus `nativeDockExplained` once the first-time dialog was confirmed)
 - Import from macOS Dock and Undo last import (nothing new stored in `dock.json`; imported apps, spacers, position, and icon size land in `entries`, `edge`, and `iconSize`). Entries may include `{ type: "spacer", spacer: { id, size } }` (`regular` or `small`).

@@ -20,6 +20,12 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
+## Native Dock defaults audit (2026-11-01)
+
+- [x] Compared against macos-defaults.com/dock: `orientation` bottom and `tilesize` 48 match; `autohide` (native false) stays on in Portside by choice (edge reveal is the point); `autohide-delay` 0.2s and `autohide-time-modifier` 0.5s stay faster on purpose (reveal 0, slide 150ms); `mineffect`, `static-only`, `scroll-to-open` have no Portside equivalent.
+- [x] `showRecents` now defaults to `true`, like macOS (was `false`, copied from James's own setting). Only applies when dock.json has no `showRecents` key; existing files keep their value. Verified with `--resave-settings` in sandboxes: `{}` saves `showRecents: true`, `autoHide: true`; `{"showRecents": false}` stays false.
+- Deferred: first launch still imports only `orientation` and `tilesize` from the macOS Dock; `autohide`, `show-recents`, `magnification`, `largesize`, `show-process-indicators`, `showhidden` use Portside's defaults.
+
 ## Windows respect Portside: Phase 6 (2026-11-01)
 
 - [x] `reserveSpace` in dock.json (default `true`; older files keep the default). Space is reserved only while hiding is off and this is on. Restored by Undo last import like `autoHide`.
