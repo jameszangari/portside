@@ -20,6 +20,14 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
+## Settings hang on the General pane (2026-11-01)
+
+- [x] Reported as a memory leak; it was a hang. Footprint was 84MB (normal). Hang report `portside_2026-11-01-113239_M4MX.hang`: the dev build's main thread sat 54s inside `UpdatesAuthSection`'s `@State` initial value -> `GitHubAuth.hasAnyToken` -> `token()` -> `readKeychain` (`kSecReturnData`) on the `gh:github.com` item, waiting on securityd. A rebuilt binary is not on that item's access list, so reading the secret waits on a keychain access approval. Force quit by James at 11:32:25.
+- [x] Fix: `hasPortsideToken` / `hasAnyToken` read attributes only (account names), never the secret, so they never prompt or wait. The secret is still read only by `token()` inside the nonisolated async update check and download, off the main thread.
+- [x] Verified: a freshly compiled binary not on any access list answers `hasAnyToken=true` in 5.9ms; the dev build launched with Settings, switched to General through AX, answers AX on the main thread in 20 to 31ms; no new hang report. `swift build` clean.
+- [ ] Hand test: `swift run portside`, open Settings > General: no beachball, Updates shows the token status.
+- Known gap: Check for Updates from a rebuilt dev binary can still show a keychain prompt for the `gh` item (off the main thread; Allow or Deny, the dock stays responsive).
+
 ## Windows respect Portside: Phase 3 (2026-11-01)
 
 - [x] Reflow on reservation change, matching the native Dock (Phase 0): windows whose dock-side edge sits on the old dock edge (within 2pt) follow it, to the new depth on the same edge and display, otherwise back to the `visibleFrame` edge; then every window flush with the screen edge is fitted (sweep). Growing moves before resizing; shrinking resizes first.

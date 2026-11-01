@@ -22,13 +22,18 @@ enum GitHubAuth {
         return ghCLIToken()
     }
 
+    /// Presence checks read attributes only, never the secret. Reading a
+    /// secret can wait on a keychain access prompt (a rebuilt or re-signed
+    /// binary is not on the `gh` item's access list), and Settings asks on
+    /// the main thread: that froze Portside for a minute on 2026-11-01.
     static var hasPortsideToken: Bool {
-        guard let own = readKeychain(service: portsideService, account: portsideAccount) else { return false }
-        return !own.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !keychainAccounts(service: portsideService).isEmpty
     }
 
-    /// True when a Portside token or a `gh` keychain token is available.
-    static var hasAnyToken: Bool { token() != nil }
+    /// True when a Portside token or a `gh` keychain token is stored.
+    static var hasAnyToken: Bool {
+        hasPortsideToken || !keychainAccounts(service: ghService).isEmpty
+    }
 
     static func savePortsideToken(_ token: String) throws {
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -109,6 +114,7 @@ enum GitHubAuth {
     /// Account names for a service. The macOS file keychain rejects
     /// `kSecReturnData` with `kSecMatchLimitAll` (errSecParam), so list
     /// attributes here and read each password with a single match.
+    /// Attributes need no access approval, so this never prompts.
     private static func keychainAccounts(service: String) -> [String] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
