@@ -6,7 +6,7 @@ import ApplicationServices
 // a fake 80pt reserved band. Run through run.sh, which restores any
 // com.apple.dock or Rectangle value it touches.
 //
-// Modes: rect, native, gap, dock, dock2, dock3, fit, all (rect + native + gap).
+// Modes: rect, native, gap, dock, dock2, dock3, fit, fillwait, hold, all (rect + native + gap).
 setvbuf(stdout, nil, _IOLBF, 0)
 func now() -> Double { CACurrentMediaTime() }
 func log(_ s: String) { print(String(format: "OBS    %.4f ", now()) + s) }
@@ -203,6 +203,14 @@ if mode == "fillwait" {
     step(0.6) { phase = "W-reset"; reset(); _ = front() }
     step(2.0) { phase = "W-fill"; settleArmed = true; pressMenu("Fill") }
     step(0.3) { report("W after fill + settle clamp") }
+}
+// hold: Rectangle maximize, then report the frame every 0.5s for HOLD
+// seconds (env, default 20) while something else toggles Portside.
+if mode == "hold" {
+    step(0.6) { phase = "H-reset"; reset(); _ = front() }
+    step(1.0) { phase = "H-rect-max"; rectangle("maximize") }
+    let seconds = Double(ProcessInfo.processInfo.environment["HOLD"] ?? "20") ?? 20
+    for _ in 0..<Int(seconds * 2) { step(0.5) { if let w = window() { log("HOLD frame=\(frame(w))") } } }
 }
 step(0.5) { if let w = window() { log("final frame \(frame(w))") }; exit(0) }
 for (time, f) in steps { DispatchQueue.main.asyncAfter(deadline: .now() + time, execute: f) }

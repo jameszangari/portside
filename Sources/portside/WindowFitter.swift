@@ -26,6 +26,9 @@ final class WindowFitter {
         /// The coordinate a window's dock-side edge may reach: max y for the
         /// bottom, min x for the left, max x for the right.
         let limit: CGFloat
+        /// The same edge of the display's `visibleFrame`: where windows go
+        /// back to when the reservation goes away.
+        let visibleEdge: CGFloat
     }
 
     /// AXUIElement as a dictionary key (CFEqual / CFHash).
@@ -75,6 +78,12 @@ final class WindowFitter {
     /// Recent fit times per window, to spot an app resetting its size.
     private var recentFits: [WindowKey: [CFTimeInterval]] = [:]
 
+    /// The engine's fitter, for `releaseForExit` from signal handlers.
+    private static weak var active: WindowFitter?
+    /// Test hook: only fit windows of this bundle id, so automated runs never
+    /// touch real apps' windows (see docs/BUILD.md).
+    private static let onlyBundleID = ProcessInfo.processInfo.environment["PORTSIDE_WINDOW_FIT_ONLY"]
+
     init() {
         let ready = DispatchSemaphore(value: 0)
         let thread = Thread { [weak self] in
@@ -89,21 +98,41 @@ final class WindowFitter {
         thread.qualityOfService = .userInitiated
         thread.start()
         ready.wait()
+        Self.active = self
+    }
+
+    /// Portside is quitting: give fitted windows their room back now, since
+    /// nothing will cover the reserved band once the dock is gone. Blocks
+    /// until done (bounded by the AX timeout per app).
+    static func releaseForExit(reason: String) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let fitter = active, let reservation = fitter.reservation, AXIsProcessTrusted() else { return }
+        fitter.reservation = nil
+        let target = Self.target(for: reservation)
+        let pids = NSWorkspace.shared.runningApplications.filter(isWatchable).map(\.processIdentifier)
+        fitter.queue.sync {
+            fitter.target = nil
+            fitter.release(pids, from: target, to: target.visibleEdge)
+        }
+        fitter.logger.info("released windows for exit (\(reason, privacy: .public))")
     }
 
     // MARK: - Main thread API
 
-    /// The dock's reservation changed (nil: nothing reserved). Starts or
-    /// stops watching windows.
+    /// The dock's reservation changed (nil: nothing reserved). Reflows
+    /// existing windows the way apps do when the native Dock shows, hides,
+    /// or resizes, then starts or stops watching windows.
+    ///
+    /// Reflow (measured against the native Dock, see CHECKLIST Phase 0):
+    /// windows flush with the old dock edge follow it (to the new depth on
+    /// the same edge, otherwise back to the `visibleFrame` edge), and
+    /// windows flush with the screen edge are fitted to the new reservation.
     func setReservation(_ new: Reservation?) {
         dispatchPrecondition(condition: .onQueue(.main))
+        let old = reservation
         reservation = new
-        guard let new else {
-            stop(reason: "reservation off")
-            return
-        }
         guard AXIsProcessTrusted() else {
-            if !loggedUntrusted {
+            if new != nil, !loggedUntrusted {
                 loggedUntrusted = true
                 logger.info("Accessibility not granted, windows are not fitted to the dock")
             }
@@ -111,8 +140,22 @@ final class WindowFitter {
             return
         }
         loggedUntrusted = false
-        let target = Self.target(for: new)
-        queue.async { self.target = target }
+        let pids = NSWorkspace.shared.runningApplications.filter(Self.isWatchable).map(\.processIdentifier)
+        let newTarget = new.map(Self.target(for:))
+        if let old {
+            let oldTarget = Self.target(for: old)
+            let sameEdge = newTarget.map { $0.edge == oldTarget.edge && $0.screen == oldTarget.screen } ?? false
+            let to = sameEdge ? newTarget!.limit : oldTarget.visibleEdge
+            queue.async { self.release(pids, from: oldTarget, to: to) }
+        }
+        guard let newTarget else {
+            stop(reason: "reservation off")
+            return
+        }
+        queue.async {
+            self.target = newTarget
+            self.sweep(pids)
+        }
         start()
     }
 
@@ -162,6 +205,7 @@ final class WindowFitter {
 
     private static func isWatchable(_ app: NSRunningApplication) -> Bool {
         app.activationPolicy == .regular && app.processIdentifier != ProcessInfo.processInfo.processIdentifier
+            && (onlyBundleID == nil || app.bundleIdentifier == onlyBundleID)
     }
 
     private func watch(_ app: NSRunningApplication) {
@@ -180,7 +224,13 @@ final class WindowFitter {
         case .left: screen.minX + r.depth
         case .right: screen.maxX - r.depth
         }
-        return Target(edge: r.edge, screen: screen, limit: limit)
+        let v = NSScreen.screens.first { $0.frame == s }?.visibleFrame ?? s
+        let visibleEdge: CGFloat = switch r.edge {
+        case .bottom: primaryTop - v.minY
+        case .left: v.minX
+        case .right: v.maxX
+        }
+        return Target(edge: r.edge, screen: screen, limit: limit, visibleEdge: visibleEdge)
     }
 
     // MARK: - Observers (queue)
@@ -242,22 +292,72 @@ final class WindowFitter {
         }
     }
 
+    // MARK: - Reflow (queue)
+
+    /// Standard windows of `pids`, read with the short AX timeout.
+    private func windows(of pids: [pid_t]) -> [AXUIElement] {
+        pids.flatMap { pid -> [AXUIElement] in
+            let app = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(app, Self.axTimeout)
+            return Self.value(app, kAXWindowsAttribute) as? [AXUIElement] ?? []
+        }
+    }
+
+    /// Fit every window that is flush with the screen edge right now.
+    private func sweep(_ pids: [pid_t]) {
+        guard target != nil else { return }
+        for window in windows(of: pids) { fit(window, key: WindowKey(element: window)) }
+    }
+
+    /// Move windows whose dock-side edge sits on `old`'s limit to `to`.
+    private func release(_ pids: [pid_t], from old: Target, to: CGFloat) {
+        var moved = 0
+        for window in windows(of: pids) {
+            AXUIElementSetMessagingTimeout(window, Self.axTimeout)
+            guard Self.isFittable(window),
+                  let frame = Self.frame(window),
+                  old.screen.contains(CGPoint(x: frame.midX, y: frame.midY))
+            else { continue }
+            var r = frame
+            switch old.edge {
+            case .bottom:
+                guard abs(frame.maxY - old.limit) <= Self.flushTolerance else { continue }
+                r.size.height = to - frame.minY
+            case .left:
+                guard abs(frame.minX - old.limit) <= Self.flushTolerance else { continue }
+                r.origin.x = to
+                r.size.width = frame.maxX - to
+            case .right:
+                guard abs(frame.maxX - old.limit) <= Self.flushTolerance else { continue }
+                r.size.width = to - frame.minX
+            }
+            guard r != frame, r.width >= Self.minimumLength, r.height >= Self.minimumLength else { continue }
+            // Growing: move first so the far edge stays put. Shrinking: size
+            // first (see `fit`).
+            if r.width > frame.width || r.height > frame.height {
+                if r.origin != frame.origin { Self.setPosition(window, r.origin) }
+                Self.setSize(window, r.size)
+            } else {
+                Self.setSize(window, r.size)
+                if r.origin != frame.origin { Self.setPosition(window, r.origin) }
+            }
+            moved += 1
+        }
+        if moved > 0 {
+            logger.info("reflowed \(moved) window(s) off the old \(old.edge.rawValue, privacy: .public) dock edge")
+        }
+    }
+
     // MARK: - Fitting (queue)
 
     private func fit(_ window: AXUIElement, key: WindowKey) {
         guard let target, (refusals[key] ?? 0) < 2 else { return }
         AXUIElementSetMessagingTimeout(window, Self.axTimeout)
-        guard Self.string(window, kAXRoleAttribute) == kAXWindowRole,
-              Self.string(window, kAXSubroleAttribute) == kAXStandardWindowSubrole,
-              Self.bool(window, "AXFullScreen") != true,
-              Self.bool(window, kAXMinimizedAttribute) != true,
+        guard Self.isFittable(window),
               let frame = Self.frame(window),
               target.screen.contains(CGPoint(x: frame.midX, y: frame.midY)),
               let fitted = Self.fitted(frame, to: target)
         else { return }
-        var settable = DarwinBoolean(false)
-        guard AXUIElementIsAttributeSettable(window, kAXSizeAttribute as CFString, &settable) == .success, settable.boolValue else { return }
-
         let started = CACurrentMediaTime()
         // Size first: moving a left-flush window right before shrinking it
         // would push its far edge off screen, where the app may clamp it.
@@ -286,6 +386,17 @@ final class WindowFitter {
             refusals[key, default: 0] += 1
             logger.info("\(app, privacy: .public) window refused the fitted frame (attempt \(self.refusals[key] ?? 0))")
         }
+    }
+
+    /// Standard, resizable, on-screen windows (not fullscreen or minimized).
+    private static func isFittable(_ window: AXUIElement) -> Bool {
+        var settable = DarwinBoolean(false)
+        return string(window, kAXRoleAttribute) == kAXWindowRole
+            && string(window, kAXSubroleAttribute) == kAXStandardWindowSubrole
+            && bool(window, "AXFullScreen") != true
+            && bool(window, kAXMinimizedAttribute) != true
+            && AXUIElementIsAttributeSettable(window, kAXSizeAttribute as CFString, &settable) == .success
+            && settable.boolValue
     }
 
     /// The frame `frame` should have, or nil if it is not flush with the

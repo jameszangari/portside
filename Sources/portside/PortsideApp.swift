@@ -105,6 +105,7 @@ enum PortsideMain {
             signal(number, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
             source.setEventHandler {
+                WindowFitter.releaseForExit(reason: name)
                 NativeDockController.restoreForExit(reason: name)
                 exit(0)
             }
@@ -271,6 +272,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        WindowFitter.releaseForExit(reason: "applicationWillTerminate")
         dockEngine?.stop()
         NativeDockController.restoreForExit(reason: "applicationWillTerminate")
     }

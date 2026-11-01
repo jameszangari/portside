@@ -20,6 +20,15 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
+## Windows respect Portside: Phase 3 (2026-11-01)
+
+- [x] Reflow on reservation change, matching the native Dock (Phase 0): windows whose dock-side edge sits on the old dock edge (within 2pt) follow it, to the new depth on the same edge and display, otherwise back to the `visibleFrame` edge; then every window flush with the screen edge is fitted (sweep). Growing moves before resizing; shrinking resizes first.
+- [x] Release on quit: `applicationWillTerminate` and the SIGTERM/SIGINT/SIGHUP handlers give fitted windows their room back synchronously before exit. Found in testing: killing a pinned test instance left real windows 68pt short.
+- [x] Test hook `PORTSIDE_WINDOW_FIT_ONLY=<bundle id>` limits fitting to one app (docs/BUILD.md). Incident: the first Phase 3 run had no such limit and the sweep resized James's Discord and T3 Code windows (1728x1084 to 1728x1016); restored by the agent through AX right after, confirmed 1728x1084.
+- [x] Verified (sandboxed dev build, probe only, menu items pressed through AX): launch pinned 1084 -> 1016; Turn Hiding On -> 1084; Turn Hiding Off -> 1016; SIGTERM -> 1084. Move to Left: bottom release to 1084 then left fit to x 53, 1675 wide; SIGTERM -> back to x 0, 1728 wide. `swift build` clean.
+- [ ] Hand test: with a few maximized windows, turn hiding off (they shrink to the dock), on (they grow back), change icon size with hiding off (they follow the dock's top), move the dock Left/Right/Bottom (they follow), quit Portside from the menu bar (they grow back).
+- Known gaps: a window you deliberately sized to exactly the dock's edge also follows it (native does the same with `visibleFrame`). A force quit (SIGKILL) or crash cannot release windows. Icon size dragging sends a reservation change per step, so windows step along with it.
+
 ## Windows respect Portside: Phase 2 (2026-11-01)
 
 - [x] `WindowFitter.swift`: while a reservation exists and Accessibility is granted, one `AXObserver` per regular app (window created, moved, resized), attached at start and on app launch (retried while the app finishes launching), removed on quit. Off when hiding is on.

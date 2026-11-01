@@ -77,6 +77,7 @@ build/Portside.app/Contents/MacOS/portside --restore-dock
 - The folder must be writable (`~/Applications` is; `/Applications` may not be for a standard user); otherwise the update stops before downloading.
 - Settings > General > Updates lists any other Portside.app copies with their versions (Show in Finder, Move to Trash), since Open at Login or Spotlight can launch a stale one.
 - Hidden test commands (no UI): `portside --install-update <dmg> [--expect-version X.Y.Z] [--no-relaunch]` runs the same stage, verify, and swap path from a local DMG against the bundle the binary lives in. `portside --resave-settings` loads and saves dock.json through the normal path. `portside --check-updates` prints whether a GitHub token was found and the result of a real update check. Run them with `CFFIXED_USER_HOME=/tmp/somewhere` to keep your real preferences and logs out of it.
+- Window fitting tests: `scripts/window-fit-probe/run.sh` (modes listed in `ProbeObserver.swift`). Launch the dev build with `PORTSIDE_WINDOW_FIT_ONLY=com.james.portside.probe` (plus `CFFIXED_USER_HOME` and `{"autoHide": false}` in that dock.json) so only the probe window is fitted; without it every open app's maximized windows get resized.
 
 ### When the GitHub repo becomes public
 
