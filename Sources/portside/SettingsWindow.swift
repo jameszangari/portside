@@ -204,27 +204,27 @@ extension Text {
 // MARK: - Root
 
 private enum SettingsTab: String, CaseIterable, Identifiable {
-    case general, appearance, widgets, groups, system
+    case dock, appearance, widgets, groups, general
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .general: "General"
+        case .dock: "Dock"
         case .appearance: "Appearance"
         case .widgets: "Widgets"
         case .groups: "Groups"
-        case .system: "System"
+        case .general: "General"
         }
     }
 
     var symbol: String {
         switch self {
-        case .general: "dock.rectangle"
+        case .dock: "dock.rectangle"
         case .appearance: "paintbrush"
         case .widgets: "square.grid.2x2"
         case .groups: "folder"
-        case .system: "gearshape"
+        case .general: "gearshape"
         }
     }
 }
@@ -240,7 +240,7 @@ struct SettingsView: View {
     let trash: TrashController
     @ObservedObject var badges: DockBadges
 
-    @State private var tab: SettingsTab = .general
+    @State private var tab: SettingsTab = .dock
 
     var body: some View {
         NavigationSplitView {
@@ -250,11 +250,11 @@ struct SettingsView: View {
         } detail: {
             Group {
                 switch tab {
-                case .general: GeneralSettings(dockModel: dockModel, layout: layout, trash: trash, badges: badges)
-                case .appearance: AppearanceSettings(dockModel: dockModel)
+                case .dock: DockSettings(dockModel: dockModel, trash: trash)
+                case .appearance: AppearanceSettings(dockModel: dockModel, layout: layout, badges: badges)
                 case .widgets: WidgetSettings(dockModel: dockModel)
                 case .groups: GroupSettings(dockModel: dockModel)
-                case .system: SystemSettings(dockModel: dockModel, layout: layout, nativeDock: nativeDock, launchAtLogin: launchAtLogin)
+                case .general: GeneralSettings(dockModel: dockModel, layout: layout, nativeDock: nativeDock, launchAtLogin: launchAtLogin)
                 }
             }
             .formStyle(.grouped)
@@ -334,23 +334,17 @@ private struct SettingsSidebar: View {
     }
 }
 
-// MARK: - General
+// MARK: - Dock
 
-private struct GeneralSettings: View {
+/// Where the dock sits and how it behaves. Controls that only matter in some
+/// states (the hide delays) appear only then, instead of sitting greyed out.
+private struct DockSettings: View {
     @ObservedObject var dockModel: DockModel
-    @ObservedObject var layout: DockLayout
     @ObservedObject var trash: TrashController
-    @ObservedObject var badges: DockBadges
-
-    /// Same limit the separator drag clamps to. Kept one point above the
-    /// minimum so the slider range is never empty.
-    private var maxIconSize: CGFloat {
-        max(layout.fitTileSize, DockModel.iconSizeRange.lowerBound + 1)
-    }
 
     var body: some View {
         Form {
-            Section("Dock") {
+            Section("Layout") {
                 Picker("Position", selection: Binding(
                     get: { dockModel.edge },
                     set: { dockModel.setEdge($0) }
@@ -358,52 +352,6 @@ private struct GeneralSettings: View {
                     ForEach(DockEdge.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
-
-                SettingsSlider(
-                    title: "Icon size",
-                    value: min(Double(dockModel.iconSize), Double(maxIconSize)),
-                    range: Double(DockModel.iconSizeRange.lowerBound)...Double(maxIconSize),
-                    snap: 1,
-                    format: { "\(Int($0)) pt" },
-                    set: { dockModel.setIconSize(min(CGFloat($0), maxIconSize), persist: $1) }
-                )
-
-                SettingsSlider(
-                    title: "Icon gap",
-                    value: Double(dockModel.iconGap),
-                    range: Double(DockModel.iconGapRange.lowerBound)...Double(DockModel.iconGapRange.upperBound),
-                    snap: 1,
-                    format: { "\(Int($0)) pt" },
-                    set: { dockModel.setIconGap(CGFloat($0), persist: $1) }
-                )
-
-                Toggle(isOn: Binding(
-                    get: { dockModel.magnificationEnabled },
-                    set: { dockModel.setMagnificationEnabled($0) }
-                )) {
-                    Text("Magnification")
-                    Text("Hold Control-Shift over the dock to flip it for a moment.").helperStyle()
-                }
-
-                SettingsSlider(
-                    title: "Magnified size",
-                    value: Double(dockModel.magnifiedSize),
-                    range: Double(DockModel.magnifiedSizeRange.lowerBound)...Double(DockModel.magnifiedSizeRange.upperBound),
-                    snap: 1,
-                    format: { "\(Int($0)) pt" },
-                    set: { dockModel.setMagnifiedSize(CGFloat($0), persist: $1) }
-                )
-                .disabled(!dockModel.magnificationEnabled)
-
-                Toggle(isOn: Binding(
-                    get: { dockModel.autoHide },
-                    set: { dockModel.setAutoHide($0) }
-                )) {
-                    Text("Hide dock automatically")
-                    if !dockModel.autoHide {
-                        Text("Windows can extend under the dock while it stays visible.").helperStyle()
-                    }
-                }
 
                 Toggle("Show Trash in dock", isOn: Binding(
                     get: { dockModel.showTrash },
@@ -424,25 +372,57 @@ private struct GeneralSettings: View {
                         }
                     }
                 }
+            }
 
+            Section("Auto-hide") {
                 Toggle(isOn: Binding(
-                    get: { dockModel.showBadges },
-                    set: { dockModel.setShowBadges($0) }
+                    get: { dockModel.autoHide },
+                    set: { dockModel.setAutoHide($0) }
                 )) {
-                    Text("Show notification badges")
-                    if badges.isAvailable {
-                        Text("The same badges the macOS Dock shows. An app whose badges are off in Notifications settings may still show one here.").helperStyle()
-                    } else {
-                        Text("Not available on this version of macOS.").helperStyle()
-                    }
+                    Text("Hide dock automatically")
+                    Text(dockModel.autoHide
+                         ? "The dock slides away until the pointer touches the screen edge."
+                         : "The dock stays visible, so windows can extend under it.")
+                        .helperStyle()
                 }
-                .disabled(!badges.isAvailable)
+
+                if dockModel.autoHide {
+                    SettingsSlider(
+                        title: "Reveal delay",
+                        value: dockModel.revealDelay,
+                        range: DockModel.revealDelayRange,
+                        snap: 0.01,
+                        format: milliseconds,
+                        set: { dockModel.setRevealDelay($0, persist: $1) }
+                    )
+                    SettingsSlider(
+                        title: "Hide delay",
+                        value: dockModel.hideDelay,
+                        range: DockModel.hideDelayRange,
+                        snap: 0.01,
+                        format: milliseconds,
+                        set: { dockModel.setHideDelay($0, persist: $1) }
+                    )
+                }
+            }
+
+            Section("Motion") {
+                SettingsSlider(
+                    title: "Animation duration",
+                    value: dockModel.animationDuration,
+                    range: DockModel.animationDurationRange,
+                    snap: 0.01,
+                    format: { $0 == 0 ? "Instant" : milliseconds($0) },
+                    set: { dockModel.setAnimationDuration($0, persist: $1) }
+                )
 
                 Toggle("Animate opening applications", isOn: Binding(
                     get: { dockModel.animateOpeningApplications },
                     set: { dockModel.setAnimateOpeningApplications($0) }
                 ))
+            }
 
+            Section("Apps") {
                 Toggle("Show indicators for open applications", isOn: Binding(
                     get: { dockModel.showIndicators },
                     set: { dockModel.setShowIndicators($0) }
@@ -475,52 +455,9 @@ private struct GeneralSettings: View {
             }
 
             Section {
-                HotkeyRecorderButton(
-                    title: "Open Settings",
-                    chord: dockModel.settingsHotkey,
-                    defaultChord: .settingsDefault,
-                    onChange: { dockModel.setSettingsHotkey($0) }
-                )
-            } header: {
-                Text("Keyboard")
+                Button("Reset Timing to Defaults") { dockModel.resetTimingToDefaults() }
             } footer: {
-                Text("Works from any app. Default ⌘⇧D; distinct from ⌥⌘D (Dock hiding). Clear removes it; the menu bar Settings… item still uses ⌘,.")
-                    .footerStyle()
-            }
-
-            Section {
-                SettingsSlider(
-                    title: "Reveal delay",
-                    value: dockModel.revealDelay,
-                    range: DockModel.revealDelayRange,
-                    snap: 0.01,
-                    format: milliseconds,
-                    set: { dockModel.setRevealDelay($0, persist: $1) }
-                )
-                SettingsSlider(
-                    title: "Hide delay",
-                    value: dockModel.hideDelay,
-                    range: DockModel.hideDelayRange,
-                    snap: 0.01,
-                    format: milliseconds,
-                    set: { dockModel.setHideDelay($0, persist: $1) }
-                )
-                SettingsSlider(
-                    title: "Animation duration",
-                    value: dockModel.animationDuration,
-                    range: DockModel.animationDurationRange,
-                    snap: 0.01,
-                    format: { $0 == 0 ? "Instant" : milliseconds($0) },
-                    set: { dockModel.setAnimationDuration($0, persist: $1) }
-                )
-            } header: {
-                HStack {
-                    Text("Timing")
-                    Spacer()
-                    Button("Reset to Defaults") { dockModel.resetTimingToDefaults() }
-                        .buttonStyle(.link)
-                        .font(.system(size: 12))
-                }
+                Text("Resets reveal delay, hide delay and animation duration.").footerStyle()
             }
         }
     }
@@ -540,8 +477,11 @@ private struct GeneralSettings: View {
     }
 }
 
-/// macOS Dock hiding, launch at login, and importing from the macOS Dock.
-private struct SystemSettings: View {
+// MARK: - General
+
+/// App-level settings: startup, the Settings shortcut, hiding the macOS
+/// Dock, and importing from it.
+private struct GeneralSettings: View {
     @ObservedObject var dockModel: DockModel
     @ObservedObject var layout: DockLayout
     let nativeDock: NativeDockController
@@ -558,6 +498,28 @@ private struct SystemSettings: View {
 
     var body: some View {
         Form {
+            Section("Startup") {
+                LaunchAtLoginRow(launchAtLogin: launchAtLogin)
+                Toggle("Open Settings when Portside launches", isOn: Binding(
+                    get: { dockModel.openSettingsOnLaunch },
+                    set: { dockModel.setOpenSettingsOnLaunch($0) }
+                ))
+            }
+
+            Section {
+                HotkeyRecorderButton(
+                    title: "Open Settings",
+                    chord: dockModel.settingsHotkey,
+                    defaultChord: .settingsDefault,
+                    onChange: { dockModel.setSettingsHotkey($0) }
+                )
+            } header: {
+                Text("Keyboard")
+            } footer: {
+                Text("Opens Settings from any app. Default ⌘⇧D. The menu bar Settings… item always uses ⌘,.")
+                    .footerStyle()
+            }
+
             Section("macOS Dock") {
                 Toggle(isOn: Binding(
                     get: { dockModel.hideNativeDock },
@@ -570,14 +532,6 @@ private struct SystemSettings: View {
                     Text("Its settings are saved first and restored when you turn this off or quit.").helperStyle()
                     Text("⌥⌘D can interfere. Turn it off in Keyboard Shortcuts > Launchpad & Dock.").helperStyle()
                 }
-            }
-
-            Section("Startup") {
-                LaunchAtLoginRow(launchAtLogin: launchAtLogin)
-                Toggle("Open Settings when Portside launches", isOn: Binding(
-                    get: { dockModel.openSettingsOnLaunch },
-                    set: { dockModel.setOpenSettingsOnLaunch($0) }
-                ))
             }
 
             Section("Import") {
@@ -765,6 +719,8 @@ struct SettingsSlider: View {
 
 private struct AppearanceSettings: View {
     @ObservedObject var dockModel: DockModel
+    @ObservedObject var layout: DockLayout
+    @ObservedObject var badges: DockBadges
     /// Which gradient stop the color editor shows (Solid).
     @State private var editingEndColor = false
 
@@ -772,8 +728,55 @@ private struct AppearanceSettings: View {
         DockBackgroundStyle.allCases.filter { $0 != .glass || DockBackgroundStyle.isGlassAvailable }
     }
 
+    /// Same limit the separator drag clamps to. Kept one point above the
+    /// minimum so the slider range is never empty.
+    private var maxIconSize: CGFloat {
+        max(layout.fitTileSize, DockModel.iconSizeRange.lowerBound + 1)
+    }
+
     var body: some View {
         Form {
+            // How big things are. Magnified size only appears once
+            // magnification is on, so nothing here is ever greyed out.
+            Section("Size") {
+                SettingsSlider(
+                    title: "Icon size",
+                    value: min(Double(dockModel.iconSize), Double(maxIconSize)),
+                    range: Double(DockModel.iconSizeRange.lowerBound)...Double(maxIconSize),
+                    snap: 1,
+                    format: { "\(Int($0)) pt" },
+                    set: { dockModel.setIconSize(min(CGFloat($0), maxIconSize), persist: $1) }
+                )
+
+                SettingsSlider(
+                    title: "Icon gap",
+                    value: Double(dockModel.iconGap),
+                    range: Double(DockModel.iconGapRange.lowerBound)...Double(DockModel.iconGapRange.upperBound),
+                    snap: 1,
+                    format: { "\(Int($0)) pt" },
+                    set: { dockModel.setIconGap(CGFloat($0), persist: $1) }
+                )
+
+                Toggle(isOn: Binding(
+                    get: { dockModel.magnificationEnabled },
+                    set: { dockModel.setMagnificationEnabled($0) }
+                )) {
+                    Text("Magnification")
+                    Text("Hold Control-Shift over the dock to flip it for a moment.").helperStyle()
+                }
+
+                if dockModel.magnificationEnabled {
+                    SettingsSlider(
+                        title: "Magnified size",
+                        value: Double(dockModel.magnifiedSize),
+                        range: Double(DockModel.magnifiedSizeRange.lowerBound)...Double(DockModel.magnifiedSizeRange.upperBound),
+                        snap: 1,
+                        format: { "\(Int($0)) pt" },
+                        set: { dockModel.setMagnifiedSize(CGFloat($0), persist: $1) }
+                    )
+                }
+            }
+
             Section {
                 Picker("Icon style", selection: Binding(
                     get: { dockModel.iconStyle },
@@ -813,7 +816,7 @@ private struct AppearanceSettings: View {
                 )
             } header: {
                 HStack {
-                    Text("Dock")
+                    Text("Background")
                     Spacer()
                     Button("Reset \(dockModel.background.style.effective.title)") { dockModel.resetBackgroundStyleToDefaults() }
                         .buttonStyle(.link)
@@ -824,19 +827,35 @@ private struct AppearanceSettings: View {
                 Text(backgroundHelp).footerStyle()
             }
 
+            // Show/hide and color live together so badges are one decision.
             Section {
-                HStack(spacing: 12) {
-                    Picker("Badge color", selection: Binding(
-                        get: { dockModel.badgeColor },
-                        set: { dockModel.setBadgeColor($0) }
-                    )) {
-                        ForEach(BadgeColor.allCases) { choice in
-                            if choice == .custom { Divider() }
-                            Text(choice.title).tag(choice)
-                        }
+                Toggle(isOn: Binding(
+                    get: { dockModel.showBadges },
+                    set: { dockModel.setShowBadges($0) }
+                )) {
+                    Text("Show notification badges")
+                    if badges.isAvailable {
+                        Text("The same badges the macOS Dock shows. An app whose badges are off in Notifications settings may still show one here.").helperStyle()
+                    } else {
+                        Text("Not available on this version of macOS.").helperStyle()
                     }
-                    DockBadgeLabel(text: "3", iconSize: 48, style: dockModel.badgeStyle)
-                    DockBadgeLabel(text: "128", iconSize: 48, style: dockModel.badgeStyle)
+                }
+                .disabled(!badges.isAvailable)
+
+                if badges.isAvailable && dockModel.showBadges {
+                    HStack(spacing: 12) {
+                        Picker("Badge color", selection: Binding(
+                            get: { dockModel.badgeColor },
+                            set: { dockModel.setBadgeColor($0) }
+                        )) {
+                            ForEach(BadgeColor.allCases) { choice in
+                                if choice == .custom { Divider() }
+                                Text(choice.title).tag(choice)
+                            }
+                        }
+                        DockBadgeLabel(text: "3", iconSize: 48, style: dockModel.badgeStyle)
+                        DockBadgeLabel(text: "128", iconSize: 48, style: dockModel.badgeStyle)
+                    }
                 }
                 if dockModel.badgeColor == .custom {
                     // Badges are always opaque, so no Opacity slider.
@@ -847,10 +866,18 @@ private struct AppearanceSettings: View {
             } header: {
                 Text("Badges")
             } footer: {
-                Text(dockModel.badgeColor == .macOS
-                     ? "The same red as the macOS Dock."
-                     : "Text turns black on light colors so counts stay readable.")
-                    .footerStyle()
+                if badges.isAvailable && dockModel.showBadges {
+                    Text(dockModel.badgeColor == .macOS
+                         ? "The same red as the macOS Dock."
+                         : "Text turns black on light colors so counts stay readable.")
+                        .footerStyle()
+                }
+            }
+
+            Section {
+                Button("Reset Appearance to Defaults") { dockModel.resetAppearanceToDefaults() }
+            } footer: {
+                Text("Resets icon style, background, tint and corner radius. Sizes and badges are not changed.").footerStyle()
             }
         }
     }
