@@ -52,6 +52,7 @@ struct GroupTileView: View {
                 let menu = NSMenu()
                 menu.autoenablesItems = false
                 menu.addItem(ClosureMenuItem("Rename", onRename))
+                menu.addItem(ClosureMenuItem("Change Icon...", onRename))
                 menu.addItem(.separator())
                 menu.addItem(ClosureMenuItem("Ungroup") { dockModel.ungroup(groupID: group.id) })
                 menu.addItem(ClosureMenuItem("Remove from Dock", onRemove))
@@ -69,6 +70,24 @@ struct GroupTileView: View {
     }
 
     private var icon: some View {
+        Group {
+            if let custom = group.icon {
+                GroupIconArtwork(icon: custom, size: size * (1 - 2 * IconMetrics.margin))
+                    .brightness(isExpanded ? 0.08 : 0)
+                    .animation(GroupPopoverMotion.present, value: isExpanded)
+                    .frame(width: size, height: size)
+            } else {
+                appGrid
+            }
+        }
+        .dockBadge(dockModel.showBadges ? badges.badge(forGroup: group) : nil, iconSize: size, style: dockModel.badgeStyle)
+        .contentShape(Rectangle())
+        .menuHold(hold, onTap: onToggle)
+        .magnifiedIcon(id: DockEntry.group(group).id)
+    }
+
+    /// Default tile: up to nine member icons in a mini grid.
+    private var appGrid: some View {
         let shown = Array(group.apps.prefix(9))
         let columns = shown.count > 4 ? 3 : 2
         // Drawn at an app icon's visible size so spacing matches the icons.
@@ -97,16 +116,10 @@ struct GroupTileView: View {
             }
             .frame(width: drawn, height: drawn)
             .frame(width: size, height: size)
-            .dockBadge(dockModel.showBadges ? badges.badge(forGroup: group) : nil, iconSize: size, style: dockModel.badgeStyle)
-            .contentShape(Rectangle())
-            .menuHold(hold, onTap: onToggle)
-            .magnifiedIcon(id: DockEntry.group(group).id)
     }
 
     private var indicator: some View {
-        Circle()
-            .fill(Color.primary.opacity(anyRunning ? 0.75 : 0))
-            .frame(width: 4, height: 4)
+        RunningIndicator(isOn: anyRunning && dockModel.showIndicators)
             .magnifiedIndicator(id: DockEntry.group(group).id)
     }
 
@@ -224,6 +237,11 @@ struct GroupPopoverView: View {
                     onCommit: { groups.endRename(commit: true) },
                     onCancel: { groups.endRename(commit: false) }
                 )
+                // Icon choice, shown while naming (so right after creating
+                // a group too). Picks apply at once.
+                GroupIconPicker(icon: group.icon) { dockModel.setGroupIcon(groupID: group.id, to: $0) }
+                    .onExitCommand { groups.endRename(commit: false) }
+                Divider()
             } else {
                 Text(group.name)
                     .font(.system(size: 13, weight: .semibold))
@@ -249,6 +267,7 @@ struct GroupPopoverView: View {
                             app: app,
                             groupID: group.id,
                             running: runningApps.runningInstance(of: app),
+                            isHidden: runningApps.isHidden(runningApps.runningInstance(of: app)),
                             iconSize: Self.iconSize,
                             width: Self.cellWidth,
                             dockModel: dockModel,
@@ -344,6 +363,7 @@ private struct GroupAppCell: View {
     let app: PinnedApp
     let groupID: String
     let running: NSRunningApplication?
+    var isHidden = false
     let iconSize: CGFloat
     let width: CGFloat
     @ObservedObject var dockModel: DockModel
@@ -379,7 +399,7 @@ private struct GroupAppCell: View {
                 .interpolation(.high)
                 .frame(width: iconSize, height: iconSize)
                 // While launching, the bounce window draws the icon.
-                .opacity(bouncer.bouncingID == bounceKey ? 0 : 1)
+                .opacity(bouncer.bouncingID == bounceKey ? 0 : (isHidden && dockModel.dimHiddenApps ? RunningIndicator.hiddenOpacity : 1))
                 // Same drop highlight as a dock tile.
                 .background(
                     RoundedRectangle(cornerRadius: iconSize * 0.25, style: .continuous)
@@ -395,9 +415,7 @@ private struct GroupAppCell: View {
                 .onDisappear {
                     groups.cellIconFrameChanged(groupID: groupID, appID: app.id, frame: nil)
                 }
-            Circle()
-                .fill(Color.primary.opacity(running == nil ? 0 : 0.75))
-                .frame(width: 4, height: 4)
+            RunningIndicator(isOn: running != nil && dockModel.showIndicators)
             Text(app.displayName)
                 .font(.system(size: 11))
                 .lineLimit(1)

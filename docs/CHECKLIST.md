@@ -16,9 +16,34 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **P1:** Right-click context menu (Keep in Dock, Open at Login, Show in Finder, Hide, Quit, Remove); click-and-hold opens the same menu (built on app tiles, group tiles, Portside's own tile and grid cells, hand test pending); divider right-click (built: Turn Hiding On/Off, Turn Magnification On/Off, Position on Screen, Dock Settings); Option turns Quit into Force Quit (built); drag apps in from Finder (built); drag icons out to remove (built, hand test pending); drop files onto app icons to open them (built: strip tiles and group grid cells); launch bounce (built: all three edges plus group grid cells); reveal when a file is dragged to the edge (built); Cmd-click (Reveal in Finder, built); Option-click (hide frontmost) and Cmd+Option-click (hide others) (built); Hide/Show and Force Quit in the app menu (built); Cmd-Option-D show/hide (built); Open at Login checkbox on app tiles (built, hand test pending)
 - [x] **P2:** Trash; folder stacks (grid-first; fan/list deferred); spacers; system glass + Reduce Transparency; spring-load apps; magnification. Hand-tested.
 - [ ] **P3:** [x] Follow the display the cursor hits; [x] fullscreen apps and Spaces (`canJoinAllSpaces` / `fullScreenAuxiliary` + re-front on Space change); [x] do not reveal while holding the mouse button / dragging a window (file drags still reveal); [x] badge counts from LaunchServices (private API, guarded; no Accessibility); [ ] window list in the right-click menu; [ ] VoiceOver labels and keyboard navigation
-- [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; the recents section; bounce on attention request (needs private APIs, not wanted for now)
+- [ ] **Out of scope (do not build):** minimized windows in the Dock; two-finger swipe App Expose gesture; assigning apps to Spaces from the menu; bounce on attention request (needs private APIs, not wanted for now)
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
+
+## Distinct background styles + native Dock options (2026-11-01)
+
+- [x] Each background style keeps its own settings in one `background` object in dock.json, so switching styles loses nothing. Old `backgroundStyle` / `backgroundFrost` / `backgroundTint` migrate on load (read only, no longer written).
+- [x] **Liquid Glass:** pure system `glassEffect`, nothing layered on top. Regular or Clear variant, Strength (neutral window-color tint into the glass, 0 = plain system glass), optional Tint color (turning it on raises Strength to at least 35% so it shows).
+- [x] **Frosted:** material picker (Ultra Thin to Ultra Thick), Strength (material opacity), Tint with its own opacity, Border toggle.
+- [x] **Solid:** Color, Linear Gradient (two colors plus Angle 0 to 359), or Radial Gradient (center and edge color), each color with its own opacity, overall Opacity, Border toggle, swap-colors button.
+- [x] Reset button resets only the current style plus corner radius. Reduce Transparency: glass falls back to a regular material with the glass tint; every style is at least 92% opaque.
+- [x] Native Dock options in General > Dock: Show indicators for open applications (strip, group tiles, grid cells, Portside tile), Show suggested and recent apps (up to 3 recently quit unpinned apps after the running apps; persisted as `recentApps`; default off like the native setting here), Make hidden apps translucent (native hidden `showhidden`; hide/unhide from `NSWorkspace` notifications, no polling).
+- [x] `swift build` clean; `swift run` launches without a crash. Rendering of each style not verified by the agent (needs a human look).
+- [x] Fix (follow-up): Clear looked like Regular. Measured: public `Glass.clear` and `NSGlassEffectView.Style.clear` both blur the backdrop heavily on macOS 27 (scratch window over striped text, screenshots). The system "Tinted" setting (`NSGlassTintAmount` 0.83 here) affects only Regular. Clear now uses private `NSGlassEffectView._variant` 19 (see-through lens, guarded in `SeeThroughGlass.swift`), with Strength as a fill underneath because that variant ignores `tintColor`. Hover labels (non-rect shape) keep the public clear glass.
+- [x] Fix (follow-up): Strength slider stuck after toggling Regular/Clear. Not reproduced by the agent (AX increment does not move any SwiftUI slider). `SettingsSlider` now drives the thumb from local drag state and commits that on release, instead of a `value` captured before the drag. The glass effect is also rebuilt (`id`) when the variant flips.
+- [x] Tint row (Glass and Frosted): the switch stays at the trailing edge; the color well appears to its left when on, so the switch never moves.
+- [x] Color picking: the macOS color panel stopped taking a second pick (likely the non-activating app). Replaced every `ColorPicker` (tints, solid colors, custom badge) with an inline `PaletteColorEditor`: 20 preset swatches plus Saturation, Tint, Shade, and Opacity (hidden for glass tints and badges, which are opaque). Stored as `PaletteColor` (base plus adjustments); legacy RGBA values decode as base plus opacity (checked with a standalone decode test). Gradients: click the start or end chip to choose which stop the editor shows. Removed an unused flat-settings compatibility block in DockModel that appeared outside this session.
+- [x] Tint off/on remembers the color, swatch and slider values (`savedTint` per style, persisted).
+- [ ] Hand test: each style and control applies live; switching styles keeps each one's values; relaunch keeps them; Reduce Transparency; indicators off; recents appear after quitting an unpinned app; Cmd-H fades an icon with the option on.
+- Native Dock features still not built (were out of scope): minimized windows in the dock (and so minimize-into-app-icon and Genie/Scale, which the macOS Dock process still performs), App Expose swipe, assign to Spaces, bounce on attention. Recents does not import the native `recent-apps` list.
+
+## Widget height matches icons (2026-11-01)
+
+- [x] Widget chrome was a full-tile square/rect, so it looked taller than app squircles (those have a built-in ~10% transparent margin). Groups already drew at `tile * (1 - 2 * IconMetrics.margin)`.
+- [x] `WidgetTile` now uses that same drawn height for chrome, centered in a full-tile slot. Removed the extra along-dock padding and the fit-math `widgetMargins` term (margin lives inside the slot, like groups).
+- [x] Wide-widget width bug: chrome was `drawn * units`, which inset each end by `2 * margin` on medium/large tiles and made gaps next to Wide widgets larger than group/small gaps. Chrome width is now `slotWidth - 2 * margin` (one margin per outer end only).
+- [x] `swift build` clean.
+- [ ] Hand test: bottom dock with Clock, Calendar (Wide), Weather, System Stats, Battery, CPU, Memory; widgets align with app/group/folder/Trash height; gaps between widgets match gaps between groups/apps (including around Wide); gap 0 still does not make them touch; Left/Right still look right; separator resize still fits.
 
 ## README cleanup + macOS 26 floor (2026-10-31)
 
@@ -225,7 +250,7 @@ Status (2026-10-31): built. Settings always centers on the primary display; Icon
 - [x] **Settings window position:** every open (from closed or miniaturized) places the fixed 760x560 window at the dead center of the primary screen's visible frame. No longer follows the cursor's screen. Menu bar and separator menu share the same path.
 - [x] **Icon gap slider:** Settings > General > Dock, under Icon size. Range 0 to 8pt, default 6. Live apply, persisted as `iconGap` in `dock.json`. Strip, multi-unit widgets, hover slop, and magnifier slot math all use it on Bottom/Left/Right.
 - [x] **Icon gap vs separators:** icon gap now spaces only tiles (apps, groups, folders, widgets, Trash). Section separator air per side is `5 + iconGap` (separator pads itself by a constant 5), so it tracks the gap. Hit target stays at least 9pt so resize/menu work at gap 0.
-- [x] **Same minimum spacing for every item:** app icons carry a built-in transparent margin (100/1024 of the tile per side, measured on system icons), so at gap 0 they never touch. Widgets now pad by that margin along the dock, and group/folder tiles draw their rounded square at the icon's visible size (`IconMetrics.margin` in DockItem.swift). Gap 0 = app-icon spacing everywhere; fit-to-screen math includes the widget margins.
+- [x] **Same minimum spacing for every item:** app icons carry a built-in transparent margin (100/1024 of the tile per side, measured on system icons), so at gap 0 they never touch. Widgets, groups and folders draw chrome at that visible size inside a full-tile slot (`IconMetrics.margin` in DockItem.swift). Gap 0 = app-icon spacing everywhere.
 - [x] **Separator between widgets and folders/Trash:** the right section now reads widgets | folders and Trash. The extra separator shows only when widgets exist and a folder, Trash, or a folder-drop gap follows; fit-to-screen math counts it. Same resize and menu behavior as the other separators.
 - [x] **Even right edge:** the system folder and Trash images have only a 4% / 2% transparent margin (app icons 10%, measured), so Trash hugged the dock edge and the folder sat tight against its neighbors. Both are now drawn at `IconMetrics.fullBleedScale` (0.86) inside the tile, matching an app icon's visible size and edge spacing.
 
@@ -1945,3 +1970,14 @@ Status: done and hand-tested by James.
 - [x] System Stats percentages use larger, heavier white text and the wide legend uses brighter, larger labels for contrast against its dark widget card. The bottom layout is unchanged.
 - [ ] Verify on-device at the user's icon size, especially the two percentages in the compact side-dock tile.
 - [ ] Verify hover label tail points toward the dock on both Left and Right; the path maps the bottom tail to the inner edge for each side orientation.
+
+## Follow-up: custom group icons
+
+- [x] `FolderGroup.icon` (optional `{ symbol, color }`), `DockModel.setGroupIcon`. Old dock.json files load unchanged (no icon means the app grid).
+- [x] `GroupIcon.swift`: 13 macOS system colors, SF Symbols catalog read from CoreGlyphs.bundle plists (7,207 symbols after dropping script/RTL variants, about 20ms to load in release, falls back to a suggested list), artwork that follows the system icon style (Default, Dark, Clear, Tinted; Automatic follows dark mode; Original icon style uses Default).
+- [x] Picker shows under the name field while naming (so on group creation), from the tile menu (Change Icon...), and in Settings > Groups (click the group's icon). Picks apply live; "Show Apps" restores the grid.
+- [x] Artwork rendered offline for all six style variants and eight colors and checked by eye. `swift build` clean; the built binary launched and stayed up.
+- [ ] Hand-check: tile matches neighboring app icons at the user's size and icon style, with and without magnification; search field typing in the grid overlay; Escape in the search field cancels the rename; picker in the Settings popover.
+- [x] Picker spacing: the 13 swatches overflowed the 300pt picker (gray clipped past the card edge). Swatches are now 16pt in equal-width cells and the symbol grid uses flexible columns, so both span the picker width.
+- [x] Dark icon style background darkened to match native dark icons (gradient white 0.13 to 0.04, was 0.23 to 0.1; dimmer sheen and rim).
+- Known gap: Tinted uses the accent color as the tint (the system's tinted icon color is not public). Clear is an approximation of the system's glass icon look.

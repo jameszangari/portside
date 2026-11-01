@@ -59,7 +59,6 @@ final class DockModel: Codable, ObservableObject {
         static let animationDuration: TimeInterval = 0.15
         static let groupHoverDelay: TimeInterval = 0.05
         static let groupHoverCloseGrace: TimeInterval = 0.05
-        static let backgroundFrost: Double = 0.5
         static let cornerRadius: CGFloat = 16
         static let magnifiedSize: CGFloat = 64
         /// Gap between strip tiles. Matches the long-standing DockMetrics default.
@@ -160,12 +159,56 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    // MARK: - Native Dock options
+
+    /// Native "Show indicators for open applications".
+    @Published private(set) var showIndicators = true
+    /// Native hidden option `showhidden`: icons of hidden apps are drawn
+    /// translucent.
+    @Published private(set) var dimHiddenApps = false
+    /// Native "Show suggested and recent apps in Dock".
+    @Published private(set) var showRecents = false
+    /// Most recent first. Apps that quit while not pinned, like the native
+    /// Dock's recents section.
+    @Published private(set) var recentApps: [PinnedApp] = []
+
+    static let recentAppsLimit = 3
+
+    func setShowIndicators(_ enabled: Bool) {
+        guard enabled != showIndicators else { return }
+        showIndicators = enabled
+        persist()
+    }
+
+    func setDimHiddenApps(_ enabled: Bool) {
+        guard enabled != dimHiddenApps else { return }
+        dimHiddenApps = enabled
+        persist()
+    }
+
+    func setShowRecents(_ enabled: Bool) {
+        guard enabled != showRecents else { return }
+        showRecents = enabled
+        persist()
+    }
+
+    /// A regular app quit. Remember it unless it is pinned (anywhere,
+    /// including groups).
+    func noteAppQuit(_ app: PinnedApp) {
+        guard !allPinnedApps.contains(where: { $0.id == app.id }) else { return }
+        var next = recentApps.filter { $0.id != app.id }
+        next.insert(app, at: 0)
+        next = Array(next.prefix(Self.recentAppsLimit))
+        guard next != recentApps else { return }
+        recentApps = next
+        persist()
+    }
+
     // MARK: - Appearance
 
     @Published private(set) var iconStyle: IconStyle = .matchSystem
-    @Published private(set) var backgroundStyle: DockBackgroundStyle = DockBackgroundStyle.systemDefault
-    @Published private(set) var backgroundFrost: Double = Defaults.backgroundFrost
-    @Published private(set) var backgroundTint: RGBAColor?
+    /// Selected background style plus each style's own settings.
+    @Published private(set) var background = DockBackground()
     @Published private(set) var cornerRadius: CGFloat = Defaults.cornerRadius
     /// Mirrors Accessibility > Display > Reduce Transparency for live redraws.
     @Published private(set) var reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
@@ -174,8 +217,7 @@ final class DockModel: Codable, ObservableObject {
 
     /// The strip and group grid background, in one value.
     var look: DockLook {
-        DockLook(style: backgroundStyle, frost: backgroundFrost, tint: backgroundTint,
-                 cornerRadius: cornerRadius, reduceTransparency: reduceTransparency)
+        DockLook(background: background, cornerRadius: cornerRadius, reduceTransparency: reduceTransparency)
     }
 
     func syncReduceTransparency() {
@@ -191,35 +233,43 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
-    func setBackgroundStyle(_ style: DockBackgroundStyle) {
-        guard style != backgroundStyle else { return }
-        backgroundStyle = style
+    /// Change any background setting. Sliders pass `persist: false` while
+    /// dragging and save once on release.
+    func updateBackground(persist shouldPersist: Bool = true, _ change: (inout DockBackground) -> Void) {
+        var next = background
+        change(&next)
+        guard next != background else {
+            if shouldPersist { persist() }
+            return
+        }
+        background = next
+        if shouldPersist { persist() }
+    }
+
+    /// Current style's settings and the corner radius back to defaults.
+    /// Other styles keep theirs.
+    func resetBackgroundStyleToDefaults() {
+        updateBackground(persist: false) { bg in
+            switch bg.style {
+            case .glass: bg.glass = GlassBackground()
+            case .frosted: bg.frosted = FrostedBackground()
+            case .solid: bg.solid = SolidBackground()
+            }
+        }
+        cornerRadius = Defaults.cornerRadius
         persist()
     }
 
-    func setBackgroundFrost(_ value: Double, persist shouldPersist: Bool = true) {
-        backgroundFrost = min(max(value, 0), 1)
-        if shouldPersist { persist() }
-    }
-
-    func setBackgroundTint(_ tint: RGBAColor?, persist shouldPersist: Bool = true) {
-        guard tint != backgroundTint else { return }
-        backgroundTint = tint
-        if shouldPersist { persist() }
+    func resetAppearanceToDefaults() {
+        iconStyle = .matchSystem
+        background = DockBackground()
+        cornerRadius = Defaults.cornerRadius
+        persist()
     }
 
     func setCornerRadius(_ value: CGFloat, persist shouldPersist: Bool = true) {
         cornerRadius = min(max(value, Self.cornerRadiusRange.lowerBound), Self.cornerRadiusRange.upperBound)
         if shouldPersist { persist() }
-    }
-
-    func resetAppearanceToDefaults() {
-        iconStyle = .matchSystem
-        backgroundStyle = DockBackgroundStyle.systemDefault
-        backgroundFrost = Defaults.backgroundFrost
-        backgroundTint = nil
-        cornerRadius = Defaults.cornerRadius
-        persist()
     }
 
     // MARK: - Hiding
@@ -280,7 +330,7 @@ final class DockModel: Codable, ObservableObject {
     @Published private(set) var badgeColor: BadgeColor = .macOS
     /// Used when `badgeColor` is `.custom`. Kept when switching away, so
     /// switching back restores it.
-    @Published private(set) var badgeCustomColor: RGBAColor = BadgeColor.defaultCustom
+    @Published private(set) var badgeCustomColor: PaletteColor = BadgeColor.defaultCustom
 
     var badgeStyle: BadgeStyle { BadgeStyle(fill: badgeColor.fill(custom: badgeCustomColor)) }
 
@@ -290,11 +340,10 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
-    func setBadgeCustomColor(_ color: RGBAColor) {
-        guard color != badgeCustomColor else { return }
-        badgeCustomColor = color
+    func setBadgeCustomColor(_ color: PaletteColor, persist shouldPersist: Bool = true) {
+        if color != badgeCustomColor { badgeCustomColor = color }
         if badgeColor != .custom { badgeColor = .custom }
-        persist()
+        if shouldPersist { persist() }
     }
 
     func setShowBadges(_ enabled: Bool) {
@@ -777,6 +826,18 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    /// Set or clear (nil) a group's custom tile icon.
+    func setGroupIcon(groupID: String, to icon: GroupIcon?) {
+        guard let index = entries.firstIndex(where: { $0.group?.id == groupID }),
+              var group = entries[index].group, group.icon != icon else { return }
+        group.icon = icon
+        var list = entries
+        list[index] = .group(group)
+        entries = list
+        persist()
+        Self.logger.info("group icon \(group.name, privacy: .public): \(icon?.symbol ?? "apps", privacy: .public) \(icon?.color.rawValue ?? "", privacy: .public)")
+    }
+
     /// Remove the group and its apps from the dock.
     func removeGroup(groupID: String) {
         entries.removeAll { $0.group?.id == groupID }
@@ -834,7 +895,10 @@ final class DockModel: Codable, ObservableObject {
         case showTrash, trashAccessHintDismissed
         case showBadges, badgeColor, badgeCustomColor
         case stacks, layout, widgetSizes
-        case iconStyle, backgroundStyle, backgroundFrost, backgroundTint, cornerRadius
+        case iconStyle, background, cornerRadius
+        case showIndicators, dimHiddenApps, showRecents, recentApps
+        /// Before per-style backgrounds. Read only, for migration.
+        case backgroundStyle, backgroundFrost, backgroundTint
         case settingsHotkey
         /// Before Milestone D: a flat list of apps. Read only, for migration.
         case pinnedApps
@@ -868,7 +932,7 @@ final class DockModel: Codable, ObservableObject {
         trashAccessHintDismissed = (try? c.decodeIfPresent(Bool.self, forKey: .trashAccessHintDismissed)) ?? false
         showBadges = (try? c.decodeIfPresent(Bool.self, forKey: .showBadges)) ?? true
         badgeColor = (try? c.decodeIfPresent(BadgeColor.self, forKey: .badgeColor)) ?? .macOS
-        badgeCustomColor = (try? c.decodeIfPresent(RGBAColor.self, forKey: .badgeCustomColor)) ?? BadgeColor.defaultCustom
+        badgeCustomColor = (try? c.decodeIfPresent(PaletteColor.self, forKey: .badgeCustomColor)) ?? BadgeColor.defaultCustom
         stacks = (try? c.decodeIfPresent([FolderStack].self, forKey: .stacks)) ?? []
         layout = (try? c.decodeIfPresent([String].self, forKey: .layout)) ?? []
         widgetSizes = (try? c.decodeIfPresent([String: WidgetSize].self, forKey: .widgetSizes)) ?? [:]
@@ -878,9 +942,19 @@ final class DockModel: Codable, ObservableObject {
         // try? per key: an unknown enum value (from a newer build) falls back
         // to the default instead of failing the whole file.
         iconStyle = (try? c.decodeIfPresent(IconStyle.self, forKey: .iconStyle)) ?? .matchSystem
-        backgroundStyle = (try? c.decodeIfPresent(DockBackgroundStyle.self, forKey: .backgroundStyle)) ?? DockBackgroundStyle.systemDefault
-        backgroundFrost = min(max((try? c.decodeIfPresent(Double.self, forKey: .backgroundFrost)) ?? Defaults.backgroundFrost, 0), 1)
-        backgroundTint = (try? c.decodeIfPresent(RGBAColor.self, forKey: .backgroundTint)) ?? nil
+        if c.contains(.background) {
+            background = c.value(.background, or: DockBackground())
+        } else {
+            background = DockBackground(
+                legacyStyle: c.value(.backgroundStyle, or: DockBackgroundStyle.systemDefault),
+                frost: c.value(.backgroundFrost, or: 0.5),
+                tint: c.value(.backgroundTint, or: RGBAColor?.none)
+            )
+        }
+        showIndicators = c.value(.showIndicators, or: true)
+        dimHiddenApps = c.value(.dimHiddenApps, or: false)
+        showRecents = c.value(.showRecents, or: false)
+        recentApps = Array(c.value(.recentApps, or: [PinnedApp]()).prefix(Self.recentAppsLimit))
         let radius = (try? c.decodeIfPresent(CGFloat.self, forKey: .cornerRadius)) ?? Defaults.cornerRadius
         cornerRadius = min(max(radius, Self.cornerRadiusRange.lowerBound), Self.cornerRadiusRange.upperBound)
         if c.contains(.settingsHotkey) {
@@ -923,9 +997,11 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(groupHoverDelay, forKey: .groupHoverDelay)
         try c.encode(groupHoverCloseGrace, forKey: .groupHoverCloseGrace)
         try c.encode(iconStyle, forKey: .iconStyle)
-        try c.encode(backgroundStyle, forKey: .backgroundStyle)
-        try c.encode(backgroundFrost, forKey: .backgroundFrost)
-        try c.encodeIfPresent(backgroundTint, forKey: .backgroundTint)
+        try c.encode(background, forKey: .background)
+        try c.encode(showIndicators, forKey: .showIndicators)
+        try c.encode(dimHiddenApps, forKey: .dimHiddenApps)
+        try c.encode(showRecents, forKey: .showRecents)
+        if !recentApps.isEmpty { try c.encode(recentApps, forKey: .recentApps) }
         try c.encode(cornerRadius, forKey: .cornerRadius)
         // Always write the key: null means cleared, object means set. Older
         // files without the key keep the default on load.

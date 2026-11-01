@@ -5,9 +5,9 @@ import os.log
 private let itemLogger = Logger(subsystem: "com.james.portside", category: "DockItem")
 
 /// macOS app icons leave a transparent margin around the visible shape
-/// (100pt of the 1024pt grid on each side). Tiles that fill their whole
-/// frame (widgets, groups, folders) inset by this much so every item keeps
-/// the same visible spacing, and icon gap 0 is the tightest the icons sit.
+/// (100pt of the 1024pt grid on each side). Tiles that draw their own chrome
+/// (widgets, groups) inset by this much so every item keeps the same visible
+/// size and spacing, and icon gap 0 is the tightest the icons sit.
 enum IconMetrics {
     static let margin: CGFloat = 100.0 / 1024
     /// The folder and Trash images fill nearly their whole frame (about 2 to
@@ -190,6 +190,7 @@ enum AppLauncher {
 /// (Portside is a regular app then). Clicking it brings Settings forward.
 struct PortsideTileView: View {
     let size: CGFloat
+    var showsIndicator = true
     /// Redraws when the icon style or the system icon style changes.
     @ObservedObject private var icons = IconCache.shared
     let onOpenSettings: () -> Void
@@ -234,9 +235,7 @@ struct PortsideTileView: View {
     }
 
     private var indicator: some View {
-        Circle()
-            .fill(Color.primary.opacity(0.75))
-            .frame(width: 4, height: 4)
+        RunningIndicator(isOn: showsIndicator)
             .magnifiedIndicator(id: Self.hoverID)
     }
 }
@@ -252,6 +251,8 @@ struct DockItemView: View {
     @ObservedObject var badges: DockBadges
     /// A file drag is over this tile and the app can open it.
     var isDropTarget = false
+    /// The app is hidden (Cmd-H); drawn translucent when that option is on.
+    var isHidden = false
     @ObservedObject private var icons = IconCache.shared
     @State private var hold = MenuHold()
     @Environment(\.dockEdge) private var edge
@@ -291,7 +292,7 @@ struct DockItemView: View {
             .frame(width: size, height: size)
             // While launching, the bounce window draws the icon. Hidden here
             // only visually: the slot and its click target stay put.
-            .opacity(bouncer.bouncingID == app.id ? 0 : 1)
+            .opacity(bouncer.bouncingID == app.id ? 0 : (isHidden && dockModel.dimHiddenApps ? RunningIndicator.hiddenOpacity : 1))
             // Native-Dock-style drop highlight. Negative padding inside the
             // background, so it never changes the tile's layout.
             .background(
@@ -318,9 +319,22 @@ struct DockItemView: View {
     }
 
     private var indicator: some View {
-        Circle()
-            .fill(Color.primary.opacity(running == nil ? 0 : 0.75))
-            .frame(width: 4, height: 4)
+        RunningIndicator(isOn: running != nil && dockModel.showIndicators)
             .magnifiedIndicator(id: app.id)
+    }
+}
+
+/// The running dot under (or beside) a tile. Always takes its space so
+/// tiles line up whether or not it shows.
+struct RunningIndicator: View {
+    let isOn: Bool
+
+    /// Icon opacity for hidden apps (native `showhidden` look).
+    static let hiddenOpacity = 0.5
+
+    var body: some View {
+        Circle()
+            .fill(Color.primary.opacity(isOn ? 0.75 : 0))
+            .frame(width: 4, height: 4)
     }
 }

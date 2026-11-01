@@ -87,7 +87,11 @@ final class DockEngine {
 
     init(dockModel: DockModel = DockModel.load()) {
         self.dockModel = dockModel
-        self.runningApps = RunningApps()
+        let runningApps = RunningApps()
+        runningApps.onQuit = { [weak dockModel] app in
+            if let quit = PinnedApp(runningApp: app) { dockModel?.noteAppQuit(quit) }
+        }
+        self.runningApps = runningApps
         self.widgets = WidgetStore(dockModel: dockModel)
         self.layout = DockLayout()
         self.hover = DockHover(overlay: OverlayPanel())

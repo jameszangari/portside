@@ -442,6 +442,27 @@ private struct GeneralSettings: View {
                     get: { dockModel.animateOpeningApplications },
                     set: { dockModel.setAnimateOpeningApplications($0) }
                 ))
+
+                Toggle("Show indicators for open applications", isOn: Binding(
+                    get: { dockModel.showIndicators },
+                    set: { dockModel.setShowIndicators($0) }
+                ))
+
+                Toggle(isOn: Binding(
+                    get: { dockModel.showRecents },
+                    set: { dockModel.setShowRecents($0) }
+                )) {
+                    Text("Show suggested and recent apps in Dock")
+                    Text("Up to \(DockModel.recentAppsLimit) apps you quit recently that are not in the dock, after the running apps.").helperStyle()
+                }
+
+                Toggle(isOn: Binding(
+                    get: { dockModel.dimHiddenApps },
+                    set: { dockModel.setDimHiddenApps($0) }
+                )) {
+                    Text("Make hidden apps translucent")
+                    Text("Apps hidden with ⌘H show a faded icon, like the macOS Dock's hidden option.").helperStyle()
+                }
             }
 
             Section {
@@ -666,24 +687,39 @@ private struct SettingsSlider: View {
     /// (new value, persist)
     let set: (Double, Bool) -> Void
 
-    @State private var isDragging = false
+    /// The thumb's value while dragging. The slider shows this rather than
+    /// `value`, so it always follows the cursor, and the release commits it
+    /// (not a `value` captured before the drag, which snapped back).
+    @State private var draft: Double?
 
     var body: some View {
+        let shown = draft ?? value
         HStack(spacing: 12) {
             Text(title)
                 .frame(width: SettingsLayout.labelWidth, alignment: .leading)
             Slider(
-                value: Binding(get: { value }, set: { set(snapped($0), !isDragging) }),
+                value: Binding(
+                    get: { draft ?? value },
+                    set: { raw in
+                        let next = snapped(raw)
+                        if draft != nil { draft = next }
+                        set(next, draft == nil)
+                    }
+                ),
                 in: range
             ) {
                 Text(title)
             } onEditingChanged: { editing in
-                isDragging = editing
-                if !editing { set(value, true) }
+                if editing {
+                    draft = value
+                } else if let final = draft {
+                    draft = nil
+                    set(final, true)
+                }
             }
             .labelsHidden()
-            .accessibilityValue(format(value))
-            Text(format(value))
+            .accessibilityValue(format(shown))
+            Text(format(shown))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
                 .frame(width: SettingsLayout.valueWidth, alignment: .trailing)
@@ -700,10 +736,8 @@ private struct SettingsSlider: View {
 
 private struct AppearanceSettings: View {
     @ObservedObject var dockModel: DockModel
-
-    /// Brand navy (design/brand tokens) at low strength, the starting
-    /// color when the tint is turned on.
-    private static let defaultTint = RGBAColor(red: 0x10 / 255, green: 0x28 / 255, blue: 0x3F / 255, alpha: 0.35)
+    /// Which gradient stop the color editor shows (Solid).
+    @State private var editingEndColor = false
 
     private var styles: [DockBackgroundStyle] {
         DockBackgroundStyle.allCases.filter { $0 != .glass || DockBackgroundStyle.isGlassAvailable }
@@ -729,36 +763,15 @@ private struct AppearanceSettings: View {
             }
 
             Section {
-                Picker("Background", selection: Binding(
-                    get: { dockModel.backgroundStyle.effective },
-                    set: { dockModel.setBackgroundStyle($0) }
-                )) {
+                Picker("Background", selection: binding(\.style)) {
                     ForEach(styles) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
 
-                SettingsSlider(
-                    title: dockModel.backgroundStyle.effective == .solid ? "Opacity" : "Frost",
-                    value: dockModel.backgroundFrost,
-                    range: 0...1,
-                    snap: 0.01,
-                    format: { "\(Int(($0 * 100).rounded()))%" },
-                    set: { dockModel.setBackgroundFrost($0, persist: $1) }
-                )
-
-                HStack(spacing: 12) {
-                    Toggle("Tint", isOn: Binding(
-                        get: { dockModel.backgroundTint != nil },
-                        set: { dockModel.setBackgroundTint($0 ? Self.defaultTint : nil) }
-                    ))
-                    if let tint = dockModel.backgroundTint {
-                        Spacer()
-                        ColorPicker("Tint color", selection: Binding(
-                            get: { tint.color },
-                            set: { dockModel.setBackgroundTint(RGBAColor($0)) }
-                        ), supportsOpacity: true)
-                        .labelsHidden()
-                    }
+                switch dockModel.background.style.effective {
+                case .glass: glassControls
+                case .frosted: frostedControls
+                case .solid: solidControls
                 }
 
                 SettingsSlider(
@@ -773,9 +786,10 @@ private struct AppearanceSettings: View {
                 HStack {
                     Text("Dock")
                     Spacer()
-                    Button("Reset to Defaults") { dockModel.resetAppearanceToDefaults() }
+                    Button("Reset \(dockModel.background.style.effective.title)") { dockModel.resetBackgroundStyleToDefaults() }
                         .buttonStyle(.link)
                         .font(.system(size: 12))
+                        .help("Resets this style and the corner radius. Other styles keep their settings.")
                 }
             } footer: {
                 Text(backgroundHelp).footerStyle()
@@ -792,15 +806,14 @@ private struct AppearanceSettings: View {
                             Text(choice.title).tag(choice)
                         }
                     }
-                    if dockModel.badgeColor == .custom {
-                        ColorPicker("Custom badge color", selection: Binding(
-                            get: { dockModel.badgeCustomColor.color },
-                            set: { dockModel.setBadgeCustomColor(RGBAColor($0)) }
-                        ), supportsOpacity: false)
-                        .labelsHidden()
-                    }
                     DockBadgeLabel(text: "3", iconSize: 48, style: dockModel.badgeStyle)
                     DockBadgeLabel(text: "128", iconSize: 48, style: dockModel.badgeStyle)
+                }
+                if dockModel.badgeColor == .custom {
+                    // Badges are always opaque, so no Opacity slider.
+                    PaletteColorEditor(color: dockModel.badgeCustomColor, showsOpacity: false) { value, persist in
+                        dockModel.setBadgeCustomColor(value, persist: persist)
+                    }
                 }
             } header: {
                 Text("Badges")
@@ -814,10 +827,250 @@ private struct AppearanceSettings: View {
     }
 
     private var backgroundHelp: String {
-        switch dockModel.backgroundStyle.effective {
-        case .glass: "Liquid Glass like the macOS Dock. Frost 0% is clear glass; higher values blur and soften what is behind it."
-        case .frosted: "The translucent material from earlier macOS versions. Frost sets how strong it is."
-        case .solid: "A dark fill. Opacity sets how much shows through."
+        switch dockModel.background.style.effective {
+        case .glass: SeeThroughGlass.isAvailable
+            ? "The system Liquid Glass, same as the macOS Dock. Regular is frosted; Clear is see-through with refraction at the edges. Strength fills the glass with a neutral shade, or with the tint color when Tint is on."
+            : "The system Liquid Glass, same as the macOS Dock. Clear is lighter than Regular. Strength fills the glass with a neutral shade, or with the tint color when Tint is on."
+        case .frosted: "A blur material you tune yourself. Material sets the blur, Strength how opaque it is; the tint's own opacity sets how strong the color is."
+        case .solid: "Your own color or gradient. Each color keeps its own opacity, and Opacity scales the whole fill."
+        }
+    }
+
+    // MARK: Background controls
+
+    private func binding<T>(_ path: WritableKeyPath<DockBackground, T>) -> Binding<T> {
+        Binding(
+            get: { dockModel.background[keyPath: path] },
+            set: { value in dockModel.updateBackground { $0[keyPath: path] = value } }
+        )
+    }
+
+    private func percentSlider(_ title: String, _ path: WritableKeyPath<DockBackground, Double>) -> SettingsSlider {
+        SettingsSlider(
+            title: title,
+            value: dockModel.background[keyPath: path],
+            range: 0...1,
+            snap: 0.01,
+            format: { "\(Int(($0 * 100).rounded()))%" },
+            set: { value, persist in dockModel.updateBackground(persist: persist) { $0[keyPath: path] = value } }
+        )
+    }
+
+    private func colorEditor(_ path: WritableKeyPath<DockBackground, PaletteColor>, showsOpacity: Bool) -> PaletteColorEditor {
+        PaletteColorEditor(color: dockModel.background[keyPath: path], showsOpacity: showsOpacity) { value, persist in
+            dockModel.updateBackground(persist: persist) { $0[keyPath: path] = value }
+        }
+    }
+
+    /// Tint switch with the palette editor under it when on. The switch
+    /// stays at the trailing edge; a chip of the result sits to its left,
+    /// so the switch never moves under the cursor.
+    @ViewBuilder
+    /// Turning it off keeps the color in `saved`; turning it on restores it.
+    private func tintRow(_ path: WritableKeyPath<DockBackground, PaletteColor?>,
+                         saved: WritableKeyPath<DockBackground, PaletteColor?>, showsOpacity: Bool,
+                         starting: PaletteColor, onEnable: @escaping (inout DockBackground) -> Void = { _ in }) -> some View {
+        let tint = dockModel.background[keyPath: path]
+        HStack(spacing: 12) {
+            Text("Tint")
+            Spacer()
+            if let tint {
+                ColorChip(color: tint.color)
+            }
+            Toggle("Tint", isOn: Binding(
+                get: { dockModel.background[keyPath: path] != nil },
+                set: { on in
+                    dockModel.updateBackground { bg in
+                        if on {
+                            bg[keyPath: path] = bg[keyPath: saved] ?? starting
+                            bg[keyPath: saved] = nil
+                            onEnable(&bg)
+                        } else {
+                            bg[keyPath: saved] = bg[keyPath: path]
+                            bg[keyPath: path] = nil
+                        }
+                    }
+                }
+            ))
+            .toggleStyle(.switch)
+            .labelsHidden()
+        }
+        if let tint {
+            PaletteColorEditor(color: tint, showsOpacity: showsOpacity) { value, persist in
+                dockModel.updateBackground(persist: persist) { $0[keyPath: path] = value }
+            }
+        }
+    }
+
+    @ViewBuilder private var glassControls: some View {
+        Picker("Glass", selection: binding(\.glass.variant)) {
+            ForEach(GlassVariant.allCases) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        percentSlider("Strength", \.glass.strength)
+        // Glass tints are opaque (Strength sets how much shows). A tint at
+        // 0% strength would be invisible, so turning it on brings the
+        // strength up to where the color shows.
+        tintRow(\.glass.tint, saved: \.glass.savedTint, showsOpacity: false, starting: .brandNavy) { bg in
+            bg.glass.strength = max(bg.glass.strength, 0.35)
+        }
+    }
+
+    @ViewBuilder private var frostedControls: some View {
+        Picker("Material", selection: binding(\.frosted.material)) {
+            ForEach(FrostMaterial.allCases) { Text($0.title).tag($0) }
+        }
+        percentSlider("Strength", \.frosted.strength)
+        tintRow(\.frosted.tint, saved: \.frosted.savedTint, showsOpacity: true, starting: {
+            var navy = PaletteColor.brandNavy
+            navy.opacity = 0.35
+            return navy
+        }())
+        Toggle("Border", isOn: binding(\.frosted.border))
+    }
+
+    @ViewBuilder private var solidControls: some View {
+        let solid = dockModel.background.solid
+        let editingEnd = solid.fill.isGradient && editingEndColor
+        Picker("Fill", selection: binding(\.solid.fill)) {
+            ForEach(SolidFill.allCases) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        if solid.fill.isGradient {
+            // Two stops: click a chip to edit it.
+            HStack(spacing: 10) {
+                Text("Colors")
+                Spacer()
+                ColorChip(color: solid.color.color, isSelected: !editingEnd) { editingEndColor = false }
+                    .help(solid.fill == .radial ? "Center color" : "Start color")
+                Button {
+                    dockModel.updateBackground { bg in
+                        swap(&bg.solid.color, &bg.solid.endColor)
+                    }
+                } label: {
+                    Image(systemName: "arrow.left.arrow.right")
+                }
+                .buttonStyle(.borderless)
+                .help("Swap colors")
+                ColorChip(color: solid.endColor.color, isSelected: editingEnd) { editingEndColor = true }
+                    .help(solid.fill == .radial ? "Edge color" : "End color")
+            }
+        } else {
+            HStack(spacing: 10) {
+                Text("Color")
+                Spacer()
+                ColorChip(color: solid.color.color)
+            }
+        }
+        colorEditor(editingEnd ? \.solid.endColor : \.solid.color, showsOpacity: true)
+        if solid.fill == .linear {
+            SettingsSlider(
+                title: "Angle",
+                value: solid.angle,
+                range: SolidBackground.angleRange,
+                snap: 1,
+                format: { "\(Int($0))°" },
+                set: { value, persist in dockModel.updateBackground(persist: persist) { $0.solid.angle = value } }
+            )
+        }
+        percentSlider("Opacity", \.solid.opacity)
+        Toggle("Border", isOn: binding(\.solid.border))
+    }
+}
+
+// MARK: - Palette color editor
+
+/// Portside's own color picker: preset swatches plus Saturation, Tint,
+/// Shade and (optionally) Opacity sliders. Inline in the form, so it never
+/// needs the system color panel (which a non-activating app handles badly).
+private struct PaletteColorEditor: View {
+    let color: PaletteColor
+    var showsOpacity = true
+    /// (new color, persist)
+    let set: (PaletteColor, Bool) -> Void
+
+    private static let columns = Array(repeating: GridItem(.fixed(22), spacing: 8), count: 10)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            LazyVGrid(columns: Self.columns, alignment: .leading, spacing: 8) {
+                ForEach(PaletteColor.presets, id: \.name) { preset in
+                    ColorChip(color: preset.color.color, size: 22, isSelected: color.base.sameRGB(as: preset.color)) {
+                        var next = color
+                        next.base = preset.color.withAlpha(1)
+                        set(next, true)
+                    }
+                    .help(preset.name)
+                    .accessibilityLabel(preset.name)
+                }
+            }
+            slider("Saturation", \.saturation)
+            slider("Tint", \.tint)
+            slider("Shade", \.shade)
+            if showsOpacity {
+                slider("Opacity", \.opacity)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func slider(_ title: String, _ path: WritableKeyPath<PaletteColor, Double>) -> SettingsSlider {
+        SettingsSlider(
+            title: title,
+            value: color[keyPath: path],
+            range: 0...1,
+            snap: 0.01,
+            format: { "\(Int(($0 * 100).rounded()))%" },
+            set: { value, persist in
+                var next = color
+                next[keyPath: path] = value
+                set(next, persist)
+            }
+        )
+    }
+}
+
+/// A round color sample over a checkerboard (so opacity shows). With an
+/// action it is a button; `isSelected` draws a ring.
+private struct ColorChip: View {
+    let color: Color
+    var size: CGFloat = 22
+    var isSelected = false
+    var action: (() -> Void)?
+
+    var body: some View {
+        if let action {
+            Button(action: action) { chip }
+                .buttonStyle(.plain)
+        } else {
+            chip
+        }
+    }
+
+    private var chip: some View {
+        ZStack {
+            Checkerboard().clipShape(Circle())
+            Circle().fill(color)
+        }
+        .frame(width: size, height: size)
+        .overlay(Circle().strokeBorder(Color.primary.opacity(0.25), lineWidth: 1))
+        .padding(3)
+        .overlay(Circle().strokeBorder(Color.accentColor, lineWidth: isSelected ? 2 : 0))
+        .contentShape(Circle())
+    }
+}
+
+private struct Checkerboard: View {
+    var body: some View {
+        Canvas { context, size in
+            let cell: CGFloat = 4
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
+            for row in 0..<Int(ceil(size.height / cell)) {
+                for col in 0..<Int(ceil(size.width / cell)) where (row + col).isMultiple(of: 2) {
+                    context.fill(Path(CGRect(x: CGFloat(col) * cell, y: CGFloat(row) * cell, width: cell, height: cell)),
+                                 with: .color(Color(white: 0.8)))
+                }
+            }
         }
     }
 }
@@ -976,12 +1229,20 @@ private struct GroupSettingsRow: View {
 
     @State private var draft = ""
     @State private var confirmingDelete = false
+    @State private var choosingIcon = false
     @State private var hovering = false
     @FocusState private var nameFocused: Bool
 
     var body: some View {
         HStack(spacing: 12) {
-            GroupMiniIcon(group: group)
+            Button { choosingIcon = true } label: { GroupMiniIcon(group: group) }
+                .buttonStyle(.plain)
+                .help("Change the group's dock icon")
+                .accessibilityLabel("Change icon")
+                .popover(isPresented: $choosingIcon, arrowEdge: .bottom) {
+                    GroupIconPicker(icon: group.icon) { dockModel.setGroupIcon(groupID: group.id, to: $0) }
+                        .padding(12)
+                }
 
             VStack(alignment: .leading, spacing: 0) {
                 nameField
@@ -1050,6 +1311,14 @@ private struct GroupMiniIcon: View {
     var body: some View {
         let cell: CGFloat = 14
         let grid = Array(repeating: GridItem(.fixed(cell), spacing: 2), count: 2)
+        if let icon = group.icon {
+            GroupIconArtwork(icon: icon, size: size)
+        } else {
+            appGrid(cell: cell, grid: grid)
+        }
+    }
+
+    private func appGrid(cell: CGFloat, grid: [GridItem]) -> some View {
         RoundedRectangle(cornerRadius: 8, style: .continuous)
             .fill(.quaternary)
             .overlay {

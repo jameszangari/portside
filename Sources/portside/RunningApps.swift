@@ -11,6 +11,10 @@ final class RunningApps: ObservableObject {
     /// Portside itself is a regular app right now (Settings is open), so its
     /// own dock shows it as running, like the native Dock does.
     @Published private(set) var includesSelf = false
+    /// Running apps that are hidden (Cmd-H), for the translucent-icon option.
+    @Published private(set) var hiddenPIDs: Set<pid_t> = []
+    /// A regular app quit. The engine feeds this to the recents list.
+    var onQuit: ((NSRunningApplication) -> Void)?
 
     private var observers: [NSObjectProtocol] = []
     private let logger = Logger(subsystem: "com.james.portside", category: "RunningApps")
@@ -24,6 +28,8 @@ final class RunningApps: ObservableObject {
             // Some apps switch to the regular activation policy after launch;
             // they activate when they do, so this catches them.
             NSWorkspace.didActivateApplicationNotification,
+            NSWorkspace.didHideApplicationNotification,
+            NSWorkspace.didUnhideApplicationNotification,
         ]
         for name in names {
             observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
@@ -31,6 +37,7 @@ final class RunningApps: ObservableObject {
                 // runningApplications can still list an app when its terminate
                 // notification arrives, so exclude it explicitly.
                 let terminated = name == NSWorkspace.didTerminateApplicationNotification ? app?.processIdentifier : nil
+                if terminated != nil, let app, app.activationPolicy == .regular { self?.onQuit?(app) }
                 self?.refresh(reason: name.rawValue, app: app, excluding: terminated)
             })
         }
@@ -60,6 +67,8 @@ final class RunningApps: ObservableObject {
             $0.activationPolicy == .regular && !$0.isTerminated
                 && $0.processIdentifier != selfPID && $0.processIdentifier != excludedPID
         }
+        let hidden = Set(next.filter(\.isHidden).map(\.processIdentifier))
+        if hidden != hiddenPIDs { hiddenPIDs = hidden }
         // Activation fires constantly; only publish when membership changes.
         if next.map(\.processIdentifier) != apps.map(\.processIdentifier) {
             apps = next
@@ -74,6 +83,10 @@ final class RunningApps: ObservableObject {
             if let id = pinned.bundleIdentifier, running.bundleIdentifier == id { return true }
             return running.bundleURL?.path == pinned.path
         }
+    }
+
+    func isHidden(_ running: NSRunningApplication?) -> Bool {
+        running.map { hiddenPIDs.contains($0.processIdentifier) } ?? false
     }
 
     func isRunning(_ pinned: PinnedApp) -> Bool {

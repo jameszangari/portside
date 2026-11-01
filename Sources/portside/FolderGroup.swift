@@ -10,11 +10,14 @@ struct FolderGroup: Codable, Hashable, Identifiable {
     var id: String
     var name: String
     var apps: [PinnedApp]
+    /// Custom tile artwork. Nil shows the mini grid of member icons.
+    var icon: GroupIcon?
 
-    init(id: String = UUID().uuidString, name: String, apps: [PinnedApp]) {
+    init(id: String = UUID().uuidString, name: String, apps: [PinnedApp], icon: GroupIcon? = nil) {
         self.id = id
         self.name = name
         self.apps = apps
+        self.icon = icon
     }
 }
 

@@ -12,7 +12,9 @@ How Portside is put together. See also [PLAN.md](PLAN.md) for the original miles
 ## Notes
 
 - The separator's resize cursor needs a private SkyLight call, because macOS ignores cursor changes from a background app. `BackgroundCursor.swift` loads it with `dlopen`/`dlsym`. If the framework or symbols are missing, the cursor feature is disabled and nothing crashes.
-- Notification badges read each app's badge from LaunchServices (`_LSASNCreateWithPid`, `_LSCopyApplicationInformationItem`), the store the Dock itself draws from. `LaunchServicesBadges.swift` loads them with `dlopen`/`dlsym`; if they are missing, badges turn off and Settings says so. No other private APIs are used.
+- Notification badges read each app's badge from LaunchServices (`_LSASNCreateWithPid`, `_LSCopyApplicationInformationItem`), the store the Dock itself draws from. `LaunchServicesBadges.swift` loads them with `dlopen`/`dlsym`; if they are missing, badges turn off and Settings says so.
+- Clear Liquid Glass sets the private `_variant` of `NSGlassEffectView` to 19, the see-through lens (no blur, refraction at the rim). The public `.clear` glass still blurs heavily on macOS 27. `SeeThroughGlass.swift` checks the selectors at runtime and reads the value back; if anything is off, Clear falls back to the public glass. Variant numbers were measured on macOS 27.0.1 and may change in an OS update (worst case is a wrong look, not a crash). No other private APIs are used.
+- The group icon picker lists SF Symbols from the plists in `/System/Library/CoreServices/CoreGlyphs.bundle` (`symbol_order.plist`, `symbol_search.plist`), since there is no public API that lists symbols. They are undocumented files, not an API. If they are missing or change shape, `SymbolCatalog` falls back to a built-in list of suggested symbols, and a saved symbol that no longer exists draws as a folder.
 - The native Dock is modified only while "Hide the macOS Dock" is on: Portside writes `autohide` and `autohide-delay` in `com.apple.dock` (public CFPreferences, then `killall Dock`) and restores every saved value on the way out. With the option off, no `com.apple.dock` settings are touched and both docks can react to the same edge. Portside is separate from the third-party Dockset app.
 - The system's Cmd+Option+D shortcut toggles the native Dock's auto-hide. While Portside hides the native Dock, it makes the native Dock appear until restore.
 - Opening Settings turns Portside into a regular app (visible in Cmd+Tab and the native Dock) until the window closes. While Settings is the key window, auto-hide is suppressed so the strip stays visible; the saved preference is unchanged.
@@ -48,6 +50,7 @@ Sources/portside/
   GroupController.swift     Group open/close state and every close path
   GroupRemoval.swift        "Remove group?" confirmation alert and focus hand-back
   GroupViews.swift          Group tile and expanded grid views
+  GroupIcon.swift           Custom group icon: model, SF Symbols catalog, artwork, picker
   OverlayPanel.swift        Reusable non-activating overlay panel
   LaunchBounce.swift        Native-style launch bounce animation
   RunningApps.swift         Running app tracking via NSWorkspace notifications
@@ -57,6 +60,7 @@ Sources/portside/
   LaunchAtLogin.swift       "Open Portside at login" via SMAppService.mainApp
   SettingsWindow.swift      Settings window: sidebar and panes (General, Appearance, Widgets, Groups, System)
   DockAppearance.swift      Icon style and dock background options, background modifier, icon style observer
+  SeeThroughGlass.swift     Guarded private glass variant for see-through Clear Liquid Glass
   HotKey.swift              Global hotkeys (Carbon RegisterEventHotKey), chord model, Settings shortcut recorder
   BackgroundCursor.swift    Guarded SkyLight call for the resize cursor
   AppIcon.swift             App icon: system-rendered in Portside.app, bundled PNGs under swift run, PNG export

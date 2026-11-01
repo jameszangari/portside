@@ -177,13 +177,14 @@ struct DockStrip: View {
         let innerWidgetGaps = units - widgets.hosts.count
         let fixed = alongPadding * 2 + separatorLength * CGFloat(separators)
             + spacing * CGFloat(max(items - 1, 0) + innerWidgetGaps)
-        let widgetMargins = 2 * IconMetrics.margin * CGFloat(widgets.hosts.count)
-        let tileUnits = max(CGFloat(apps + units) + widgetMargins, 1)
+        // Widgets sit in full-tile slots (chrome inset like groups), so they
+        // count as `units` tiles with no extra margin in the fit math.
+        let tileUnits = max(CGFloat(apps + units), 1)
         let fit = ((layout.maxStripLength(for: edge) - fixed) / tileUnits).rounded(.down)
         return max(DockModel.iconSizeRange.lowerBound, fit)
     }
 
-    private var unpinnedRunning: [(PinnedApp, NSRunningApplication)] {
+    private var unpinnedRunning: [(PinnedApp, NSRunningApplication?)] {
         runningApps.apps.compactMap { running in
             guard let app = PinnedApp(runningApp: running), !dockModel.isPinned(app) else { return nil }
             if dockModel.allPinnedApps.contains(where: { runningApps.runningInstance(of: $0) == running }) { return nil }
@@ -191,9 +192,22 @@ struct DockStrip: View {
         }
     }
 
+    /// Native "Show suggested and recent apps": recently quit apps that are
+    /// neither pinned nor running, after the running apps.
+    private func recents(after running: [(PinnedApp, NSRunningApplication?)]) -> [(PinnedApp, NSRunningApplication?)] {
+        guard dockModel.showRecents else { return [] }
+        let shown = Set(running.map(\.0.id))
+        return dockModel.recentApps.compactMap { app in
+            guard !shown.contains(app.id), !dockModel.allPinnedApps.contains(where: { $0.id == app.id }),
+                  FileManager.default.fileExists(atPath: app.url.path) else { return nil }
+            return (app, nil)
+        }
+    }
+
     var body: some View {
         let edge = dockModel.edge
-        let extras = unpinnedRunning
+        let running = unpinnedRunning
+        let extras = running + recents(after: running)
         let showsSelf = runningApps.includesSelf
         let showsTrash = dockModel.showTrash
         let folderStacks = dockModel.stacks
@@ -279,7 +293,7 @@ struct DockStrip: View {
     /// App tiles that take file drops, by hover id: pinned apps and running
     /// apps that are not pinned. Groups, Portside's own tile, widgets and
     /// separators are not in here, so they reject non-app drops.
-    private func dropApps(extras: [(PinnedApp, NSRunningApplication)]) -> [String: (app: PinnedApp, isPinned: Bool)] {
+    private func dropApps(extras: [(PinnedApp, NSRunningApplication?)]) -> [String: (app: PinnedApp, isPinned: Bool)] {
         var apps: [String: (app: PinnedApp, isPinned: Bool)] = [:]
         for case .app(let app) in dockModel.entries { apps[app.id] = (app, true) }
         for (app, _) in extras { apps[app.id] = (app, false) }
@@ -310,7 +324,7 @@ struct DockStrip: View {
     /// One item of the layout.
     @ViewBuilder private func slot(
         _ id: String, tile: CGFloat, maxTile: CGFloat, edge: DockEdge,
-        extras: [(PinnedApp, NSRunningApplication)], showsSelf: Bool,
+        extras: [(PinnedApp, NSRunningApplication?)], showsSelf: Bool,
         entryByID: [String: DockEntry], stackByID: [String: FolderStack], widgetByID: [String: WidgetHost]
     ) -> some View {
         if let entry = entryByID[id] {
@@ -324,14 +338,16 @@ struct DockStrip: View {
             block {
                 separator(tile: tile, maxTile: maxTile, edge: edge, id: nil)
                     .magnifiedShift()
-                ForEach(extras, id: \.0.id) { app, running in
-                    DockItemView(app: app, running: running, isPinned: false, size: tile, dockModel: dockModel, bouncer: bouncer,
-                                 badges: badges, isDropTarget: dropTargetID == app.id)
-                        .opacity(dragging == app.id ? 0 : 1)
-                        .gesture(unpinnedGroupDropGesture(for: app, tile: tile))
+                ForEach(extras.filter { $0.1 != nil }, id: \.0.id) { app, running in
+                    unpinnedTile(app, running: running, tile: tile)
                 }
                 if showsSelf {
-                    PortsideTileView(size: tile) { interactions.onOpenSettings?() }
+                    PortsideTileView(size: tile, showsIndicator: dockModel.showIndicators) { interactions.onOpenSettings?() }
+                }
+                // Recents (not running) after everything running, like the
+                // native Dock's recents section.
+                ForEach(extras.filter { $0.1 == nil }, id: \.0.id) { app, _ in
+                    unpinnedTile(app, running: nil, tile: tile)
                 }
             }
         } else if id.hasPrefix(DockModel.separatorPrefix) {
@@ -340,8 +356,6 @@ struct DockStrip: View {
         } else if id.hasPrefix("widget:"), let host = widgetByID[String(id.dropFirst("widget:".count))] {
             host.view
                 .environment(\.widgetSize, shownSize(host, edge: edge))
-                // Same visible air as an app icon's built-in margin.
-                .padding(edge.isVertical ? .vertical : .horizontal, tile * IconMetrics.margin)
                 .magnifiedShift()
                 .opacity(dragging == host.id ? 0 : 1)
                 .gesture(widgetDragGesture(for: host, tile: tile))
@@ -422,11 +436,20 @@ struct DockStrip: View {
         }
     }
 
+    /// A running app that is not pinned, or a recent app.
+    private func unpinnedTile(_ app: PinnedApp, running: NSRunningApplication?, tile: CGFloat) -> some View {
+        DockItemView(app: app, running: running, isPinned: false, size: tile, dockModel: dockModel, bouncer: bouncer,
+                     badges: badges, isDropTarget: dropTargetID == app.id, isHidden: runningApps.isHidden(running))
+            .opacity(dragging == app.id ? 0 : 1)
+            .gesture(unpinnedGroupDropGesture(for: app, tile: tile))
+    }
+
     @ViewBuilder private func entryView(_ entry: DockEntry, tile: CGFloat) -> some View {
         switch entry {
         case .app(let app):
-            DockItemView(app: app, running: runningApps.runningInstance(of: app), isPinned: true, size: tile, dockModel: dockModel, bouncer: bouncer,
-                         badges: badges, isDropTarget: dropTargetID == app.id)
+            let running = runningApps.runningInstance(of: app)
+            DockItemView(app: app, running: running, isPinned: true, size: tile, dockModel: dockModel, bouncer: bouncer,
+                         badges: badges, isDropTarget: dropTargetID == app.id, isHidden: runningApps.isHidden(running))
         case .group(let group):
             GroupTileView(
                 group: group,

@@ -201,7 +201,7 @@ struct DockLabel: View {
     private static let tail: CGFloat = 7
 
     private static var defaultLook: DockLook {
-        DockLook(style: DockBackgroundStyle.systemDefault, frost: 0.5, tint: nil, cornerRadius: 0)
+        DockLook(cornerRadius: 0)
     }
 
     var body: some View {

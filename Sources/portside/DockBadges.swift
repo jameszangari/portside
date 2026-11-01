@@ -235,12 +235,12 @@ enum BadgeColor: String, Codable, CaseIterable, Identifiable {
     static let nativeRed = NSColor(displayP3Red: 0.850, green: 0.281, blue: 0.223, alpha: 1)
 
     /// Starting color when Custom is picked.
-    static let defaultCustom: RGBAColor = {
+    static let defaultCustom: PaletteColor = {
         let c = nativeRed.usingColorSpace(.sRGB) ?? .systemRed
-        return RGBAColor(red: c.redComponent, green: c.greenComponent, blue: c.blueComponent, alpha: 1)
+        return PaletteColor(base: RGBAColor(red: c.redComponent, green: c.greenComponent, blue: c.blueComponent, alpha: 1))
     }()
 
-    func fill(custom: RGBAColor) -> NSColor {
+    func fill(custom: PaletteColor) -> NSColor {
         switch self {
         case .macOS: Self.nativeRed
         case .accent: .controlAccentColor
@@ -251,8 +251,13 @@ enum BadgeColor: String, Codable, CaseIterable, Identifiable {
         case .purple: .systemPurple
         case .pink: .systemPink
         case .graphite: .systemGray
-        case .custom: NSColor(srgbRed: custom.red, green: custom.green, blue: custom.blue, alpha: custom.alpha)
+        case .custom: Self.opaque(custom.resolved)
         }
+    }
+
+    /// Badges are always opaque.
+    private static func opaque(_ rgb: RGBAColor) -> NSColor {
+        NSColor(srgbRed: rgb.red, green: rgb.green, blue: rgb.blue, alpha: 1)
     }
 }
 

@@ -125,6 +125,9 @@ extension EnvironmentValues {
 }
 
 /// Standard widget chrome: a rounded tile of `size` units wide.
+/// Inset by one app-icon margin on each side (same as groups), centered in a
+/// full-tile slot. Wide widgets only inset the outer ends so the gap to
+/// neighbors matches small widgets and app tiles.
 struct WidgetTile<Content: View>: View {
     let size: WidgetSize
     @ViewBuilder var content: Content
@@ -133,16 +136,22 @@ struct WidgetTile<Content: View>: View {
 
     var body: some View {
         let units = CGFloat(size.rawValue)
+        let inset = tile * IconMetrics.margin
+        let drawn = tile - 2 * inset
+        let slotWidth = tile * units + iconGap * (units - 1)
+        let chromeWidth = slotWidth - 2 * inset
+        let radius = drawn * 0.22
         content
-            .frame(width: tile * units + iconGap * (units - 1), height: tile)
+            .frame(width: chromeWidth, height: drawn)
             // Own frosted backing, so the dock's Frost and style settings
             // never make a widget see-through.
             .background {
-                let shape = RoundedRectangle(cornerRadius: tile * 0.22, style: .continuous)
+                let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
                 shape.fill(.regularMaterial)
                     .overlay(shape.fill(Color.white.opacity(0.08)))
             }
-            .clipShape(RoundedRectangle(cornerRadius: tile * 0.22, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .frame(width: slotWidth, height: tile)
     }
 }
 

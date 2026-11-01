@@ -12,7 +12,7 @@ Full feature list. The [README](../README.md) keeps a short summary.
 - Timing logs for mouseEntered (or draggingEntered), animation start, and panel-interactive.
 - Auto-hide toggle (menu bar item, separator right-click menu, Settings, or Cmd+Option+D). With hiding off, the dock stays revealed.
 - Multi-display: an edge zone on every screen; the dock follows the display whose edge you hit. Works across Spaces and over fullscreen apps. Does not reveal while you are holding a mouse button (for example dragging a window); file drags to the edge still reveal.
-- Notification badges, the same ones the macOS Dock shows, with no permission needed. They update while the dock is visible. Same size, placement, font and red as the native badge. Badge color is a setting (Appearance > Badges: macOS Red, Accent Color, system colors, or Custom). Toggle in Settings. Group tiles show the sum of member badges.
+- Notification badges, the same ones the macOS Dock shows, with no permission needed. They update while the dock is visible. Same size, placement, font and red as the native badge. Badge color is a setting (Appearance > Badges: macOS Red, Accent Color, system colors, or Custom from the Portside palette). Toggle in Settings. Group tiles show the sum of member badges.
 
 ## Apps
 
@@ -22,6 +22,7 @@ Full feature list. The [README](../README.md) keeps a short summary.
 - Drag an icon out of the dock to remove it, like the native Dock: the icon floats under the cursor for the whole drag (strip leaves a gap), a "Remove" label shows once it is clearly outside, and releasing it there removes it with a short poof (instant under Reduce Motion). Dragging back over the dock reorders as usual, and Escape puts it back. Works for app tiles, group tiles, and widgets (a group with apps in it asks first, see Groups); an app dragged out of an open group grid asks Remove from Group or Remove from Dock.
 - Drop files on an app tile to open them in that app, like the native Dock. Only tiles whose app can open the files highlight and accept the drop (Finder takes folders). A not-running pinned app launches with the bounce.
 - Running apps that are not pinned show after the pinned section.
+- Native Dock options (General > Dock): Show indicators for open applications, Show suggested and recent apps (up to 3 recently quit apps after the running apps), Make hidden apps translucent (Cmd-H fades the icon).
 - Right-click menu: Keep in Dock or Remove from Dock, Add to Group, Open at Login (checkbox), Show in Finder, then for running apps Hide (Show if hidden) and Quit. Hold Option and Quit becomes Force Quit. Open at Login for other apps uses System Events (may ask for Automation once); Portside's own tile uses the same SMAppService path as Settings.
 - App tiles, group tiles, Portside's own tile and group cells: short click opens (or toggles the group); hold for 0.5s opens its menu (simultaneous with the tap, not exclusive); moving first starts a drag. Hover labels track the magnified icon's spring frames so they stay centered.
 - Dock menus take the keyboard while open (Escape closes them, arrows move through them) without taking focus from the frontmost app.
@@ -54,6 +55,7 @@ Full feature list. The [README](../README.md) keeps a short summary.
 ## Groups
 
 - User-defined groups of apps shown as one tile that opens a grid.
+- Custom group icon: pick one of 13 macOS system colors and any SF Symbol (searchable by name and keyword, about 7,200 symbols) to replace the mini app grid on the tile. The picker shows under the name field when a group is created or renamed, from the tile menu (Change Icon...), and from Settings > Groups (click the group's icon). "Show Apps" goes back to the grid. The artwork follows the system icon style (Default, Dark, Clear, Tinted) so it sits with the app icons.
 - Inline naming on creation; rename from the open grid title (click it), the tile menu, or Settings. Ungroup and remove-from-group from context menus.
 - Removing a group that has apps ("Remove from Dock", or dragging its tile out) asks first: Ungroup Instead (default, apps return as normal tiles), Remove Group, or Cancel. Empty groups go without asking. The alert gives focus back to the previous app.
 - Optional open on hover, with configurable open delay and close grace.
@@ -64,7 +66,12 @@ Full feature list. The [README](../README.md) keeps a short summary.
 ## Appearance
 
 - Icons match the macOS icon style (Default, Dark, Clear, Tinted) like the native Dock, and refresh when you change it in System Settings. Or pick "Original" to show each app's own artwork.
-- Dock background: Liquid Glass (default), Frosted, or Solid, with a Frost (or Opacity) slider, an optional tint color, and corner radius. Open group grids use the same look. Widgets keep their own frosted card whatever the Frost setting. Accessibility Reduce Transparency turns glass into opaque frosted live; Reduce Motion is respected for slides, springs, and the poof.
+- Dock background, three distinct styles that each keep their own settings, plus corner radius. Open group grids and hover labels use the same look.
+  - Liquid Glass (default): the system glass with Strength and an optional tint color. Regular is the frosted system glass; Clear is see-through with refraction at the edges (falls back to the public clear glass if the private variant goes away).
+  - Frosted: a blur material (Ultra Thin to Ultra Thick) with Strength, a tint with its own opacity, and an optional border.
+  - Solid: a color, linear gradient (with angle), or radial gradient; every color has its own opacity, plus overall Opacity and an optional border.
+  - Reset applies to the current style only.
+  - Colors come from Portside's own palette instead of the macOS color panel: 20 preset swatches plus Saturation, Tint, Shade and Opacity sliders, inline in Settings. Gradients edit one stop at a time (click its chip). The custom badge color uses the same palette. Widgets keep their own frosted card whatever the Frost setting. Accessibility Reduce Transparency turns glass into opaque frosted live; Reduce Motion is respected for slides, springs, and the poof.
 
 ## Folder stacks
 
