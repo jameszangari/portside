@@ -11,7 +11,7 @@
 
 1. **Do NOT hand-write an Xcode project.** Never author `project.pbxproj` or a `.xcodeproj` by hand. This is a dead end and causes infinite loops. Use **Swift Package Manager** instead:
    - `swift package init --type executable`
-   - A `Package.swift` with an executable target, `platforms: [.macOS(.v14)]` (or current), and resources.
+   - A `Package.swift` with an executable target, `platforms: [.macOS("26.0")]` (or current), and resources.
    - All source under `Sources/portside/`.
    - If an `.xcodeproj` is ever strictly needed, generate it with **XcodeGen** from a `project.yml`, never by hand.
 2. **Build after every single file-creation batch.** After writing files, run `swift build` and paste the result. Do not write more than ~3 files without compiling. If it doesn't compile, fix it before adding anything new.

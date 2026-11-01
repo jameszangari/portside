@@ -10,7 +10,8 @@ let infoPlist = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appe
 let package = Package(
     name: "portside",
     platforms: [
-        .macOS(.v14)
+        // String form: .v26 needs PackageDescription 6.2; tools-version stays 5.10.
+        .macOS("26.0")
     ],
     targets: [
         .target(

@@ -20,6 +20,13 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [ ] **Enhancements:** more widgets; app groups (D); window previews on hover (on B.5 overlay); profiles
 - [ ] **UX cleanup:** Side-dock widget layout (deferred from B.6; see phase below)
 
+## README cleanup + macOS 26 floor (2026-10-31)
+
+- [x] Declared minimum bumped from macOS 14 to **macOS 26** (`Package.swift` `.macOS("26.0")`, `LSMinimumSystemVersion` / actool `26.0`). Matches Liquid Glass and the only tested host (macOS 27 / Xcode 27).
+- [x] README shortened to overview + quick start + doc index. Detail moved to `docs/FEATURES.md`, `docs/ARCHITECTURE.md`, `docs/BUILD.md`, `docs/DATA.md`.
+- [x] `AGENTS.md` definition of done points at those files for layout / dock.json / private-API notes.
+- Known gap: still untested on a clean macOS 26 machine (developed on 27).
+
 ## Open Settings hotkey (2026-10-31)
 
 - [x] Customizable global hotkey opens Settings from any app (Carbon `RegisterEventHotKey`, same path as Cmd+Option+D).
@@ -38,7 +45,8 @@ Roadmap mirrors `docs/PLAN.md`. Milestones A to E, B.5 and B.6 are done and hand
 - [x] `verify_dmg` mounts the result and checks the app signature, the Applications link, and the saved layout.
 - [x] Verified (ad-hoc `--package`): window bounds 200,120,740,708; icons at 270,150 and 270,415; screenshot matches the Chrome-style layout; volume icon shows.
 - Findings: Finder only saves window bounds after a close/reopen, and icon positions must be set after that reopen or they shift down by the toolbar height. `hdiutil -srcfolder` drops `.VolumeIcon.icns` and the main Finder pass deletes it, so it is copied last and parked off-window in a short second pass.
-- [ ] Full `--notarize` DMG run: in progress; blocked on the keychain prompt for the Developer ID key (see report).
+- [x] Full `--notarize` DMG run: app and DMG both Accepted and stapled. Published as [v0.3.0](https://github.com/jameszangari/portside-dock/releases/tag/v0.3.0) with `Portside-0.3.0.dmg` (3.5 MB). The downloaded asset, quarantined, passes `spctl` as Notarized Developer ID; the app inside is 0.3.0, stapled, and accepted.
+- [ ] Hand test: download from the release page, open the DMG, drag to Applications, launch with no Gatekeeper prompt.
 - Known gaps: needs Finder Automation permission for the terminal on first run. If your Finder shows the path bar or hidden files, you see them in the DMG window too (your Finder prefs, not baked into the DMG).
 
 ## Developer ID + notarization (2026-10-31)

@@ -132,7 +132,7 @@ set_key CFBundleShortVersionString string "$version"
 set_key CFBundleVersion string "$version"
 set_key CFBundleIconFile string AppIcon
 set_key CFBundleInfoDictionaryVersion string 6.0
-set_key LSMinimumSystemVersion string 14.0
+set_key LSMinimumSystemVersion string 26.0
 set_key LSUIElement bool true
 set_key NSHighResolutionCapable bool true
 plutil -lint "$plist"
@@ -152,7 +152,7 @@ if [ -d "$icon_doc" ]; then
     echo "==> actool AppIcon.icon"
     mkdir "$work/actool"
     if xcrun actool "$icon_doc" --compile "$work/actool" \
-            --platform macosx --minimum-deployment-target 14.0 \
+            --platform macosx --minimum-deployment-target 26.0 \
             --app-icon AppIcon --include-all-app-icons \
             --output-partial-info-plist "$work/actool.plist" \
             --output-format human-readable-text --errors --warnings >"$work/actool.log" 2>&1 \
