@@ -32,8 +32,8 @@ enum PortsideMain {
             exit(MainActor.assumeIsolated { WidgetPreviews.render(to: CommandLine.arguments[index + 1]) })
         }
         #endif
-        if CommandLine.arguments.contains("--print-usage") {
-            exit(UsageFetcher.printAll())
+        if let flag = CommandLine.arguments.firstIndex(of: "--print-usage") {
+            exit(UsageFetcher.printAll(only: CommandLine.arguments.dropFirst(flag + 1).first))
         }
         // Same as Settings > Widgets > Agent Hooks.
         for (flag, action) in [("--install-agent-hooks", AgentHooks.install), ("--remove-agent-hooks", AgentHooks.uninstall)]

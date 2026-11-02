@@ -1322,30 +1322,18 @@ private struct WidgetSettings: View {
                 Section {
                     ForEach(AgentProvider.all) { provider in
                         Toggle(isOn: Binding(
-                            get: { dockModel.usageProviders.contains(provider.id) && (provider.id != "claude" || dockModel.usageClaudeConsent) },
-                            set: { on in
-                                if provider.id == "claude" {
-                                    if on, !dockModel.usageClaudeConsent {
-                                        guard UsageConsent.requestClaude() else { return }
-                                        dockModel.setUsageClaudeConsent(true)
-                                    } else if !on {
-                                        dockModel.setUsageClaudeConsent(false)
-                                    }
-                                }
-                                dockModel.setUsageProvider(provider.id, enabled: on)
-                            }
+                            get: { UsageConsent.isShown(provider.id, in: dockModel) },
+                            set: { UsageConsent.setShown(provider.id, $0, in: dockModel) }
                         )) {
                             Text("\(provider.name) by \(provider.vendor)")
-                            Text(provider.id == "claude"
-                                 ? "5-hour and weekly limits, from your Claude Code sign-in."
-                                 : "5-hour and weekly limits, from Codex's local session logs.").helperStyle()
+                            Text(provider.usageDetail).helperStyle()
                         }
                         .toggleStyle(.switch)
                     }
                 } header: {
                     Text("AI Usage Providers")
                 } footer: {
-                    Text("Refreshes every 5 minutes. The first two selected show on the tile; hover for reset times.").footerStyle()
+                    Text("Refreshes every 5 minutes. Every provider you pick shows on the tile; hover for percentages.").footerStyle()
                 }
             }
         }
@@ -1404,9 +1392,10 @@ private struct WidgetRow: View {
                     get: { enabled },
                     set: { on in
                         dockModel.setWidget(kind, enabled: on)
-                        if on, kind == UsageWidget.kind, dockModel.usageProviders.contains("claude"),
-                           !dockModel.usageClaudeConsent, UsageConsent.requestClaude() {
-                            dockModel.setUsageClaudeConsent(true)
+                        if on, kind == UsageWidget.kind {
+                            for id in dockModel.usageProviders where !dockModel.usageAllowed(id) {
+                                if UsageConsent.request(id) { dockModel.setUsageConsent(id, granted: true) }
+                            }
                         }
                     }
                 ))

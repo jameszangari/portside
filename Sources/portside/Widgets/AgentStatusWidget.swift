@@ -127,7 +127,7 @@ struct AgentProvider: Hashable, Identifiable {
     /// Ring and accent color in the Usage widget.
     let color: Color
 
-    static let all = [named("claude"), named("codex")]
+    static let all = [named("claude"), named("codex"), named("copilot")]
 
     static func named(_ id: String) -> AgentProvider {
         switch id {
@@ -139,6 +139,10 @@ struct AgentProvider: Hashable, Identifiable {
             AgentProvider(id: id, name: "Codex", vendor: "OpenAI",
                           bundleIDs: ["com.openai.codex"],
                           color: Color(red: 0.25, green: 0.55, blue: 1.0))
+        case "copilot":
+            AgentProvider(id: id, name: "Copilot", vendor: "GitHub",
+                          bundleIDs: ["com.github.CopilotForXcode"],
+                          color: Color(red: 0.62, green: 0.40, blue: 0.95))
         default:
             AgentProvider(id: id, name: id.capitalized, vendor: id.capitalized, bundleIDs: [], color: .gray)
         }

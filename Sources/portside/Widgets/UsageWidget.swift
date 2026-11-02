@@ -3,8 +3,9 @@ import Combine
 import SwiftUI
 import os.log
 
-/// Plan usage meters for coding agents: the share of the short (5 hour)
-/// and weekly limits used, per provider picked in Settings > Widgets.
+/// Plan usage meters for coding agents: the share of each provider's limits
+/// used (5 hour and weekly, or monthly for Copilot), per provider picked in
+/// Settings > Widgets or the widget's right-click menu.
 ///
 /// Sources (read on a 5 minute refresh, off the main thread):
 /// - Claude: Claude Code's sign-in from the login keychain, read with
@@ -14,6 +15,13 @@ import os.log
 ///   or sent until the user agrees (`DockModel.usageClaudeConsent`).
 /// - Codex: the `rate_limits` Codex writes into its session logs under
 ///   ~/.codex/sessions. Local only; as fresh as the last Codex turn.
+/// - Copilot: account-wide monthly quota, so it covers use in editors, the
+///   CLI, and `copilot --acp` alike. ACP itself has no quota method, so this
+///   asks the Copilot CLI's headless server (`account.getQuota`, marked
+///   experimental by GitHub), which uses the CLI's own sign-in. Without the
+///   CLI, the GitHub CLI's token goes to GitHub's Copilot user endpoint (not
+///   a documented API). Nothing runs until the user agrees
+///   (`DockModel.usageCopilotConsent`).
 final class UsageWidget: DockWidget, DockModelWidget {
     static let kind = "usage"
     let name = "AI Usage"
@@ -32,17 +40,22 @@ final class UsageWidget: DockWidget, DockModelWidget {
 
     private var cancellable: AnyCancellable?
     private var consentCancellable: AnyCancellable?
-    private var claudeConsent = false
+    private var allowed: Set<String> = []
     private let queue = DispatchQueue(label: "com.james.portside.usage")
     private let logger = Logger(subsystem: "com.james.portside", category: "Widgets")
 
     func attach(_ model: DockModel) {
         providers = model.usageProviders.map(AgentProvider.named)
-        claudeConsent = model.usageClaudeConsent
-        consentCancellable = model.$usageClaudeConsent.dropFirst().sink { [weak self] granted in
-            self?.claudeConsent = granted
-            self?.refresh()
-        }
+        let allowedIDs = { AgentProvider.all.map(\.id).filter(model.usageAllowed) }
+        allowed = Set(allowedIDs())
+        // Published fires before the value is stored, so read after this turn.
+        consentCancellable = model.$usageClaudeConsent.dropFirst().map { _ in () }
+            .merge(with: model.$usageCopilotConsent.dropFirst().map { _ in () })
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] in
+                self?.allowed = Set(allowedIDs())
+                self?.refresh()
+            }
         cancellable = model.$usageProviders.dropFirst().sink { [weak self] ids in
             self?.providers = ids.map(AgentProvider.named)
             self?.refresh()
@@ -51,14 +64,14 @@ final class UsageWidget: DockWidget, DockModelWidget {
 
     func refresh() {
         let selected = providers
-        let claudeAllowed = claudeConsent
+        let allowedIDs = allowed
         queue.async { [weak self] in
             let group = DispatchGroup()
             var results: [String: ProviderUsage] = [:]
             let lock = NSLock()
             for provider in selected {
                 group.enter()
-                UsageFetcher.fetch(provider, claudeAllowed: claudeAllowed) { result in
+                UsageFetcher.fetch(provider, allowed: allowedIDs.contains(provider.id)) { result in
                     lock.withLock { results[provider.id] = result }
                     group.leave()
                 }
@@ -79,11 +92,8 @@ final class UsageWidget: DockWidget, DockModelWidget {
 
     /// Opens the first provider's usage page.
     func activate() {
-        guard let provider = providers.first else { return }
-        let page = provider.id == "claude"
-            ? "https://claude.ai/settings/usage"
-            : "https://chatgpt.com/codex/settings/usage"
-        if let url = URL(string: page) { NSWorkspace.shared.open(url) }
+        guard let provider = providers.first, let url = URL(string: provider.usagePage) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     var body: some View {
@@ -92,6 +102,25 @@ final class UsageWidget: DockWidget, DockModelWidget {
 }
 
 /// One limit window: "5h" at 27%, resetting at `resetsAt`.
+extension AgentProvider {
+    /// Settings line under the provider's switch.
+    var usageDetail: String {
+        switch id {
+        case "claude": "5-hour and weekly limits, from your Claude Code sign-in."
+        case "copilot": "Monthly quota, including CLI and ACP use, from the Copilot CLI or GitHub CLI sign-in."
+        default: "5-hour and weekly limits, from Codex's local session logs."
+        }
+    }
+
+    var usagePage: String {
+        switch id {
+        case "claude": "https://claude.ai/settings/usage"
+        case "copilot": "https://github.com/settings/copilot"
+        default: "https://chatgpt.com/codex/settings/usage"
+        }
+    }
+}
+
 struct UsageWindow: Equatable {
     let label: String
     let percent: Double
@@ -138,30 +167,64 @@ struct ProviderUsage: Equatable {
             return "\(provider.name) " + windows.map(percent).joined(separator: " · ")
         }
         return windows.map { window in
-            let name = window.label == "5h" ? "Session" : window.label == "7d" ? "Weekly" : window.label
+            let name = ["5h": "Session", "7d": "Weekly", "Prem": "Premium"][window.label] ?? window.label
             return "\(name) \(percent(window))"
         }.joined(separator: " · ")
     }
 
-    /// Time today, weekday and time later.
+    /// Time today, weekday and time this week, date beyond that (monthly quotas).
     private static func resetFormat(_ date: Date) -> Date.FormatStyle {
-        Calendar.current.isDateInToday(date) ? .dateTime.hour().minute() : .dateTime.weekday(.abbreviated).hour().minute()
+        if Calendar.current.isDateInToday(date) { return .dateTime.hour().minute() }
+        return date.timeIntervalSinceNow < 7 * 86400 ? .dateTime.weekday(.abbreviated).hour().minute() : .dateTime.month(.abbreviated).day()
     }
 }
 
 // MARK: - Consent
 
 enum UsageConsent {
-    /// Asks before Portside reads Claude Code's token. True when allowed.
+    /// The provider is on and allowed to read and send.
     @MainActor
-    static func requestClaude() -> Bool {
-        let alert = NSAlert()
-        alert.messageText = "Show Claude usage?"
-        alert.informativeText = """
-        To show your Claude limits, Portside reads the sign-in token Claude Code keeps in your login keychain ("Claude Code-credentials") and sends it to api.anthropic.com to ask for your 5-hour and weekly usage. This repeats every 5 minutes.
+    static func isShown(_ id: String, in model: DockModel) -> Bool {
+        model.usageProviders.contains(id) && model.usageAllowed(id)
+    }
 
-        The token is not logged, saved, or sent anywhere else. The endpoint is not a documented API and may change. You can turn this off at any time in Settings > Widgets.
-        """
+    /// Turns a provider on or off, asking first where it needs consent.
+    /// Turning it off revokes the consent.
+    @MainActor
+    static func setShown(_ id: String, _ on: Bool, in model: DockModel) {
+        if on, !model.usageAllowed(id) {
+            guard request(id) else { return }
+            model.setUsageConsent(id, granted: true)
+        } else if !on {
+            model.setUsageConsent(id, granted: false)
+        }
+        model.setUsageProvider(id, enabled: on)
+    }
+
+    /// Asks before Portside reads a provider's sign-in. True when allowed.
+    @MainActor
+    static func request(_ id: String) -> Bool {
+        let alert = NSAlert()
+        switch id {
+        case "claude":
+            alert.messageText = "Show Claude usage?"
+            alert.informativeText = """
+            To show your Claude limits, Portside reads the sign-in token Claude Code keeps in your login keychain ("Claude Code-credentials") and sends it to api.anthropic.com to ask for your 5-hour and weekly usage. This repeats every 5 minutes.
+
+            The token is not logged, saved, or sent anywhere else. The endpoint is not a documented API and may change. You can turn this off at any time in Settings > Widgets.
+            """
+        case "copilot":
+            alert.messageText = "Show Copilot usage?"
+            alert.informativeText = """
+            To show your Copilot quota, Portside briefly runs the Copilot CLI, which asks GitHub using its own sign-in. Without the CLI, Portside gets a token from the GitHub CLI (gh auth token) and sends it to api.github.com. This repeats every 5 minutes.
+
+            The token is not logged, saved, or sent anywhere else. These interfaces may change. You can turn this off at any time in Settings > Widgets.
+            """
+        default:
+            return true
+        }
+        // The dock panel never activates the app, so bring the alert forward.
+        NSApp.activate()
         alert.addButton(withTitle: "Allow")
         alert.addButton(withTitle: "Don't Allow")
         return alert.runModal() == .alertFirstButtonReturn
@@ -171,12 +234,12 @@ enum UsageConsent {
 // MARK: - Fetching
 
 extension UsageFetcher {
-    /// `portside --print-usage`: one summary line per provider.
-    static func printAll() -> Int32 {
+    /// `portside --print-usage [provider]`: one summary line per provider.
+    static func printAll(only id: String? = nil) -> Int32 {
         let group = DispatchGroup()
-        for provider in AgentProvider.all {
+        for provider in AgentProvider.all where id == nil || provider.id == id {
             group.enter()
-            fetch(provider, claudeAllowed: true) { usage in
+            fetch(provider, allowed: true) { usage in
                 print(usage.summary)
                 group.leave()
             }
@@ -190,14 +253,14 @@ enum UsageFetcher {
     private static let logger = Logger(subsystem: "com.james.portside", category: "Widgets")
     private static let home = FileManager.default.homeDirectoryForCurrentUser
 
-    static func fetch(_ provider: AgentProvider, claudeAllowed: Bool, completion: @escaping (ProviderUsage) -> Void) {
+    static func fetch(_ provider: AgentProvider, allowed: Bool, completion: @escaping (ProviderUsage) -> Void) {
+        guard allowed else {
+            return completion(ProviderUsage(provider: provider, windows: [], note: "Allow in Settings > Widgets"))
+        }
         switch provider.id {
-        case "claude":
-            guard claudeAllowed else {
-                return completion(ProviderUsage(provider: provider, windows: [], note: "Allow in Settings > Widgets"))
-            }
-            claude(provider, completion: completion)
+        case "claude": claude(provider, completion: completion)
         case "codex": completion(codex(provider))
+        case "copilot": copilot(provider, completion: completion)
         default: completion(ProviderUsage(provider: provider, windows: [], note: "Not supported"))
         }
     }
@@ -321,6 +384,199 @@ enum UsageFetcher {
         }
         return nil
     }
+
+    // MARK: Copilot
+
+    private struct CopilotQuota {
+        let key: String
+        let unlimited: Bool
+        let entitlement: Double
+        let percentRemaining: Double?
+        let resetsAt: Date?
+    }
+
+    private static func copilot(_ provider: AgentProvider, completion: @escaping (ProviderUsage) -> Void) {
+        func finish(_ quotas: [CopilotQuota]) {
+            let windows = copilotWindows(quotas)
+            let note = windows.isEmpty ? (quotas.contains(where: \.unlimited) ? "Unlimited" : "No limits reported") : nil
+            completion(ProviderUsage(provider: provider, windows: windows, note: note))
+        }
+        if let cli = copilotCLI(), let quotas = copilotQuotasFromCLI(cli) { return finish(quotas) }
+        func fail(_ note: String) { completion(ProviderUsage(provider: provider, windows: [], note: note)) }
+        guard let token = githubCLIToken() else { return fail("Sign in to Copilot CLI or GitHub CLI") }
+        var request = URLRequest(url: URL(string: "https://api.github.com/copilot_internal/user")!)
+        request.setValue("token \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Portside", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 15
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard error == nil, status == 200, let data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let snapshots = json["quota_snapshots"] as? [String: [String: Any]] else {
+                logger.error("usage copilot: HTTP \(status)")
+                return fail(status == 401 || status == 403 ? "Sign in to Copilot CLI or GitHub CLI"
+                            : status == 404 ? "No Copilot plan" : "Usage unavailable")
+            }
+            let reset = (json["quota_reset_date"] as? String).flatMap(parseDay)
+            finish(snapshots.map { key, value in
+                CopilotQuota(key: key, unlimited: value["unlimited"] as? Bool ?? false,
+                             entitlement: (value["entitlement"] as? NSNumber)?.doubleValue ?? 0,
+                             percentRemaining: (value["percent_remaining"] as? NSNumber)?.doubleValue,
+                             resetsAt: reset)
+            })
+        }.resume()
+    }
+
+    /// Premium requests first, then Chat and Code. Free plans have no premium
+    /// quota and paid plans usually have unlimited Chat and Code, so both
+    /// kinds are left out.
+    private static func copilotWindows(_ quotas: [CopilotQuota]) -> [UsageWindow] {
+        [("premium_interactions", "Prem"), ("chat", "Chat"), ("completions", "Code")].compactMap { key, label in
+            guard let quota = quotas.first(where: { $0.key == key }), !quota.unlimited, quota.entitlement > 0,
+                  let remaining = quota.percentRemaining else { return nil }
+            // The CLI can report a reset date of "now". `UsageWindow` would
+            // read that as expired and show 0%, so only keep future dates.
+            let resetsAt = quota.resetsAt.flatMap { $0 > Date() ? $0 : nil }
+            return UsageWindow(label: label, percent: 100 - remaining, resetsAt: resetsAt)
+        }
+    }
+
+    /// The Copilot CLI, from its usual install places. A GUI app has no shell
+    /// PATH to search.
+    private static func copilotCLI() -> URL? {
+        let fm = FileManager.default
+        var candidates = [
+            home.appendingPathComponent(".local/bin/copilot"),
+            URL(fileURLWithPath: "/opt/homebrew/bin/copilot"),
+            URL(fileURLWithPath: "/usr/local/bin/copilot"),
+            home.appendingPathComponent(".npm-global/bin/copilot"),
+            home.appendingPathComponent(".local/share/gh/copilot/copilot"),
+            home.appendingPathComponent("Library/Application Support/Code/User/globalStorage/github.copilot-chat/copilotCli/copilot"),
+        ]
+        let nvm = home.appendingPathComponent(".nvm/versions/node")
+        for version in (try? fm.contentsOfDirectory(atPath: nvm.path))?.sorted().reversed() ?? [] {
+            candidates.append(nvm.appendingPathComponent("\(version)/bin/copilot"))
+        }
+        return candidates.first { fm.isExecutableFile(atPath: $0.path) }
+    }
+
+    /// Runs `copilot --headless --stdio` for one `account.getQuota` call, using
+    /// the CLI's own sign-in. Portside never sees a token. Nil when the CLI
+    /// fails, is signed out, or takes over 10 seconds.
+    private static func copilotQuotasFromCLI(_ cli: URL) -> [CopilotQuota]? {
+        // Its logs go to a folder of ours, so ~/.copilot/logs does not gain a
+        // file every 5 minutes.
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("portside-copilot-\(UUID().uuidString)")
+        guard (try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)) != nil else { return nil }
+        defer { try? FileManager.default.removeItem(at: scratch) }
+
+        let process = Process()
+        process.executableURL = cli
+        process.arguments = ["--headless", "--no-auto-update", "--log-level", "none", "--log-dir", scratch.path, "--stdio"]
+        process.currentDirectoryURL = scratch
+        // npm installs start with `env node`, and the CLI falls back to `gh`.
+        var environment = ProcessInfo.processInfo.environment
+        let path = [cli.deletingLastPathComponent().path, "/opt/homebrew/bin", "/usr/local/bin", environment["PATH"] ?? "/usr/bin:/bin"]
+        environment["PATH"] = path.joined(separator: ":")
+        process.environment = environment
+        let input = Pipe(), output = Pipe()
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        // A CLI that exits early must not end Portside with SIGPIPE.
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+
+        let lock = NSLock()
+        let finished = DispatchSemaphore(value: 0)
+        var buffer = Data()
+        var result: [String: Any]?
+        output.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            lock.withLock {
+                buffer.append(chunk)
+                if let reply = rpcReply(from: &buffer) { result = reply }
+            }
+            if chunk.isEmpty || lock.withLock({ result != nil }) {
+                handle.readabilityHandler = nil
+                finished.signal()
+            }
+        }
+        defer {
+            output.fileHandleForReading.readabilityHandler = nil
+            try? input.fileHandleForWriting.close()
+            if process.isRunning { process.terminate() }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [process] in
+                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+            }
+        }
+        do { try process.run() } catch {
+            logger.error("usage copilot: CLI did not start")
+            return nil
+        }
+        let body = Data(#"{"jsonrpc":"2.0","id":1,"method":"account.getQuota","params":{}}"#.utf8)
+        do {
+            try input.fileHandleForWriting.write(contentsOf: Data("Content-Length: \(body.count)\r\n\r\n".utf8) + body)
+        } catch { return nil }
+        guard finished.wait(timeout: .now() + 10) == .success,
+              let snapshots = lock.withLock({ result })?["quotaSnapshots"] as? [String: [String: Any]] else {
+            logger.error("usage copilot: no quota from CLI")
+            return nil
+        }
+        return snapshots.map { key, value in
+            CopilotQuota(key: key, unlimited: value["isUnlimitedEntitlement"] as? Bool ?? false,
+                         entitlement: (value["entitlementRequests"] as? NSNumber)?.doubleValue ?? 0,
+                         percentRemaining: (value["remainingPercentage"] as? NSNumber)?.doubleValue,
+                         resetsAt: (value["resetDate"] as? String).flatMap(parseDate))
+        }
+    }
+
+    /// Consumes complete `Content-Length` frames, returning the result of
+    /// the reply to request 1 when one has arrived. An error reply returns
+    /// an empty result.
+    private static func rpcReply(from buffer: inout Data) -> [String: Any]? {
+        let separator = Data("\r\n\r\n".utf8)
+        while let gap = buffer.range(of: separator),
+              let header = String(data: buffer[buffer.startIndex..<gap.lowerBound], encoding: .utf8),
+              let length = header.components(separatedBy: "\r\n")
+                  .first(where: { $0.lowercased().hasPrefix("content-length:") })
+                  .flatMap({ Int($0.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)) }),
+              buffer.distance(from: gap.upperBound, to: buffer.endIndex) >= length {
+            let end = buffer.index(gap.upperBound, offsetBy: length)
+            let frame = buffer[gap.upperBound..<end]
+            defer { buffer = Data(buffer[end...]) }
+            guard let json = try? JSONSerialization.jsonObject(with: frame) as? [String: Any],
+                  (json["id"] as? NSNumber)?.intValue == 1 else { continue }
+            return json["result"] as? [String: Any] ?? [:]
+        }
+        return nil
+    }
+
+    /// The GitHub CLI's token. Never logged.
+    private static func githubCLIToken() -> String? {
+        let fm = FileManager.default
+        guard let gh = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].first(where: fm.isExecutableFile) else { return nil }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: gh)
+        process.arguments = ["auth", "token"]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return nil }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0,
+              let token = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !token.isEmpty else { return nil }
+        return token
+    }
+
+    /// "2026-12-01".
+    private static func parseDay(_ text: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withFullDate]
+        return formatter.date(from: text)
+    }
 }
 
 // MARK: - Views
@@ -334,7 +590,7 @@ struct UsageView: View {
         let size = WidgetSize.resolved(chosen, natural: .large)
         let inset = WidgetLayout.inset(tile)
         let side = WidgetLayout.itemSide(tile)
-        let shown = Array(usage.prefix(2))
+        let shown = usage
         WidgetTile(size: size) {
             if shown.isEmpty {
                 Image(systemName: "gauge.with.dots.needle.67percent")
@@ -343,10 +599,11 @@ struct UsageView: View {
             } else if size == .small {
                 // One ring per provider, short window only.
                 ConcentricUsage(usage: shown, side: side)
-            } else if size == .medium && shown.count > 1 {
-                // No text: gauges spaced evenly.
+            } else if size == .medium && shown.count > 1 || shown.count > 2 {
+                // No text: gauges spaced evenly. Three only fit in Wide when smaller.
+                let gauge = size == .medium && shown.count > 2 ? side * 0.72 : side
                 EvenRow {
-                    ForEach(shown, id: \.provider.id) { UsageGauge(usage: $0, side: side) }
+                    ForEach(shown, id: \.provider.id) { UsageGauge(usage: $0, side: gauge) }
                 }
             } else if shown.count == 1 {
                 // One provider (Wide or Extra Wide): gauge, then labeled

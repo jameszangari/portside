@@ -735,9 +735,27 @@ final class DockModel: Codable, ObservableObject {
     /// reads nothing and sends nothing.
     @Published private(set) var usageClaudeConsent = false
 
-    func setUsageClaudeConsent(_ granted: Bool) {
-        guard granted != usageClaudeConsent else { return }
-        usageClaudeConsent = granted
+    /// The user agreed to let Portside ask GitHub for their Copilot quota,
+    /// through the Copilot CLI or the GitHub CLI's token. Until then the
+    /// Copilot meter runs nothing and sends nothing.
+    @Published private(set) var usageCopilotConsent = false
+
+    /// Whether this provider's meter may read and send. Codex is local only.
+    func usageAllowed(_ id: String) -> Bool {
+        switch id {
+        case "claude": usageClaudeConsent
+        case "copilot": usageCopilotConsent
+        default: true
+        }
+    }
+
+    func setUsageConsent(_ id: String, granted: Bool) {
+        guard granted != usageAllowed(id) else { return }
+        switch id {
+        case "claude": usageClaudeConsent = granted
+        case "copilot": usageCopilotConsent = granted
+        default: return
+        }
         persist()
     }
 
@@ -745,7 +763,8 @@ final class DockModel: Codable, ObservableObject {
         var next = usageProviders.filter { $0 != id }
         if enabled {
             next.append(id)
-            next.sort { (Self.Defaults.usageProviders.firstIndex(of: $0) ?? 99) < (Self.Defaults.usageProviders.firstIndex(of: $1) ?? 99) }
+            let order = AgentProvider.all.map(\.id)
+            next.sort { (order.firstIndex(of: $0) ?? 99) < (order.firstIndex(of: $1) ?? 99) }
         }
         usageProviders = next
         persist()
@@ -965,7 +984,7 @@ final class DockModel: Codable, ObservableObject {
         case showTrash, trashAccessHintDismissed
         case showBadges, badgeColor, badgeCustomColor
         case activityIcons
-        case stacks, layout, widgetSizes, usageProviders, usageClaudeConsent
+        case stacks, layout, widgetSizes, usageProviders, usageClaudeConsent, usageCopilotConsent
         case iconStyle, background, cornerRadius
         case showIndicators, dimHiddenApps, showRecents, recentApps
         /// Before per-style backgrounds. Read only, for migration.
@@ -1011,6 +1030,7 @@ final class DockModel: Codable, ObservableObject {
         widgetSizes = (try? c.decodeIfPresent([String: WidgetSize].self, forKey: .widgetSizes)) ?? [:]
         usageProviders = (try? c.decodeIfPresent([String].self, forKey: .usageProviders)) ?? Defaults.usageProviders
         usageClaudeConsent = try c.decodeIfPresent(Bool.self, forKey: .usageClaudeConsent) ?? false
+        usageCopilotConsent = try c.decodeIfPresent(Bool.self, forKey: .usageCopilotConsent) ?? false
         openGroupsOnHover = try c.decodeIfPresent(Bool.self, forKey: .openGroupsOnHover) ?? false
         openSettingsOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .openSettingsOnLaunch) ?? false
         groupHoverDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverDelay) ?? Defaults.groupHoverDelay, to: Self.groupHoverDelayRange)
@@ -1074,6 +1094,7 @@ final class DockModel: Codable, ObservableObject {
         if !widgetSizes.isEmpty { try c.encode(widgetSizes, forKey: .widgetSizes) }
         if usageProviders != Defaults.usageProviders { try c.encode(usageProviders, forKey: .usageProviders) }
         if usageClaudeConsent { try c.encode(true, forKey: .usageClaudeConsent) }
+        if usageCopilotConsent { try c.encode(true, forKey: .usageCopilotConsent) }
         try c.encode(openGroupsOnHover, forKey: .openGroupsOnHover)
         try c.encode(openSettingsOnLaunch, forKey: .openSettingsOnLaunch)
         try c.encode(groupHoverDelay, forKey: .groupHoverDelay)
@@ -1305,6 +1326,7 @@ final class DockModel: Codable, ObservableObject {
         settingsHotkey = old.settingsHotkey
         openGroupsOnHover = old.openGroupsOnHover
         usageClaudeConsent = old.usageClaudeConsent
+        usageCopilotConsent = old.usageCopilotConsent
         openSettingsOnLaunch = old.openSettingsOnLaunch
         groupHoverDelay = old.groupHoverDelay
         groupHoverCloseGrace = old.groupHoverCloseGrace
