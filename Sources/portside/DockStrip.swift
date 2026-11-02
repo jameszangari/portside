@@ -407,6 +407,17 @@ struct DockStrip: View {
         let edit = ClosureMenuItem("Edit Widgets...") { interactions.onOpenSettings?() }
         edit.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: nil)
         menu.addItem(edit)
+        if host.id == UsageWidget.kind {
+            menu.addItem(.separator())
+            for provider in AgentProvider.all {
+                let shown = UsageConsent.isShown(provider.id, in: dockModel)
+                let item = ClosureMenuItem(provider.name) {
+                    UsageConsent.setShown(provider.id, !shown, in: dockModel)
+                }
+                item.state = shown ? .on : .off
+                menu.addItem(item)
+            }
+        }
         let sizes = WidgetSize.choices(upTo: host.size)
         if !edge.isVertical, sizes.count > 1 {
             menu.addItem(.separator())

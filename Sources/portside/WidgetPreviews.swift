@@ -8,6 +8,8 @@ import SwiftUI
 enum WidgetPreviews {
     @MainActor
     static func render(to directory: String) -> Int32 {
+        // DockLabel's background reads NSApp for the appearance.
+        _ = NSApplication.shared
         let art = NSImage(size: NSSize(width: 64, height: 64), flipped: false) { rect in
             NSGradient(starting: .systemRed, ending: .systemPurple)?.draw(in: rect, angle: 45)
             return true
@@ -15,12 +17,13 @@ enum WidgetPreviews {
         let player = NowPlayingWidget.players[0]
         let track = NowPlayingWidget.Track(id: "1", title: "Ya Dig", artist: "Young Nudy", artwork: art,
                                            artworkURL: nil, isPlaying: true, player: player)
-        let claude = AgentProvider.named("claude"), codex = AgentProvider.named("codex")
+        let claude = AgentProvider.named("claude"), codex = AgentProvider.named("codex"), copilot = AgentProvider.named("copilot")
         let usage = [
             ProviderUsage(provider: claude, windows: [UsageWindow(label: "5h", percent: 79, resetsAt: nil),
                                                       UsageWindow(label: "7d", percent: 71, resetsAt: nil)], note: nil),
             ProviderUsage(provider: codex, windows: [UsageWindow(label: "5h", percent: 12, resetsAt: nil),
                                                      UsageWindow(label: "7d", percent: 30, resetsAt: nil)], note: nil),
+            ProviderUsage(provider: copilot, windows: [UsageWindow(label: "Prem", percent: 45, resetsAt: nil)], note: nil),
         ]
         let clock = ClockWidget(), stats = SystemStatsWidget()
         clock.refresh(); stats.refresh()
@@ -32,8 +35,15 @@ enum WidgetPreviews {
             ("Now Playing", [.small, .medium, .large], { _ in AnyView(NowPlayingView(track: track) { _ in }) }),
             ("Agents done", [.small, .medium], { _ in AnyView(AgentStatusView(summary: agentsDone)) }),
             ("Agents working", [.small, .medium], { _ in AnyView(AgentStatusView(summary: agentsWorking)) }),
-            ("AI Usage x2", [.small, .medium, .large], { _ in AnyView(UsageView(usage: usage)) }),
+            ("AI Usage x3", [.small, .medium, .large], { _ in AnyView(UsageView(usage: usage)) }),
+            ("AI Usage x2", [.small, .medium, .large], { _ in AnyView(UsageView(usage: Array(usage.prefix(2)))) }),
+            ("Copilot x1", [.small, .medium, .large], { _ in AnyView(UsageView(usage: [usage[2]])) }),
             ("AI Usage x1", [.small, .medium, .large], { _ in AnyView(UsageView(usage: [usage[0]])) }),
+            ("Label short", [.small], { _ in AnyView(DockLabel(title: "Safari", pointing: .bottom)) }),
+            ("Label usage", [.small], { _ in AnyView(DockLabel(title: "Claude 26% · 87%   Codex 12% · 38%   Copilot 0% · 0%", pointing: .bottom)) }),
+            ("Label notes", [.small], { _ in AnyView(DockLabel(title: "Claude: Open Claude Code to refresh its sign-in   Codex: No recent Codex usage   Copilot: Sign in to Copilot CLI or GitHub CLI", pointing: .bottom)) }),
+            ("Label long", [.small], { _ in AnyView(DockLabel(title: "quarterly-financial-report-final-revised-version-2026-with-all-appendices-and-speaker-notes.pdf", pointing: .bottom)) }),
+            ("Label endless", [.small], { _ in AnyView(DockLabel(title: String(repeating: "very-long-file-name-", count: 30) + "end.pdf", pointing: .bottom)) }),
         ]
         for tile: CGFloat in [32, 48, 64] {
             let sheet = VStack(alignment: .leading, spacing: 6) {

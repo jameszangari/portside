@@ -30,7 +30,7 @@ macOS asks for permissions as features need them; see [Privacy and permissions](
 - **Apps:** pin, reorder, drag-out remove, Finder drops, running apps, recent apps, indicator and hidden-app options, Open at Login, native modifier clicks, launch bounce
 - **Activity icons:** camera (green), microphone (orange), playing audio (animated wave), working (CPU-based, per app)
 - **Layout:** Bottom / Left / Right, live icon size and gap, magnification with shelf
-- **Widgets:** Clock, Battery, Calendar, Weather, System Stats, CPU, Memory, Now Playing, Agents, AI Usage (Small / Wide / Extra Wide on the bottom dock)
+- **Widgets:** Clock, Battery, Calendar, Weather, System Stats, CPU, Memory, Now Playing, Agents, AI Usage with Claude, Codex and Copilot, your pick (Small / Wide / Extra Wide on the bottom dock)
 - **Groups and stacks:** app groups with grids and optional custom icons (SF Symbol + palette color); folder stacks (grid / native-style fan / list) with FSEvents, drag items out to any app; Trash tile
 - **Appearance:** match macOS icon style or Original; Liquid Glass (matches the native Dock in dark mode, or Custom with every part adjustable) or Solid (color or gradient, optional backdrop blur) background; one color picker everywhere (Brand, Neutrals, macOS and RGB presets, hex, hue, saturation, tint, shade, opacity)
 - **Native Dock:** hide via autohide-delay (save/restore), import apps and folders, open at login via `SMAppService`, optional Settings on launch
@@ -58,6 +58,7 @@ Portside has no telemetry and no account. Everything stays on your Mac except th
 | `api.github.com`, `github.com`, `*.githubusercontent.com` | Check for Updates, Install Update | A version check and the release DMG download. No identifiers. |
 | `api.open-meteo.com`, `geocoding-api.open-meteo.com` | Weather widget on | The city you type, then its coordinates |
 | `api.anthropic.com` | AI Usage widget with Claude, after you allow it | Claude Code's sign-in token, to ask for your usage |
+| `api.github.com` | AI Usage widget with Copilot, after you allow it, and only without the Copilot CLI | The GitHub CLI's token, to ask for your Copilot quota. With the Copilot CLI installed, the CLI makes this request itself. |
 | Spotify's artwork host (`https` only) | Now Playing with Spotify | A cover art request for the current track |
 
 **Permissions** (macOS asks when a feature first needs them):
@@ -73,7 +74,7 @@ Portside has no telemetry and no account. Everything stays on your Mac except th
 - Only if you click Install Hooks: entries in `~/.claude/settings.json`, `~/.codex/hooks.json` and `~/.codex/config.toml`, each backed up once to `<file>.portside.bak`. Remove Hooks undoes it.
 - With "Hide the macOS Dock" on: `autohide` and `autohide-delay` in `com.apple.dock`, restored on quit.
 
-**What widgets read:** AI Usage reads Claude Code's keychain token only after you agree, and Codex's local session logs in `~/.codex/sessions`. Agents reads the hook files above. Battery, System Stats, CPU and Memory read local system counters. Now Playing asks Spotify or Music what is playing.
+**What widgets read:** AI Usage reads Claude Code's keychain token only after you agree, Codex's local session logs in `~/.codex/sessions`, and, only after you agree, your Copilot quota by running the Copilot CLI or `gh auth token`. Agents reads the hook files above. Battery, System Stats, CPU and Memory read local system counters. Now Playing asks Spotify or Music what is playing.
 
 ## Build from source
 

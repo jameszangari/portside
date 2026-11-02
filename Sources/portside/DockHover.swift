@@ -199,18 +199,30 @@ struct DockLabel: View {
     var look: DockLook?
 
     private static let tail: CGFloat = 7
+    private static let fontSize: CGFloat = 14
+    private static let maxTextWidth: CGFloat = 640
 
     private static var defaultLook: DockLook {
         DockLook(cornerRadius: 0)
     }
 
+    /// The longest line's width, capped. A fixed width is what makes long
+    /// text wrap here: the bubble is `fixedSize`, and without a width SwiftUI
+    /// lays the text out as one line and truncates it.
+    private var textWidth: CGFloat {
+        let natural = (title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: Self.fontSize)]).width
+        return min(natural.rounded(.up) + 1, Self.maxTextWidth)
+    }
+
     var body: some View {
         Text(title)
-            .font(.system(size: 14))
+            .font(.system(size: Self.fontSize))
             .foregroundStyle(.primary)
-            .lineLimit(1)
+            .multilineTextAlignment(.center)
+            // Truncates only past this, for a very long file name.
+            .lineLimit(4)
             .truncationMode(.middle)
-            .frame(maxWidth: 320)
+            .frame(width: textWidth)
             .padding(.horizontal, 14)
             .padding(.vertical, 4)
             .padding(tailSide, pointing == nil ? 0 : Self.tail)

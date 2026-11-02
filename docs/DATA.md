@@ -39,8 +39,9 @@ It is deleted after a verified restore. If it exists when Portside starts, Ports
 - Magnification (`magnificationEnabled`) and Magnified size (`magnifiedSize`, points, 16 to 128, default 64)
 - Reveal delay, hide delay, animation duration (with reset to defaults)
 - Widgets: on/off (`widgetKinds`; dragging a widget in the dock updates both this order and `layout`; optional `cpu`, `memory`, `nowPlaying`, `agents` and `usage`, off by default)
-- AI Usage providers (`usageProviders`: ordered provider ids, `claude` and/or `codex`; default both, written only when changed)
+- AI Usage providers (`usageProviders`: ordered provider ids, any of `claude`, `codex`, `copilot`; default `claude` and `codex`, written only when changed)
 - AI Usage consent (`usageClaudeConsent`: `true` once you allow reading Claude Code's keychain token; absent means no; the Claude meter reads and sends nothing until then)
+- AI Usage Copilot consent (`usageCopilotConsent`: `true` once you allow asking GitHub for your Copilot quota; absent means no; the Copilot meter runs nothing and sends nothing until then)
 - Agent status files (not in dock.json): `agents/<pid>.json` next to dock.json, one per agent process, written by the hook script (`agent-hook.sh`, installed from Settings > Widgets > Agent Hooks): `{ provider ("claude" or "codex"), pid, time (Unix seconds), payload (the hook's stdin JSON) }`. Portside reads `payload.cwd` for the project name and maps `payload.hook_event_name` to idle, working, or done, and deletes the file on `SessionEnd` or when the process is gone. The `agents` folder and `agent-hook.sh` are mode 0700 and the status files 0600, because the payload can hold prompt text. Installing also sets `codex_hooks = true` under `[features]` in `~/.codex/config.toml`, and backs up each changed agent file once to `<file>.portside.bak`
 - Groups: rename, ungroup, delete, open on hover, open delay, close grace. A group entry may carry `icon: { symbol, color, theme? }` (an SF Symbol name, a palette color as below with opacity ignored, and `theme` `light` or `dark` to pin that icon's style; absent means `system`, following the macOS icon style; no `icon` means the app grid). Older files with `color` as a name (`blue`, `indigo`, ...) or a separate `custom` color still load and are rewritten as a palette color on the next save
 - Appearance: icon style (`iconStyle`: `matchSystem` or `original`), `background` object (below), `cornerRadius` (points, default 14, the native Dock's). Older `backgroundStyle` / `backgroundFrost` / `backgroundTint` keys are read once for migration and no longer written
@@ -51,7 +52,7 @@ It is deleted after a verified restore. If it exists when Portside starts, Ports
   - Solid `border`: `isOn` (default on), `width` (points, 0.5 to 6), `color` (palette color; default white at 15% opacity). A plain Bool from older builds still loads as on or off
 - Native Dock options: `showIndicators` (default true), `showRecents` (default true, like macOS), `recentApps` (up to 3 `PinnedApp`, most recent first; absent when empty), `dimHiddenApps` (default false)
 - Open Settings on launch (`openSettingsOnLaunch`, default `false`)
-- Hide the macOS Dock (`hideNativeDock`, plus `nativeDockExplained` once the first-time dialog was confirmed)
+- Hide the macOS Dock (`hideNativeDock`, default `true`, plus `nativeDockExplained` once the first-time dialog was confirmed)
 - Import from macOS Dock and Undo last import (nothing new stored in `dock.json`; imported apps, spacers, position, and icon size land in `entries`, `edge`, and `iconSize`). Entries may include `{ type: "spacer", spacer: { id, size } }` (`regular` or `small`).
 - Open Portside at login: not stored by Portside. macOS keeps it (System Settings > General > Login Items).
 
