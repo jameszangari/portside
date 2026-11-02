@@ -18,7 +18,9 @@ final class UsageWidget: DockWidget, DockModelWidget {
     let name = "AI Usage"
     var hoverTitle: String {
         guard !usage.isEmpty else { return providers.isEmpty ? "AI Usage · No providers selected" : "AI Usage · Loading" }
-        return usage.map(\.summary).joined(separator: "   ")
+        // One provider: "Session 79% · Weekly 71%". Several: "Claude 79% · 71%   Codex 12% · 30%".
+        if usage.count == 1 { return usage[0].hoverText(named: false) }
+        return usage.map { $0.hoverText(named: true) }.joined(separator: "   ")
     }
     let icon = Image(systemName: "gauge.with.dots.needle.67percent")
     let size = WidgetSize.large
@@ -115,6 +117,21 @@ struct ProviderUsage: Equatable {
             return "\(window.label) \(Int(window.percent.rounded()))%\(reset)"
         }
         return "\(provider.name): " + parts.joined(separator: ", ")
+    }
+
+    /// Hover label: percentages only, no reset times. Single provider spells
+    /// out "Session"/"Weekly"; with several, the provider name leads and the
+    /// numbers stay bare so the label fits.
+    func hoverText(named: Bool) -> String {
+        guard !windows.isEmpty else { return "\(provider.name): \(note ?? "No data")" }
+        let percent = { (w: UsageWindow) in "\(Int(w.percent.rounded()))%" }
+        if named {
+            return "\(provider.name) " + windows.map(percent).joined(separator: " · ")
+        }
+        return windows.map { window in
+            let name = window.label == "5h" ? "Session" : window.label == "7d" ? "Weekly" : window.label
+            return "\(name) \(percent(window))"
+        }.joined(separator: " · ")
     }
 
     /// Time today, weekday and time later.
