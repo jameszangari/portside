@@ -1,50 +1,34 @@
-# Portside: Custom macOS Dock (Architecture Plan)
+# Portside: Architecture Plan
 
-**Project:** `portside` (personal use, Apple Silicon M4, macOS 27.0.1, Xcode 27.1)
-**Goal:** A fast, event-driven dock replacement inspired by Dockset 0.2.7: all the core features (widgets, folders, indicators) with none of the polling-based sluggishness.
+**Project:** `portside`, a native macOS dock replacement for Apple Silicon (macOS 26 or later).
+**Goal:** A fast, event-driven dock: widgets, folders, running indicators, with none of the polling-based sluggishness some docks have.
 
-> Rename note: the app is **Portside**, NOT "Dockset". Dockset is the third-party app being replaced; it lives in /Applications with bundle id `dev.benja.dockset`. Use a distinct name/bundle id (`com.james.portside`) everywhere so there are no keychain, signing, or UserDefaults collisions with it. If you see "Dockset" anywhere in filenames, types, or bundle paths below or in generated code, it's a mistake: fix it to Portside.
+## 0. Build rules
 
----
-
-## 0. CRITICAL BUILD RULES (read first, these prevent the loops)
-
-1. **Do NOT hand-write an Xcode project.** Never author `project.pbxproj` or a `.xcodeproj` by hand. This is a dead end and causes infinite loops. Use **Swift Package Manager** instead:
-   - `swift package init --type executable`
-   - A `Package.swift` with an executable target, `platforms: [.macOS("26.0")]` (or current), and resources.
-   - All source under `Sources/portside/`.
-   - If an `.xcodeproj` is ever strictly needed, generate it with **XcodeGen** from a `project.yml`, never by hand.
-2. **Build after every single file-creation batch.** After writing files, run `swift build` and paste the result. Do not write more than ~3 files without compiling. If it doesn't compile, fix it before adding anything new.
-3. **If you catch yourself repeating the same sentence or tool call, STOP.** Output "STUCK: <one line on why>" and wait. Do not retry the same action more than twice.
-4. **One milestone at a time.** Finish, build, and get sign-off on milestone A before touching B. Do not scaffold later milestones early.
-5. **Public APIs by default.** Private APIs (CoreDock, SkyLight, badges) only as small guarded shims (`dlopen`/`dlsym`, graceful fallback so an OS update degrades instead of crashing), each in its own file and listed in the checklist. Currently: `BackgroundCursor.swift`.
+1. **SwiftPM only.** No hand-written `.xcodeproj` or `project.pbxproj`. All source is under `Sources/portside/`, with `platforms: [.macOS("26.0")]` in `Package.swift`.
+2. **Build often.** Run `swift build` after each batch of changes and read the real output. A clean build is not proof it works; also run `swift run` to catch launch crashes.
+3. **Public APIs by default.** Private APIs only as small guarded shims (`dlopen`/`dlsym`, graceful fallback so an OS update degrades instead of crashing), each in its own file and listed in `docs/ARCHITECTURE.md` Notes.
+4. **No polling in the reveal/hide path.** Allowed timers: one cancelable hide-delay timer, widget refresh, running-app cache refresh.
 
 ---
 
-## 1. REA Findings (reverse-engineered from Dockset 0.2.7)
+## 1. Design approach
 
-### Root cause of sluggishness
-Dockset detects edge reveal with **repeating polling timers** (~50ms armed / 250ms idle) in `CustomDockWindowController.updateVisibilityTimer`, plus a non-instant window activation. The fix is event-driven detection + a non-activating panel.
+### Why a new dock
+Docks that detect the screen edge with repeating timers (every 50 to 250 ms) feel laggy, and a window that activates on click steals focus. Portside uses event-driven detection and a non-activating panel instead.
 
-### What to reuse vs. rebuild
-| Aspect | Dockset | Portside |
-|--------|---------|-------|
-| Language / UI | Swift + AppKit/CoreGraphics | Same |
-| Window type | `NSPanel` (non-activating) | Same, built correctly from scratch |
-| Edge reveal | **Polling NSTimer** | **NSTrackingArea** `mouseEntered`/`mouseExited` (zero polling) |
-| Native dock hiding | `CoreDockSetAutoHideEnabled` (private) | **autohide-delay trick only** (see §4); pick ONE mechanism |
-| Persistence | `DockStore` Codable JSON + UserDefaults | Same pattern |
-| Widgets | `WidgetHost` → `CustomWidgetView` | Clean plugin protocol (§5) |
-| Folders | `DockSwipeTransition` + `DockItemCollapse` | SwiftUI `withAnimation` |
-| Badges | private `NSRunningApplication` APIs | Milestone F only, guarded |
-
-### Private APIs (Milestone F only, behind dlopen/dlsym)
-- CoreDock: `CoreDockGetAutoHideEnabled`, `CoreDockSetAutoHideEnabled`, `CoreDockGetOrientationAndPinning`
-- SkyLight (Spaces/fullscreen, only if needed): `CGSMainConnectionID`, `CGSCopyManagedDisplaySpaces`, etc.
-- NSWorkspace (public): `runningApplications`, `URLForApplicationWithBundleIdentifier:`
+| Aspect | Portside |
+|--------|----------|
+| Language / UI | Swift, SwiftUI and AppKit |
+| Window type | Non-activating `NSPanel` |
+| Edge reveal | `NSTrackingArea` `mouseEntered`/`mouseExited` on a thin edge window (zero polling) |
+| Native dock hiding | `autohide` and `autohide-delay` only (see section 4), saved and restored exactly |
+| Persistence | Codable JSON (`dock.json`) |
+| Widgets | Plugin protocol (section 5) |
+| Folders | SwiftUI `withAnimation` |
+| Badges | Launch Services badge store, guarded (`LaunchServicesBadges.swift`) |
 
 ---
-
 ## 2. Architecture
 
 ```
@@ -161,11 +145,11 @@ struct FolderGroup: Codable, Identifiable {
     var isExpanded: Bool
 }
 ```
-Expand/collapse with SwiftUI `withAnimation`; grid pops above the strip. (Dockset uses a custom `DockSwipeTransition`; we don't need it.)
+Expand/collapse with SwiftUI `withAnimation`; grid pops above the strip. 
 
 ---
 
-## 7. Build Order (milestones: build and sign-off each before next)
+## 7. Build order (milestones: build and verify each before the next)
 
 **A: Edge tracker + non-activating panel + slide (foundation).** DONE.
 DockEngine, EdgeTracker (NSTrackingArea), DockPanel, minimal DockModel (delays/animation only), timing logs (mouseEntered -> animation start -> interactive). *Test: edge -> reveal ~16ms; leave -> hides after delay; clicking a placeholder works without focus steal.* **This is the whole point: do not move on until the reveal feels instant.**
@@ -246,7 +230,7 @@ Features that make Portside feel like the real Dock. Ordered by daily-driver imp
 
 Goal: with Portside's hiding off, Rectangle Maximize, Window > Fill and tiling stop at the dock's edge, like the native Dock. No public API lets an app shrink `NSScreen.visibleFrame`, so Portside fits windows itself through Accessibility (event-driven, no polling).
 
-- **Phase 0 (done):** measurements, see CHECKLIST "Windows respect Portside: Phase 0".
+- **Phase 0 (done):** measurements.
 - **Phase 1 (done):** `DockReservation`: reserved depth per edge on the dock's display (panel thickness minus its transparent far padding, plus a 4pt gap; magnification excluded). Active only when hiding is off. Recomputed on hiding, icon size, edge, and display changes.
 - **Phase 2 (done; permission UI moved to Phase 6):** `WindowFitter`: AX permission flow; per-app `AXObserver` (window created, moved, resized), apps from `RunningApps`. Fit only windows flush with the screen edge (within 2pt). Coalesce per window: one cancelable work item about 60ms after the last event, then set size and position together (fixing on the first event loses to Rectangle's follow-up move and to Fill's animation). Skip Portside, fullscreen, non-resizable, and windows that refuse; one retry, then leave the window alone.
 - **Phase 3 (done; also releases windows on quit):** toggle reflow, matching macOS: hiding turned off shrinks windows flush with the screen edge; hiding turned on grows windows flush with the reserved edge back to the screen edge.

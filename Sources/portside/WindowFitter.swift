@@ -272,8 +272,8 @@ final class WindowFitter {
 
     /// Observer thread: a window was created, moved, or resized.
     fileprivate func windowChanged(_ element: AXUIElement) {
-        queue.async {
-            guard self.target != nil else { return }
+        queue.async { [weak self] in
+            guard let self, self.target != nil else { return }
             let key = WindowKey(element: element)
             self.pending[key]?.cancel()
             let count = (self.burstCounts[key] ?? 0) + 1

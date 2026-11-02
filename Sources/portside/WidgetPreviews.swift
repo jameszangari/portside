@@ -24,8 +24,8 @@ enum WidgetPreviews {
         ]
         let clock = ClockWidget(), stats = SystemStatsWidget()
         clock.refresh(); stats.refresh()
-        let agentsDone = AgentSummary(provider: claude, running: 0, done: 1, projects: ["custom-dock"], hosts: ["T3 Code"])
-        let agentsWorking = AgentSummary(provider: claude, running: 2, done: 1, projects: ["custom-dock", "t3code"], hosts: ["T3 Code", "Terminal"])
+        let agentsDone = AgentSummary(provider: claude, running: 0, done: 1, projects: ["my-project"], hosts: ["T3 Code"])
+        let agentsWorking = AgentSummary(provider: claude, running: 2, done: 1, projects: ["my-project", "t3code"], hosts: ["T3 Code", "Terminal"])
         let rows: [(String, [WidgetSize], (WidgetSize) -> AnyView)] = [
             ("Clock", [.small, .medium], { _ in AnyView(clock.body) }),
             ("System Stats", [.small, .medium], { _ in AnyView(stats.body) }),

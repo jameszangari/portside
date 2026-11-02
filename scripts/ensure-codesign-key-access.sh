@@ -87,7 +87,7 @@ resolve_icon() {
     for candidate in \
         "$HOME/Applications/Portside.app/Contents/Resources/AppIcon.icns" \
         "$root/build/Portside.app/Contents/Resources/AppIcon.icns" \
-        "$root/design/brand/approved-icon/png/portside-approved-original-256.png" \
+        "$root/design/approved-icon/png/portside-approved-original-256.png" \
         "$root/Sources/portside/Support/AppIcon-256.png"
     do
         if [ -f "$candidate" ]; then

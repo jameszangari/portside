@@ -1,4 +1,5 @@
 #!/bin/bash
+# MAINTAINER ONLY: part of Portside's release process. Contributors do not need it.
 # Cuts a release: bumps VERSION, regenerates BuildInfo.swift, makes one
 # commit "Release vX.Y.Z", creates an annotated tag vX.Y.Z, and builds a
 # notarized build/dist/Portside-X.Y.Z.dmg (Developer ID Portside.app).

@@ -10,7 +10,8 @@ import os.log
 /// - Claude: Claude Code's sign-in from the login keychain, read with
 ///   /usr/bin/security (the tool Claude Code stores it with, so no
 ///   prompt), sent to Anthropic's OAuth usage endpoint. Not a documented
-///   API; any failure shows as a note instead of meters.
+///   API; any failure shows as a note instead of meters. Nothing is read
+///   or sent until the user agrees (`DockModel.usageClaudeConsent`).
 /// - Codex: the `rate_limits` Codex writes into its session logs under
 ///   ~/.codex/sessions. Local only; as fresh as the last Codex turn.
 final class UsageWidget: DockWidget, DockModelWidget {
@@ -30,11 +31,18 @@ final class UsageWidget: DockWidget, DockModelWidget {
     @Published private(set) var providers: [AgentProvider] = AgentProvider.all
 
     private var cancellable: AnyCancellable?
+    private var consentCancellable: AnyCancellable?
+    private var claudeConsent = false
     private let queue = DispatchQueue(label: "com.james.portside.usage")
     private let logger = Logger(subsystem: "com.james.portside", category: "Widgets")
 
     func attach(_ model: DockModel) {
         providers = model.usageProviders.map(AgentProvider.named)
+        claudeConsent = model.usageClaudeConsent
+        consentCancellable = model.$usageClaudeConsent.dropFirst().sink { [weak self] granted in
+            self?.claudeConsent = granted
+            self?.refresh()
+        }
         cancellable = model.$usageProviders.dropFirst().sink { [weak self] ids in
             self?.providers = ids.map(AgentProvider.named)
             self?.refresh()
@@ -43,13 +51,14 @@ final class UsageWidget: DockWidget, DockModelWidget {
 
     func refresh() {
         let selected = providers
+        let claudeAllowed = claudeConsent
         queue.async { [weak self] in
             let group = DispatchGroup()
             var results: [String: ProviderUsage] = [:]
             let lock = NSLock()
             for provider in selected {
                 group.enter()
-                UsageFetcher.fetch(provider) { result in
+                UsageFetcher.fetch(provider, claudeAllowed: claudeAllowed) { result in
                     lock.withLock { results[provider.id] = result }
                     group.leave()
                 }
@@ -140,6 +149,25 @@ struct ProviderUsage: Equatable {
     }
 }
 
+// MARK: - Consent
+
+enum UsageConsent {
+    /// Asks before Portside reads Claude Code's token. True when allowed.
+    @MainActor
+    static func requestClaude() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Show Claude usage?"
+        alert.informativeText = """
+        To show your Claude limits, Portside reads the sign-in token Claude Code keeps in your login keychain ("Claude Code-credentials") and sends it to api.anthropic.com to ask for your 5-hour and weekly usage. This repeats every 5 minutes.
+
+        The token is not logged, saved, or sent anywhere else. The endpoint is not a documented API and may change. You can turn this off at any time in Settings > Widgets.
+        """
+        alert.addButton(withTitle: "Allow")
+        alert.addButton(withTitle: "Don't Allow")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+}
+
 // MARK: - Fetching
 
 extension UsageFetcher {
@@ -148,7 +176,7 @@ extension UsageFetcher {
         let group = DispatchGroup()
         for provider in AgentProvider.all {
             group.enter()
-            fetch(provider) { usage in
+            fetch(provider, claudeAllowed: true) { usage in
                 print(usage.summary)
                 group.leave()
             }
@@ -162,9 +190,13 @@ enum UsageFetcher {
     private static let logger = Logger(subsystem: "com.james.portside", category: "Widgets")
     private static let home = FileManager.default.homeDirectoryForCurrentUser
 
-    static func fetch(_ provider: AgentProvider, completion: @escaping (ProviderUsage) -> Void) {
+    static func fetch(_ provider: AgentProvider, claudeAllowed: Bool, completion: @escaping (ProviderUsage) -> Void) {
         switch provider.id {
-        case "claude": claude(provider, completion: completion)
+        case "claude":
+            guard claudeAllowed else {
+                return completion(ProviderUsage(provider: provider, windows: [], note: "Allow in Settings > Widgets"))
+            }
+            claude(provider, completion: completion)
         case "codex": completion(codex(provider))
         default: completion(ProviderUsage(provider: provider, windows: [], note: "Not supported"))
         }

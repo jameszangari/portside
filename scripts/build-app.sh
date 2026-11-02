@@ -139,15 +139,15 @@ set_key NSHighResolutionCapable bool true
 plutil -lint "$plist"
 
 # App icon, best first:
-# 1. design/brand/icon-composer/AppIcon.icon compiled by actool: Assets.car
+# 1. design/icon-composer/AppIcon.icon compiled by actool: Assets.car
 #    (Liquid Glass on macOS 26 and later, CFBundleIconName) plus a flat
 #    AppIcon.icns for older macOS.
 # 2. The approved brand .icns, copied as is.
 # 3. An icon rendered with the hidden `portside --export-icon` flag.
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-icon_doc="$root/design/brand/icon-composer/AppIcon.icon"
-brand_icns="$root/design/brand/approved-icon/icns/portside-approved-original.icns"
+icon_doc="$root/design/icon-composer/AppIcon.icon"
+brand_icns="$root/design/approved-icon/icns/portside-approved-original.icns"
 compiled=false
 if [ -d "$icon_doc" ]; then
     echo "==> actool AppIcon.icon"
@@ -170,7 +170,7 @@ fi
 if [ "$compiled" = true ]; then
     :
 elif [ -f "$brand_icns" ]; then
-    echo "==> AppIcon.icns (design/brand)"
+    echo "==> AppIcon.icns (design)"
     cp "$brand_icns" "$contents/Resources/AppIcon.icns"
 else
     echo "==> AppIcon.icns (brand icons missing, generating with --export-icon)" >&2

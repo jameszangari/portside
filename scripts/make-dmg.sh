@@ -1,4 +1,5 @@
 #!/bin/bash
+# MAINTAINER ONLY: part of Portside's release process. Contributors do not need it.
 # Wraps a built Portside.app in a drag-to-install disk image: the app on
 # top, an arrow, and an Applications shortcut below (background from
 # scripts/DMGBackground.swift). No network.

@@ -9,7 +9,7 @@ enum UpdateCheckResult: Equatable {
     /// Repo URL couldn't be turned into an API URL.
     case notConfigured
     case upToDate
-    /// `dmgURL` is the GitHub asset to install when present (API asset URL when private).
+    /// `dmgURL` is the GitHub asset to install when present (the release asset `browser_download_url`).
     case available(version: String, releaseURL: URL, dmgURL: URL?)
     case failed(String)
 
@@ -34,8 +34,7 @@ struct InstalledCopy: Identifiable, Equatable {
 /// with `AppInfo.version`, and can download the release DMG and replace the
 /// running `.app` in place. One request per click; nothing runs in the background.
 ///
-/// The GitHub repo is private, so checks and downloads need a token
-/// (`GitHubAuth`: Portside keychain entry, or a logged-in `gh` CLI token).
+/// The repo is public, so checks and downloads are unauthenticated.
 ///
 /// Replacement: the new app is staged next to the installed one (same
 /// volume), verified (bundle id, version, Developer ID team), then a helper
@@ -51,8 +50,6 @@ enum UpdateChecker {
 
         struct Asset: Decodable {
             let name: String
-            /// API URL; required for private-repo downloads (with a Bearer token).
-            let url: URL
             let browser_download_url: URL
         }
     }
@@ -100,29 +97,20 @@ enum UpdateChecker {
               let api = URL(string: "https://api.github.com/repos/\(parts[0])/\(parts[1])/releases/latest") else {
             return .notConfigured
         }
-        let token = GitHubAuth.token()
         var request = URLRequest(url: api, timeoutInterval: 10)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("Portside/\(AppInfo.version)", forHTTPHeaderField: "User-Agent")
-        if let token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-                return .failed(httpFailure(http.statusCode, authenticated: token != nil))
+                return .failed(httpFailure(http.statusCode))
             }
             let release = try JSONDecoder().decode(Release.self, from: data)
             let latest = release.tag_name.hasPrefix("v") ? String(release.tag_name.dropFirst()) : release.tag_name
             guard isNewer(latest, than: AppInfo.version) else { return .upToDate }
             let asset = release.assets.first { $0.name == "Portside-\(latest).dmg" }
                 ?? release.assets.first { $0.name.hasPrefix("Portside-") && $0.name.hasSuffix(".dmg") }
-            // Private repos need the API asset URL + token; public can use either.
-            let dmgURL: URL? = {
-                guard let asset else { return nil }
-                return token != nil ? asset.url : asset.browser_download_url
-            }()
-            return .available(version: latest, releaseURL: release.html_url, dmgURL: dmgURL)
+            return .available(version: latest, releaseURL: release.html_url, dmgURL: asset?.browser_download_url)
         } catch {
             return .failed(error.localizedDescription)
         }
@@ -208,15 +196,12 @@ enum UpdateChecker {
 
     // MARK: - Private
 
-    private static func httpFailure(_ code: Int, authenticated: Bool) -> String {
+    private static func httpFailure(_ code: Int) -> String {
         switch code {
-        case 401, 403:
-            return "GitHub auth failed. Check the token in Settings > General."
+        case 403, 429:
+            return "GitHub is rate limiting requests. Try again later."
         case 404:
-            if authenticated {
-                return "no releases published yet."
-            }
-            return "the GitHub repo is private (or has no releases). Add a token in Settings > General, or sign in with the GitHub CLI (gh auth login)."
+            return "no releases found."
         default:
             return "GitHub returned \(code)."
         }
@@ -231,20 +216,37 @@ enum UpdateChecker {
         }
     }
 
+    /// Release downloads must be HTTPS and come from GitHub. Checked before
+    /// the first request and again on every redirect.
+    static func isAllowedDownloadURL(_ url: URL) -> Bool {
+        guard url.scheme == "https", url.user == nil, url.password == nil,
+              url.port == nil || url.port == 443,
+              let host = url.host?.lowercased() else { return false }
+        return host == "github.com" || host.hasSuffix(".githubusercontent.com")
+    }
+
+    private final class RedirectGuard: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession, task: URLSessionTask,
+                        willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest) async -> URLRequest? {
+            guard let url = request.url, UpdateChecker.isAllowedDownloadURL(url) else {
+                updateLogger.error("refused redirect to \(request.url?.absoluteString ?? "nil", privacy: .public)")
+                return nil
+            }
+            return request
+        }
+    }
+
     private static func downloadDMG(from url: URL) async throws -> URL {
+        guard isAllowedDownloadURL(url) else {
+            throw UpdateError.untrustedURL(url.absoluteString)
+        }
         var request = URLRequest(url: url, timeoutInterval: 120)
         request.setValue("Portside/\(AppInfo.version)", forHTTPHeaderField: "User-Agent")
-        // API asset URLs need octet-stream + Bearer; browser URLs are fine with either.
-        let isAPIAsset = url.host == "api.github.com"
-        if isAPIAsset {
-            request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+        let (tempURL, response) = try await URLSession.shared.download(for: request, delegate: RedirectGuard())
+        if let final = response.url, !isAllowedDownloadURL(final) {
+            throw UpdateError.untrustedURL(final.absoluteString)
         }
-        if let token = GitHubAuth.token() {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        } else if isAPIAsset {
-            throw UpdateError.authRequired
-        }
-        let (tempURL, response) = try await URLSession.shared.download(for: request)
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             throw UpdateError.downloadFailed(http.statusCode)
         }
@@ -261,12 +263,14 @@ enum UpdateChecker {
     private static func prepareUpdate(dmg: URL, expectedVersion: String?, destination: URL) throws -> StagedUpdate {
         let work = destination.deletingLastPathComponent()
             .appendingPathComponent(".portside-update-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o700])
         let mount = FileManager.default.temporaryDirectory
             .appendingPathComponent("PortsideUpdateMount-\(UUID().uuidString)", isDirectory: true)
         var mounted = false
         do {
-            try FileManager.default.createDirectory(at: mount, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: mount, withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: 0o700])
             try run("/usr/bin/hdiutil", ["attach", dmg.path, "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mount.path])
             mounted = true
 
@@ -292,6 +296,10 @@ enum UpdateChecker {
         }
     }
 
+    private static var releaseRequirement: String {
+        "anchor apple generic and certificate leaf[subject.OU] = \"\(AppInfo.releaseTeamID)\""
+    }
+
     /// Bundle id, version, and a valid Developer ID signature from the release team.
     private static func verify(_ app: URL, expectedVersion: String?) throws -> String {
         guard let bundle = Bundle(url: app),
@@ -302,7 +310,10 @@ enum UpdateChecker {
         if let expectedVersion, version != expectedVersion {
             throw UpdateError.verificationFailed("expected version \(expectedVersion), the download is \(version.isEmpty ? "unversioned" : version).")
         }
-        let requirement = "anchor apple generic and certificate leaf[subject.OU] = \"\(AppInfo.releaseTeamID)\""
+        if isNewer(AppInfo.version, than: version) {
+            throw UpdateError.verificationFailed("the download (\(version)) is older than the running version (\(AppInfo.version)).")
+        }
+        let requirement = releaseRequirement
         do {
             try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "-R=\(requirement)", app.path])
         } catch {
@@ -328,6 +339,7 @@ enum UpdateChecker {
         OLD="$WORK/Portside-previous.app"
         LOG=\(shellEscape(logURL.path))
         RELAUNCH=\(relaunch ? 1 : 0)
+        REQ=\(shellEscape(releaseRequirement))
         mkdir -p "$(dirname "$LOG")"
         log() { echo "$(date '+%Y-%m-%d %H:%M:%S') [swap] $*" >> "$LOG"; }
         reopen() { [ "$RELAUNCH" = 1 ] && /usr/bin/open "$DEST"; }
@@ -337,6 +349,12 @@ enum UpdateChecker {
         if kill -0 "$APP_PID" 2>/dev/null; then
             log "still running after 60s; update cancelled, nothing changed"
             rm -rf "$WORK"
+            exit 1
+        fi
+        if ! /usr/bin/codesign --verify --deep --strict -R="$REQ" "$SRC" >>"$LOG" 2>&1; then
+            log "staged app failed signature re-check; update cancelled, nothing changed"
+            rm -rf "$WORK"
+            reopen
             exit 1
         fi
         if ! mv "$DEST" "$OLD"; then
@@ -424,7 +442,7 @@ private enum UpdateError: LocalizedError {
     case notInstalledApp
     case notWritable(String)
     case dmgMissingApp
-    case authRequired
+    case untrustedURL(String)
     case verificationFailed(String)
     case downloadFailed(Int)
     case commandFailed(String, String)
@@ -437,8 +455,8 @@ private enum UpdateError: LocalizedError {
             "Portside can't write to \(folder). Move Portside.app to ~/Applications, or update from the release page."
         case .dmgMissingApp:
             "the download didn't contain Portside.app."
-        case .authRequired:
-            "a GitHub token is required to download from this private repo."
+        case .untrustedURL(let url):
+            "refusing to download from \(url) (updates must come from GitHub over HTTPS)."
         case .verificationFailed(let reason):
             reason
         case .downloadFailed(let code):

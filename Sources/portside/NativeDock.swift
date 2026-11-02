@@ -25,12 +25,11 @@ enum NativeDock {
     ]
     static let touchedKeys = ["autohide", "autohide-delay"]
 
-    /// Seconds before the native Dock reveals (about 11.5 days). Same idea
-    /// as Dockset.
+    /// Seconds before the native Dock reveals (about 11.5 days).
     static let hiddenDelay: Double = 1_000_000
 
     /// A prior delay at or above this means another app (or a crashed
-    /// Dockset) already hid the Dock this way. Saving that as the "real"
+    /// Portside) already hid the Dock this way. Saving that as the "real"
     /// value would make restore keep the Dock hidden, so hiding refuses.
     static let suspiciousDelay: Double = 1_000
 

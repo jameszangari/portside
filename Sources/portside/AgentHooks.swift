@@ -52,7 +52,8 @@ enum AgentHooks {
 
     /// Installs for every agent found. Safe to repeat.
     static func install() throws {
-        try FileManager.default.createDirectory(at: scriptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: scriptURL.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o700])
         try writeScript()
         for target in targets where status(target) != .notFound {
             try edit(target, install: true)
@@ -84,7 +85,22 @@ enum AgentHooks {
 
     private static func writeScript() throws {
         try script.write(to: scriptURL, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scriptURL.path)
+        // The folder holds session payloads, which can include prompt text.
+        let folder = scriptURL.deletingLastPathComponent().path
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: folder)
+    }
+
+    /// Atomic writes make a new file with default permissions; put the
+    /// original mode back so a 0600 config stays 0600. New files get 0600.
+    private static func write(_ data: Data, to url: URL) throws {
+        let mode = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.posixPermissions] as? NSNumber
+        try data.write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: mode ?? 0o600], ofItemAtPath: url.path)
+    }
+
+    private static func shellQuote(_ text: String) -> String {
+        "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     private static func backUp(_ url: URL) {
@@ -117,7 +133,7 @@ enum AgentHooks {
             hooks[event] = groups.isEmpty ? nil : groups
         }
         if install {
-            let command = "'\(scriptURL.path)' \(target.id) \(tag)"
+            let command = "\(shellQuote(scriptURL.path)) \(target.id) \(tag)"
             for event in target.events {
                 var groups = hooks[event] as? [[String: Any]] ?? []
                 groups.append(["hooks": [["type": "command", "command": command]]])
@@ -127,7 +143,7 @@ enum AgentHooks {
         root["hooks"] = hooks.isEmpty ? nil : hooks
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         backUp(target.hooksFile)
-        try data.write(to: target.hooksFile, options: .atomic)
+        try write(data, to: target.hooksFile)
     }
 
     /// Sets `codex_hooks = true` under `[features]`, line by line, so the
@@ -146,7 +162,7 @@ enum AgentHooks {
             lines += ["[features]", "codex_hooks = true", ""]
         }
         backUp(url)
-        try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+        try write(Data(lines.joined(separator: "\n").utf8), to: url)
     }
 
     enum HookError: LocalizedError {
@@ -164,6 +180,7 @@ enum AgentHooks {
     static let script = #"""
     #!/bin/bash
     # Portside Agents widget hook. Installed from Portside Settings > Widgets.
+    umask 077
     provider="${1:-unknown}"
     dir="$HOME/Library/Application Support/com.james.portside/agents"
     payload=$(cat)
@@ -181,7 +198,7 @@ enum AgentHooks {
       pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
     done
 
-    mkdir -p "$dir" 2>/dev/null || exit 0
+    mkdir -p -m 700 "$dir" 2>/dev/null || exit 0
     tmp="$dir/.$agent_pid.$$"
     printf '{"provider":"%s","pid":%d,"time":%s,"payload":%s}\n' \
       "$provider" "$agent_pid" "$(date +%s)" "$payload" > "$tmp" 2>/dev/null \

@@ -3,7 +3,7 @@ import os.log
 
 /// EdgeTracker owns a thin, practically invisible window along the dock's
 /// edge on **every** display and reports cursor enter/exit through an
-/// NSTrackingArea. This is the fix for Dockset's lag: zero polling, the
+/// NSTrackingArea. Zero polling: the
 /// window server tells us the instant the cursor crosses into the edge zone.
 ///
 /// Multi-display (P3): each screen has its own edge window. Entering one
