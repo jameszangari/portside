@@ -294,7 +294,7 @@ final class AppActivity: ObservableObject {
             let output = Self.audioUInt32(object, kAudioProcessPropertyIsRunningOutput) != 0
             guard input || output else { continue }
             let pid = pid_t(bitPattern: Self.audioUInt32(object, kAudioProcessPropertyPID))
-            guard let key = owner(pid: pid, bundleID: Self.audioBundleID(object)) else { continue }
+            guard let key = owner(pid: pid, bundleID: Self.audioBundleID(object)) ?? Self.proxyOwner(pid: pid, apps: apps) else { continue }
             if input { mic.insert(key) }
             if output { audio.insert(key) }
         }
@@ -316,6 +316,16 @@ final class AppActivity: ObservableObject {
             self.applyAudio(audio)
             self.publish()
         }
+    }
+
+    /// FaceTime does its call audio in the system daemon `avconferenced`, so
+    /// the mic and sound show up under that process, not under the app.
+    /// Credit them to FaceTime when it is running.
+    private static func proxyOwner(pid: pid_t, apps: [DockApp]) -> String? {
+        var name = [CChar](repeating: 0, count: 256)
+        guard proc_name(pid, &name, UInt32(name.count)) > 0,
+              String(cString: name) == "avconferenced" else { return nil }
+        return apps.first { $0.key == "com.apple.FaceTime" }?.key
     }
 
     // MARK: - CoreAudio (queue)
