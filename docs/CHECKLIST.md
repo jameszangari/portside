@@ -42,6 +42,10 @@ Out of scope: minimized windows in the Dock, the two-finger App Expose gesture, 
 - Camera usage has no public per-app owner API, so a running camera is credited to apps also using the microphone.
 - Codex usage meters only move after a Codex turn that logs `rate_limits` numbers.
 - The AI Usage Claude meter uses an undocumented Anthropic endpoint and may stop working without notice.
+- The AI Usage Copilot meter uses the CLI's experimental `account.getQuota` or GitHub's undocumented `copilot_internal/user`, and either may change. ACP has no quota method, so `copilot --acp` use is counted through the account-wide quota, not read over ACP. Only tested on a free plan against live data; paid plan parsing is tested with a stub reply.
+- The Copilot CLI is found in fixed install locations only (Homebrew, `~/.local/bin`, npm global, nvm, `gh copilot`, VS Code). Elsewhere the meter falls back to the GitHub CLI.
+- The Agents widget does not track Copilot sessions; it covers Claude Code and Codex only.
+- Copilot has no app icon unless Copilot for Xcode is installed, so its gauge shows a "C".
 - Window fitting is not measured with Stage Manager, edge-drag tiling, Raycast window commands, or apps with their own minimum height.
 - Group tiles and Portside's own tile use SwiftUI `.contextMenu`, so right-click works only on their unmagnified area.
 - The DMG layout script drives Finder; your Finder preferences (path bar, hidden files) show in the DMG window.
