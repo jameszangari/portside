@@ -250,6 +250,11 @@ struct GroupPopoverView: View {
                 // a group too). Picks apply at once.
                 GroupIconPicker(icon: group.icon) { dockModel.setGroupIcon(groupID: group.id, to: $0, persist: $1) }
                     .onExitCommand { groups.endRename(commit: false) }
+                // Saves the name and returns to the title with the pencil.
+                Button("Done") { groups.endRename(commit: true) }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                 Divider()
             } else {
                 Text(group.name)
