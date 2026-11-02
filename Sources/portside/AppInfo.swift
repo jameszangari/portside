@@ -18,9 +18,8 @@ enum AppInfo {
     /// Short hash for dirty or unreleased builds ("abc1234", "abc1234-dirty"),
     /// nil for a clean release or when the commit is unknown.
     static var buildSuffix: String? {
-        guard commit != "unknown" else { return nil }
-        if isDirty == true { return "\(commit)-dirty" }
-        return isRelease ? nil : commit
+        guard commit != "unknown", !isRelease else { return nil }
+        return isDirty == true ? "\(commit)-dirty" : commit
     }
 
     /// "Version 0.1.0 by James Cliff", plus " (abc1234)" when not a clean release.

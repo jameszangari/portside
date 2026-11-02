@@ -1,17 +1,17 @@
 #!/bin/bash
 # MAINTAINER ONLY: part of Portside's release process. Contributors do not need it.
-# Publishes the current VERSION's annotated tag to GitHub with the notarized
-# drag-to-install Portside-X.Y.Z.dmg attached. Always rebuilds and
-# notarizes from the tagged commit before uploading.
+# Step 2 of a release, after the scripts/release.sh pull request is merged.
+# Tags the merged commit on main as vX.Y.Z, builds and notarizes
+# Portside-X.Y.Z.dmg from it, pushes only the tag, and creates the GitHub
+# release with the .dmg attached.
 #
 # Usage: scripts/publish-release.sh [--dry-run | --apply]
 #   --dry-run  (default) print what would happen, change nothing
-#   --apply    push the branch tip and tag, then gh release create with the .dmg
+#   --apply    tag, build, push the tag, then gh release create with the .dmg
 #
-# Requires: VERSION is X.Y.Z, tag vX.Y.Z exists locally, gh is authenticated,
+# Requires: on main and level with origin/main, a clean tree, gh authenticated,
 # Developer ID Application identity, and scripts/setup-notary.sh once.
-# Refuses if the tag does not point at HEAD (run from the release commit).
-# Never force-pushes. Does not bump VERSION (use scripts/release.sh for that).
+# Safe to rerun after a failed build. Never pushes a branch or force-pushes.
 set -euo pipefail
 
 usage() {
@@ -42,16 +42,15 @@ branch="$(git rev-parse --abbrev-ref HEAD)"
 head_full="$(git rev-parse HEAD)"
 head_short="$(git rev-parse --short HEAD)"
 
-if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-    echo "publish-release: tag $tag does not exist. Cut it with scripts/release.sh first." >&2
-    exit 1
+# Unset until the first --apply creates the tag.
+tag_commit=""
+if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+    tag_commit="$(git rev-list -n 1 "$tag")"
 fi
-
-tag_commit="$(git rev-list -n 1 "$tag")"
-tag_short="$(git rev-parse --short "$tag_commit")"
-head_matches_tag=true
-if [ "$tag_commit" != "$head_full" ]; then
-    head_matches_tag=false
+if [ -n "$tag_commit" ] && [ "$tag_commit" != "$head_full" ]; then
+    echo "publish-release: tag $tag exists at $(git rev-parse --short "$tag_commit"), not HEAD ($head_short)." >&2
+    echo "Bump the version with scripts/release.sh first." >&2
+    exit 1
 fi
 
 if ! command -v gh >/dev/null 2>&1; then
@@ -79,11 +78,15 @@ if [ "$apply" = false ]; then
     echo "DRY RUN (nothing will change; pass --apply to publish)"
     echo
     echo "  Branch:   $branch at $head_short"
-    echo "  Tag:      $tag at $tag_short"
+    if [ -n "$tag_commit" ]; then
+        echo "  Tag:      $tag exists at HEAD"
+    else
+        echo "  Tag:      $tag would be created at HEAD"
+    fi
     echo "  Disk img: $dmg (rebuilt and notarized on --apply)"
     echo "  $visibility_line"
-    if [ "$head_matches_tag" = false ]; then
-        echo "  HEAD:     does not match $tag; --apply would refuse (git checkout $tag)"
+    if [ "$branch" != "main" ]; then
+        echo "  Branch:   not main, --apply would refuse"
     fi
     if gh release view "$tag" >/dev/null 2>&1; then
         echo "  GitHub:   release $tag already exists (would upload/replace the .dmg asset)"
@@ -93,8 +96,8 @@ if [ "$apply" = false ]; then
     echo
     echo "With --apply it would run:"
     echo "  scripts/check-repo-visibility.sh"
+    echo "  git tag -a $tag -m \"Release $tag\""
     echo "  scripts/build-app.sh --notarize"
-    echo "  git push -u origin HEAD"
     echo "  git push origin $tag"
     if gh release view "$tag" >/dev/null 2>&1; then
         echo "  gh release upload $tag $dmg --clobber"
@@ -104,9 +107,13 @@ if [ "$apply" = false ]; then
     exit 0
 fi
 
-if [ "$head_matches_tag" = false ]; then
-    echo "publish-release: HEAD ($head_short) is not tag $tag ($tag_short)." >&2
-    echo "Check out the release commit (git checkout $tag) or cut a new release." >&2
+if [ "$branch" != "main" ]; then
+    echo "publish-release: run this from main (on $branch)." >&2
+    exit 1
+fi
+git fetch -q origin main
+if [ "$head_full" != "$(git rev-parse origin/main)" ]; then
+    echo "publish-release: local main differs from origin/main. Merge the release PR and run git pull." >&2
     exit 1
 fi
 
@@ -118,6 +125,10 @@ if [ -n "$dirty" ]; then
 fi
 
 echo "==> $visibility_line"
+if [ -z "$tag_commit" ]; then
+    echo "==> Tagging $head_short as $tag"
+    git tag -a "$tag" -m "Release $tag"
+fi
 echo "==> Building notarized .dmg (Developer ID + notarytool + staple)"
 scripts/build-app.sh --notarize
 if [ ! -f "$dmg" ]; then
@@ -125,8 +136,6 @@ if [ ! -f "$dmg" ]; then
     exit 1
 fi
 
-echo "==> git push origin HEAD"
-git push -u origin HEAD
 echo "==> git push origin $tag"
 git push origin "$tag"
 
