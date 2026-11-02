@@ -18,6 +18,15 @@ final class NativeDockController {
     /// setting is on.
     func applyAtLaunch() {
         guard dockModel.hideNativeDock else { return }
+        // On by default, so a first launch still owes the explanation.
+        if !dockModel.nativeDockExplained {
+            guard confirmFirstTime() else {
+                Self.logger.info("launch: canceled at the first-time explanation")
+                dockModel.setHideNativeDock(false)
+                return
+            }
+            dockModel.markNativeDockExplained()
+        }
         Self.logger.info("launch: Hide the macOS Dock is on, hiding")
         do {
             try NativeDock.hide()

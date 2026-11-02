@@ -52,7 +52,7 @@ It is deleted after a verified restore. If it exists when Portside starts, Ports
   - Solid `border`: `isOn` (default on), `width` (points, 0.5 to 6), `color` (palette color; default white at 15% opacity). A plain Bool from older builds still loads as on or off
 - Native Dock options: `showIndicators` (default true), `showRecents` (default true, like macOS), `recentApps` (up to 3 `PinnedApp`, most recent first; absent when empty), `dimHiddenApps` (default false)
 - Open Settings on launch (`openSettingsOnLaunch`, default `false`)
-- Hide the macOS Dock (`hideNativeDock`, plus `nativeDockExplained` once the first-time dialog was confirmed)
+- Hide the macOS Dock (`hideNativeDock`, default `true`, plus `nativeDockExplained` once the first-time dialog was confirmed)
 - Import from macOS Dock and Undo last import (nothing new stored in `dock.json`; imported apps, spacers, position, and icon size land in `entries`, `edge`, and `iconSize`). Entries may include `{ type: "spacer", spacer: { id, size } }` (`regular` or `small`).
 - Open Portside at login: not stored by Portside. macOS keeps it (System Settings > General > Login Items).
 

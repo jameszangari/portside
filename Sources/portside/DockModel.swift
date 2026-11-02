@@ -613,7 +613,7 @@ final class DockModel: Codable, ObservableObject {
 
     /// "Hide the macOS Dock". Written only by `NativeDockController`, after
     /// the native Dock was actually hidden (or restored).
-    @Published private(set) var hideNativeDock: Bool = false
+    @Published private(set) var hideNativeDock: Bool = true
 
     /// The first-time explanation for `hideNativeDock` was confirmed.
     private(set) var nativeDockExplained: Bool = false
@@ -1017,7 +1017,7 @@ final class DockModel: Codable, ObservableObject {
         autoHide = try c.decodeIfPresent(Bool.self, forKey: .autoHide) ?? true
         reserveSpace = try c.decodeIfPresent(Bool.self, forKey: .reserveSpace) ?? true
         animateOpeningApplications = try c.decodeIfPresent(Bool.self, forKey: .animateOpeningApplications) ?? true
-        hideNativeDock = try c.decodeIfPresent(Bool.self, forKey: .hideNativeDock) ?? false
+        hideNativeDock = try c.decodeIfPresent(Bool.self, forKey: .hideNativeDock) ?? true
         nativeDockExplained = try c.decodeIfPresent(Bool.self, forKey: .nativeDockExplained) ?? false
         showTrash = (try? c.decodeIfPresent(Bool.self, forKey: .showTrash)) ?? true
         trashAccessHintDismissed = (try? c.decodeIfPresent(Bool.self, forKey: .trashAccessHintDismissed)) ?? false
