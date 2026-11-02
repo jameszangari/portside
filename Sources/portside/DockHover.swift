@@ -189,8 +189,8 @@ final class DockHover {
 }
 
 /// Native-Dock-style name label: a speech bubble whose small tail points at
-/// the icon. Its background is the dock's own (Liquid Glass, Frosted or
-/// Solid, with the same frost and tint); without a look (the drag-out label)
+/// the icon. Its background is the dock's own (Liquid Glass or Solid, with
+/// the same frost and tint); without a look (the drag-out label)
 /// it uses the default glass. Without `pointing` it has no tail.
 struct DockLabel: View {
     let title: String

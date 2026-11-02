@@ -60,7 +60,8 @@ final class DockModel: Codable, ObservableObject {
         static let animationDuration: TimeInterval = 0.15
         static let groupHoverDelay: TimeInterval = 0.05
         static let groupHoverCloseGrace: TimeInterval = 0.05
-        static let cornerRadius: CGFloat = 16
+        /// The native Dock's radius at its default height, measured.
+        static let cornerRadius: CGFloat = 14
         static let magnifiedSize: CGFloat = 64
         /// Gap between strip tiles. Matches the long-standing DockMetrics default.
         static let iconGap: CGFloat = 6
@@ -213,12 +214,21 @@ final class DockModel: Codable, ObservableObject {
     @Published private(set) var cornerRadius: CGFloat = Defaults.cornerRadius
     /// Mirrors Accessibility > Display > Reduce Transparency for live redraws.
     @Published private(set) var reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+    /// Mirrors the System Settings Liquid Glass slider for live redraws.
+    @Published private(set) var systemGlassTint = NativeDockGlass.systemTint
 
     static let cornerRadiusRange: ClosedRange<CGFloat> = 4...28
 
     /// The strip and group grid background, in one value.
     var look: DockLook {
-        DockLook(background: background, cornerRadius: cornerRadius, reduceTransparency: reduceTransparency)
+        DockLook(background: background, cornerRadius: cornerRadius, reduceTransparency: reduceTransparency, systemGlassTint: systemGlassTint)
+    }
+
+    func syncSystemGlassTint() {
+        let next = NativeDockGlass.systemTint
+        guard next != systemGlassTint else { return }
+        systemGlassTint = next
+        DockModel.logger.info("Liquid Glass slider \(next, format: .fixed(precision: 2))")
     }
 
     func syncReduceTransparency() {
@@ -252,8 +262,11 @@ final class DockModel: Codable, ObservableObject {
     func resetBackgroundStyleToDefaults() {
         updateBackground(persist: false) { bg in
             switch bg.style {
-            case .glass: bg.glass = GlassBackground()
-            case .frosted: bg.frosted = FrostedBackground()
+            case .glass:
+                // Back to the macOS values, staying on Custom if that is selected.
+                let variant = bg.glass.variant
+                bg.glass = GlassBackground()
+                bg.glass.variant = variant
             case .solid: bg.solid = SolidBackground()
             }
         }
@@ -997,7 +1010,7 @@ final class DockModel: Codable, ObservableObject {
             background = c.value(.background, or: DockBackground())
         } else {
             background = DockBackground(
-                legacyStyle: c.value(.backgroundStyle, or: DockBackgroundStyle.systemDefault),
+                legacyStyle: c.value(.backgroundStyle, or: DockBackgroundStyle.glass),
                 frost: c.value(.backgroundFrost, or: 0.5),
                 tint: c.value(.backgroundTint, or: RGBAColor?.none)
             )

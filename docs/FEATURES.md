@@ -73,13 +73,12 @@ Full feature list. The [README](../README.md) keeps a short summary.
 
 - Icons match the macOS icon style (Default, Dark, Clear, Tinted) like the native Dock, and refresh when you change it in System Settings. Or pick "Original" to show each app's own artwork.
 - One color picker for every color (background, tints, badges, group icons): preview and hex field, swatches in labeled Brand, Neutrals, macOS and RGB sections, Hue, Saturation, Tint, Shade, and Opacity where it applies, plus Reset Adjustments.
-- Dock background, three distinct styles that each keep their own settings, plus corner radius. Open group grids and hover labels use the same look.
-  - Liquid Glass (default): the system glass with Strength and an optional tint color. Regular is the frosted system glass; Clear is see-through with refraction at the edges (falls back to the public clear glass if the private variant goes away).
-  - Frosted: a blur material (Ultra Thin to Ultra Thick) with Strength, a tint with its own opacity, and an optional border.
-  - Solid: a color, linear gradient (with angle), or radial gradient; every color has its own opacity, plus overall Opacity and an optional border.
+- Dock background, two styles that each keep their own settings, plus corner radius. Open group grids and hover labels use the same look.
+  - Liquid Glass (default). Match macOS is built to match the native Dock in dark mode: same color, rim, and no outer shadow, with the blur following the Liquid Glass slider in System Settings > Appearance. It has no settings; in light mode it uses the plain system glass. Custom starts from the same values and adjusts every part: follow macOS blur or set your own, refraction, saturation, brightness, contrast, a fill color with its own opacity, and the glass's own edge (Border) with its own opacity, width, and color. Color editors and color adjustments stay collapsed until opened, one at a time.
+  - Solid: a color, linear gradient (with angle), or radial gradient; every color has its own opacity, plus overall Opacity, optional backdrop Blur (with a material thickness), and a border with its own width and color.
   - Reset applies to the current style only.
   - Text and dots on the dock follow the background, not just dark mode: a light solid color or tint gets black hover-label text, running dots, and grid labels; a dark one gets white.
-  - Colors come from Portside's own palette instead of the macOS color panel: 20 preset swatches plus Saturation, Tint, Shade and Opacity sliders, inline in Settings. Gradients edit one stop at a time (click its chip). The custom badge color uses the same palette. Widgets keep their own frosted card whatever the Frost setting. Accessibility Reduce Transparency turns glass into opaque frosted live; Reduce Motion is respected for slides, springs, and the poof.
+  - Colors come from Portside's own palette instead of the macOS color panel: 20 preset swatches plus Saturation, Tint, Shade and Opacity sliders, inline in Settings. Gradients edit one stop at a time (click its chip). The custom badge color uses the same palette. Widgets keep their own frosted card whatever the background. Accessibility Reduce Transparency turns glass into a material live; Reduce Motion is respected for slides, springs, and the poof.
 
 ## Folder stacks
 

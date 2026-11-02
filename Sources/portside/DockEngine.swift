@@ -72,6 +72,7 @@ final class DockEngine {
     private var iconStyleSubscription: AnyCancellable?
     private var autoHideSubscription: AnyCancellable?
     private var accessibilityObserver: NSObjectProtocol?
+    private var glassTintObserver: SystemGlassTintObserver?
     /// Global mouse-up: after a button-held edge suppress, reveal if the
     /// cursor is still in an edge zone when the button releases.
     private var mouseUpMonitor: Any?
@@ -437,6 +438,10 @@ final class DockEngine {
                 self?.dockModel.syncReduceTransparency()
             }
             dockModel.syncReduceTransparency()
+        }
+        if glassTintObserver == nil {
+            glassTintObserver = SystemGlassTintObserver { [weak self] in self?.dockModel.syncSystemGlassTint() }
+            dockModel.syncSystemGlassTint()
         }
         for name in [NSApplication.didChangeScreenParametersNotification, .dockScreenDidChange] {
             reservationObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in

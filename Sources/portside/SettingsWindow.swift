@@ -982,10 +982,10 @@ private struct AppearanceSettings: View {
     @ObservedObject var badges: DockBadges
     /// Which gradient stop the color editor shows (Solid).
     @State private var editingEndColor = false
+    /// The one expanded row, so color editors never stack up.
+    @State private var openPanel: Panel?
 
-    private var styles: [DockBackgroundStyle] {
-        DockBackgroundStyle.allCases.filter { $0 != .glass || DockBackgroundStyle.isGlassAvailable }
-    }
+    private enum Panel { case fill, adjustments, rimColor, solidBorderColor }
 
     /// Same limit the separator drag clamps to. Kept one point above the
     /// minimum so the slider range is never empty.
@@ -1055,13 +1055,12 @@ private struct AppearanceSettings: View {
 
             Section {
                 Picker("Background", selection: binding(\.style)) {
-                    ForEach(styles) { Text($0.title).tag($0) }
+                    ForEach(DockBackgroundStyle.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
 
-                switch dockModel.background.style.effective {
+                switch dockModel.background.style {
                 case .glass: glassControls
-                case .frosted: frostedControls
                 case .solid: solidControls
                 }
 
@@ -1077,13 +1076,17 @@ private struct AppearanceSettings: View {
                 HStack {
                     Text("Background")
                     Spacer()
-                    Button("Reset \(dockModel.background.style.effective.title)") { dockModel.resetBackgroundStyleToDefaults() }
+                    Button("Reset \(dockModel.background.style.title)") { dockModel.resetBackgroundStyleToDefaults() }
                         .buttonStyle(.link)
                         .font(.system(size: 12))
                         .help("Resets this style and the corner radius. Other styles keep their settings.")
                 }
             } footer: {
                 Text(backgroundHelp).footerStyle()
+            }
+
+            if dockModel.background.style == .glass && dockModel.background.glass.variant == .custom {
+                customGlassSections
             }
 
             // Show/hide and color live together so badges are one decision.
@@ -1136,18 +1139,17 @@ private struct AppearanceSettings: View {
             Section {
                 Button("Reset Appearance to Defaults") { dockModel.resetAppearanceToDefaults() }
             } footer: {
-                Text("Resets icon style, background, tint and corner radius. Sizes and badges are not changed.").footerStyle()
+                Text("Resets icon style, background and corner radius. Sizes and badges are not changed.").footerStyle()
             }
         }
     }
 
     private var backgroundHelp: String {
-        switch dockModel.background.style.effective {
-        case .glass: SeeThroughGlass.isAvailable
-            ? "The system Liquid Glass, same as the macOS Dock. Regular is frosted; Clear is see-through with refraction at the edges. Strength fills the glass with a neutral shade, or with the tint color when Tint is on."
-            : "The system Liquid Glass, same as the macOS Dock. Clear is lighter than Regular. Strength fills the glass with a neutral shade, or with the tint color when Tint is on."
-        case .frosted: "A blur material you tune yourself. Material sets the blur, Strength how opaque it is; the tint's own opacity sets how strong the color is."
-        case .solid: "Your own color or gradient. Each color keeps its own opacity, and Opacity scales the whole fill."
+        switch dockModel.background.style {
+        case .glass: dockModel.background.glass.variant == .regular
+            ? "The macOS Dock's glass. Its blur follows the Liquid Glass slider in System Settings > Appearance."
+            : "Starts from the macOS Dock's values. Reset returns to them."
+        case .solid: "Your own color or gradient. Each color keeps its own opacity, and Opacity scales the whole fill. Blur softens whatever sits behind the dock (like CSS backdrop-filter)."
         }
     }
 
@@ -1179,71 +1181,97 @@ private struct AppearanceSettings: View {
         }
     }
 
-    /// Tint switch with the palette editor under it when on. The switch
-    /// stays at the trailing edge; a chip of the result sits to its left,
-    /// so the switch never moves under the cursor.
-    @ViewBuilder
-    /// Turning it off keeps the color in `saved`; turning it on restores it.
-    private func tintRow(_ path: WritableKeyPath<DockBackground, PaletteColor?>,
-                         saved: WritableKeyPath<DockBackground, PaletteColor?>, showsOpacity: Bool,
-                         starting: PaletteColor, onEnable: @escaping (inout DockBackground) -> Void = { _ in }) -> some View {
-        let tint = dockModel.background[keyPath: path]
-        HStack(spacing: 12) {
-            Text("Tint")
-            Spacer()
-            if let tint {
-                ColorChip(color: tint.color)
-            }
-            Toggle("Tint", isOn: Binding(
-                get: { dockModel.background[keyPath: path] != nil },
-                set: { on in
-                    dockModel.updateBackground { bg in
-                        if on {
-                            bg[keyPath: path] = bg[keyPath: saved] ?? starting
-                            bg[keyPath: saved] = nil
-                            onEnable(&bg)
-                        } else {
-                            bg[keyPath: saved] = bg[keyPath: path]
-                            bg[keyPath: path] = nil
-                        }
-                    }
-                }
-            ))
-            .toggleStyle(.switch)
-            .labelsHidden()
-        }
-        if let tint {
-            PaletteColorEditor(color: tint, showsOpacity: showsOpacity) { value, persist in
-                dockModel.updateBackground(persist: persist) { $0[keyPath: path] = value }
-            }
-        }
-    }
-
     @ViewBuilder private var glassControls: some View {
         Picker("Glass", selection: binding(\.glass.variant)) {
             ForEach(GlassVariant.allCases) { Text($0.title).tag($0) }
         }
         .pickerStyle(.segmented)
-        percentSlider("Strength", \.glass.strength)
-        // Glass tints are opaque (Strength sets how much shows). A tint at
-        // 0% strength would be invisible, so turning it on brings the
-        // strength up to where the color shows.
-        tintRow(\.glass.tint, saved: \.glass.savedTint, showsOpacity: false, starting: .brandNavy) { bg in
-            bg.glass.strength = max(bg.glass.strength, 0.35)
+    }
+
+    @ViewBuilder private var customGlassSections: some View {
+        let glass = dockModel.background.glass
+        Section("Glass") {
+            Toggle("Follow macOS blur", isOn: binding(\.glass.followsSystemBlur))
+            if !glass.followsSystemBlur {
+                glassSlider("Blur", \.glass.blurRadius, GlassBackground.blurRange, snap: 0.5) { String(format: "%.1f pt", $0) }
+            }
+            Toggle("Refraction", isOn: binding(\.glass.lens))
+            panelRow("Fill", .fill) { ColorChip(color: glass.fill.color, size: 18) }
+            if openPanel == .fill {
+                colorEditor(\.glass.fill, showsOpacity: true)
+            }
+            panelRow("Color adjustments", .adjustments) { EmptyView() }
+            if openPanel == .adjustments {
+                glassSlider("Saturation", \.glass.saturation, GlassBackground.saturationRange, snap: 0.05, format: percent)
+                glassSlider("Brightness", \.glass.brightness, GlassBackground.brightnessRange, snap: 0.01) { String(format: "%+.0f%%", $0 * 100) }
+                glassSlider("Contrast", \.glass.contrast, GlassBackground.contrastRange, snap: 0.05, format: percent)
+            }
+        }
+        Section {
+            percentSlider("Opacity", \.glass.rimOpacity)
+            if glass.rimOpacity > 0 {
+                glassSlider("Width", \.glass.rimWidth, GlassBackground.rimWidthRange, snap: 0.5) { String(format: "%.1f pt", $0) }
+                panelRow("Color", .rimColor) { ColorChip(color: glass.rimColor.opaqueColor, size: 18) }
+                if openPanel == .rimColor {
+                    colorEditor(\.glass.rimColor, showsOpacity: false)
+                }
+            }
+        } header: {
+            Text("Border")
+        } footer: {
+            Text("The glass's own edge. 35% matches the macOS Dock; 0% removes it.").footerStyle()
         }
     }
 
-    @ViewBuilder private var frostedControls: some View {
-        Picker("Material", selection: binding(\.frosted.material)) {
-            ForEach(FrostMaterial.allCases) { Text($0.title).tag($0) }
+    /// A row that expands what sits under it, closing any other open row.
+    private func panelRow<Trailing: View>(_ title: String, _ panel: Panel, @ViewBuilder trailing: () -> Trailing) -> some View {
+        Button {
+            openPanel = openPanel == panel ? nil : panel
+        } label: {
+            HStack(spacing: 10) {
+                Text(title)
+                Spacer()
+                trailing()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(openPanel == panel ? 90 : 0))
+            }
+            .contentShape(Rectangle())
         }
-        percentSlider("Strength", \.frosted.strength)
-        tintRow(\.frosted.tint, saved: \.frosted.savedTint, showsOpacity: true, starting: {
-            var navy = PaletteColor.brandNavy
-            navy.opacity = 0.35
-            return navy
-        }())
-        Toggle("Border", isOn: binding(\.frosted.border))
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder private func borderControls(_ path: WritableKeyPath<DockBackground, DockBorder>) -> some View {
+        let border = dockModel.background[keyPath: path]
+        HStack(spacing: 12) {
+            Text("Border")
+            Spacer()
+            Toggle("Border", isOn: binding(path.appending(path: \.isOn)))
+                .toggleStyle(.switch)
+                .labelsHidden()
+        }
+        if border.isOn {
+            glassSlider("Border width", path.appending(path: \.width), DockBorder.widthRange, snap: 0.5) { String(format: "%.1f pt", $0) }
+            panelRow("Border color", .solidBorderColor) { ColorChip(color: border.color.color, size: 18) }
+            if openPanel == .solidBorderColor {
+                colorEditor(path.appending(path: \.color), showsOpacity: true)
+            }
+        }
+    }
+
+    private func percent(_ value: Double) -> String { "\(Int((value * 100).rounded()))%" }
+
+    private func glassSlider(_ title: String, _ path: WritableKeyPath<DockBackground, Double>, _ range: ClosedRange<Double>,
+                             snap: Double, format: @escaping (Double) -> String) -> SettingsSlider {
+        SettingsSlider(
+            title: title,
+            value: dockModel.background[keyPath: path],
+            range: range,
+            snap: snap,
+            format: format,
+            set: { value, persist in dockModel.updateBackground(persist: persist) { $0[keyPath: path] = value } }
+        )
     }
 
     @ViewBuilder private var solidControls: some View {
@@ -1297,7 +1325,13 @@ private struct AppearanceSettings: View {
             )
         }
         percentSlider("Opacity", \.solid.opacity)
-        Toggle("Border", isOn: binding(\.solid.border))
+        Toggle("Blur", isOn: binding(\.solid.blur))
+        if solid.blur {
+            Picker("Blur material", selection: binding(\.solid.blurMaterial)) {
+                ForEach(FrostMaterial.allCases) { Text($0.title).tag($0) }
+            }
+        }
+        borderControls(\.solid.border)
     }
 }
 

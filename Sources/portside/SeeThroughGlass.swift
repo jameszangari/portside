@@ -4,7 +4,7 @@ import os.log
 
 private let glassLogger = Logger(subsystem: "com.james.portside", category: "Appearance")
 
-/// Truly see-through Liquid Glass for the "Clear" variant.
+/// Truly see-through Liquid Glass, the lens in Match macOS and Custom.
 ///
 /// The public `Glass.clear` (and `NSGlassEffectView.Style.clear`) still
 /// blurs the backdrop heavily on macOS 27, so text behind it is unreadable.

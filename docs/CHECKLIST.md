@@ -166,6 +166,7 @@ Plan in PLAN.md section 8, "Windows respect Portside". Measured with `scripts/wi
 - [x] Working: CPU of the app plus its child processes, 2s sampler only while a watched app runs. Defaults T3 Code, Claude, Codex; per app via right-click Show Working Icon. Settings: Dock > Activity Icons, one toggle per kind. Persisted as `activityIcons`.
 - [x] `swift build` clean; `swift run` launches. Logs confirmed Spotifast detected as Playing audio and T3 Code as Working (about 15% CPU while an agent ran; idle Claude about 1 to 2%). Sampler costs about 9 to 17ms per 2s in a debug build.
 - [ ] Hand test: chips render and animate; mic (UAD, Voice Memos), camera (FaceTime, Zoom); T3/Claude/Codex go Working during an agent turn and clear within about 4s after; Ableton; Settings toggles; right-click Show Working Icon.
+- [x] FaceTime fix: its call audio runs in the system daemon `avconferenced`, so no dock app owned the mic and the camera chip never showed. That daemon's audio is now credited to FaceTime (`proxyOwner`). Verified live: `com.apple.FaceTime=Camera in use`.
 - Known gaps: macOS has no public per-app camera owner, so camera goes to apps also using the mic (camera-only apps like Photo Booth get nothing; a mic app open during someone else's call shows green). Apps that keep audio running (Ableton Live) show the wave whenever open. Safari audio plays from a shared WebKit process with no link to Safari. Working is a CPU guess: scrolling a busy chat can trip it, an agent waiting on a slow tool may drop it. Thresholds (8% on, 4% off) need tuning from real use. `com.openai.codex` bundle id not verified (Codex not installed here). UAD Console may not use CoreAudio input and so may not show the mic.
 
 ## Label text contrast (2026-11-01)
@@ -2175,6 +2176,77 @@ Status: done and hand-tested by James.
 - [x] A folder dropped in front of an existing folder landed last (just before the Trash) instead of where the drop gap showed. The new folder went into the stacks list at the right index, but a saved layout placed new folders after the previous folder or before the Trash, never before the next folder. `resolvedLayout()` now places new folders and widgets before the next one of their kind already in the layout, the same way apps already worked. Existing misplaced folders fix themselves on next launch.
 - [x] `swift build` clean. Not launched, because a second copy would share the live `dock.json` with the installed app.
 - [ ] Hand test: drop a folder before, between, and after existing folders; it lands where the gap showed and stays there after relaunch.
+
+## Follow-up: Solid backdrop blur (2026-11-01)
+
+- [x] Solid backgrounds get a Blur toggle (off by default) and, while on, a Blur material picker (Ultra Thin to Ultra Thick). The material sits under the color or gradient so translucent fills soften whatever is behind the dock. Stored as `solid.blur` / `solid.blurMaterial`. Reset Solid clears them. Older dock.json without the keys stays flat.
+- [x] `swift build` clean.
+- [ ] Hand test: Solid color and gradient with Blur on/off over a busy window; each material thickness; Opacity low enough to see the blur; Reduce Transparency; open group/stack grids and hover labels match.
+- Known gap: blur uses the same discrete SwiftUI materials as Frosted, not a continuous radius slider.
+
+## Follow-up: Frosted/Glass strength actually blurs (2026-11-01)
+
+- [x] Frosted Strength no longer fades the material with `.opacity` (that punched a sharp hole through the blur so text stayed readable at 80%). Material always draws fully; Strength adds a milky window-background wash on top (Dockset-style denser glass). Default Strength 0.55.
+- [x] Clear Liquid Glass: Strength ramps a backdrop material under the see-through lens (ultraThin → ultraThick) plus a fill, so high Strength softens text like the Dockset Liquid Glass preview. Strength 0 stays pure refraction.
+- [x] Settings footers and FEATURES/DATA updated. `swift build` clean.
+- [ ] Hand test: Frosted over a text-heavy window at Strength 0 / 50 / 80 / 100 with Thin and Ultra Thick; Clear glass the same; Regular glass unchanged; Reduce Transparency; group grid and hover label match.
+- Known gap: blur thickness still uses discrete materials, not a continuous radius like a CSS `blur(px)` slider.
+
+## Follow-up: Liquid Glass and Frosted merged (2026-11-01)
+
+- [x] One Liquid Glass style replaces both. Controls: Regular/Clear, Strength, Material (only while Strength is above 0), Tint with its own opacity, Border. Strength 0 stays the native Dock look. `FrostedBackground` and `DockBackgroundStyle.frosted` are gone. Package minimum is macOS 26, so the pre-26 fallback branches went too.
+- [x] Migration: a selected Frosted carries its settings into glass (keeps the glass variant). Old glass tint amount moves from Strength to the tint's opacity. Unselected Frosted settings are dropped.
+- [x] `swift build` clean. Scratch harness outside the repo: decoded 6 old `background` shapes including a copy of the live one (correct fields, round trip stable, no `frosted` written), and a screenshot of Regular and Clear over black text at Strength 0, 50, 100 confirmed text is unreadable above 0 and the plain lens stays clear at 0.
+- [ ] Not launched via `swift run`: the installed app is running and a second copy would share `dock.json` and the native Dock handling. Settings UI and live migration are untested.
+- [ ] Hand test: migration keeps the current look, Settings controls, Regular and Clear at several Strengths, Reduce Transparency, group grid and hover label match.
+- Known gaps: Regular with a low-opacity tint looks nearly neutral (the system glass tint is faint). Material steps are discrete (the Material picker), but the blur now eases in with Strength (see the follow-up below).
+
+## Follow-up: glass blur eases in (2026-11-01)
+
+- [x] 0 to 1% Strength used to jump to the full material blur. The material now fades in with `GlassBackground.blurAmount` (squared ramp, full at 40% Strength), so low Strength stays close to native glass and the look changes smoothly. The frost wash still grows linearly to 100%. Same code path for Regular, Clear and the public Clear fallback.
+- [x] `swift build` clean. Not launched (installed app shares `dock.json`).
+- [ ] Hand test: drag Strength 0 to 5% slowly over a text-heavy window, no visible jump; 40% and 100% look as before; try each Material.
+- Known gap: the low-Strength blur is a crossfade of the discrete material, not a true continuous blur radius (that needs a private backdrop filter).
+
+## Follow-up: Liquid Glass feels native (2026-11-01)
+
+- [x] Finding: macOS has its own Liquid Glass slider, stored as global `NSGlassTintAmount` (0.74 here), and the Dock binary reads that key. Public `Glass.regular` follows it: captured the same view at 0 and 1 using a per-process argument override, with a visible change and the real pref unchanged.
+- [x] Regular is now Match macOS: plain system glass with only an optional tint. Strength, Material, the frost wash and the white stroke no longer apply to it. They were our layers over the system look.
+- [x] Tint is a plain fill inside the glass. `Glass.tint` rendered gray in a test panel, even with saturated red at 80%, so a tinted Match macOS would have shown no color.
+- [x] Strength and Material apply to Clear only. Border removed from glass (Solid keeps it; old `border` key ignored).
+- [x] `swift build` clean. Not launched (installed app shares `dock.json`), so the Settings UI is untested.
+- [ ] Hand test: pick Match macOS, compare with the real Dock, move the System Settings slider and check the dock follows it live.
+- Known gaps: the Dock uses its own glass controller (`DockGlassMaterialLayerController`), so public glass may not be pixel-identical. Private `NSGlassEffectView` variants may include a closer match, but which number is the Dock's could not be confirmed, so none is used. Live follow of the slider is only verified across process launches.
+
+## Follow-up: Match macOS measured against the real Dock (2026-11-01)
+
+- [x] Captured the real Dock (Portside quit, icon size 34, dark mode) over white, black, and text backdrops at slider 0, 0.5, and 0.83. Findings: 1139x48pt here, 5pt above the screen edge, radius about 14pt, no outer shadow, bright inner rim on top and bottom only. The Liquid Glass slider changes only the blur: over solid backdrops the Dock reads 178 on white and 16 on black at every position.
+- [x] This corrects the previous follow-up: plain public glass is not native. It reads 127/21 at slider 0.83 and its color moves with the slider. The Dock binary uses private `GlassMaterialProvider.Configuration.dock`. None of `NSGlassEffectView` variants 0 to 23 matched, and `_tintOpacityReduced` had no effect.
+- [x] New `NativeDockGlass.swift`: backdrop blur and color curve, lens, fixed gray, rim. Blur follows `NSGlassTintAmount` by KVO. Default corner radius is now 14. Falls back to public glass in light mode or if the private classes are missing.
+- [x] Scored the real `DockAppearance` code at the Dock's exact rect, in a throwaway harness, 0 to 255 scale. Native vs ours: white 177.9 / 177.9, black 16.4 / 17.6. Body diff at slider 0.83: white 0.26, black 2.97, text 11.59 (public glass: 50.55, 4.63, 33.20). Outside the edge 0.02 or less.
+- [x] `swift build` clean. Not launched.
+- [ ] Hand test: side by side with the real Dock, slider live, tinted, hover label, group and stack grids.
+- Known gaps: text backdrop still differs most, especially slider 0 (body diff 32.23), because the Dock's own refraction softens text more than the lens does. Blur at 0.83 is weaker than native near the top and bottom edges. Blur above 0.83 is extrapolated, since slider 1 was not captured. Light mode is not matched. Strip height, gaps, and icon spacing have not been compared in the real app. The lens path has no floating shadow on group grids. Hover labels have no lens, only blur and gray. Tuned on one Mac and OS version.
+
+## Follow-up: Custom border is the glass's own edge (2026-11-01)
+
+- [x] Border in Custom now controls the glass's own edge, not an extra line: opacity (0 to 100%, 35% is the Dock's, 0% removes it), width, and color. This replaces the Rim slider, and the add-on line from the first attempt is gone from glass. An earlier `rim` strength converts on load.
+- [x] Settings cleanup: Custom moved into its own Glass and Border sections, corner radius stays up with the style pickers, and color editors and color adjustments collapse behind rows with only one open at a time. Solid's border color collapses the same way; Solid's main color editor stays inline.
+- [x] Solid keeps `DockBorder` (switch, width, color), since it has no glass edge. Old Bool values still load.
+- [x] Lens is now clipped to the dock's shape. It drew a faint halo outside its edge (216 and 188 over white, where the Dock is 255). Earlier scoring missed this because the test panel was exactly dock-sized.
+- [x] Launched the debug build from a throwaway home folder (`PORTSIDE_SETTINGS_TAB`, `PORTSIDE_SETTINGS_HEIGHT`, hiding off) and checked the collapsed Settings layout in a screenshot. A saved `rim` of 0.7 shows as 24%. Expanding rows was not clicked through.
+- [ ] Hand test: Border opacity at 0, 35, and 100%, width, color, collapsing rows, and the dock's outer edge over a light window.
+
+## Follow-up: Clear becomes Custom (2026-11-01)
+
+- [x] Renamed Clear to Custom (stored value stays `clear`). Custom starts at the Match macOS values and adjusts every part: follow macOS blur or a set blur (0 to 40pt), refraction, saturation, brightness, contrast, rim, fill color and opacity. Reset returns to the macOS values and stays on Custom.
+- [x] Match macOS now has no settings, so it stays the measured look. Strength, Material, frost wash, Tint, and Border are gone from glass. Solid is unchanged.
+- [x] Migration: an old tint becomes the fill and moves the dock to Custom, and Strength on Custom becomes a set blur. Selected Frosted becomes Custom with no lens. Checked by decoding 6 config shapes with a stable round trip. A plain or untinted Regular stays Match macOS.
+- [x] Test window: Custom at defaults is pixel-identical to Match macOS (max diff 0). Blur, refraction, saturation, brightness, contrast, rim, and fill each change the render. Rim has the smallest effect (0.79), as it only touches the edges. `swift build` clean. Not launched, so the Settings controls themselves are untested.
+- [x] Bug found in the test image: blur faded out near the layer's edges, so sharp text returned at high radius. Fixed with `inputNormalizeEdges`. Scan at strip heights 34 to 110pt and radii 0 to 40: sharpness now falls steadily with radius.
+- [ ] That fix came after the native scoring above, so those scores are stale for the edges and need recapturing. The native captures were deleted with the scratch files.
+- [ ] Hand test: Settings controls, live dragging, Reset, light mode, Reduce Transparency.
+- Known gaps: frost wash removed, so hiding text now relies on Blur and Fill. Custom in light mode has not been compared with anything. Glass no longer draws a floating shadow on group and stack grids when the backdrop stack is in use. The gaps in the measured follow-up above still apply.
 
 ## Follow-up: drag files out of stacks, native fan (2026-11-01)
 

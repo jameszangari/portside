@@ -26,10 +26,8 @@ enum IconStyle: String, Codable, CaseIterable, Identifiable {
 /// The dock's background. Each style keeps its own settings (see
 /// `DockBackground`), so switching back and forth loses nothing.
 enum DockBackgroundStyle: String, Codable, CaseIterable, Identifiable {
-    /// The system Liquid Glass, exactly like the native Dock.
+    /// The macOS Dock's glass, as is or with every part adjustable.
     case glass
-    /// A blur material with its own thickness, strength, tint, and border.
-    case frosted
     /// A color or gradient the user picks, with opacity.
     case solid
 
@@ -38,22 +36,8 @@ enum DockBackgroundStyle: String, Codable, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .glass: "Liquid Glass"
-        case .frosted: "Frosted"
         case .solid: "Solid"
         }
-    }
-
-    static var isGlassAvailable: Bool {
-        if #available(macOS 26, *) { return true }
-        return false
-    }
-
-    /// Matches the native Dock of the running macOS.
-    static var systemDefault: DockBackgroundStyle { isGlassAvailable ? .glass : .frosted }
-
-    /// Glass falls back to frosted before macOS 26.
-    var effective: DockBackgroundStyle {
-        self == .glass && !Self.isGlassAvailable ? .frosted : self
     }
 }
 
@@ -275,13 +259,14 @@ extension KeyedDecodingContainer {
 
 private func unit(_ value: Double) -> Double { min(max(value, 0), 1) }
 
-/// The two system glass variants (System Settings > Appearance > Liquid
-/// Glass offers the same pair).
+/// Match macOS has no settings of its own; Custom exposes every part of it.
 enum GlassVariant: String, Codable, CaseIterable, Identifiable {
-    case regular, clear
+    case regular
+    /// Stored as "clear", its name in older dock.json files.
+    case custom = "clear"
 
     var id: String { rawValue }
-    var title: String { self == .regular ? "Regular" : "Clear" }
+    var title: String { self == .regular ? "Match macOS" : "Custom" }
 }
 
 /// SwiftUI's blur materials, thinnest to thickest.
@@ -328,49 +313,99 @@ enum SolidFill: String, Codable, CaseIterable, Identifiable {
     var isGradient: Bool { self != .color }
 }
 
-/// Native Liquid Glass. Nothing is layered on it: strength and tint go into
-/// the glass itself, so it keeps the system highlights and refraction.
+/// Liquid Glass. The custom values start at the macOS Dock's, so switching to
+/// Custom changes nothing until a control moves.
 struct GlassBackground: Codable, Equatable {
     var variant: GlassVariant = .regular
-    /// 0 to 1. How strongly the glass is tinted (neutral, or `tint`). 0 is
-    /// the plain system glass.
-    var strength: Double = 0
-    /// Tint color, used opaque. The strength sets how much of it shows.
-    var tint: PaletteColor?
-    /// The last tint while Tint is off, so turning it back on restores it.
-    var savedTint: PaletteColor?
+    /// Blur follows the System Settings Liquid Glass slider, like the Dock.
+    var followsSystemBlur: Bool = true
+    /// Points of blur while `followsSystemBlur` is off.
+    var blurRadius: Double = 6
+    /// The see-through lens that refracts at the rim.
+    var lens: Bool = true
+    var saturation: Double = NativeDockGlass.saturation
+    var brightness: Double = NativeDockGlass.brightness
+    var contrast: Double = NativeDockGlass.contrast
+    /// Color laid over the glass; its opacity sets how strong it is.
+    var fill: PaletteColor = NativeDockGlass.fill
+    /// Opacity of the edge's bright line. The Dock's is 0.35; 0 removes the edge.
+    var rimOpacity: Double = 0.35
+    /// Points for the edge's bright outer line. 1 is the Dock's.
+    var rimWidth: Double = 1
+    /// The edge's color, used opaque. White is the Dock's.
+    var rimColor = PaletteColor(base: RGBAColor(red: 1, green: 1, blue: 1, alpha: 1))
+
+    static let blurRange: ClosedRange<Double> = 0...40
+    static let saturationRange: ClosedRange<Double> = 0...3
+    static let brightnessRange: ClosedRange<Double> = -0.5...0.5
+    static let contrastRange: ClosedRange<Double> = 0.5...2
+    static let rimWidthRange: ClosedRange<Double> = 0.5...6
+
+    /// Keys from builds before Custom.
+    private enum LegacyKeys: String, CodingKey { case strength, material, tint, rim }
 
     init() {}
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        func clamped(_ key: CodingKeys, _ fallback: Double, _ range: ClosedRange<Double>) -> Double {
+            min(max(c.value(key, or: fallback), range.lowerBound), range.upperBound)
+        }
         variant = c.value(.variant, or: GlassVariant.regular)
-        strength = unit(c.value(.strength, or: 0.0))
-        tint = c.value(.tint, or: PaletteColor?.none)
-        savedTint = c.value(.savedTint, or: PaletteColor?.none)
+        followsSystemBlur = c.value(.followsSystemBlur, or: true)
+        blurRadius = clamped(.blurRadius, 6, Self.blurRange)
+        lens = c.value(.lens, or: true)
+        saturation = clamped(.saturation, NativeDockGlass.saturation, Self.saturationRange)
+        brightness = clamped(.brightness, NativeDockGlass.brightness, Self.brightnessRange)
+        contrast = clamped(.contrast, NativeDockGlass.contrast, Self.contrastRange)
+        fill = c.value(.fill, or: NativeDockGlass.fill)
+        let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+        // `rim` was a strength where 1 meant the Dock's edge.
+        rimOpacity = unit(c.value(.rimOpacity, or: legacy.value(.rim, or: 1.0) * 0.35))
+        rimWidth = clamped(.rimWidth, 1, Self.rimWidthRange)
+        rimColor = c.value(.rimColor, or: GlassBackground().rimColor)
+        guard !c.contains(.fill) else { return }
+
+        // Older files: a tint becomes the fill, which Match macOS does not
+        // have, so a tinted dock moves to Custom. Strength becomes fixed blur.
+        let strength = unit(legacy.value(.strength, or: 0.0))
+        if var tint = legacy.value(.tint, or: PaletteColor?.none) {
+            // Before Frosted merged in, Strength set how much of the tint showed.
+            if !legacy.contains(.material) { tint.opacity = strength }
+            fill = tint
+            variant = .custom
+        }
+        if variant == .custom && strength > 0 {
+            followsSystemBlur = false
+            blurRadius = 1 + strength * 20
+        }
     }
 }
 
-/// A blur material with full control over it.
-struct FrostedBackground: Codable, Equatable {
-    var material: FrostMaterial = .thin
-    /// 0 to 1. The material's opacity.
-    var strength: Double = 0.8
-    /// Color laid over the material; its opacity sets how strong it is.
-    var tint: PaletteColor?
-    /// The last tint while Tint is off, so turning it back on restores it.
-    var savedTint: PaletteColor?
-    var border: Bool = true
+/// A line around the dock's inside edge. Also reads the plain on/off Bool that
+/// older dock.json files stored.
+struct DockBorder: Codable, Equatable {
+    var isOn: Bool
+    var width: Double = 1
+    var color = PaletteColor(base: RGBAColor(red: 1, green: 1, blue: 1, alpha: 1), opacity: 0.15)
 
-    init() {}
+    static let widthRange: ClosedRange<Double> = 0.5...6
+
+    init(isOn: Bool) {
+        self.isOn = isOn
+    }
+
+    private enum CodingKeys: String, CodingKey { case isOn, width, color }
 
     init(from decoder: Decoder) throws {
+        if let on = try? decoder.singleValueContainer().decode(Bool.self) {
+            self.init(isOn: on)
+            return
+        }
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        material = c.value(.material, or: FrostMaterial.thin)
-        strength = unit(c.value(.strength, or: 0.8))
-        tint = c.value(.tint, or: PaletteColor?.none)
-        savedTint = c.value(.savedTint, or: PaletteColor?.none)
-        border = c.value(.border, or: true)
+        self.init(isOn: c.value(.isOn, or: false))
+        width = min(max(c.value(.width, or: 1.0), Self.widthRange.lowerBound), Self.widthRange.upperBound)
+        color = c.value(.color, or: color)
     }
 }
 
@@ -385,7 +420,12 @@ struct SolidBackground: Codable, Equatable {
     var angle: Double = 90
     /// 0 to 1, applied on top of each color's own alpha.
     var opacity: Double = 0.85
-    var border: Bool = true
+    /// Blurs whatever is behind the dock, under the color or gradient
+    /// (CSS `backdrop-filter: blur`). Off by default so existing solids stay flat.
+    var blur: Bool = false
+    /// How thick the blur is while `blur` is on.
+    var blurMaterial: FrostMaterial = .regular
+    var border = DockBorder(isOn: true)
 
     static let angleRange: ClosedRange<Double> = 0...359
 
@@ -398,7 +438,9 @@ struct SolidBackground: Codable, Equatable {
         endColor = c.value(.endColor, or: SolidBackground().endColor)
         angle = min(max(c.value(.angle, or: 90.0), Self.angleRange.lowerBound), Self.angleRange.upperBound)
         opacity = unit(c.value(.opacity, or: 0.85))
-        border = c.value(.border, or: true)
+        blur = c.value(.blur, or: false)
+        blurMaterial = c.value(.blurMaterial, or: FrostMaterial.regular)
+        border = c.value(.border, or: DockBorder(isOn: true))
     }
 
     /// Start and end points for `angle`, inside the unit square.
@@ -412,32 +454,38 @@ struct SolidBackground: Codable, Equatable {
 /// The selected style plus every style's settings, stored in dock.json as
 /// `background`.
 struct DockBackground: Codable, Equatable {
-    var style: DockBackgroundStyle = .systemDefault
+    var style: DockBackgroundStyle = .glass
     var glass = GlassBackground()
-    var frosted = FrostedBackground()
     var solid = SolidBackground()
+
+    /// Read once to migrate the old Frosted style, which merged into glass.
+    private enum LegacyKeys: String, CodingKey { case style, frosted }
 
     init() {}
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        style = c.value(.style, or: DockBackgroundStyle.systemDefault)
+        style = c.value(.style, or: DockBackgroundStyle.glass)
         glass = c.value(.glass, or: GlassBackground())
-        frosted = c.value(.frosted, or: FrostedBackground())
         solid = c.value(.solid, or: SolidBackground())
+        // Frosted was selected: Custom with its blur and tint, and no lens.
+        let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+        if legacy.value(.style, or: "") == "frosted" {
+            glass = legacy.value(.frosted, or: GlassBackground())
+            glass.variant = .custom
+            glass.lens = false
+        }
     }
 
     /// Settings from builds before per-style backgrounds (one shared
     /// `backgroundFrost` and `backgroundTint`).
     init(legacyStyle: DockBackgroundStyle, frost: Double, tint: RGBAColor?) {
         style = legacyStyle
-        frosted.strength = unit(0.3 + 0.7 * frost)
-        frosted.tint = tint.map(PaletteColor.init)
-        solid.opacity = unit(0.4 + 0.6 * frost)
         if let tint {
-            glass.tint = PaletteColor(base: tint)
-            glass.strength = unit(tint.alpha)
+            glass.fill = PaletteColor(tint)
+            glass.variant = .custom
         }
+        solid.opacity = unit(0.4 + 0.6 * frost)
     }
 }
 
@@ -449,14 +497,9 @@ struct DockLook: Equatable {
     /// Snapshot of System Settings > Accessibility > Display > Reduce
     /// Transparency, so the strip redraws when that option flips.
     var reduceTransparency: Bool = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
-
-    /// Style after Reduce Transparency: glass becomes frosted (native Dock
-    /// also drops translucency when that Accessibility option is on).
-    var displayStyle: DockBackgroundStyle {
-        let base = background.style.effective
-        if reduceTransparency && base == .glass { return .frosted }
-        return base
-    }
+    /// Snapshot of the System Settings Liquid Glass slider, so the strip
+    /// redraws when it moves.
+    var systemGlassTint: Double = NativeDockGlass.systemTint
 
     /// Reduce Transparency keeps every style at least mostly opaque.
     func opaque(_ value: Double) -> Double {
@@ -473,7 +516,7 @@ struct DockLook: Equatable {
         let darkMode = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         let backdrop = darkMode ? 0.12 : 0.88
         let luminance: Double
-        switch displayStyle {
+        switch background.style {
         case .solid:
             let solid = background.solid
             let stops = solid.fill.isGradient ? [solid.color, solid.endColor] : [solid.color]
@@ -481,15 +524,11 @@ struct DockLook: Equatable {
                 let rgba = stop.resolved
                 return Self.over(rgba, alpha: rgba.alpha * opaque(solid.opacity), backdrop: backdrop)
             }.reduce(0, +) / Double(stops.count)
-        case .frosted:
-            let tint = background.style.effective == .glass
-                ? background.glass.tint.map { ($0.resolved, background.glass.strength) }
-                : background.frosted.tint.map { ($0.resolved, $0.resolved.alpha) }
-            luminance = tint.map { Self.over($0.0, alpha: $0.1, backdrop: backdrop) } ?? Self.linear(backdrop)
         case .glass:
             let glass = background.glass
-            luminance = glass.tint.map { Self.over($0.resolved, alpha: glass.strength, backdrop: backdrop) }
-                ?? Self.linear(backdrop)
+            luminance = glass.variant == .custom
+                ? Self.over(glass.fill.resolved, alpha: glass.fill.resolved.alpha, backdrop: backdrop)
+                : Self.linear(backdrop)
         }
         // Equal contrast point between black and white text.
         return luminance > 0.179 ? .light : .dark
@@ -526,8 +565,8 @@ extension View {
     }
 
     /// The same background in another shape (the hover label's bubble), so
-    /// it always matches the dock. Clear glass uses the public (blurred)
-    /// variant here, since the see-through one only does rounded rects.
+    /// it always matches the dock. It has no lens, since the see-through one
+    /// only does rounded rects.
     func dockBackground<S: InsettableShape>(_ look: DockLook, in shape: S, shadow: Bool = false) -> some View {
         dockContentScheme(look).modifier(DockBackgroundModifier(look: look, shape: shape, roundedRadius: nil, shadow: shadow))
     }
@@ -539,85 +578,99 @@ private struct DockBackgroundModifier<S: InsettableShape>: ViewModifier {
     /// Set when `shape` is a plain rounded rectangle of this radius.
     let roundedRadius: CGFloat?
     let shadow: Bool
+    /// The system appearance: `dockContentScheme` only changes the content.
+    @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
-        switch look.displayStyle {
+        switch look.background.style {
         case .glass:
-            if #available(macOS 26, *) {
-                let settings = look.background.glass
-                if settings.variant == .clear, let roundedRadius, SeeThroughGlass.isAvailable {
-                    // See-through lens glass. It ignores tint colors, so
-                    // strength is a fill underneath (the glass refracts it).
-                    content.background {
-                        ZStack {
-                            shape.fill(glassShade.opacity(settings.strength))
+            let settings = look.background.glass
+            let isCustom = settings.variant == .custom
+            if look.reduceTransparency {
+                reducedGlass(content, isCustom ? settings.fill : nil)
+            } else if !NativeDockGlass.isAvailable || (!isCustom && colorScheme != .dark) {
+                // The Dock was measured in dark mode only, so Match macOS stays
+                // on the system glass in light mode. Custom is the user's own
+                // recipe, so it applies in both.
+                content
+                    .background { if isCustom { shape.fill(settings.fill.color) } }
+                    .glassEffect(.regular, in: shape)
+            } else {
+                content.background {
+                    ZStack {
+                        NativeDockBackdropView(recipe: backdropRecipe(settings))
+                            .clipShape(shape)
+                        if let roundedRadius, !isCustom || settings.lens {
+                            // Clipped: the lens also draws a faint halo outside
+                            // its edge, which the Dock does not have.
                             SeeThroughGlassView(cornerRadius: roundedRadius)
+                                .clipShape(shape)
                         }
+                        shape.fill(isCustom ? settings.fill.color : NativeDockGlass.fill.color)
+                        nativeRim(isCustom ? settings : GlassBackground())
                     }
-                } else {
-                    // `id` rebuilds the effect when the variant flips, so the
-                    // old glass never lingers.
-                    content.glassEffect(glass, in: shape).id(settings.variant)
                 }
-            } else {
-                frosted(content, look.background.frosted)
-            }
-        case .frosted:
-            if look.background.style.effective == .glass {
-                // Glass under Reduce Transparency: the system's own fallback
-                // look, a regular material with the glass tint.
-                frosted(content, glassFallbackFrosted)
-            } else {
-                frosted(content, look.background.frosted)
             }
         case .solid:
             solid(content, look.background.solid)
         }
     }
 
-    @available(macOS 26, *)
-    private var glass: Glass {
-        let settings = look.background.glass
-        let base: Glass = settings.variant == .clear ? .clear : .regular
-        guard settings.strength > 0 else { return base }
-        return base.tint(glassShade.opacity(settings.strength))
+    @ViewBuilder private func borderLine(_ border: DockBorder) -> some View {
+        if border.isOn { shape.strokeBorder(border.color.color, lineWidth: border.width) }
     }
 
-    /// Tint color, or the window background for a neutral shade that reads
-    /// as a denser pane in both light and dark mode.
-    private var glassShade: Color {
-        look.background.glass.tint?.opaqueColor ?? Color(nsColor: .windowBackgroundColor)
+    private func backdropRecipe(_ settings: GlassBackground) -> NativeDockGlass.Recipe {
+        let systemBlur = NativeDockGlass.blurRadius(forTint: look.systemGlassTint)
+        guard settings.variant == .custom else { return NativeDockGlass.Recipe(radius: systemBlur) }
+        return NativeDockGlass.Recipe(
+            radius: settings.followsSystemBlur ? systemBlur : CGFloat(settings.blurRadius),
+            saturation: settings.saturation, brightness: settings.brightness, contrast: settings.contrast
+        )
     }
 
-    /// Frosted stand-in when Liquid Glass is reduced to a material.
-    private var glassFallbackFrosted: FrostedBackground {
-        var fallback = FrostedBackground()
-        fallback.material = .regular
-        fallback.tint = look.background.glass.tint.map {
-            var tint = $0
-            tint.opacity = look.background.glass.strength
-            return tint
+    /// The Dock's bright inner edge: strongest in the outer point, fading over
+    /// the next two, on the top and bottom but not the sides.
+    private func nativeRim(_ settings: GlassBackground) -> some View {
+        let color = settings.rimColor.opaqueColor
+        let fade = LinearGradient(stops: [
+            .init(color: color, location: 0), .init(color: color.opacity(0), location: 0.3),
+            .init(color: color.opacity(0), location: 0.7), .init(color: color, location: 1),
+        ], startPoint: .top, endPoint: .bottom)
+        return ZStack {
+            shape.strokeBorder(fade, lineWidth: settings.rimWidth).opacity(settings.rimOpacity)
+            // The softer glow inside it, at the Dock's ratio of 0.055 to 0.35.
+            shape.strokeBorder(fade, lineWidth: settings.rimWidth * 3).opacity(settings.rimOpacity * 0.157)
         }
-        return fallback
     }
 
-    private func frosted(_ content: Content, _ settings: FrostedBackground) -> some View {
+    /// Reduce Transparency: a material stands in for the glass, like the
+    /// system's own fallback.
+    private func reducedGlass(_ content: Content, _ fill: PaletteColor?) -> some View {
         content
             .background {
-                shape.fill(settings.material.material).opacity(look.opaque(settings.strength))
-                    .overlay { if let tint = settings.tint { shape.fill(tint.color) } }
-                    .shadow(color: .black.opacity(shadow ? 0.3 : 0), radius: 12, y: 5)
+                ZStack {
+                    shape.fill(FrostMaterial.regular.material)
+                    if let fill { shape.fill(fill.color) }
+                }
+                .shadow(color: .black.opacity(shadow ? 0.3 : 0), radius: 12, y: 5)
             }
-            .overlay { if settings.border { shape.strokeBorder(.white.opacity(0.15), lineWidth: 1) } }
     }
 
     private func solid(_ content: Content, _ settings: SolidBackground) -> some View {
         content
             .background {
-                shape.fill(solidFill(settings)).opacity(look.opaque(settings.opacity))
-                    .shadow(color: .black.opacity(shadow ? 0.3 : 0), radius: 12, y: 5)
+                ZStack {
+                    // Material first so the color/gradient tints the blur
+                    // instead of covering it (opacity still lets it show).
+                    if settings.blur {
+                        shape.fill(settings.blurMaterial.material)
+                    }
+                    shape.fill(solidFill(settings)).opacity(look.opaque(settings.opacity))
+                }
+                .shadow(color: .black.opacity(shadow ? 0.3 : 0), radius: 12, y: 5)
             }
-            .overlay { if settings.border { shape.strokeBorder(.white.opacity(0.15), lineWidth: 1) } }
+            .overlay { borderLine(settings.border) }
     }
 
     private func solidFill(_ settings: SolidBackground) -> AnyShapeStyle {
