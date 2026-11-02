@@ -23,6 +23,7 @@ These were built and tested with synthetic input; a person should confirm them o
 - Magnification with 27+ apps, group grids, and menus
 - Calendar consent and Downloads permission retention in the signed app
 - Download the DMG from a release, drag to Applications, launch with no Gatekeeper prompt
+- Glass rim over white pages and text: no colored specks in Match macOS or Custom with Refraction on, and the rim bend still looks right, including while magnifying
 
 ## Backlog
 
@@ -48,6 +49,7 @@ Out of scope: minimized windows in the Dock, the two-finger App Expose gesture, 
 - Copilot has no app icon unless Copilot for Xcode is installed, so its gauge shows a "C".
 - A clicked-open group or folder closes only on a click. Cmd-Tab or a Space switch leaves it (and an auto-hiding dock) up until the next click.
 - The Settings sidebar sits flush with the window edge and the toolbar can end in a hard line, unlike the floating sidebar and soft edge in System Settings.
+- The lens rim has no chromatic aberration now, and it was not compared against the native Dock's rim, which may have some. The lens rewrites its filter when resized, so one frame of fringe is possible before it is removed again. Not checked after moving the Liquid Glass slider in System Settings.
 - Window fitting is not measured with Stage Manager, edge-drag tiling, Raycast window commands, or apps with their own minimum height.
 - Group tiles and Portside's own tile use SwiftUI `.contextMenu`, so right-click works only on their unmagnified area.
 - The DMG layout script drives Finder; your Finder preferences (path bar, hidden files) show in the DMG window.
