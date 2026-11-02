@@ -824,6 +824,10 @@ final class DockEngine {
                 self.logger.info("hide timer fired while a group name is being edited, staying revealed")
                 return
             }
+            if self.groups.isPinnedOpen || self.stacks.isPinnedOpen {
+                self.logger.info("hide timer fired while a clicked-open grid is up, staying revealed")
+                return
+            }
             // One-shot sanity check, not polling: if the cursor is still over
             // the panel or the edge zone (for example because enter/exit
             // events raced while the panel slid under a stationary cursor),

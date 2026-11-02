@@ -42,6 +42,8 @@ Out of scope: minimized windows in the Dock, the two-finger App Expose gesture, 
 - Camera usage has no public per-app owner API, so a running camera is credited to apps also using the microphone.
 - Codex usage meters only move after a Codex turn that logs `rate_limits` numbers.
 - The AI Usage Claude meter uses an undocumented Anthropic endpoint and may stop working without notice.
+- A clicked-open group or folder closes only on a click. Cmd-Tab or a Space switch leaves it (and an auto-hiding dock) up until the next click.
+- The Settings sidebar sits flush with the window edge and the toolbar can end in a hard line, unlike the floating sidebar and soft edge in System Settings.
 - Window fitting is not measured with Stage Manager, edge-drag tiling, Raycast window commands, or apps with their own minimum height.
 - Group tiles and Portside's own tile use SwiftUI `.contextMenu`, so right-click works only on their unmagnified area.
 - The DMG layout script drives Finder; your Finder preferences (path bar, hidden files) show in the DMG window.

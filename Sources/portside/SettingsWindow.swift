@@ -116,7 +116,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // Fixed size, like System Settings: panes scroll instead of growing
         // the window. The toolbar carries the pane title.
         hosting.sizingOptions = []
-        hosting.sceneBridgingOptions = [.toolbars, .title]
+        // Title only: the window owns its toolbar, so SwiftUI adds no sidebar
+        // toggle and panes get the system scroll edge under the title.
+        hosting.sceneBridgingOptions = [.title]
         let window = SettingsNSWindow(
             contentRect: NSRect(origin: .zero, size: SettingsLayout.windowSize),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
@@ -126,8 +128,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.contentViewController = hosting
         window.setContentSize(SettingsLayout.windowSize)
         window.title = "Portside Settings"
-        window.titlebarAppearsTransparent = true
-        window.toolbarStyle = .unified
+        window.toolbar = NSToolbar(identifier: "PortsideSettings")
+        window.toolbarStyle = .unifiedCompact
         window.isReleasedWhenClosed = false
         window.delegate = self
         // Do not restore a saved frame: position is always the primary
@@ -219,7 +221,7 @@ enum SettingsLayout {
         #endif
         return NSSize(width: 830, height: 560)
     }()
-    static let sidebarWidth: CGFloat = 270
+    static let sidebarWidth: CGFloat = 215
     /// Label column for slider rows.
     static let labelWidth: CGFloat = 136
     /// Value column for slider rows ("150 ms", "Instant").
@@ -299,7 +301,6 @@ struct SettingsView: View {
         NavigationSplitView {
             SettingsSidebar(selection: $tab)
                 .navigationSplitViewColumnWidth(min: SettingsLayout.sidebarWidth, ideal: SettingsLayout.sidebarWidth, max: SettingsLayout.sidebarWidth)
-                .toolbar(removing: .sidebarToggle)
         } detail: {
             Group {
                 switch tab {
@@ -640,26 +641,28 @@ private struct DockSettings: View {
 /// or Spotlight might launch instead of this one.
 private struct UpdatesAuthSection: View {
     @State private var status: String?
-    @State private var otherCopies: [InstalledCopy] = []
+    @Binding var otherCopies: [InstalledCopy]
 
+    /// Hidden while there is nothing to show, so no header sits alone.
     var body: some View {
-        Section {
-            ForEach(otherCopies) { copy in
-                otherCopyRow(copy)
+        if !otherCopies.isEmpty || status != nil {
+            Section {
+                ForEach(otherCopies) { copy in
+                    otherCopyRow(copy)
+                }
+                if let status {
+                    Text(status).helperStyle()
+                }
+            } header: {
+                Text("Updates")
             }
-            if let status {
-                Text(status).helperStyle()
-            }
-        } header: {
-            Text("Updates")
         }
-        .onAppear { refreshCopies() }
     }
 
     /// Only shown when running from an installed .app; under `swift run`
     /// every built copy would be "other".
-    private func refreshCopies() {
-        otherCopies = UpdateChecker.canInstallInPlace ? UpdateChecker.otherInstalledCopies() : []
+    static func currentCopies() -> [InstalledCopy] {
+        UpdateChecker.canInstallInPlace ? UpdateChecker.otherInstalledCopies() : []
     }
 
     private func otherCopyRow(_ copy: InstalledCopy) -> some View {
@@ -680,7 +683,7 @@ private struct UpdatesAuthSection: View {
                     DispatchQueue.main.async {
                         status = error.map { "Couldn't move it to the Trash: \($0.localizedDescription)" }
                             ?? "Moved \(path) to the Trash."
-                        refreshCopies()
+                        otherCopies = Self.currentCopies()
                     }
                 }
             }
@@ -701,6 +704,7 @@ private struct GeneralSettings: View {
     @State private var importRequest: ImportRequest?
     @State private var canUndoImport = DockModel.hasBeforeImport
     @State private var importStatus: String?
+    @State private var otherCopies: [InstalledCopy] = []
 
     /// Import clamps the native icon size to what fits, like the slider.
     private var maxIconSize: CGFloat {
@@ -731,7 +735,7 @@ private struct GeneralSettings: View {
                     .footerStyle()
             }
 
-            UpdatesAuthSection()
+            UpdatesAuthSection(otherCopies: $otherCopies)
 
             Section("macOS Dock") {
                 Toggle(isOn: Binding(
@@ -774,7 +778,10 @@ private struct GeneralSettings: View {
                 }
             )
         }
-        .onAppear { canUndoImport = DockModel.hasBeforeImport }
+        .onAppear {
+            canUndoImport = DockModel.hasBeforeImport
+            otherCopies = UpdatesAuthSection.currentCopies()
+        }
     }
 
     private func runImport(_ snapshot: NativeDockSnapshot, replace: Bool, applyLook: Bool) {
