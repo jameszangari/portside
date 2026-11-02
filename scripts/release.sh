@@ -1,15 +1,15 @@
 #!/bin/bash
 # MAINTAINER ONLY: part of Portside's release process. Contributors do not need it.
-# Cuts a release: bumps VERSION, regenerates BuildInfo.swift, makes one
-# commit "Release vX.Y.Z", creates an annotated tag vX.Y.Z, and builds a
-# notarized build/dist/Portside-X.Y.Z.dmg (Developer ID Portside.app).
-# Never pushes.
+# Step 1 of a release. From an up-to-date main, makes a release/vX.Y.Z branch
+# with one "Release vX.Y.Z" commit (VERSION and BuildInfo.swift), pushes the
+# branch, and opens a pull request. main is protected, so nothing goes to it
+# directly. Does not tag or build.
 #
 # Usage: scripts/release.sh patch|minor|major [--dry-run | --apply]
 #   --dry-run  (default) print what would happen, change nothing
-#   --apply    actually bump, commit, tag, and package (refuses on a dirty tree)
+#   --apply    actually bump, commit, push the branch, and open the PR
 #
-# Publish afterwards with scripts/publish-release.sh (push + GitHub release).
+# Step 2, after the PR is merged: scripts/publish-release.sh --apply
 set -euo pipefail
 
 usage() {
@@ -47,7 +47,7 @@ case "$bump" in
 esac
 next="$major.$minor.$patch"
 tag="v$next"
-dmg="build/dist/Portside-$next.dmg"
+release_branch="release/$tag"
 branch="$(git rev-parse --abbrev-ref HEAD)"
 head="$(git rev-parse --short HEAD)"
 
@@ -58,7 +58,7 @@ fi
 
 dirty="$(git status --porcelain)"
 
-# Developer ID + notary must exist before --apply commits a tag we cannot easily undo.
+# Developer ID + notary must exist before opening a PR we could not publish.
 preflight_signing() {
     if ! security find-identity -v -p codesigning | grep -q 'Developer ID Application:'; then
         echo "release: install a Developer ID Application certificate before --apply." >&2
@@ -75,48 +75,59 @@ if [ "$apply" = false ]; then
     echo
     echo "  Branch:   $branch at $head"
     echo "  Version:  $current -> $next ($bump)"
-    echo "  Tag:      $tag (annotated)"
-    echo "  Disk img: $dmg (notarized Portside.app inside)"
+    echo "  PR:       $release_branch -> main"
     if [ -n "$dirty" ]; then
         echo "  Tree:     DIRTY, --apply would refuse. Uncommitted changes:"
         echo "$dirty" | sed 's/^/              /'
     else
         echo "  Tree:     clean"
     fi
+    if [ "$branch" != "main" ]; then
+        echo "  Branch:   not main, --apply would refuse"
+    fi
     echo
     echo "With --apply it would run:"
+    echo "  git switch -c $release_branch"
     echo "  echo $next > VERSION"
     echo "  scripts/gen-version.sh --release"
     echo "  git add VERSION Sources/portside/BuildInfo.swift"
     echo "  git commit -m \"Release $tag\""
-    echo "  git tag -a $tag -m \"Release $tag\""
-    echo "  scripts/build-app.sh --notarize"
-    echo
-    echo "It never pushes. Afterwards you would run:"
-else
-    if [ -n "$dirty" ]; then
-        echo "release: working tree is dirty, commit or stash first:" >&2
-        echo "$dirty" >&2
-        exit 1
-    fi
-    preflight_signing
-    echo "$next" > VERSION
-    scripts/gen-version.sh --release
-    git add VERSION Sources/portside/BuildInfo.swift
-    git commit -q -m "Release $tag"
-    git tag -a "$tag" -m "Release $tag"
-    echo "Committed \"Release $tag\" ($(git rev-parse --short HEAD)) on $branch and tagged $tag."
-    echo "==> Building notarized .dmg for $tag"
-    scripts/build-app.sh --notarize
-    if [ ! -f "$dmg" ]; then
-        echo "release: expected $dmg after build-app --notarize" >&2
-        exit 1
-    fi
-    echo "Nothing was pushed. To publish, run:"
+    echo "  git push -u origin $release_branch"
+    echo "  gh pr create --base main --head $release_branch"
+    echo "  git switch main"
+    exit 0
 fi
 
+if [ -n "$dirty" ]; then
+    echo "release: working tree is dirty, commit or stash first:" >&2
+    echo "$dirty" >&2
+    exit 1
+fi
+if [ "$branch" != "main" ]; then
+    echo "release: run this from main (on $branch)." >&2
+    exit 1
+fi
+git fetch -q origin main
+if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+    echo "release: local main differs from origin/main. Run git pull first." >&2
+    exit 1
+fi
+if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+    echo "release: tag $tag already exists on origin" >&2
+    exit 1
+fi
+preflight_signing
+
+git switch -q -c "$release_branch"
+echo "$next" > VERSION
+scripts/gen-version.sh --release
+git add VERSION Sources/portside/BuildInfo.swift
+git commit -q -m "Release $tag"
+git push -q -u origin "$release_branch"
+gh pr create --base main --head "$release_branch" --title "Release $tag" --body "Bumps the version to $next."
+git switch -q main
+
+echo
+echo "Next: merge the pull request, then run:"
+echo "  git pull"
 echo "  scripts/publish-release.sh --apply"
-echo "  # or manually:"
-echo "  git push"
-echo "  git push origin $tag"
-echo "  gh release create $tag --verify-tag --title \"Portside $tag\" --generate-notes \"$dmg\""

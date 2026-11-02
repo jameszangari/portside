@@ -102,8 +102,8 @@ Sources/AppLoginItemList/   C helper: read session Open at Login list (LSSharedF
 scripts/
   swift-env.sh              Shared SPM env (disables Explicitly Built Modules by default)
   gen-version.sh            Writes BuildInfo.swift from VERSION and git
-  release.sh                Bumps VERSION, commits, tags, and notarizes Portside-X.Y.Z.dmg
-  publish-release.sh        Notarizes if needed, pushes the tag, GitHub release with the .dmg (runs check-repo-visibility)
+  release.sh                Bumps VERSION on a release branch and opens a pull request
+  publish-release.sh        After the PR merges: tags, notarizes, pushes the tag, GitHub release with the .dmg (runs check-repo-visibility)
   check-repo-visibility.sh  One gh call: docs/github-visibility vs live private/public
   setup-notary.sh           Stores notarytool keychain profile (portside-notary)
   build-app.sh              Builds and signs build/Portside.app (--install, --package, --notarize)

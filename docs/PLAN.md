@@ -62,7 +62,7 @@ portside/
 ├── VERSION
 ├── scripts/
 │   ├── gen-version.sh              # writes BuildInfo.swift
-│   └── release.sh                  # version bump, commit, tag
+│   └── release.sh                  # version bump on a branch, opens a PR
 ├── Sources/portside/
 │   ├── PortsideApp.swift           # entry point, menu bar, app delegate
 │   ├── DockEngine.swift            # coordinator
