@@ -4,9 +4,9 @@
 
 enum BuildInfo {
     /// Marketing version from VERSION.
-    static let version = "1.2.0"
+    static let version = "1.3.0"
     /// Short hash of HEAD when this file was generated, or "unknown".
-    static let commit = "ae50dfc"
+    static let commit = "4b34fed"
     /// Uncommitted changes when generated. nil if git was unavailable.
     static let isDirty: Bool? = true
     /// True for a tagged release build (see scripts/gen-version.sh).
