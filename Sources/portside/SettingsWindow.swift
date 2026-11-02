@@ -634,15 +634,12 @@ private struct DockSettings: View {
     }
 }
 
-// MARK: - Updates auth
+// MARK: - Updates
 
-/// Optional GitHub token for Check for Updates while the repo is private.
-/// Portside also reuses a logged-in GitHub CLI token from the keychain.
+/// Updates section: flags other installed Portside copies that Open at Login
+/// or Spotlight might launch instead of this one.
 private struct UpdatesAuthSection: View {
-    @State private var draft = ""
     @State private var status: String?
-    @State private var hasSaved = GitHubAuth.hasPortsideToken
-    @State private var hasAny = GitHubAuth.hasAnyToken
     @State private var otherCopies: [InstalledCopy] = []
 
     var body: some View {
@@ -650,34 +647,13 @@ private struct UpdatesAuthSection: View {
             ForEach(otherCopies) { copy in
                 otherCopyRow(copy)
             }
-            SecureField("Personal access token", text: $draft)
-                .textContentType(.password)
-            HStack {
-                Button("Save Token") { save() }
-                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                if hasSaved {
-                    Button("Clear Saved Token", role: .destructive) { clear() }
-                }
-            }
             if let status {
                 Text(status).helperStyle()
-            } else {
-                Text(hasAny
-                     ? "A GitHub token is available (saved here or from the GitHub CLI)."
-                     : "No token found. Check for Updates needs one while the repo is private.")
-                    .helperStyle()
             }
         } header: {
             Text("Updates")
-        } footer: {
-            Text("Fine-grained: Contents read on portside-dock. Classic: repo scope. Tokens stay in the keychain, not dock.json.")
-                .footerStyle()
         }
-        .onAppear {
-            hasSaved = GitHubAuth.hasPortsideToken
-            hasAny = GitHubAuth.hasAnyToken
-            refreshCopies()
-        }
+        .onAppear { refreshCopies() }
     }
 
     /// Only shown when running from an installed .app; under `swift run`
@@ -709,28 +685,6 @@ private struct UpdatesAuthSection: View {
                 }
             }
         }
-    }
-
-    private func save() {
-        do {
-            try GitHubAuth.savePortsideToken(draft)
-            draft = ""
-            hasSaved = GitHubAuth.hasPortsideToken
-            hasAny = GitHubAuth.hasAnyToken
-            status = "Token saved in the keychain."
-        } catch {
-            status = "Couldn't save: \(error.localizedDescription)"
-        }
-    }
-
-    private func clear() {
-        GitHubAuth.clearPortsideToken()
-        draft = ""
-        hasSaved = false
-        hasAny = GitHubAuth.hasAnyToken
-        status = hasAny
-            ? "Cleared. Still using the GitHub CLI token."
-            : "Cleared. Add a token or run gh auth login."
     }
 }
 
@@ -1368,8 +1322,18 @@ private struct WidgetSettings: View {
                 Section {
                     ForEach(AgentProvider.all) { provider in
                         Toggle(isOn: Binding(
-                            get: { dockModel.usageProviders.contains(provider.id) },
-                            set: { dockModel.setUsageProvider(provider.id, enabled: $0) }
+                            get: { dockModel.usageProviders.contains(provider.id) && (provider.id != "claude" || dockModel.usageClaudeConsent) },
+                            set: { on in
+                                if provider.id == "claude" {
+                                    if on, !dockModel.usageClaudeConsent {
+                                        guard UsageConsent.requestClaude() else { return }
+                                        dockModel.setUsageClaudeConsent(true)
+                                    } else if !on {
+                                        dockModel.setUsageClaudeConsent(false)
+                                    }
+                                }
+                                dockModel.setUsageProvider(provider.id, enabled: on)
+                            }
                         )) {
                             Text("\(provider.name) by \(provider.vendor)")
                             Text(provider.id == "claude"
@@ -1438,7 +1402,13 @@ private struct WidgetRow: View {
                 }
                 Toggle(info.name, isOn: Binding(
                     get: { enabled },
-                    set: { dockModel.setWidget(kind, enabled: $0) }
+                    set: { on in
+                        dockModel.setWidget(kind, enabled: on)
+                        if on, kind == UsageWidget.kind, dockModel.usageProviders.contains("claude"),
+                           !dockModel.usageClaudeConsent, UsageConsent.requestClaude() {
+                            dockModel.setUsageClaudeConsent(true)
+                        }
+                    }
                 ))
                 .toggleStyle(.switch)
                 .labelsHidden()

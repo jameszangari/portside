@@ -87,7 +87,6 @@ enum PortsideMain {
     /// `portside --check-updates`: run the same check as the Settings button
     /// and print the result. Hidden; no UI, no install.
     private static func checkUpdatesCommand() -> Int32 {
-        print("token available: \(GitHubAuth.hasAnyToken)")
         let done = DispatchSemaphore(value: 0)
         var result = UpdateCheckResult.notConfigured
         Task.detached {

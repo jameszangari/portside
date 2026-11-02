@@ -163,7 +163,7 @@ struct PaletteColor: Codable, Hashable {
     /// Same color, fully opaque (glass tints, badge fills).
     var opaqueColor: Color { resolved.withAlpha(1).color }
 
-    /// Brand navy (design/brand tokens).
+    /// Brand navy (design tokens).
     static let brandNavy = PaletteColor(base: RGBAColor(red: 0x10 / 255, green: 0x28 / 255, blue: 0x3F / 255, alpha: 1))
 
     typealias Preset = (name: String, color: RGBAColor)

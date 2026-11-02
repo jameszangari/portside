@@ -1,4 +1,5 @@
 #!/bin/bash
+# MAINTAINER ONLY: part of Portside's release process. Contributors do not need it.
 # Publishes the current VERSION's annotated tag to GitHub with the notarized
 # drag-to-install Portside-X.Y.Z.dmg attached. Always rebuilds and
 # notarizes from the tagged commit before uploading.

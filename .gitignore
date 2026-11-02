@@ -21,3 +21,11 @@ build/
 
 # Compiled helpers from scripts/*.swift
 scripts/.cache/
+
+# Local agent state and secrets
+.claude/
+.env*
+*.p12
+*.cer
+*.mobileprovision
+*.pem

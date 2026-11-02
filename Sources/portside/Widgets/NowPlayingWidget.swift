@@ -186,6 +186,7 @@ final class NowPlayingWidget: DockWidget {
 
     /// Spotify hands back an art URL; fetched once per track.
     private func loadArtwork(_ url: URL, trackID: String, player: Player) {
+        guard url.scheme == "https" else { return }
         URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
             guard let data, let image = NSImage(data: data) else { return }
             DispatchQueue.main.async {

@@ -50,7 +50,7 @@ enum BrandAssets {
         return rep
     }
 
-    /// The menu bar mark from design/brand/menu-bar (black with alpha) as a
+    /// The menu bar mark from design/menu-bar (black with alpha) as a
     /// template image, so macOS tints it for light, dark, and tinted menu
     /// bars. 22pt canvas with 1x and 2x pixels. Falls back to an SF Symbol.
     static let menuBarIcon: NSImage = {

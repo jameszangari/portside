@@ -1,4 +1,5 @@
 #!/bin/bash
+# MAINTAINER ONLY: part of Portside's release process. Contributors do not need it.
 set -euo pipefail
 umask 077
 

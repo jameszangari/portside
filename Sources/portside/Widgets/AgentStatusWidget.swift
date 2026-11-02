@@ -29,7 +29,8 @@ final class AgentStatusWidget: DockWidget {
 
     func start() {
         AgentHooks.updateScriptIfInstalled()
-        try? FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
         let fd = open(Self.directory.path, O_EVTONLY)
         guard fd >= 0 else {
             logger.error("agents: cannot watch \(Self.directory.path, privacy: .public)")
@@ -163,7 +164,7 @@ struct AgentSession: Equatable {
     let state: AgentState
     let ended: Bool
     let updated: Date
-    /// Working folder name ("custom-dock"), used to find its window.
+    /// Working folder name ("my-project"), used to find its window.
     let project: String?
     /// The app it runs in ("T3 Code", "Terminal"), filled in by the widget.
     var host: String?

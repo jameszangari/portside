@@ -1,4 +1,5 @@
 #!/bin/bash
+# MAINTAINER ONLY: part of Portside's release process. Contributors do not need it.
 # Stores Apple notarytool credentials in the login keychain (one-time).
 # Usage: scripts/setup-notary.sh
 #

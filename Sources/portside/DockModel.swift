@@ -730,6 +730,17 @@ final class DockModel: Codable, ObservableObject {
     /// Providers the Usage widget tracks (`AgentProvider` ids), in order.
     @Published var usageProviders: [String] = DockModel.Defaults.usageProviders
 
+    /// The user agreed to let Portside read Claude Code's sign-in token from
+    /// the keychain and send it to Anthropic. Until then the Claude meter
+    /// reads nothing and sends nothing.
+    @Published private(set) var usageClaudeConsent = false
+
+    func setUsageClaudeConsent(_ granted: Bool) {
+        guard granted != usageClaudeConsent else { return }
+        usageClaudeConsent = granted
+        persist()
+    }
+
     func setUsageProvider(_ id: String, enabled: Bool) {
         var next = usageProviders.filter { $0 != id }
         if enabled {
@@ -954,7 +965,7 @@ final class DockModel: Codable, ObservableObject {
         case showTrash, trashAccessHintDismissed
         case showBadges, badgeColor, badgeCustomColor
         case activityIcons
-        case stacks, layout, widgetSizes, usageProviders
+        case stacks, layout, widgetSizes, usageProviders, usageClaudeConsent
         case iconStyle, background, cornerRadius
         case showIndicators, dimHiddenApps, showRecents, recentApps
         /// Before per-style backgrounds. Read only, for migration.
@@ -999,6 +1010,7 @@ final class DockModel: Codable, ObservableObject {
         layout = (try? c.decodeIfPresent([String].self, forKey: .layout)) ?? []
         widgetSizes = (try? c.decodeIfPresent([String: WidgetSize].self, forKey: .widgetSizes)) ?? [:]
         usageProviders = (try? c.decodeIfPresent([String].self, forKey: .usageProviders)) ?? Defaults.usageProviders
+        usageClaudeConsent = try c.decodeIfPresent(Bool.self, forKey: .usageClaudeConsent) ?? false
         openGroupsOnHover = try c.decodeIfPresent(Bool.self, forKey: .openGroupsOnHover) ?? false
         openSettingsOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .openSettingsOnLaunch) ?? false
         groupHoverDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverDelay) ?? Defaults.groupHoverDelay, to: Self.groupHoverDelayRange)
@@ -1061,6 +1073,7 @@ final class DockModel: Codable, ObservableObject {
         if !layout.isEmpty { try c.encode(layout, forKey: .layout) }
         if !widgetSizes.isEmpty { try c.encode(widgetSizes, forKey: .widgetSizes) }
         if usageProviders != Defaults.usageProviders { try c.encode(usageProviders, forKey: .usageProviders) }
+        if usageClaudeConsent { try c.encode(true, forKey: .usageClaudeConsent) }
         try c.encode(openGroupsOnHover, forKey: .openGroupsOnHover)
         try c.encode(openSettingsOnLaunch, forKey: .openSettingsOnLaunch)
         try c.encode(groupHoverDelay, forKey: .groupHoverDelay)
@@ -1291,6 +1304,7 @@ final class DockModel: Codable, ObservableObject {
         activityIcons = old.activityIcons
         settingsHotkey = old.settingsHotkey
         openGroupsOnHover = old.openGroupsOnHover
+        usageClaudeConsent = old.usageClaudeConsent
         openSettingsOnLaunch = old.openSettingsOnLaunch
         groupHoverDelay = old.groupHoverDelay
         groupHoverCloseGrace = old.groupHoverCloseGrace

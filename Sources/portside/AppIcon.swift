@@ -2,7 +2,7 @@ import AppKit
 
 /// Portside's app icon.
 ///
-/// Portside.app built from design/brand/icon-composer/AppIcon.icon has an
+/// Portside.app built from design/icon-composer/AppIcon.icon has an
 /// Assets.car and `CFBundleIconName`. Then the icon comes from the system
 /// (`NSWorkspace.icon(forFile:)`), so it gets the same Liquid Glass
 /// rendering, icon style (light, dark, tinted), and size as every other app

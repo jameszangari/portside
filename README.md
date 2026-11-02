@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="design/brand/wordmarks/portside-horizontal-dark.png">
-    <img src="design/brand/wordmarks/portside-horizontal-light.png" alt="Portside" width="440">
+    <source media="(prefers-color-scheme: dark)" srcset="design/wordmarks/portside-horizontal-dark.png">
+    <img src="design/wordmarks/portside-horizontal-light.png" alt="Portside" width="440">
   </picture>
 </p>
 
@@ -16,7 +16,13 @@
 
 A fast, event-driven dock replacement for macOS, written in Swift (SwiftUI and AppKit) and built with SwiftPM. Touch the edge and it starts sliding in within a frame. Move away and it gets out of the way. No polling, no focus stealing, no lag.
 
-Personal project for Apple Silicon. Builds a locally signed `.app`; not meant for general distribution. Brand assets and the two-page [brand guide](design/brand/presentation/portside-approved-identity-v2.pdf) live in [`design/brand/`](design/brand/README.md).
+Free and open source (MIT). Requires **macOS 26 or later on Apple Silicon**. Brand assets and the two-page [brand guide](design/presentation/portside-approved-identity-v2.pdf) live in [`design/`](design/README.md).
+
+## Install
+
+Download the latest `Portside-X.Y.Z.dmg` from [Releases](https://github.com/jameszangari/portside/releases/latest), open it, and drag Portside to Applications (or `~/Applications`). Releases are signed with a Developer ID and notarized. Later versions install from inside the app: Settings > Check for Updates.
+
+macOS asks for permissions as features need them; see [Privacy and permissions](#privacy-and-permissions).
 
 ## Features
 
@@ -41,21 +47,51 @@ From [docs/CHECKLIST.md](docs/CHECKLIST.md) remaining backlog:
 - Window list in the app menu; VoiceOver / keyboard navigation
 - Side-dock widget layout; window previews; profiles; Trash Option-click Empty
 
-## Quick start
+## Privacy and permissions
+
+Portside has no telemetry and no account. Everything stays on your Mac except the requests below.
+
+**Network** (only these hosts):
+
+| Host | When | What is sent |
+| --- | --- | --- |
+| `api.github.com`, `github.com`, `*.githubusercontent.com` | Check for Updates, Install Update | A version check and the release DMG download. No identifiers. |
+| `api.open-meteo.com`, `geocoding-api.open-meteo.com` | Weather widget on | The city you type, then its coordinates |
+| `api.anthropic.com` | AI Usage widget with Claude, after you allow it | Claude Code's sign-in token, to ask for your usage |
+| Spotify's artwork host (`https` only) | Now Playing with Spotify | A cover art request for the current track |
+
+**Permissions** (macOS asks when a feature first needs them):
+
+- **Accessibility:** fit maximized windows clear of the dock; raise an agent's window.
+- **Calendar:** the Calendar widget's next event.
+- **Automation:** Finder (empty Trash, Trash count), System Events (Open at Login), Spotify or Music (Now Playing), Terminal or iTerm (bring an agent's tab forward).
+
+**Files Portside writes:**
+
+- `~/Library/Application Support/com.james.portside/`: `dock.json` and its backups, plus `agent-hook.sh` and `agents/` if you install the agent hooks.
+- `~/Library/Logs/Portside/update.log`.
+- Only if you click Install Hooks: entries in `~/.claude/settings.json`, `~/.codex/hooks.json` and `~/.codex/config.toml`, each backed up once to `<file>.portside.bak`. Remove Hooks undoes it.
+- With "Hide the macOS Dock" on: `autohide` and `autohide-delay` in `com.apple.dock`, restored on quit.
+
+**What widgets read:** AI Usage reads Claude Code's keychain token only after you agree, and Codex's local session logs in `~/.codex/sessions`. Agents reads the hook files above. Battery, System Stats, CPU and Memory read local system counters. Now Playing asks Spotify or Music what is playing.
+
+## Build from source
+
+You need macOS 26+, Apple Silicon, and the Xcode command line tools. No Xcode project and no signing identity required:
 
 ```
 source scripts/swift-env.sh
 swift build
-scripts/setup-signing.sh           # once
-scripts/build-app.sh --install
-open ~/Applications/Portside.app
+swift run portside
 ```
+
+For a `.app` bundle: `SIGN_IDENTITY=- scripts/build-app.sh` (ad hoc signed, so macOS re-asks for permissions after each rebuild), then `open build/Portside.app`. The maintainer's own signing setup is in [docs/BUILD.md](docs/BUILD.md).
 
 Logs: `log stream --level info --predicate 'subsystem == "com.james.portside"'`
 
 Restore the native Dock without UI: `swift run portside --restore-dock`
 
-Full build, signing, DMG, and release steps: [docs/BUILD.md](docs/BUILD.md).
+Contributing: [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY.md). Build, signing, DMG, and release steps: [docs/BUILD.md](docs/BUILD.md).
 
 ## Docs
 
@@ -65,6 +101,10 @@ Full build, signing, DMG, and release steps: [docs/BUILD.md](docs/BUILD.md).
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | How it works, private-API notes, project layout |
 | [BUILD.md](docs/BUILD.md) | Requirements, SPM, `.app`, signing, versioning |
 | [DATA.md](docs/DATA.md) | `dock.json`, backups, signing identity paths |
-| [PLAN.md](docs/PLAN.md) | Original milestones A–F |
-| [CHECKLIST.md](docs/CHECKLIST.md) | Status, findings, backlog |
-| [Brand](design/brand/README.md) | Sail identity, wordmarks, tokens |
+| [PLAN.md](docs/PLAN.md) | Original milestones A to F |
+| [CHECKLIST.md](docs/CHECKLIST.md) | Status and backlog |
+| [Brand](design/README.md) | Sail identity, wordmarks, tokens |
+
+## License
+
+[MIT](LICENSE). Provided as is, with no warranty. Portside moves and resizes windows, edits the macOS Dock's auto-hide settings when you ask it to, and can edit your agent hook files; read the permissions above before you enable those features.
