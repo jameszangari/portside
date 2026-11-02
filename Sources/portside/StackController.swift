@@ -72,6 +72,10 @@ final class StackController: ObservableObject {
     }
 
     var isExpanded: Bool { expandedID != nil }
+    /// Opened by a click, or kept by one. Holds the dock up under auto-hide
+    /// like a native Dock stack; the next click elsewhere closes it, and
+    /// `onCollapsed` re-arms the hide.
+    var isPinnedOpen: Bool { expandedID != nil && !isClosing && !openedByHover }
 
     func containsScreenPoint(_ point: NSPoint) -> Bool {
         overlay.containsScreenPoint(point)
