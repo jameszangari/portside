@@ -95,7 +95,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             DispatchQueue.main.async { AppIcon.applyToDockTile() }
             onActivationPolicyChanged?()
         }
-        NSApp.activate()
+        // Plain activate() right after the policy change is dropped, which
+        // leaves Portside last in Cmd+Tab until something else activates it.
+        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         // activate() is cooperative and the system can decline it. The
         // window must still come up on top, where one click makes it key.
@@ -326,15 +328,8 @@ private struct SettingsSidebar: View {
     @State private var status: String?
     @State private var checking = false
     @State private var clearStatus: Task<Void, Never>?
-    /// Set when a check finds a newer release; the button becomes Install Update.
-    @State private var pendingUpdate: PendingUpdate?
-    @State private var confirmingInstall = false
-
-    private struct PendingUpdate {
-        let version: String
-        let releaseURL: URL
-        let dmgURL: URL
-    }
+    /// Set when a check finds a newer release; presents the update sheet.
+    @State private var offer: UpdateOffer?
 
     var body: some View {
         List(selection: Binding(get: { selection }, set: { if let tab = $0 { selection = tab } })) {
@@ -381,28 +376,15 @@ private struct SettingsSidebar: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.opacity)
             }
-            if pendingUpdate != nil {
-                Button(checking ? "Installing…" : "Install Update") { confirmingInstall = true }
-                    .controlSize(.small)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(checking)
-            } else {
-                Button(checking ? "Checking…" : "Check for Updates", action: checkForUpdates)
-                    .controlSize(.small)
-                    .disabled(checking)
-            }
+            Button(checking ? "Checking…" : "Check for Updates", action: checkForUpdates)
+                .controlSize(.small)
+                .disabled(checking)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
         .padding(.bottom, 12)
-        .alert(
-            "Install Portside \(pendingUpdate?.version ?? "")?",
-            isPresented: $confirmingInstall
-        ) {
-            Button("Quit and Install", action: installUpdate)
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Portside will quit, replace itself with the new version, and reopen. Your settings are kept.")
+        .sheet(item: $offer) { offer in
+            UpdateSheet(offer: offer, onClose: { self.offer = nil })
         }
     }
 
@@ -414,15 +396,9 @@ private struct SettingsSidebar: View {
             checking = false
             switch result {
             case .available(let version, let page, let dmgURL):
-                // Installed .app: offer Install Update. Otherwise (swift run or
-                // a release without a DMG) open the release page.
-                if let dmgURL, UpdateChecker.canInstallInPlace {
-                    pendingUpdate = PendingUpdate(version: version, releaseURL: page, dmgURL: dmgURL)
-                    withAnimation { status = "New version \(version) found." }
-                    return
-                }
-                withAnimation { status = result.message }
-                NSWorkspace.shared.open(page)
+                withAnimation { status = nil }
+                offer = UpdateOffer(version: version, releaseURL: page, dmgURL: dmgURL)
+                return
             default:
                 withAnimation { status = result.message }
             }
@@ -430,32 +406,174 @@ private struct SettingsSidebar: View {
         }
     }
 
-    private func installUpdate() {
-        guard let update = pendingUpdate else { return }
-        clearStatus?.cancel()
-        clearStatus = Task { @MainActor in
-            checking = true
-            do {
-                try await UpdateChecker.downloadAndInstall(dmgURL: update.dmgURL, version: update.version) { phase in
-                    withAnimation { status = phase }
-                }
-                // terminate was requested; keep the button disabled.
-            } catch {
-                checking = false
-                pendingUpdate = nil
-                withAnimation {
-                    status = "Couldn't install the update: \(error.localizedDescription)"
-                }
-                NSWorkspace.shared.open(update.releaseURL)
-                await clearStatusLater()
-            }
-        }
-    }
-
     private func clearStatusLater() async {
         try? await Task.sleep(for: .seconds(6))
         guard !Task.isCancelled else { return }
         withAnimation { status = nil }
+    }
+}
+
+/// A newer release found by a check.
+private struct UpdateOffer: Identifiable {
+    let version: String
+    let releaseURL: URL
+    let dmgURL: URL?
+    var id: String { version }
+}
+
+/// Offers a newer release, then downloads and installs it from inside the
+/// sheet. The browser opens only from the Open Release Page button.
+private struct UpdateSheet: View {
+    let offer: UpdateOffer
+    let onClose: () -> Void
+
+    private enum Phase {
+        case ready
+        case working(UpdateStep)
+        case failed(String)
+    }
+
+    @State private var phase = Phase.ready
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(alignment: .top, spacing: 16) {
+                Image(nsImage: AppIcon.image(points: 64))
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 64, height: 64)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title).font(.title3.weight(.semibold))
+                        Text("You have version \(AppInfo.version).")
+                            .foregroundStyle(.secondary)
+                    }
+                    detail
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            buttons
+        }
+        .padding(24)
+        .frame(width: 460)
+    }
+
+    private var title: String {
+        switch phase {
+        case .ready: "Portside \(offer.version) is available"
+        case .working: "Updating to Portside \(offer.version)"
+        case .failed: "Couldn't install Portside \(offer.version)"
+        }
+    }
+
+    /// Why this copy can't install the update itself, if so.
+    private var blocker: String? {
+        if !UpdateChecker.canInstallInPlace {
+            return "This copy isn't running from an installed Portside.app, so it can't replace itself."
+        }
+        if offer.dmgURL == nil {
+            return "This release has no disk image to install."
+        }
+        return nil
+    }
+
+    @ViewBuilder
+    private var detail: some View {
+        switch phase {
+        case .ready:
+            Text(blocker ?? "Portside will download it, quit, replace itself, and reopen. Your settings are kept.")
+                .fixedSize(horizontal: false, vertical: true)
+        case .working(let step):
+            progress(step)
+        case .failed(let reason):
+            Text(reason)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+    }
+
+    /// A bar that fills while the size is known and sweeps otherwise.
+    private func progress(_ step: UpdateStep) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            switch step {
+            case .downloading(let received, let total) where total > 0:
+                ProgressView(value: Double(received), total: Double(total))
+                    .progressViewStyle(.linear)
+            default:
+                ProgressView().progressViewStyle(.linear)
+            }
+            HStack {
+                Text(stepTitle(step))
+                Spacer()
+                if case .downloading(let received, let total) = step, total > 0 {
+                    Text("\(byteCount(received)) of \(byteCount(total))")
+                        .monospacedDigit()
+                }
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private func stepTitle(_ step: UpdateStep) -> String {
+        switch step {
+        case .downloading: "Downloading…"
+        case .installing: "Installing…"
+        case .restarting: "Restarting…"
+        }
+    }
+
+    private func byteCount(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    @ViewBuilder
+    private var buttons: some View {
+        switch phase {
+        case .ready:
+            HStack {
+                Spacer()
+                if blocker == nil {
+                    Button("Later", action: onClose).keyboardShortcut(.cancelAction)
+                    Button("Download and Install", action: install).keyboardShortcut(.defaultAction)
+                } else {
+                    Button("Close", action: onClose).keyboardShortcut(.cancelAction)
+                    Button("Open Release Page", action: openReleasePage).keyboardShortcut(.defaultAction)
+                }
+            }
+        case .working:
+            // Nothing to cancel: the app quits as soon as the new one is staged.
+            EmptyView()
+        case .failed:
+            HStack {
+                Button("Open Release Page", action: openReleasePage)
+                Spacer()
+                Button("Close", action: onClose).keyboardShortcut(.cancelAction)
+                Button("Try Again", action: install).keyboardShortcut(.defaultAction)
+            }
+        }
+    }
+
+    private func openReleasePage() {
+        NSWorkspace.shared.open(offer.releaseURL)
+        onClose()
+    }
+
+    private func install() {
+        guard let dmgURL = offer.dmgURL else { return }
+        phase = .working(.downloading(received: 0, total: -1))
+        Task { @MainActor in
+            do {
+                try await UpdateChecker.downloadAndInstall(dmgURL: dmgURL, version: offer.version) { step in
+                    phase = .working(step)
+                }
+                onClose()
+                await UpdateChecker.quitForSwap()
+            } catch {
+                phase = .failed(error.localizedDescription)
+            }
+        }
     }
 }
 

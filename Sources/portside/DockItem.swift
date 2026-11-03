@@ -212,6 +212,13 @@ struct PortsideTileView: View {
                 menu.addItem(ClosureMenuItem("Settings...", onOpenSettings))
                 menu.addItem(.separator())
                 menu.addItem(ClosureMenuItem("Quit") { NSApp.terminate(nil) })
+                // Holding Option swaps in this one, for when Quit is refused.
+                // SIGTERM, not forceTerminate: the signal handler still puts
+                // the macOS Dock back, and SIGKILL would leave it hidden.
+                let force = ClosureMenuItem("Force Quit") { kill(getpid(), SIGTERM) }
+                force.keyEquivalentModifierMask = .option
+                force.isAlternate = true
+                menu.addItem(force)
                 return menu
             }
     }

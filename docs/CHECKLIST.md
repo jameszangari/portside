@@ -23,6 +23,9 @@ These were built and tested with synthetic input; a person should confirm them o
 - Magnification with 27+ apps, group grids, and menus
 - Calendar consent and Downloads permission retention in the signed app
 - Download the DMG from a release, drag to Applications, launch with no Gatekeeper prompt
+- Check for Updates from an installed older copy: Download and Install shows its steps, Portside quits, the new version reopens with settings intact; also the failure state (Try Again, Open Release Page) and the `swift run` state
+- Portside tile: Option turns Quit into Force Quit, and with Hide the macOS Dock on, the Dock comes back after it
+- Cmd+Tab with Settings open: opening from the menu bar, the hotkey, and a dock click puts Portside first, and it is next in line after switching away
 - Glass rim over white pages and text: no colored specks in Match macOS or Custom with Refraction on, and the rim bend still looks right, including while magnifying
 
 ## Backlog
@@ -40,6 +43,8 @@ Out of scope: minimized windows in the Dock, the two-finger App Expose gesture, 
 
 ## Known gaps
 
+- Updates check only when Check for Updates is clicked, not at launch.
+- AppKit ignores `NSApp.terminate` while the SwiftUI update sheet is up, and closing it with `endSheet` was not enough. The sheet dismisses through its SwiftUI state before quitting; if the app is still running 3 seconds later, it exits through the SIGTERM handler, which skips `dockEngine.stop()`.
 - Camera usage has no public per-app owner API, so a running camera is credited to apps also using the microphone.
 - Codex usage meters only move after a Codex turn that logs `rate_limits` numbers.
 - The AI Usage Claude meter uses an undocumented Anthropic endpoint and may stop working without notice.
