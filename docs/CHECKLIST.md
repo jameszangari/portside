@@ -25,6 +25,7 @@ These were built and tested with synthetic input; a person should confirm them o
 - Download the DMG from a release, drag to Applications, launch with no Gatekeeper prompt
 - Check for Updates from an installed older copy: Download and Install shows its steps, Portside quits, the new version reopens with settings intact; also the failure state (Try Again, Open Release Page) and the `swift run` state
 - Portside tile: Option turns Quit into Force Quit, and with Hide the macOS Dock on, the Dock comes back after it
+- Cmd+Tab with Settings open: opening from the menu bar, the hotkey, and a dock click puts Portside first, and it is next in line after switching away
 - Glass rim over white pages and text: no colored specks in Match macOS or Custom with Refraction on, and the rim bend still looks right, including while magnifying
 
 ## Backlog

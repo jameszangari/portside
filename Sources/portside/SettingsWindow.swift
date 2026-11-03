@@ -95,7 +95,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             DispatchQueue.main.async { AppIcon.applyToDockTile() }
             onActivationPolicyChanged?()
         }
-        NSApp.activate()
+        // Plain activate() right after the policy change is dropped, which
+        // leaves Portside last in Cmd+Tab until something else activates it.
+        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         // activate() is cooperative and the system can decline it. The
         // window must still come up on top, where one click makes it key.
