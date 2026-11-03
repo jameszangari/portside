@@ -23,6 +23,14 @@ enum UpdateCheckResult: Equatable {
     }
 }
 
+/// Where `UpdateChecker.downloadAndInstall` has got to.
+enum UpdateStep: Equatable {
+    /// `total` is negative when the server didn't send a length.
+    case downloading(received: Int64, total: Int64)
+    case installing
+    case restarting
+}
+
 /// Another Portside.app on disk besides the running one.
 struct InstalledCopy: Identifiable, Equatable {
     let url: URL
@@ -117,21 +125,26 @@ enum UpdateChecker {
     }
 
     /// Downloads `dmgURL`, stages and verifies the new app, backs up dock.json,
-    /// then quits so the helper can swap the bundle and reopen it.
-    /// Calls `onStatus` on the main actor with short progress strings.
+    /// and starts the helper that swaps the bundle and reopens it once Portside
+    /// quits. Follow with `quitForSwap`.
+    /// Calls `onStep` on the main actor as the update moves along.
     @MainActor
-    static func downloadAndInstall(dmgURL: URL, version: String, onStatus: (String) -> Void) async throws {
+    static func downloadAndInstall(dmgURL: URL, version: String, onStep: @escaping (UpdateStep) -> Void) async throws {
         guard let destination = installedAppURL else {
             throw UpdateError.notInstalledApp
         }
         try checkWritable(destination)
 
-        onStatus("Downloading…")
+        onStep(.downloading(received: 0, total: -1))
         updateLogger.info("downloading \(version, privacy: .public) from \(dmgURL.absoluteString, privacy: .public)")
-        let downloaded = try await downloadDMG(from: dmgURL)
+        let downloaded = try await downloadDMG(from: dmgURL) { received, total in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { onStep(.downloading(received: received, total: total)) }
+            }
+        }
         defer { try? FileManager.default.removeItem(at: downloaded) }
 
-        onStatus("Installing…")
+        onStep(.installing)
         let staged = try await Task.detached {
             try prepareUpdate(dmg: downloaded, expectedVersion: version, destination: destination)
         }.value
@@ -143,9 +156,23 @@ enum UpdateChecker {
             try? FileManager.default.removeItem(at: staged.workDirectory)
             throw error
         }
-        onStatus("Restarting…")
-        updateLogger.info("helper launched; quitting so \(destination.path, privacy: .public) can be replaced")
+        onStep(.restarting)
+        updateLogger.info("helper launched; \(destination.path, privacy: .public) is replaced once Portside quits")
+    }
+
+    /// Call after `downloadAndInstall`, with the update sheet dismissed:
+    /// AppKit ignores `terminate` while a sheet is up, and the helper gives up
+    /// if the app outlives its wait. If the app is still here after asking,
+    /// the signal handler restores the Dock and exits.
+    @MainActor
+    static func quitForSwap() async {
+        for _ in 0..<40 where NSApp.windows.contains(where: { $0.attachedSheet != nil }) {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
         NSApp.terminate(nil)
+        try? await Task.sleep(for: .seconds(3))
+        log("terminate did not finish; exiting through the signal handler")
+        kill(getpid(), SIGTERM)
     }
 
     /// `portside --install-update <dmg> [--expect-version X.Y.Z] [--no-relaunch]`:
@@ -210,9 +237,13 @@ enum UpdateChecker {
     /// Fails before any download if the swap could not happen.
     private static func checkWritable(_ destination: URL) throws {
         let parent = destination.deletingLastPathComponent()
-        guard FileManager.default.isWritableFile(atPath: parent.path),
-              FileManager.default.isWritableFile(atPath: destination.path) else {
+        guard FileManager.default.isWritableFile(atPath: parent.path) else {
             throw UpdateError.notWritable(parent.path)
+        }
+        guard access(destination.path, W_OK) == 0 else {
+            // App Management answers EPERM for a signed app when another app,
+            // such as a terminal, started this process.
+            throw errno == EPERM ? UpdateError.blockedBySystem : UpdateError.notWritable(parent.path)
         }
     }
 
@@ -225,35 +256,88 @@ enum UpdateChecker {
         return host == "github.com" || host.hasSuffix(".githubusercontent.com")
     }
 
-    private final class RedirectGuard: NSObject, URLSessionTaskDelegate {
+    /// One release download: reports bytes, re-checks each redirect, and moves
+    /// the finished file to `destination` before URLSession deletes it.
+    private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
+        private let destination: URL
+        private let onProgress: (Int64, Int64) -> Void
+        private var continuation: CheckedContinuation<Void, Error>?
+        private var failure: Error?
+        private var lastPercent: Int64 = -1
+
+        init(destination: URL, onProgress: @escaping (Int64, Int64) -> Void) {
+            self.destination = destination
+            self.onProgress = onProgress
+        }
+
+        func run(_ request: URLRequest) async throws {
+            let session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: nil)
+            defer { session.finishTasksAndInvalidate() }
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                self.continuation = continuation
+                session.downloadTask(with: request).resume()
+            }
+        }
+
         func urlSession(_ session: URLSession, task: URLSessionTask,
                         willPerformHTTPRedirection response: HTTPURLResponse,
-                        newRequest request: URLRequest) async -> URLRequest? {
+                        newRequest request: URLRequest,
+                        completionHandler: @escaping (URLRequest?) -> Void) {
             guard let url = request.url, UpdateChecker.isAllowedDownloadURL(url) else {
                 updateLogger.error("refused redirect to \(request.url?.absoluteString ?? "nil", privacy: .public)")
-                return nil
+                completionHandler(nil)
+                return
             }
-            return request
+            completionHandler(request)
+        }
+
+        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                        didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
+                        totalBytesExpectedToWrite: Int64) {
+            // Whole percents are enough for the bar and keep main-thread work down.
+            if totalBytesExpectedToWrite > 0 {
+                let percent = totalBytesWritten * 100 / totalBytesExpectedToWrite
+                guard percent != lastPercent else { return }
+                lastPercent = percent
+            }
+            onProgress(totalBytesWritten, totalBytesExpectedToWrite)
+        }
+
+        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                        didFinishDownloadingTo location: URL) {
+            do {
+                let response = downloadTask.response
+                if let final = response?.url, !UpdateChecker.isAllowedDownloadURL(final) {
+                    throw UpdateError.untrustedURL(final.absoluteString)
+                }
+                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                    throw UpdateError.downloadFailed(http.statusCode)
+                }
+                try FileManager.default.moveItem(at: location, to: destination)
+            } catch {
+                failure = error
+            }
+        }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+            if let problem = error ?? failure {
+                continuation?.resume(throwing: problem)
+            } else {
+                continuation?.resume()
+            }
+            continuation = nil
         }
     }
 
-    private static func downloadDMG(from url: URL) async throws -> URL {
+    private static func downloadDMG(from url: URL, onProgress: @escaping (Int64, Int64) -> Void) async throws -> URL {
         guard isAllowedDownloadURL(url) else {
             throw UpdateError.untrustedURL(url.absoluteString)
         }
         var request = URLRequest(url: url, timeoutInterval: 120)
         request.setValue("Portside/\(AppInfo.version)", forHTTPHeaderField: "User-Agent")
-        let (tempURL, response) = try await URLSession.shared.download(for: request, delegate: RedirectGuard())
-        if let final = response.url, !isAllowedDownloadURL(final) {
-            throw UpdateError.untrustedURL(final.absoluteString)
-        }
-        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            throw UpdateError.downloadFailed(http.statusCode)
-        }
         let dest = FileManager.default.temporaryDirectory
             .appendingPathComponent("Portside-\(UUID().uuidString).dmg")
-        try? FileManager.default.removeItem(at: dest)
-        try FileManager.default.moveItem(at: tempURL, to: dest)
+        try await DownloadDelegate(destination: dest, onProgress: onProgress).run(request)
         return dest
     }
 
@@ -342,7 +426,15 @@ enum UpdateChecker {
         REQ=\(shellEscape(releaseRequirement))
         mkdir -p "$(dirname "$LOG")"
         log() { echo "$(date '+%Y-%m-%d %H:%M:%S') [swap] $*" >> "$LOG"; }
-        reopen() { [ "$RELAUNCH" = 1 ] && /usr/bin/open "$DEST"; }
+        # open drops the environment, so a test run's fixed home is passed on.
+        reopen() {
+            [ "$RELAUNCH" = 1 ] || return 0
+            if [ -n "${CFFIXED_USER_HOME:-}" ]; then
+                /usr/bin/open --env "CFFIXED_USER_HOME=$CFFIXED_USER_HOME" "$DEST"
+            else
+                /usr/bin/open "$DEST"
+            fi
+        }
 
         log "waiting for pid $APP_PID to quit"
         for _ in $(seq 1 300); do kill -0 "$APP_PID" 2>/dev/null || break; sleep 0.2; done
@@ -441,6 +533,7 @@ enum UpdateChecker {
 private enum UpdateError: LocalizedError {
     case notInstalledApp
     case notWritable(String)
+    case blockedBySystem
     case dmgMissingApp
     case untrustedURL(String)
     case verificationFailed(String)
@@ -453,6 +546,8 @@ private enum UpdateError: LocalizedError {
             "this build isn't an installed Portside.app (use the .app from a release or build-app.sh)."
         case .notWritable(let folder):
             "Portside can't write to \(folder). Move Portside.app to ~/Applications, or update from the release page."
+        case .blockedBySystem:
+            "macOS won't let this process replace Portside.app. Quit Portside, open it from Applications or Finder, and try again."
         case .dmgMissingApp:
             "the download didn't contain Portside.app."
         case .untrustedURL(let url):
