@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import UniformTypeIdentifiers
 import os.log
 
 private let nativeMenuLogger = Logger(subsystem: "com.james.portside", category: "NativeDockMenu")
@@ -13,10 +14,18 @@ private let nativeMenuLogger = Logger(subsystem: "com.james.portside", category:
 /// in about 30 to 70ms. It works with the Dock hidden, but the menu does draw
 /// for those few frames.
 ///
-/// Only items above the Dock's own Options submenu are copied. Below it, and
-/// inside it, are Quit and Remove from Dock, which act on the native Dock and
-/// have Portside equivalents, so they can never be pressed from here.
+/// Only items above the Dock's own Options submenu are copied. Options, Quit,
+/// Hide and Remove from Dock act on the native Dock and have Portside
+/// equivalents, so they are never pressed from here. Recent-document items
+/// also expose no URL over Accessibility, so icons are inferred from the
+/// title (file type, or a folder for extensionless project names).
 enum NativeDockMenu {
+    /// True while `AXShowMenu` / `AXCancel` run on the Dock. That brief
+    /// native menu still posts `NSMenu.didBegin/EndTrackingNotification`,
+    /// which would make Portside think its own menu closed and re-arm
+    /// auto-hide before the real tile menu pops up.
+    private(set) static var isCapturing = false
+
     struct Entry {
         /// Nil for a separator.
         let title: String?
@@ -26,6 +35,16 @@ enum NativeDockMenu {
         /// Position in the native menu, to find the same item again.
         let index: Int
     }
+
+    /// Titles that are dock / app commands, not recent files or folders.
+    /// Matched exactly; localized Dock strings for Options and below are
+    /// never copied anyway.
+    private static let commandTitles: Set<String> = [
+        "New Window", "New Document", "New Viewer Window",
+        "Open", "Open New Window", "Show All Windows",
+        "Play", "Pause", "Next", "Previous",
+        "Mute", "Unmute",
+    ]
 
     struct Snapshot {
         fileprivate let tile: AXUIElement
@@ -73,6 +92,8 @@ enum NativeDockMenu {
     /// Dock (not running and not kept there).
     static func snapshot(of app: PinnedApp) -> Snapshot? {
         guard let tile = tile(for: app) else { return nil }
+        isCapturing = true
+        defer { isCapturing = false }
         let started = CACurrentMediaTime()
         guard let menu = open(tile) else {
             nativeMenuLogger.error("\(app.displayName, privacy: .public): menu did not open")
@@ -80,6 +101,9 @@ enum NativeDockMenu {
         }
         let items = copyableItems(of: menu)
         AXUIElementPerformAction(menu, kAXCancelAction as CFString)
+        // Let the Dock finish dismissing before Portside's NSMenu pops up in
+        // the same screen region (especially with Hide the macOS Dock on).
+        RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.02))
 
         var entries: [Entry] = []
         for item in items {
@@ -104,6 +128,34 @@ enum NativeDockMenu {
         return title.prefix(maxTitleLength / 2) + "..." + title.suffix(maxTitleLength / 2 - 3)
     }
 
+    /// Icon beside a copied recent item, matching the native Dock menu.
+    /// Window rows (marked) and known commands stay text-only.
+    static func icon(for entry: Entry) -> NSImage? {
+        guard let title = entry.title, !entry.isMarked, !commandTitles.contains(title) else { return nil }
+        let image: NSImage
+        let ext = (title as NSString).pathExtension
+        if !ext.isEmpty {
+            image = Self.icon(forExtension: ext)
+        } else if title == "Downloads",
+                  let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first {
+            image = NSWorkspace.shared.icon(forFile: downloads.path)
+        } else if let folder = NSImage(named: NSImage.folderName) {
+            image = folder
+        } else {
+            image = NSWorkspace.shared.icon(for: .folder)
+        }
+        let sized = image.copy() as? NSImage ?? image
+        sized.size = NSSize(width: 16, height: 16)
+        return sized
+    }
+
+    private static func icon(forExtension ext: String) -> NSImage {
+        if let type = UTType(filenameExtension: ext) {
+            return NSWorkspace.shared.icon(for: type)
+        }
+        return NSWorkspace.shared.icon(for: .data)
+    }
+
     // MARK: - Dock tree
 
     private static func value(_ element: AXUIElement, _ key: String) -> CFTypeRef? {
@@ -115,6 +167,10 @@ enum NativeDockMenu {
     private static func children(_ element: AXUIElement) -> [AXUIElement] {
         value(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
     }
+
+    /// Dock tile for App Expose when the full menu snapshot was skipped
+    /// (Portside active) or failed, but Accessibility is still granted.
+    static func tileIfTrusted(for app: PinnedApp) -> AXUIElement? { tile(for: app) }
 
     private static func tile(for app: PinnedApp) -> AXUIElement? {
         guard AXIsProcessTrusted(),

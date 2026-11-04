@@ -96,8 +96,17 @@ enum AppTileMenu {
         menu.autoenablesItems = false
         let model = context.dockModel
         let app = context.app
-        let native = NativeDockMenu.snapshot(of: app)
+        // Prefer the tile's running instance; fall back so group cells still
+        // get Hide / Quit if the strip's cache briefly lags.
+        let running = context.running ?? Self.runningInstance(of: app)
+        // AXShowMenu on the Dock fights Portside when it is the active app
+        // (Settings or About open): the Dock flash steals key focus and the
+        // tile menu never sticks. Skip the native section until Portside is
+        // accessory again; Portside items and Hide / Quit still appear.
+        let native = NSApp.isActive ? nil : NativeDockMenu.snapshot(of: app)
 
+        // Native top section: recents (with icons), windows, New Window, and
+        // the app's own dock actions. Same order as the macOS Dock menu.
         if let native {
             for entry in native.entries {
                 menu.addItem(menuItem(for: entry, in: native))
@@ -113,12 +122,13 @@ enum AppTileMenu {
         for item in context.leading {
             menu.addItem(ClosureMenuItem(item.title, item.action))
         }
+
+        // Portside additions stay top-level (not buried in Options) so a
+        // group cell with no native section is still a full menu. Options
+        // mirrors the native Dock submenu and holds the same dock actions.
+        menu.addItem(optionsItem(context))
+
         if context.offersDockItems {
-            if context.isPinned {
-                menu.addItem(ClosureMenuItem("Remove from Dock") { model.unpin(app) })
-            } else {
-                menu.addItem(ClosureMenuItem("Keep in Dock") { model.pin(app) })
-            }
             let groupItem = NSMenuItem(title: "Add to Group", action: nil, keyEquivalent: "")
             let groupMenu = NSMenu()
             groupMenu.autoenablesItems = false
@@ -129,41 +139,49 @@ enum AppTileMenu {
             groupMenu.addItem(ClosureMenuItem("New Group") { model.createGroup(with: app) })
             groupItem.submenu = groupMenu
             menu.addItem(groupItem)
-        } else if context.isPinned {
-            menu.addItem(ClosureMenuItem("Remove from Dock") { model.unpin(app) })
         }
-        let openAtLogin = ClosureMenuItem("Open at Login") {
-            let want = !AppLoginItem.isEnabled(for: app)
-            if let error = AppLoginItem.setEnabled(want, for: app) {
-                AppLoginItem.presentError(error)
-            }
-        }
-        openAtLogin.state = AppLoginItem.isEnabled(for: app) ? .on : .off
-        menu.addItem(openAtLogin)
+
         if app.bundleIdentifier != nil, model.activityIcons.working {
             let watched = model.watchesWorking(app)
             let working = ClosureMenuItem("Show Working Icon") { model.setWatchesWorking(app, !watched) }
             working.state = watched ? .on : .off
             menu.addItem(working)
         }
-        menu.addItem(ClosureMenuItem("Show in Finder") {
-            NSWorkspace.shared.activateFileViewerSelecting([app.url])
-        })
 
-        if let running = context.running {
+        if let running {
             menu.addItem(.separator())
             if let native {
                 menu.addItem(ClosureMenuItem("Show All Windows") { native.showAllWindows() })
+            } else if let tile = NativeDockMenu.tileIfTrusted(for: app) {
+                menu.addItem(ClosureMenuItem("Show All Windows") {
+                    AXUIElementPerformAction(tile, "AXShowExpose" as CFString)
+                })
             }
             if running.isHidden {
                 menu.addItem(ClosureMenuItem("Show") { running.unhide() })
             } else {
                 menu.addItem(ClosureMenuItem("Hide") { running.hide() })
+                // Option holds Hide Others, like the native Dock.
+                let hideOthers = ClosureMenuItem("Hide Others") {
+                    let me = ProcessInfo.processInfo.processIdentifier
+                    for other in NSWorkspace.shared.runningApplications
+                    where other.processIdentifier != me
+                        && other.processIdentifier != running.processIdentifier
+                        && other.activationPolicy == .regular
+                        && !other.isHidden
+                        && !other.isTerminated {
+                        other.hide()
+                    }
+                }
+                hideOthers.keyEquivalentModifierMask = .option
+                hideOthers.isAlternate = true
+                menu.addItem(hideOthers)
             }
             menu.addItem(ClosureMenuItem("Quit") { running.terminate() })
             // Holding Option swaps the item above for this one while the menu is open.
+            let name = app.displayName
             let force = ClosureMenuItem("Force Quit") {
-                actionsLogger.info("force quitting \(app.displayName, privacy: .public)")
+                actionsLogger.info("force quitting \(name, privacy: .public)")
                 running.forceTerminate()
             }
             force.keyEquivalentModifierMask = .option
@@ -173,14 +191,64 @@ enum AppTileMenu {
         return menu
     }
 
-    /// One line copied from the native Dock's menu: a separator, a section
-    /// heading (disabled), or an action that presses the real item.
+    /// Native-style Options submenu, owned by Portside so Keep/Remove and
+    /// Open at Login change this dock, not the macOS one.
+    private static func optionsItem(_ context: Context) -> NSMenuItem {
+        let model = context.dockModel
+        let app = context.app
+        let options = NSMenuItem(title: "Options", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+
+        if context.offersDockItems {
+            if context.isPinned {
+                submenu.addItem(ClosureMenuItem("Remove from Dock") { model.unpin(app) })
+            } else {
+                submenu.addItem(ClosureMenuItem("Keep in Dock") { model.pin(app) })
+            }
+        } else if context.isPinned {
+            submenu.addItem(ClosureMenuItem("Remove from Dock") { model.unpin(app) })
+        }
+
+        if !submenu.items.isEmpty { submenu.addItem(.separator()) }
+
+        let openAtLogin = ClosureMenuItem("Open at Login") {
+            let want = !AppLoginItem.isEnabled(for: app)
+            if let error = AppLoginItem.setEnabled(want, for: app) {
+                AppLoginItem.presentError(error)
+            }
+        }
+        openAtLogin.state = AppLoginItem.isEnabled(for: app) ? .on : .off
+        submenu.addItem(openAtLogin)
+
+        submenu.addItem(ClosureMenuItem("Show in Finder") {
+            NSWorkspace.shared.activateFileViewerSelecting([app.url])
+        })
+
+        options.submenu = submenu
+        return options
+    }
+
+    /// One line copied from the native Dock's menu: a separator, a recent
+    /// with an icon, a window with a check, or an app action.
     private static func menuItem(for entry: NativeDockMenu.Entry, in native: NativeDockMenu.Snapshot) -> NSMenuItem {
         guard let title = entry.title else { return .separator() }
         let item = ClosureMenuItem(NativeDockMenu.displayTitle(title)) { native.press(entry) }
         item.isEnabled = entry.isEnabled
         item.state = entry.isMarked ? .on : .off
+        item.image = NativeDockMenu.icon(for: entry)
         return item
+    }
+
+    private static func runningInstance(of app: PinnedApp) -> NSRunningApplication? {
+        let me = ProcessInfo.processInfo.processIdentifier
+        return NSWorkspace.shared.runningApplications.first { running in
+            guard running.processIdentifier != me, running.activationPolicy == .regular, !running.isTerminated else {
+                return false
+            }
+            if let id = app.bundleIdentifier, running.bundleIdentifier == id { return true }
+            return running.bundleURL?.path == app.path
+        }
     }
 }
 
@@ -288,6 +356,12 @@ private final class RightClickView: NSView {
     }
 
     func show() {
+        // Hold across Dock capture and popUp. Settings resigns key during
+        // AXShowMenu; applying that mid-build would turn auto-hide back on
+        // and slide the dock away. didEndTracking still clears menuIsOpen
+        // (only NativeDockMenu.isCapturing is ignored there).
+        MenuKeyFocus.shared.beginPresenting()
+        defer { MenuKeyFocus.shared.endPresenting() }
         guard let menu = menuProvider?() else { return }
         // popUp puts the menu's top-left corner at the point. Screen
         // coordinates (y up) avoid any view flipping; AppKit nudges the menu
@@ -321,6 +395,13 @@ private final class RightClickView: NSView {
 final class MenuKeyFocus {
     static let shared = MenuKeyFocus()
 
+    /// True from menu build through `popUp` return. NativeDockMenu's brief
+    /// Dock menu and any hide-timer races must not slide the dock away while
+    /// this is set, or the tile menu never appears.
+    private(set) var isPresenting = false
+    /// DockEngine flushes deferred Settings key-focus changes here.
+    var onPresentationEnded: (() -> Void)?
+
     private let panel: KeyOnlyPanel
 
     private init() {
@@ -344,13 +425,10 @@ final class MenuKeyFocus {
     /// stack / group overlay). NSMenu windows sit at pop-up level, so a higher
     /// overlay would cover them; that window is demoted for the tracking run.
     func popUp(_ menu: NSMenu, at origin: NSPoint, from window: NSWindow? = nil) {
-        // Settings open: Portside is active and already gets the keys.
-        let borrow = !NSApp.isActive
-        if borrow {
-            panel.setFrameOrigin(NSPoint(x: origin.x, y: origin.y - 1))
-            panel.orderFrontRegardless()
-            panel.makeKey()
-        }
+        // Borrow whenever Settings (or any other Portside window) is key.
+        // Leaving Settings key dismisses the tile menu as soon as it opens.
+        let borrow = !panel.isKeyWindow
+        if borrow { reclaimKey(at: origin) }
         let priorLevel: NSWindow.Level?
         if let window, window.level.rawValue > NSWindow.Level.popUpMenu.rawValue {
             priorLevel = window.level
@@ -358,12 +436,28 @@ final class MenuKeyFocus {
         } else {
             priorLevel = nil
         }
-        actionsLogger.info("menu opened (key focus borrowed: \(borrow), key: \(self.panel.isKeyWindow))")
+        actionsLogger.info("menu opened (key focus borrowed: \(borrow), key: \(self.panel.isKeyWindow), active: \(NSApp.isActive))")
         menu.popUp(positioning: nil, at: origin, in: nil)
         if let window, let priorLevel { window.level = priorLevel }
         if borrow { panel.orderOut(nil) }
         let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
         actionsLogger.info("menu closed, frontmost app \(front, privacy: .public), portside active: \(NSApp.isActive)")
+    }
+
+    /// Take key focus for menu tracking; used while presenting so Settings
+    /// cannot reclaim key and dismiss the menu.
+    func reclaimKey(at origin: NSPoint? = nil) {
+        if let origin {
+            panel.setFrameOrigin(NSPoint(x: origin.x, y: origin.y - 1))
+        }
+        panel.orderFrontRegardless()
+        panel.makeKey()
+    }
+
+    fileprivate func beginPresenting() { isPresenting = true }
+    fileprivate func endPresenting() {
+        isPresenting = false
+        onPresentationEnded?()
     }
 }
 
