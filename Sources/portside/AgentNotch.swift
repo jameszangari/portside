@@ -51,6 +51,8 @@ final class AgentNotch {
     private var preferences = AgentNotchSettings()
     private weak var agents: AgentStatusWidget?
     private weak var usage: UsageWidget?
+    private weak var nowPlaying: NowPlayingWidget?
+    private var mediaSubscription: AnyCancellable?
 
     init(model: DockModel, widgets: WidgetStore) {
         self.widgets = widgets
@@ -59,12 +61,15 @@ final class AgentNotch {
                 guard let self else { return }
                 let nextAgents = widgets.widget(AgentStatusWidget.kind) as? AgentStatusWidget
                 let nextUsage = preferences.showUsage ? widgets.widget(UsageWidget.kind) as? UsageWidget : nil
+                let nextMedia = preferences.showMedia ? widgets.widget(NowPlayingWidget.kind) as? NowPlayingWidget : nil
                 let changed = self.enabled != enabled || self.agents !== nextAgents || self.usage !== nextUsage
+                    || self.nowPlaying !== nextMedia
                     || self.preferences.display != preferences.display
                 self.preferences = preferences
                 self.enabled = enabled
                 self.agents = nextAgents
                 self.usage = nextUsage
+                self.nowPlaying = nextMedia
                 if changed { self.rebuildPanels() }
                 else {
                     self.surfaces.forEach { $0.state.preferences = preferences }
@@ -107,6 +112,7 @@ final class AgentNotch {
 
     private func rebuildPanels() {
         sessionsSubscription = nil
+        mediaSubscription = nil
         surfaces.forEach { $0.state.stop(); $0.panel.close() }
         surfaces = []
         guard enabled, let agents else { return }
@@ -128,16 +134,26 @@ final class AgentNotch {
             panel.hasShadow = true
             panel.hidesOnDeactivate = false
             state.onExpansion = { [weak self] in self?.layoutPanels() }
-            panel.contentView = NSHostingView(rootView: AgentNotchView(agents: agents, usage: usage, state: state))
+            panel.contentView = NSHostingView(rootView: AgentNotchView(agents: agents, usage: usage, nowPlaying: nowPlaying, state: state))
             surfaces.append(Surface(panel: panel, state: state, screen: screen))
         }
         sessionsSubscription = agents.$sessions.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.layoutPanels() }
+        if let nowPlaying {
+            mediaSubscription = nowPlaying.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in
+                self?.layoutPanels()
+            }
+        }
         layoutPanels()
+    }
+
+    private var mediaPlaying: Bool {
+        preferences.showMedia && nowPlaying?.track?.isPlaying == true
     }
 
     private func layoutPanels() {
         guard let agents else { return }
         let sessions = preferences.sessions(from: agents.sessions)
+        let playing = mediaPlaying
         for surface in surfaces {
             let screen = surface.screen
             let state = surface.state
@@ -169,7 +185,7 @@ final class AgentNotch {
                     else { surface.panel.setFrame(frame, display: true) }
                 }
             }
-            if preferences.hideWhenEmpty && sessions.isEmpty && !state.expanded { surface.panel.orderOut(nil) }
+            if preferences.hideWhenEmpty && sessions.isEmpty && !playing && !state.expanded { surface.panel.orderOut(nil) }
             else if !surface.panel.isVisible { surface.panel.orderFrontRegardless() }
         }
     }

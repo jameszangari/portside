@@ -59,6 +59,9 @@ struct AgentNotchSettings: Codable, Equatable {
     var animate = true
     var showTotal = true
     var showUsage = true
+    /// Compact waveform while Spotify or Music is playing (same sources as
+    /// the Now Playing widget). Hidden when paused or nothing is playing.
+    var showMedia = true
     var expandOnHover = true
     var collapseAfterFocus = true
     var showProject = true
@@ -93,7 +96,7 @@ struct AgentNotchSettings: Codable, Equatable {
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case position, display, compactStyle, clickAction, filter, hideWhenEmpty, animate, showTotal, showUsage
+        case position, display, compactStyle, clickAction, filter, hideWhenEmpty, animate, showTotal, showUsage, showMedia
         case expandOnHover, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
         case showFinished, claude, codex, copilot, opencode, cursor, showBorder, compactWidth, compactHeight, expandedWidth, cornerRadius, opacity, fontSize
         case rowSpacing, maxSessions, hoverDelay, collapseDelay, animationDuration, horizontalOffset, verticalOffset, accent
@@ -110,6 +113,7 @@ struct AgentNotchSettings: Codable, Equatable {
         animate = values.value(.animate, or: true)
         showTotal = values.value(.showTotal, or: true)
         showUsage = values.value(.showUsage, or: true)
+        showMedia = values.value(.showMedia, or: true)
         expandOnHover = values.value(.expandOnHover, or: true)
         collapseAfterFocus = values.value(.collapseAfterFocus, or: true)
         showProject = values.value(.showProject, or: true)

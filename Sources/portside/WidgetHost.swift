@@ -144,7 +144,7 @@ final class WidgetStore: ObservableObject {
     init(dockModel: DockModel) {
         self.dockModel = dockModel
         cancellable = dockModel.$widgetKinds.combineLatest(dockModel.$showAgentNotch, dockModel.$agentNotchSettings).sink { [weak self] kinds, notch, settings in
-            self?.sync(kinds, notch: notch, usage: settings.showUsage)
+            self?.sync(kinds, notch: notch, usage: settings.showUsage, media: settings.showMedia)
         }
     }
 
@@ -152,8 +152,14 @@ final class WidgetStore: ObservableObject {
         activeHosts.first { $0.id == kind }?.widget
     }
 
-    private func sync(_ kinds: [String], notch: Bool, usage: Bool) {
-        let extra = notch ? ([AgentStatusWidget.kind] + (usage ? [UsageWidget.kind] : [])).filter { !kinds.contains($0) } : []
+    private func sync(_ kinds: [String], notch: Bool, usage: Bool, media: Bool) {
+        var extras: [String] = []
+        if notch {
+            extras.append(AgentStatusWidget.kind)
+            if usage { extras.append(UsageWidget.kind) }
+            if media { extras.append(NowPlayingWidget.kind) }
+        }
+        let extra = extras.filter { !kinds.contains($0) }
         var next: [WidgetHost] = []
         for kind in kinds + extra {
             if let existing = activeHosts.first(where: { $0.id == kind }) {

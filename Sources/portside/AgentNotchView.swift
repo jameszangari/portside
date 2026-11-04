@@ -4,6 +4,7 @@ import SwiftUI
 struct AgentNotchView: View {
     @ObservedObject var agents: AgentStatusWidget
     let usage: UsageWidget?
+    let nowPlaying: NowPlayingWidget?
     @ObservedObject var state: AgentNotchPresentation
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -11,6 +12,9 @@ struct AgentNotchView: View {
     private var sessions: [AgentSession] { preferences.sessions(from: agents.sessions) }
     private var working: Int { sessions.filter { $0.state == .running && !$0.needsAttention }.count }
     private var attention: Int { sessions.filter(\.needsAttention).count }
+    private var mediaPlaying: Bool {
+        preferences.showMedia && nowPlaying?.track?.isPlaying == true
+    }
 
     static func dashboardHeight(preferences: AgentNotchSettings, sessionCount: Int) -> CGFloat {
         let rowHeight = preferences.fontSize * 2 + 34
@@ -45,6 +49,10 @@ struct AgentNotchView: View {
         .environment(\.colorScheme, .dark)
         .onHover { state.hover($0) }
         .animation(preferences.animate && !reduceMotion ? .easeInOut(duration: preferences.animationDuration) : nil, value: state.expanded)
+        .background {
+            // Keep compact media bars in sync when Now Playing publishes.
+            if let nowPlaying { NotchNowPlayingObserver(widget: nowPlaying) }
+        }
     }
 
     private var compactHeader: some View {
@@ -56,10 +64,28 @@ struct AgentNotchView: View {
                             Circle().fill(tint(provider)).frame(width: 7, height: 7)
                         }
                         if sessions.isEmpty { Image(systemName: "sparkles").foregroundStyle(preferences.accent.color) }
-                    } else {
-                        Image(systemName: attention > 0 ? "exclamationmark.circle.fill" : working > 0 ? "waveform" : "sparkles")
-                            .foregroundStyle(attention > 0 ? .orange : preferences.accent.color)
-                            .symbolEffect(.pulse, options: .repeating, isActive: working > 0 && preferences.animate && !reduceMotion)
+                    } else if attention > 0 {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .foregroundStyle(.orange)
+                        if preferences.compactStyle == .counts { Text("\(working)").monospacedDigit().fontWeight(.semibold) }
+                    } else if working > 0 {
+                        let loaderSize = min(16, max(10, preferences.compactHeight * 0.48))
+                        ThinkingLoader(
+                            style: ThinkingLoader.preferredStyle(for: loaderSize),
+                            paused: !preferences.animate || reduceMotion,
+                            size: loaderSize,
+                            color: preferences.accent.color
+                        )
+                        if preferences.compactStyle == .counts { Text("\(working)").monospacedDigit().fontWeight(.semibold) }
+                    } else if mediaPlaying {
+                        NotchAudioBars(
+                            paused: !preferences.animate || reduceMotion,
+                            color: preferences.accent.color,
+                            height: min(14, max(9, preferences.compactHeight * 0.4))
+                        )
+                    } else if !sessions.isEmpty {
+                        Image(systemName: "sparkles")
+                            .foregroundStyle(preferences.accent.color)
                         if preferences.compactStyle == .counts { Text("\(working)").monospacedDigit().fontWeight(.semibold) }
                     }
                 }
@@ -67,13 +93,20 @@ struct AgentNotchView: View {
             if state.notchWidth > 0 { Color.clear.frame(width: state.notchWidth).allowsHitTesting(false) }
             compactButton {
                 HStack(spacing: 5) {
+                    if mediaPlaying, working > 0 || attention > 0 {
+                        NotchAudioBars(
+                            paused: !preferences.animate || reduceMotion,
+                            color: .white.opacity(0.9),
+                            height: min(12, max(8, preferences.compactHeight * 0.36))
+                        )
+                    }
                     if attention > 0 {
                         Circle().fill(.orange).frame(width: 5, height: 5)
                         Text("\(attention)").monospacedDigit()
-                    } else if preferences.showTotal {
+                    } else if preferences.showTotal, !sessions.isEmpty {
                         Text("\(sessions.count)").monospacedDigit()
                         if preferences.compactStyle != .minimal { Text("agents").foregroundStyle(.white.opacity(0.55)) }
-                    } else {
+                    } else if !mediaPlaying {
                         Image(systemName: state.expanded ? "chevron.up" : "chevron.down").font(.system(size: 9, weight: .bold))
                     }
                 }
@@ -93,7 +126,7 @@ struct AgentNotchView: View {
             content().frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(working) working, \(attention) need attention, \(sessions.count) sessions. \(state.expanded ? "Collapse" : "Open agent dashboard")")
+        .accessibilityLabel("\(working) working, \(attention) need attention, \(sessions.count) sessions\(mediaPlaying ? ", media playing" : ""). \(state.expanded ? "Collapse" : "Open agent dashboard")")
         .help("Click to \(state.expanded ? "collapse" : preferences.clickAction == .focus ? "focus latest session" : "expand"). Hover to show sessions.")
     }
 
@@ -193,6 +226,13 @@ struct AgentNotchView: View {
     private func tint(_ provider: AgentProvider) -> Color {
         preferences.providerColors ? provider.color : preferences.accent.color
     }
+}
+
+/// Observes the Now Playing widget so the notch redraws on play/pause
+/// without owning the widget as a required ObservedObject.
+private struct NotchNowPlayingObserver: View {
+    @ObservedObject var widget: NowPlayingWidget
+    var body: some View { Color.clear.accessibilityHidden(true) }
 }
 
 private struct NotchUsageDetails: View {
