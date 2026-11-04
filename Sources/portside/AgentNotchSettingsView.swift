@@ -79,7 +79,7 @@ struct AgentNotchSettingsView: View {
                 Toggle("Show terminal or editor", isOn: binding(\.showHost))
                 Toggle("Show time since activity", isOn: binding(\.showUpdated))
                 Toggle("Show plan usage", isOn: binding(\.showUsage))
-                Text("Usage shares your Widgets provider selections and consent. Gauges show plan usage, not session context. Context and inline approvals are not supplied by the current hooks.").helperStyle()
+                Text("Usage shares your Widgets provider selections and consent. Gauges show plan usage, not session context.").helperStyle()
             }
             Section("Behavior") {
                 Toggle("Expand on hover", isOn: binding(\.expandOnHover))
@@ -97,12 +97,14 @@ struct AgentNotchSettingsView: View {
             Section("Sessions") {
                 Toggle("Claude Code", isOn: binding(\.claude))
                 Toggle("Codex", isOn: binding(\.codex))
+                Toggle("OpenCode", isOn: binding(\.opencode))
+                Toggle("Cursor (in T3)", isOn: binding(\.cursor))
                 Toggle("Copilot", isOn: binding(\.copilot))
                 Picker("Show", selection: binding(\.filter)) {
                     ForEach(AgentNotchFilter.allCases) { Text($0.title).tag($0) }
                 }
                 Toggle("Include finished sessions", isOn: binding(\.showFinished))
-                Text("Claude Code and Codex sessions come from the agent hooks. Copilot has no hook source yet, so its toggle only applies if a Copilot session file appears. Needs attention includes finished turns and explicit Claude permission or input notifications. Click a session card to focus its terminal or editor; Accessibility access may be needed.").helperStyle()
+                Text("T3 Code and OpenCode sessions are read from their local databases (no hooks). Claude Code and Codex CLI sessions still use Agent Hooks under Widgets. Copilot has no session writer yet. Needs attention includes waiting T3 runs and Claude permission prompts. Click a session card to focus its host app; Accessibility may be needed.").helperStyle()
             }
             Section {
                 Button("Reset Notch Customization") { model.updateAgentNotch { $0 = AgentNotchSettings() } }

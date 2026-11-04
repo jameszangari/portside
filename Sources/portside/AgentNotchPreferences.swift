@@ -70,6 +70,8 @@ struct AgentNotchSettings: Codable, Equatable {
     var claude = true
     var codex = true
     var copilot = true
+    var opencode = true
+    var cursor = true
     /// Thin light edge around the floating island. Off when attached to the
     /// camera housing (the housing already frames it).
     var showBorder = true
@@ -93,7 +95,7 @@ struct AgentNotchSettings: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case position, display, compactStyle, clickAction, filter, hideWhenEmpty, animate, showTotal, showUsage
         case expandOnHover, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
-        case showFinished, claude, codex, copilot, showBorder, compactWidth, compactHeight, expandedWidth, cornerRadius, opacity, fontSize
+        case showFinished, claude, codex, copilot, opencode, cursor, showBorder, compactWidth, compactHeight, expandedWidth, cornerRadius, opacity, fontSize
         case rowSpacing, maxSessions, hoverDelay, collapseDelay, animationDuration, horizontalOffset, verticalOffset, accent
     }
 
@@ -119,6 +121,8 @@ struct AgentNotchSettings: Codable, Equatable {
         claude = values.value(.claude, or: true)
         codex = values.value(.codex, or: true)
         copilot = values.value(.copilot, or: true)
+        opencode = values.value(.opencode, or: true)
+        cursor = values.value(.cursor, or: true)
         showBorder = values.value(.showBorder, or: true)
         compactWidth = values.value(.compactWidth, or: 184)
         compactHeight = values.value(.compactHeight, or: 30)
@@ -173,6 +177,8 @@ struct AgentNotchSettings: Codable, Equatable {
         case "claude": claude
         case "codex": codex
         case "copilot": copilot
+        case "opencode": opencode
+        case "cursor": cursor
         default: true
         }
     }

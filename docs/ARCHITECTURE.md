@@ -53,6 +53,7 @@ Sources/portside/
   AgentFocus.swift          Focuses an agent's window: Terminal/iTerm tab by tty, else AX window by project name
   WidgetPreviews.swift      Debug only: `--render-widget-previews <dir>` renders sample widget tiles to PNG
   AgentHooks.swift          Installs / removes the Agents widget hook in ~/.claude and ~/.codex (embedded script)
+  AgentSessionDiscovery.swift  Read-only T3 statev2.sqlite and OpenCode opencode.db session rows for the Agents notch
   AudioPlayback.swift       Public process taps, local RMS playback gate and temporary audio-device lifecycle
   AudioPlaybackProbe.swift  Debug synthetic-stream and playback-gate verification
   AppActivity.swift         Per-app activity icons: mic, camera, audio (CoreAudio/CoreMediaIO listeners), Working (CPU sampler)
@@ -109,7 +110,7 @@ Sources/portside/
     WeatherWidget.swift     Temperature and conditions (Open-Meteo)
     SystemStatsWidget.swift Combined concentric rings and separate CPU / Memory gauges
     NowPlayingWidget.swift  Spotify / Music art, song, artist, controls (notifications + AppleScript)
-    AgentStatusWidget.swift Coding agent provider, count, working/done (hook status files)
+    AgentStatusWidget.swift Coding agent provider, count, working/done (hook files + T3/OpenCode discovery)
     UsageWidget.swift       Claude / Codex 5-hour and weekly, Copilot monthly usage meters
   Support/                  Bundled resources: AppIcon-<px>.png (actool's flat render of AppIcon.icon) and MenuBarIcon-<px>.png
 Sources/AppLoginItemList/   C helper: read session Open at Login list (LSSharedFileList)
