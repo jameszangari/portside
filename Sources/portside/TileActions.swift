@@ -96,7 +96,11 @@ enum AppTileMenu {
         menu.autoenablesItems = false
         let model = context.dockModel
         let app = context.app
-        let native = NativeDockMenu.snapshot(of: app)
+        // AXShowMenu on the Dock fights Portside when it is the active app
+        // (Settings or About open): the Dock flash steals key focus and the
+        // tile menu never sticks. Skip the native section until Portside is
+        // accessory again; other Portside items still appear.
+        let native = NSApp.isActive ? nil : NativeDockMenu.snapshot(of: app)
 
         if let native {
             for entry in native.entries {
@@ -288,6 +292,12 @@ private final class RightClickView: NSView {
     }
 
     func show() {
+        // Hold across Dock capture and popUp. Settings resigns key during
+        // AXShowMenu; applying that mid-build would turn auto-hide back on
+        // and slide the dock away. didEndTracking still clears menuIsOpen
+        // (only NativeDockMenu.isCapturing is ignored there).
+        MenuKeyFocus.shared.beginPresenting()
+        defer { MenuKeyFocus.shared.endPresenting() }
         guard let menu = menuProvider?() else { return }
         // popUp puts the menu's top-left corner at the point. Screen
         // coordinates (y up) avoid any view flipping; AppKit nudges the menu
@@ -321,6 +331,13 @@ private final class RightClickView: NSView {
 final class MenuKeyFocus {
     static let shared = MenuKeyFocus()
 
+    /// True from menu build through `popUp` return. NativeDockMenu's brief
+    /// Dock menu and any hide-timer races must not slide the dock away while
+    /// this is set, or the tile menu never appears.
+    private(set) var isPresenting = false
+    /// DockEngine flushes deferred Settings key-focus changes here.
+    var onPresentationEnded: (() -> Void)?
+
     private let panel: KeyOnlyPanel
 
     private init() {
@@ -344,13 +361,10 @@ final class MenuKeyFocus {
     /// stack / group overlay). NSMenu windows sit at pop-up level, so a higher
     /// overlay would cover them; that window is demoted for the tracking run.
     func popUp(_ menu: NSMenu, at origin: NSPoint, from window: NSWindow? = nil) {
-        // Settings open: Portside is active and already gets the keys.
-        let borrow = !NSApp.isActive
-        if borrow {
-            panel.setFrameOrigin(NSPoint(x: origin.x, y: origin.y - 1))
-            panel.orderFrontRegardless()
-            panel.makeKey()
-        }
+        // Borrow whenever Settings (or any other Portside window) is key.
+        // Leaving Settings key dismisses the tile menu as soon as it opens.
+        let borrow = !panel.isKeyWindow
+        if borrow { reclaimKey(at: origin) }
         let priorLevel: NSWindow.Level?
         if let window, window.level.rawValue > NSWindow.Level.popUpMenu.rawValue {
             priorLevel = window.level
@@ -358,12 +372,28 @@ final class MenuKeyFocus {
         } else {
             priorLevel = nil
         }
-        actionsLogger.info("menu opened (key focus borrowed: \(borrow), key: \(self.panel.isKeyWindow))")
+        actionsLogger.info("menu opened (key focus borrowed: \(borrow), key: \(self.panel.isKeyWindow), active: \(NSApp.isActive))")
         menu.popUp(positioning: nil, at: origin, in: nil)
         if let window, let priorLevel { window.level = priorLevel }
         if borrow { panel.orderOut(nil) }
         let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
         actionsLogger.info("menu closed, frontmost app \(front, privacy: .public), portside active: \(NSApp.isActive)")
+    }
+
+    /// Take key focus for menu tracking; used while presenting so Settings
+    /// cannot reclaim key and dismiss the menu.
+    func reclaimKey(at origin: NSPoint? = nil) {
+        if let origin {
+            panel.setFrameOrigin(NSPoint(x: origin.x, y: origin.y - 1))
+        }
+        panel.orderFrontRegardless()
+        panel.makeKey()
+    }
+
+    fileprivate func beginPresenting() { isPresenting = true }
+    fileprivate func endPresenting() {
+        isPresenting = false
+        onPresentationEnded?()
     }
 }
 

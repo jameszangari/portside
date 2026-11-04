@@ -17,6 +17,12 @@ private let nativeMenuLogger = Logger(subsystem: "com.james.portside", category:
 /// inside it, are Quit and Remove from Dock, which act on the native Dock and
 /// have Portside equivalents, so they can never be pressed from here.
 enum NativeDockMenu {
+    /// True while `AXShowMenu` / `AXCancel` run on the Dock. That brief
+    /// native menu still posts `NSMenu.didBegin/EndTrackingNotification`,
+    /// which would make Portside think its own menu closed and re-arm
+    /// auto-hide before the real tile menu pops up.
+    private(set) static var isCapturing = false
+
     struct Entry {
         /// Nil for a separator.
         let title: String?
@@ -73,6 +79,8 @@ enum NativeDockMenu {
     /// Dock (not running and not kept there).
     static func snapshot(of app: PinnedApp) -> Snapshot? {
         guard let tile = tile(for: app) else { return nil }
+        isCapturing = true
+        defer { isCapturing = false }
         let started = CACurrentMediaTime()
         guard let menu = open(tile) else {
             nativeMenuLogger.error("\(app.displayName, privacy: .public): menu did not open")
@@ -80,6 +88,9 @@ enum NativeDockMenu {
         }
         let items = copyableItems(of: menu)
         AXUIElementPerformAction(menu, kAXCancelAction as CFString)
+        // Let the Dock finish dismissing before Portside's NSMenu pops up in
+        // the same screen region (especially with Hide the macOS Dock on).
+        RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.02))
 
         var entries: [Entry] = []
         for item in items {

@@ -116,6 +116,9 @@ final class DockEngine {
         self.dockPanel = DockPanel(dockModel: dockModel, strip: strip, magnifier: magnifier)
         self.edgeTracker = EdgeTracker(edge: dockModel.edge)
         hover.setEdge(dockModel.edge)
+        MenuKeyFocus.shared.onPresentationEnded = { [weak self] in
+            self?.flushPendingSettingsKeyFocus()
+        }
 
         reservation.onChange = { [weak windowFitter] _, new in windowFitter?.setReservation(new) }
         reservationSubscriptions = [
@@ -273,7 +276,9 @@ final class DockEngine {
 
         let center = NotificationCenter.default
         menuObservers.append(center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
-            guard let self else { return }
+            // NativeDockMenu briefly opens the Dock's own menu to copy items;
+            // ignore that so auto-hide and hover are not torn down mid-build.
+            guard let self, !NativeDockMenu.isCapturing else { return }
             self.menuIsOpen = true
             self.updateMagnifierSuspension()
             // The menu opens where the hover label is; the native Dock hides it.
@@ -287,7 +292,8 @@ final class DockEngine {
             }
         })
         menuObservers.append(center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { [weak self] _ in
-            guard let self else { return }
+            // Dock capture only: Portside's own popUp must still clear menuIsOpen.
+            guard let self, !NativeDockMenu.isCapturing else { return }
             self.menuIsOpen = false
             self.updateMagnifierSuspension()
             // Forget the cursor first: it is stale after menu tracking (a
@@ -535,12 +541,37 @@ final class DockEngine {
         dockModel.autoHide && !settingsIsKey
     }
 
+    /// Settings key-focus change that arrived during a tile menu presentation
+    /// (NativeDockMenu's AXShowMenu makes Settings resign key). Applied when
+    /// the menu presentation ends so auto-hide does not flap mid-click.
+    private var pendingSettingsKeyFocus: Bool?
+
     /// Settings became or resigned the key window. Pin or release auto-hide
     /// without writing `dockModel.autoHide`.
     func settingsKeyFocusChanged(_ focused: Bool) {
+        if NativeDockMenu.isCapturing || MenuKeyFocus.shared.isPresenting {
+            pendingSettingsKeyFocus = focused
+            return
+        }
+        applySettingsKeyFocus(focused)
+    }
+
+    private func applySettingsKeyFocus(_ focused: Bool) {
         guard settingsIsKey != focused else { return }
         settingsIsKey = focused
         applyEffectiveAutoHide(reason: focused ? "settings focused" : "settings unfocused")
+    }
+
+    private func flushPendingSettingsKeyFocus() {
+        if let focused = pendingSettingsKeyFocus {
+            pendingSettingsKeyFocus = nil
+            applySettingsKeyFocus(focused)
+            return
+        }
+        // Settings key callbacks are swallowed while a tile menu presents;
+        // resync from the real key window so auto-hide pin matches.
+        let settingsKey = NSApp.windows.contains { $0.isKeyWindow && $0.styleMask.contains(.titled) }
+        applySettingsKeyFocus(settingsKey)
     }
 
     /// Turn effective auto-hide on or off, live. Off: the edge window goes
@@ -750,6 +781,11 @@ final class DockEngine {
     }
 
     private func rearmHideIfCursorOutside(source: String) {
+        // Right-click builds the menu (and may flash the native Dock menu)
+        // before popUp; hiding mid-build leaves no menu on screen. The real
+        // tile menu's didEndTracking still rearms via "menu closed".
+        if NativeDockMenu.isCapturing { return }
+        if MenuKeyFocus.shared.isPresenting, source != "menu closed" { return }
         if !isCursorInsideDock(NSEvent.mouseLocation) {
             handleExit(source: source)
         }
