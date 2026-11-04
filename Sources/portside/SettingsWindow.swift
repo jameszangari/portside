@@ -673,7 +673,7 @@ private struct DockSettings: View {
                     }
                     if dockModel.reserveSpace && !accessibility.isTrusted {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Portside needs Accessibility access to resize other apps' windows. Until then, windows can extend under the dock. If Portside already looks enabled in Settings, turn it off and on, or remove the stale entry and grant this copy.").helperStyle()
+                            Text("Portside needs Accessibility access to resize other apps' windows. Until then, windows can extend under the dock. If Portside already looks enabled after an update, use Grant Access to reset the stale permission, then quit and reopen Portside.").helperStyle()
                             HStack {
                                 Button("Grant Access…") {
                                     accessibility.requestAccess(forFeature: "keeping windows clear of the dock")
