@@ -288,7 +288,12 @@ private final class RightClickView: NSView {
     }
 
     func show() {
-        guard let menu = menuProvider?() else { return }
+        // Hold auto-hide across NativeDockMenu's Dock capture. Clear before
+        // popUp so the real menu's didEndTracking can re-arm hide normally.
+        MenuKeyFocus.shared.beginPresenting()
+        let menu = menuProvider?()
+        MenuKeyFocus.shared.endPresenting()
+        guard let menu else { return }
         // popUp puts the menu's top-left corner at the point. Screen
         // coordinates (y up) avoid any view flipping; AppKit nudges the menu
         // back on screen if needed.
@@ -320,6 +325,11 @@ private final class RightClickView: NSView {
 /// back to the frontmost app.
 final class MenuKeyFocus {
     static let shared = MenuKeyFocus()
+
+    /// True from menu build through `popUp` return. NativeDockMenu's brief
+    /// Dock menu and any hide-timer races must not slide the dock away while
+    /// this is set, or the tile menu never appears.
+    private(set) var isPresenting = false
 
     private let panel: KeyOnlyPanel
 
@@ -365,6 +375,9 @@ final class MenuKeyFocus {
         let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
         actionsLogger.info("menu closed, frontmost app \(front, privacy: .public), portside active: \(NSApp.isActive)")
     }
+
+    fileprivate func beginPresenting() { isPresenting = true }
+    fileprivate func endPresenting() { isPresenting = false }
 }
 
 private final class KeyOnlyPanel: NSPanel {

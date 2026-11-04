@@ -273,7 +273,9 @@ final class DockEngine {
 
         let center = NotificationCenter.default
         menuObservers.append(center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
-            guard let self else { return }
+            // NativeDockMenu briefly opens the Dock's own menu to copy items;
+            // ignore that so auto-hide and hover are not torn down mid-build.
+            guard let self, !NativeDockMenu.isCapturing else { return }
             self.menuIsOpen = true
             self.updateMagnifierSuspension()
             // The menu opens where the hover label is; the native Dock hides it.
@@ -287,7 +289,8 @@ final class DockEngine {
             }
         })
         menuObservers.append(center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { [weak self] _ in
-            guard let self else { return }
+            // Dock capture only: Portside's own popUp must still clear menuIsOpen.
+            guard let self, !NativeDockMenu.isCapturing else { return }
             self.menuIsOpen = false
             self.updateMagnifierSuspension()
             // Forget the cursor first: it is stale after menu tracking (a
@@ -750,6 +753,9 @@ final class DockEngine {
     }
 
     private func rearmHideIfCursorOutside(source: String) {
+        // Right-click builds the menu (and may flash the native Dock menu)
+        // before popUp; hiding mid-build leaves no menu on screen.
+        if MenuKeyFocus.shared.isPresenting || NativeDockMenu.isCapturing { return }
         if !isCursorInsideDock(NSEvent.mouseLocation) {
             handleExit(source: source)
         }
