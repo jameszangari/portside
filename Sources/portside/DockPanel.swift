@@ -184,6 +184,30 @@ final class DockPanel {
         logger.info("panel relocated to active screen \(DockScreen.frame.width, format: .fixed(precision: 0))x\(DockScreen.frame.height, format: .fixed(precision: 0))")
     }
 
+    /// Put the panel back where its state says it belongs, after sleep or a
+    /// display change. A slide cut off by sleep may never run its completion,
+    /// and a window the system moved while displays were away is not told.
+    func reassert() {
+        guard !NSScreen.screens.isEmpty else { return }
+        generation += 1
+        panel.ignoresMouseEvents = false
+        removeSettleReentryMonitor()
+        let wasHiding = state == .hiding
+        switch state {
+        case .hidden, .hiding:
+            state = .hidden
+            panel.setFrame(hiddenFrame, display: false)
+            panel.orderOut(nil)
+        case .revealed, .revealing:
+            state = .revealed
+            panel.setFrame(revealedFrame, display: true)
+            panel.orderFrontRegardless()
+        }
+        layout(display: state == .revealed)
+        if wasHiding { onHidden?() }
+        logger.info("panel reasserted, revealed: \(self.state == .revealed)")
+    }
+
     // MARK: - Geometry
     //
     // The panel sits flush against the screen frame's edge (the native

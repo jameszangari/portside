@@ -30,6 +30,7 @@ final class NativeDockController {
         Self.logger.info("launch: Hide the macOS Dock is on, hiding")
         do {
             try NativeDock.hide()
+            NativeDock.startWatchdog()
         } catch {
             Self.logger.error("launch: hide failed, turning the setting off: \(error.localizedDescription, privacy: .public)")
             dockModel.setHideNativeDock(false)
@@ -49,6 +50,7 @@ final class NativeDockController {
             }
             do {
                 try NativeDock.hide()
+                NativeDock.startWatchdog()
                 dockModel.setHideNativeDock(true)
             } catch {
                 dockModel.setHideNativeDock(false)
@@ -98,7 +100,7 @@ final class NativeDockController {
         alert.informativeText = """
             Portside turns on the macOS Dock's auto-hide and sets its reveal delay so long that it never appears, then restarts the Dock. Its position and size are not changed.
 
-            Your current Dock settings are saved first and put back exactly when you turn this off or quit Portside. If Portside crashes, they are put back the next time it opens.
+            Your current Dock settings are saved first and put back exactly when you turn this off or quit Portside. If Portside crashes, they are put back right away.
 
             To undo it by hand, choose Restore macOS Dock from the Portside menu bar item, or run: portside --restore-dock
             """

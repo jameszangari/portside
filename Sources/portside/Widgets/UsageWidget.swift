@@ -41,10 +41,17 @@ final class UsageWidget: DockWidget, DockModelWidget {
     private var cancellable: AnyCancellable?
     private var consentCancellable: AnyCancellable?
     private var allowed: Set<String> = []
+    private var cliCancellable: AnyCancellable?
+    private var allowCopilotCLI = false
     private let queue = DispatchQueue(label: "com.james.portside.usage")
     private let logger = Logger(subsystem: "com.james.portside", category: "Widgets")
 
     func attach(_ model: DockModel) {
+        allowCopilotCLI = model.usageCopilotCLIEnabled
+        cliCancellable = model.$usageCopilotCLIEnabled.dropFirst().sink { [weak self] enabled in
+            self?.allowCopilotCLI = enabled
+            self?.refresh()
+        }
         providers = model.usageProviders.map(AgentProvider.named)
         let allowedIDs = { AgentProvider.all.map(\.id).filter(model.usageAllowed) }
         allowed = Set(allowedIDs())
@@ -65,13 +72,14 @@ final class UsageWidget: DockWidget, DockModelWidget {
     func refresh() {
         let selected = providers
         let allowedIDs = allowed
+        let allowCLI = allowCopilotCLI
         queue.async { [weak self] in
             let group = DispatchGroup()
             var results: [String: ProviderUsage] = [:]
             let lock = NSLock()
             for provider in selected {
                 group.enter()
-                UsageFetcher.fetch(provider, allowed: allowedIDs.contains(provider.id)) { result in
+                UsageFetcher.fetch(provider, allowed: allowedIDs.contains(provider.id), allowCopilotCLI: allowCLI) { result in
                     lock.withLock { results[provider.id] = result }
                     group.leave()
                 }
@@ -107,7 +115,7 @@ extension AgentProvider {
     var usageDetail: String {
         switch id {
         case "claude": "5-hour and weekly limits, from your Claude Code sign-in."
-        case "copilot": "Monthly quota, including CLI and ACP use, from the Copilot CLI or GitHub CLI sign-in."
+        case "copilot": "Monthly quota from GitHub CLI sign-in. The optional Copilot CLI source is off by default."
         default: "5-hour and weekly limits, from Codex's local session logs."
         }
     }
@@ -216,7 +224,7 @@ enum UsageConsent {
         case "copilot":
             alert.messageText = "Show Copilot usage?"
             alert.informativeText = """
-            To show your Copilot quota, Portside briefly runs the Copilot CLI, which asks GitHub using its own sign-in. Without the CLI, Portside gets a token from the GitHub CLI (gh auth token) and sends it to api.github.com. This repeats every 5 minutes.
+            To show your Copilot quota, Portside gets a token from the GitHub CLI (gh auth token) and sends it to api.github.com. This repeats every 5 minutes. You can separately enable the Copilot CLI source in Widgets; it is off by default for managed Macs.
 
             The token is not logged, saved, or sent anywhere else. These interfaces may change. You can turn this off at any time in Settings > Widgets.
             """
@@ -253,14 +261,14 @@ enum UsageFetcher {
     private static let logger = Logger(subsystem: "com.james.portside", category: "Widgets")
     private static let home = FileManager.default.homeDirectoryForCurrentUser
 
-    static func fetch(_ provider: AgentProvider, allowed: Bool, completion: @escaping (ProviderUsage) -> Void) {
+    static func fetch(_ provider: AgentProvider, allowed: Bool, allowCopilotCLI: Bool = false, completion: @escaping (ProviderUsage) -> Void) {
         guard allowed else {
             return completion(ProviderUsage(provider: provider, windows: [], note: "Allow in Settings > Widgets"))
         }
         switch provider.id {
         case "claude": claude(provider, completion: completion)
         case "codex": completion(codex(provider))
-        case "copilot": copilot(provider, completion: completion)
+        case "copilot": copilot(provider, allowCLI: allowCopilotCLI, completion: completion)
         default: completion(ProviderUsage(provider: provider, windows: [], note: "Not supported"))
         }
     }
@@ -395,15 +403,21 @@ enum UsageFetcher {
         let resetsAt: Date?
     }
 
-    private static func copilot(_ provider: AgentProvider, completion: @escaping (ProviderUsage) -> Void) {
+    private static func copilot(_ provider: AgentProvider, allowCLI: Bool, completion: @escaping (ProviderUsage) -> Void) {
         func finish(_ quotas: [CopilotQuota]) {
             let windows = copilotWindows(quotas)
             let note = windows.isEmpty ? (quotas.contains(where: \.unlimited) ? "Unlimited" : "No limits reported") : nil
             completion(ProviderUsage(provider: provider, windows: windows, note: note))
         }
-        if let cli = copilotCLI(), let quotas = copilotQuotasFromCLI(cli) { return finish(quotas) }
+        let cli = copilotCLI()
+        if allowCLI, let path = cli.usable, shouldTryCopilotCLI {
+            if let quotas = copilotQuotasFromCLI(path) { return finish(quotas) }
+            backOffCopilotCLI()
+        }
         func fail(_ note: String) { completion(ProviderUsage(provider: provider, windows: [], note: note)) }
-        guard let token = githubCLIToken() else { return fail("Sign in to Copilot CLI or GitHub CLI") }
+        guard let token = githubCLIToken() else {
+            return fail(allowCLI && cli.isBlocked ? "macOS blocked the Copilot CLI" : "Sign in with gh auth login, or enable Copilot CLI in Widgets")
+        }
         var request = URLRequest(url: URL(string: "https://api.github.com/copilot_internal/user")!)
         request.setValue("token \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -415,6 +429,11 @@ enum UsageFetcher {
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let snapshots = json["quota_snapshots"] as? [String: [String: Any]] else {
                 logger.error("usage copilot: HTTP \(status)")
+                if let error = error as? URLError,
+                   [.secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasUnknownRoot,
+                    .serverCertificateHasBadDate, .serverCertificateNotYetValid].contains(error.code) {
+                    return fail("TLS trust failed. Ask IT to check the proxy certificate for api.github.com.")
+                }
                 return fail(status == 401 || status == 403 ? "Sign in to Copilot CLI or GitHub CLI"
                             : status == 404 ? "No Copilot plan" : "Usage unavailable")
             }
@@ -442,9 +461,40 @@ enum UsageFetcher {
         }
     }
 
+    /// After a failed run the CLI is left alone for this long, and the GitHub
+    /// CLI is used. macOS shows its "Not Opened" alert whenever a blocked
+    /// program starts, which `isQuarantined` cannot rule out for a program the
+    /// CLI starts itself; retrying every refresh would repeat the alert.
+    private static let copilotCLIBackoff: TimeInterval = 6 * 3600
+    private static let copilotCLILock = NSLock()
+    private static var copilotCLIRetryAt = Date.distantPast
+
+    private static var shouldTryCopilotCLI: Bool {
+        copilotCLILock.withLock { Date() >= copilotCLIRetryAt }
+    }
+
+    private static func backOffCopilotCLI() {
+        logger.notice("usage copilot: CLI failed, not running it again for a while")
+        copilotCLILock.withLock { copilotCLIRetryAt = Date().addingTimeInterval(copilotCLIBackoff) }
+    }
+
+    /// Would Gatekeeper refuse this file? Downloaded programs keep the
+    /// quarantine attribute (a Homebrew cask does) until someone approves them.
+    /// A terminal with the Developer Tools permission runs them regardless, so
+    /// the CLI can seem fine while Portside gets the "Not Opened" alert.
+    private static func isQuarantined(_ url: URL) -> Bool {
+        var value = [CChar](repeating: 0, count: 256)
+        let length = getxattr(url.resolvingSymlinksInPath().path, "com.apple.quarantine", &value, value.count - 1, 0, 0)
+        guard length > 0 else { return false }
+        // "0083;65a1b2c3;agent;uuid". Flag 0x40 means the user approved it.
+        let flags = String(cString: value).split(separator: ";").first.flatMap { UInt32($0, radix: 16) } ?? 0
+        return flags & 0x40 == 0
+    }
+
     /// The Copilot CLI, from its usual install places. A GUI app has no shell
-    /// PATH to search.
-    private static func copilotCLI() -> URL? {
+    /// PATH to search. Quarantined copies are skipped: running one is what
+    /// makes macOS offer to move it to the Trash.
+    private static func copilotCLI() -> (usable: URL?, isBlocked: Bool) {
         let fm = FileManager.default
         var candidates = [
             home.appendingPathComponent(".local/bin/copilot"),
@@ -458,7 +508,10 @@ enum UsageFetcher {
         for version in (try? fm.contentsOfDirectory(atPath: nvm.path))?.sorted().reversed() ?? [] {
             candidates.append(nvm.appendingPathComponent("\(version)/bin/copilot"))
         }
-        return candidates.first { fm.isExecutableFile(atPath: $0.path) }
+        let installed = candidates.filter { fm.isExecutableFile(atPath: $0.path) }
+        let usable = installed.first { !isQuarantined($0) }
+        if usable == nil, !installed.isEmpty { logger.notice("usage copilot: CLI is quarantined, not running it") }
+        return (usable, !installed.isEmpty && usable == nil)
     }
 
     /// Runs `copilot --headless --stdio` for one `account.getQuota` call, using

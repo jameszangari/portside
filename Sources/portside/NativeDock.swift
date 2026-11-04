@@ -280,6 +280,51 @@ enum NativeDock {
         }
     }
 
+    // MARK: - Watchdog
+
+    private static var watchdog: Process?
+
+    /// Starts a small child process (`portside --watch-native-dock <pid>`)
+    /// that outlives a crash or `kill -9`: signal handlers cannot run then, so
+    /// without it the Dock stays hidden, showing only in App Expose, until
+    /// Portside opens again. Started when the Dock gets hidden.
+    static func startWatchdog() {
+        guard watchdog?.isRunning != true, let executable = Bundle.main.executableURL else { return }
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = ["--watch-native-dock", String(ProcessInfo.processInfo.processIdentifier)]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            watchdog = process
+            logger.info("watchdog started, pid \(process.processIdentifier)")
+        } catch {
+            logger.error("watchdog did not start: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// The child's side: waits for `pid` to exit, then restores if a backup is
+    /// still there. A clean quit already restored and removed it.
+    static func runWatchdog(watching pid: pid_t) -> Never {
+        // Same process group as a terminal launch: Ctrl+C must not end this first.
+        for number in [SIGINT, SIGHUP, SIGTERM] { signal(number, SIG_IGN) }
+        let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .global())
+        let finish: () -> Never = {
+            if backupExists {
+                logger.notice("watchdog: Portside (pid \(pid)) exited without restoring")
+                recoverIfNeeded()
+            }
+            exit(0)
+        }
+        source.setEventHandler { finish() }
+        source.resume()
+        // It may have gone before the source was armed.
+        if kill(pid, 0) != 0 { finish() }
+        dispatchMain()
+    }
+
     // MARK: - Hide
 
     /// Save the backup, then hide. On any failure after the backup is

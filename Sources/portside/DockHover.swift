@@ -70,10 +70,6 @@ final class DockHover {
     /// sits 2.5pt past the dock's outer edge.
     static let bubbleGap: CGFloat = 7.5
 
-    /// The dock's current background, so labels use the same glass or
-    /// frost. Read each time a label opens.
-    var look: (() -> DockLook?)?
-
     /// Labels stay hidden while true (a group popover is open in the spot
     /// where the label would appear).
     var isSuppressed = false {
@@ -178,7 +174,7 @@ final class DockHover {
             return
         }
         currentAnchor = anchor
-        let label = AnyView(DockLabel(title: hit.title, pointing: edge, look: look?()))
+        let label = AnyView(DockLabel(title: hit.title, pointing: edge))
         overlay.present(label, anchor: anchor, edge: edge, gap: Self.bubbleGap)
         logger.debug("label: \(hit.title, privacy: .public)")
     }
@@ -188,35 +184,29 @@ final class DockHover {
     }
 }
 
-/// Native-Dock-style name label: a speech bubble whose small tail points at
-/// the icon. Its background is the dock's own (Liquid Glass or Solid, with
-/// the same frost and tint); without a look (the drag-out label)
-/// it uses the default glass. Without `pointing` it has no tail.
+/// Native semantic colors on an opaque bubble keep labels readable over any
+/// window, independently of the dock's tint, glass, or opacity.
 struct DockLabel: View {
     let title: String
     /// The dock's edge. The tail sits on the side facing the dock.
     var pointing: DockEdge?
-    var look: DockLook?
 
     private static let tail: CGFloat = 7
     private static let fontSize: CGFloat = 14
     private static let maxTextWidth: CGFloat = 640
 
-    private static var defaultLook: DockLook {
-        DockLook(cornerRadius: 0)
-    }
-
     /// The longest line's width, capped. A fixed width is what makes long
     /// text wrap here: the bubble is `fixedSize`, and without a width SwiftUI
     /// lays the text out as one line and truncates it.
     private var textWidth: CGFloat {
-        let natural = (title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: Self.fontSize)]).width
+        let natural = (title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: Self.fontSize, weight: .medium)]).width
         return min(natural.rounded(.up) + 1, Self.maxTextWidth)
     }
 
     var body: some View {
+        let bubble = LabelBubble(edge: pointing, tail: Self.tail)
         Text(title)
-            .font(.system(size: Self.fontSize))
+            .font(.system(size: Self.fontSize, weight: .medium))
             .foregroundStyle(.primary)
             .multilineTextAlignment(.center)
             // Truncates only past this, for a very long file name.
@@ -227,7 +217,11 @@ struct DockLabel: View {
             .padding(.vertical, 4)
             .padding(tailSide, pointing == nil ? 0 : Self.tail)
             .fixedSize()
-            .dockBackground(look ?? Self.defaultLook, in: LabelBubble(edge: pointing, tail: Self.tail))
+            .background {
+                bubble.fill(Color(nsColor: .windowBackgroundColor))
+                    .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+            }
+            .overlay { bubble.strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1) }
     }
 
     private var tailSide: Edge.Set {
@@ -266,7 +260,8 @@ private struct LabelBubble: InsettableShape {
         let height = vertical ? rect.width : rect.height
         let body = height - max(0, tail - inset)
         let mid = width / 2
-        let r = min(radius, body / 2)
+        let r = min(radius, body / 2, vertical ? width / 4 : width / 2)
+        let tailHalfWidth = min(self.tailHalfWidth, max(0, width / 2 - r))
 
         var p = Path()
         p.move(to: CGPoint(x: r, y: 0))

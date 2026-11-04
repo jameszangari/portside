@@ -37,6 +37,12 @@ final class WidgetHost: Identifiable {
         widgetLogger.info("started \(self.id, privacy: .public), refresh every \(interval, format: .fixed(precision: 0))s")
     }
 
+    /// A click on the widget (the strip's gesture tells clicks from drags).
+    func activate() {
+        widgetLogger.info("clicked \(self.id, privacy: .public)")
+        widget.activate()
+    }
+
     func stop() {
         timer?.invalidate()
         timer = nil
@@ -69,7 +75,6 @@ private struct WidgetContainer<W: DockWidget>: View {
         widget.body
             .dockHoverTarget(id: "widget:" + widget.id, title: widget.hoverTitle)
             .contentShape(Rectangle())
-            .onTapGesture { widget.activate() }
     }
 }
 
@@ -134,18 +139,24 @@ final class WidgetStore: ObservableObject {
     @Published private(set) var hosts: [WidgetHost] = []
     private var cancellable: AnyCancellable?
     private weak var dockModel: DockModel?
+    private var activeHosts: [WidgetHost] = []
 
     init(dockModel: DockModel) {
         self.dockModel = dockModel
-        cancellable = dockModel.$widgetKinds.sink { [weak self] kinds in
-            self?.sync(kinds)
+        cancellable = dockModel.$widgetKinds.combineLatest(dockModel.$showAgentNotch, dockModel.$agentNotchSettings).sink { [weak self] kinds, notch, settings in
+            self?.sync(kinds, notch: notch, usage: settings.showUsage)
         }
     }
 
-    private func sync(_ kinds: [String]) {
+    func widget(_ kind: String) -> (any DockWidget)? {
+        activeHosts.first { $0.id == kind }?.widget
+    }
+
+    private func sync(_ kinds: [String], notch: Bool, usage: Bool) {
+        let extra = notch ? ([AgentStatusWidget.kind] + (usage ? [UsageWidget.kind] : [])).filter { !kinds.contains($0) } : []
         var next: [WidgetHost] = []
-        for kind in kinds {
-            if let existing = hosts.first(where: { $0.id == kind }) {
+        for kind in kinds + extra {
+            if let existing = activeHosts.first(where: { $0.id == kind }) {
                 next.append(existing)
             } else if let widget = WidgetCatalog.make(kind) {
                 if let dockModel, let configurable = widget as? DockModelWidget {
@@ -156,13 +167,17 @@ final class WidgetStore: ObservableObject {
                 next.append(host)
             }
         }
-        for old in hosts where !next.contains(where: { $0.id == old.id }) {
+        for old in activeHosts where !next.contains(where: { $0.id == old.id }) {
             old.stop()
         }
-        hosts = next
+        activeHosts = next
+        hosts = next.filter { kinds.contains($0.id) }
     }
 
     func stopAll() {
-        hosts.forEach { $0.stop() }
+        cancellable = nil
+        activeHosts.forEach { $0.stop() }
+        activeHosts = []
+        hosts = []
     }
 }

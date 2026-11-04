@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import SwiftUI
 import os.log
 
@@ -95,6 +96,17 @@ enum AppTileMenu {
         menu.autoenablesItems = false
         let model = context.dockModel
         let app = context.app
+        let native = NativeDockMenu.snapshot(of: app)
+
+        if let native {
+            for entry in native.entries {
+                menu.addItem(menuItem(for: entry, in: native))
+            }
+            if !native.entries.isEmpty { menu.addItem(.separator()) }
+        } else if !AXIsProcessTrusted() {
+            menu.addItem(ClosureMenuItem("Show Windows and Recents...") { AccessibilityTrust.shared.requestAccess() })
+            menu.addItem(.separator())
+        }
 
         for item in context.leading {
             menu.addItem(ClosureMenuItem(item.title, item.action))
@@ -138,6 +150,9 @@ enum AppTileMenu {
 
         if let running = context.running {
             menu.addItem(.separator())
+            if let native {
+                menu.addItem(ClosureMenuItem("Show All Windows") { native.showAllWindows() })
+            }
             if running.isHidden {
                 menu.addItem(ClosureMenuItem("Show") { running.unhide() })
             } else {
@@ -154,6 +169,16 @@ enum AppTileMenu {
             menu.addItem(force)
         }
         return menu
+    }
+
+    /// One line copied from the native Dock's menu: a separator, a section
+    /// heading (disabled), or an action that presses the real item.
+    private static func menuItem(for entry: NativeDockMenu.Entry, in native: NativeDockMenu.Snapshot) -> NSMenuItem {
+        guard let title = entry.title else { return .separator() }
+        let item = ClosureMenuItem(NativeDockMenu.displayTitle(title)) { native.press(entry) }
+        item.isEnabled = entry.isEnabled
+        item.state = entry.isMarked ? .on : .off
+        return item
     }
 }
 

@@ -166,6 +166,7 @@ struct AgentSession: Equatable {
     let provider: AgentProvider
     let pid: pid_t
     let state: AgentState
+    let needsAttention: Bool
     let ended: Bool
     let updated: Date
     /// Working folder name ("my-project"), used to find its window.
@@ -179,6 +180,7 @@ struct AgentSession: Equatable {
               let pid = json["pid"] as? Int else { return nil }
         let payload = json["payload"] as? [String: Any] ?? [:]
         let event = payload["hook_event_name"] as? String ?? ""
+        needsAttention = event == "Notification" && ["permission_prompt", "elicitation_dialog"].contains(payload["notification_type"] as? String ?? "")
         provider = AgentProvider.named(json["provider"] as? String ?? "unknown")
         self.pid = pid_t(pid)
         updated = Date(timeIntervalSince1970: json["time"] as? TimeInterval ?? 0)

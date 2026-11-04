@@ -249,7 +249,7 @@ extension Text {
 // MARK: - Root
 
 private enum SettingsTab: String, CaseIterable, Identifiable {
-    case dock, appearance, widgets, groups, general
+    case dock, appearance, widgets, groups, notch, general
 
     var id: String { rawValue }
 
@@ -259,6 +259,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .appearance: "Appearance"
         case .widgets: "Widgets"
         case .groups: "Groups"
+        case .notch: "Agent Notch"
         case .general: "General"
         }
     }
@@ -269,6 +270,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .appearance: "paintbrush"
         case .widgets: "square.grid.2x2"
         case .groups: "folder"
+        case .notch: "macbook.gen2"
         case .general: "gearshape"
         }
     }
@@ -310,6 +312,7 @@ struct SettingsView: View {
                 case .appearance: AppearanceSettings(dockModel: dockModel, layout: layout, badges: badges)
                 case .widgets: WidgetSettings(dockModel: dockModel, widgets: widgets)
                 case .groups: GroupSettings(dockModel: dockModel)
+                case .notch: AgentNotchSettingsView(model: dockModel)
                 case .general: GeneralSettings(dockModel: dockModel, layout: layout, nativeDock: nativeDock, launchAtLogin: launchAtLogin)
                 }
             }
@@ -330,16 +333,34 @@ private struct SettingsSidebar: View {
     @State private var clearStatus: Task<Void, Never>?
     /// Set when a check finds a newer release; presents the update sheet.
     @State private var offer: UpdateOffer?
+    /// Where the rows' icons start, from the sidebar's edge. The list's own
+    /// insets differ between macOS versions and cannot be set, so the header
+    /// and footer read them to share one left edge.
+    @State private var rowLeading: CGFloat = 16
+    @State private var sidebarLeading: CGFloat = 0
+    @State private var firstRowLeading: CGFloat?
 
     var body: some View {
         List(selection: Binding(get: { selection }, set: { if let tab = $0 { selection = tab } })) {
             ForEach(SettingsTab.allCases) { tab in
-                Label(tab.title, systemImage: tab.symbol).tag(tab)
+                Label(tab.title, systemImage: tab.symbol)
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minX } action: { x in
+                        if tab == SettingsTab.allCases.first { firstRowLeading = x }
+                    }
+                    .tag(tab)
             }
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .top, spacing: 0) { identity }
         .safeAreaInset(edge: .bottom, spacing: 0) { updates }
+        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minX } action: { sidebarLeading = $0 }
+        .onChange(of: firstRowLeading) { updateRowLeading() }
+        .onChange(of: sidebarLeading) { updateRowLeading() }
+    }
+
+    private func updateRowLeading() {
+        guard let firstRowLeading else { return }
+        rowLeading = max(0, firstRowLeading - sidebarLeading)
     }
 
     private var identity: some View {
@@ -360,7 +381,7 @@ private struct SettingsSidebar: View {
         }
         // Author and build details don't fit the sidebar; hover shows them.
         .help(AppInfo.versionLine)
-        .padding(.horizontal, 16)
+        .padding(.horizontal, rowLeading)
         .padding(.top, 4)
         .padding(.bottom, 10)
     }
@@ -381,8 +402,11 @@ private struct SettingsSidebar: View {
                 .disabled(checking)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
-        .padding(.bottom, 12)
+        // The button's bezel fills its frame, while the icons above it have
+        // about this much empty margin.
+        .padding(.horizontal, rowLeading + 3)
+        .padding(.top, 8)
+        .padding(.bottom, rowLeading + 3)
         .sheet(item: $offer) { offer in
             UpdateSheet(offer: offer, onClose: { self.offer = nil })
         }
@@ -414,7 +438,7 @@ private struct SettingsSidebar: View {
 }
 
 /// A newer release found by a check.
-private struct UpdateOffer: Identifiable {
+struct UpdateOffer: Identifiable {
     let version: String
     let releaseURL: URL
     let dmgURL: URL?
@@ -423,7 +447,7 @@ private struct UpdateOffer: Identifiable {
 
 /// Offers a newer release, then downloads and installs it from inside the
 /// sheet. The browser opens only from the Open Release Page button.
-private struct UpdateSheet: View {
+struct UpdateSheet: View {
     let offer: UpdateOffer
     let onClose: () -> Void
 
@@ -585,6 +609,7 @@ private struct DockSettings: View {
     @ObservedObject private var accessibility = AccessibilityTrust.shared
     @ObservedObject var dockModel: DockModel
     @ObservedObject var trash: TrashController
+    @ObservedObject private var activity = AppActivity.shared
 
     var body: some View {
         Form {
@@ -724,7 +749,18 @@ private struct DockSettings: View {
             Section {
                 activityToggle(\.camera, "Camera", "Green, like the macOS camera dot. Shown on apps using the microphone while a camera is on.")
                 activityToggle(\.microphone, "Microphone", "Orange, like the macOS microphone dot.")
-                activityToggle(\.audio, "Playing audio", "An animated sound wave. Apps that keep their audio engine running (Ableton Live) show it whenever they are open.")
+                activityToggle(\.audio, "Audio activity", "Shows a static speaker for open audio streams, or an animated speaker for measured playback when enabled below.")
+                if dockModel.activityIcons.audio {
+                    activityToggle(\.measureAudioPlayback, "Measure actual playback", "Requires System Audio Recording permission. Measures app audio levels in memory; audio is never recorded, saved, or sent anywhere. Silent streams show no playback icon. The permission prompt appears when an app has an active output stream.")
+                    if let notice = activity.audioMeasurementNotice {
+                        Text(notice).helperStyle()
+                    }
+                    Button("Open System Audio Recording Settings") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                }
                 activityToggle(\.working, "Working", "Pulsing dots while the app and its child processes are busy. Turn it on per app with Show Working Icon in the app's right-click menu.")
             } header: {
                 Text("Activity Icons")
@@ -851,6 +887,19 @@ private struct GeneralSettings: View {
             } footer: {
                 Text("Opens Settings from any app. Default ⌘⇧D. The menu bar Settings… item always uses ⌘,.")
                     .footerStyle()
+            }
+
+            Section("Automatic updates") {
+                Toggle("Check for updates automatically", isOn: Binding(
+                    get: { dockModel.automaticUpdateChecks },
+                    set: { dockModel.setAutomaticUpdateChecks($0) }
+                ))
+                Text("Checks at launch and every 24 hours. Portside notifies you when an update is available; choose Install and Relaunch to apply it.").helperStyle()
+            }
+
+            Section("Permissions") {
+                Button("Open Full Disk Access") { TrashController.openFullDiskAccessSettings() }
+                Text("Enable Portside in System Settings, then restart it. macOS requires you to grant this permission yourself. It helps with protected files such as Trash; it does not override Gatekeeper or your employer's security policy.").helperStyle()
             }
 
             UpdatesAuthSection(otherCopies: $otherCopies)
@@ -992,10 +1041,10 @@ private func milliseconds(_ seconds: Double) -> String {
     "\(Int((seconds * 1000).rounded())) ms"
 }
 
-/// Continuous slider (no tick marks) with a fixed label column on the left
-/// and the current value right-aligned. The value snaps in the binding.
-/// Updates the model live while dragging and saves once when the drag ends;
-/// keyboard and accessibility changes have no drag, so they save at once.
+/// Continuous Form slider: label in the Form column (aligned with toggles and
+/// pickers), no tick marks, value right-aligned. Snaps in the binding.
+/// Updates live while dragging and saves once when the drag ends; keyboard
+/// and accessibility changes have no drag, so they save at once.
 struct SettingsSlider: View {
     let title: String
     let value: Double
@@ -1015,41 +1064,86 @@ struct SettingsSlider: View {
 
     var body: some View {
         let shown = draft ?? value
-        HStack(spacing: 12) {
+        LabeledContent {
+            HStack(spacing: 12) {
+                Slider(
+                    value: Binding(
+                        get: { draft ?? value },
+                        set: { raw in
+                            let next = snapped(raw)
+                            if draft != nil { draft = next }
+                            set(next, draft == nil)
+                        }
+                    ),
+                    in: range,
+                    onEditingChanged: { editing in
+                        if editing {
+                            draft = value
+                        } else if let final = draft {
+                            draft = nil
+                            set(final, true)
+                        }
+                    }
+                )
+                .controlSize(.regular)
+                .labelsHidden()
+                .accessibilityLabel(title)
+                .accessibilityValue(format(shown))
+                // SwiftUI can leave NSSlider tick marks on for some ranges;
+                // clear them so the track stays a single clean line.
+                .background(SliderTickClear())
+                Text(format(shown))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: valueWidth, alignment: .trailing)
+                    .accessibilityHidden(true)
+            }
+        } label: {
+            // Fixed width so every Settings section shares one label column,
+            // matching toggles/pickers instead of growing with the longest title.
             Text(title)
                 .frame(width: labelWidth, alignment: .leading)
-            Slider(
-                value: Binding(
-                    get: { draft ?? value },
-                    set: { raw in
-                        let next = snapped(raw)
-                        if draft != nil { draft = next }
-                        set(next, draft == nil)
-                    }
-                ),
-                in: range
-            ) {
-                Text(title)
-            } onEditingChanged: { editing in
-                if editing {
-                    draft = value
-                } else if let final = draft {
-                    draft = nil
-                    set(final, true)
-                }
-            }
-            .labelsHidden()
-            .accessibilityValue(format(shown))
-            Text(format(shown))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .frame(width: valueWidth, alignment: .trailing)
-                .accessibilityHidden(true)
         }
     }
 
     private func snapped(_ raw: Double) -> Double {
         min(max((raw / snap).rounded() * snap, range.lowerBound), range.upperBound)
+    }
+}
+
+/// Finds the nearest hosting `NSSlider` and removes tick marks.
+private struct SliderTickClear: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        view.setFrameSize(NSSize(width: 1, height: 1))
+        DispatchQueue.main.async { Self.clear(from: view) }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { Self.clear(from: nsView) }
+    }
+
+    private static func clear(from view: NSView) {
+        func findSlider(in root: NSView) -> NSSlider? {
+            if let slider = root as? NSSlider { return slider }
+            for child in root.subviews {
+                if let slider = findSlider(in: child) { return slider }
+            }
+            return nil
+        }
+        var node: NSView? = view
+        while let current = node {
+            if let slider = findSlider(in: current) {
+                if slider.numberOfTickMarks != 0 {
+                    slider.numberOfTickMarks = 0
+                    slider.allowsTickMarkValuesOnly = false
+                    slider.needsDisplay = true
+                }
+                return
+            }
+            node = current.superview
+        }
     }
 }
 
@@ -1439,11 +1533,11 @@ private struct WidgetSettings: View {
                 }
             }
 
-            if dockModel.widgetKinds.contains(AgentStatusWidget.kind) {
+            if dockModel.widgetKinds.contains(AgentStatusWidget.kind) || dockModel.showAgentNotch {
                 AgentHooksSection()
             }
 
-            if dockModel.widgetKinds.contains(UsageWidget.kind) {
+            if dockModel.widgetKinds.contains(UsageWidget.kind) || dockModel.showAgentNotch {
                 Section {
                     ForEach(AgentProvider.all) { provider in
                         Toggle(isOn: Binding(
@@ -1455,6 +1549,11 @@ private struct WidgetSettings: View {
                         }
                         .toggleStyle(.switch)
                     }
+                    Toggle("Allow Copilot CLI quota checks", isOn: Binding(
+                        get: { dockModel.usageCopilotCLIEnabled },
+                        set: { dockModel.setUsageCopilotCLIEnabled($0) }
+                    ))
+                    Text("Off by default. Some managed Macs block the Copilot CLI. Leave this off to use GitHub CLI sign-in over HTTPS, and ask IT about proxy or security blocks.").helperStyle()
                 } header: {
                     Text("AI Usage Providers")
                 } footer: {

@@ -10,6 +10,8 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Portside measures app audio levels locally to show playback activity. Audio is not recorded, saved, or sent anywhere.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Portside asks Finder to empty the Trash, System Events to add or remove apps from Open at Login, Spotify or Music for the Now Playing widget, and Terminal or iTerm to bring an agent's tab forward from the Agents widget.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>

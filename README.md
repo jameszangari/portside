@@ -27,14 +27,15 @@ macOS asks for permissions as features need them; see [Privacy and permissions](
 ## Features
 
 - **Reveal:** event-driven edge tracking, non-activating panel, slide animation, multi-display, file-drag reveal, notification badges, windows fit clear of the pinned dock (Accessibility)
-- **Apps:** pin, reorder, drag-out remove, Finder drops, running apps, recent apps, indicator and hidden-app options, Open at Login, native modifier clicks, launch bounce
-- **Activity icons:** camera (green), microphone (orange), playing audio (animated wave), working (CPU-based, per app)
+- **Apps:** pin, reorder, drag-out remove, Finder drops, running apps, recent apps, indicator and hidden-app options, Open at Login, native modifier clicks, launch bounce, the native Dock's window list, recent documents and app actions in the tile menu (Accessibility)
+- **Activity icons:** camera (green), microphone (orange), audio output (static speaker or opt-in measured playback animation), working (CPU-based, per app)
 - **Layout:** Bottom / Left / Right, live icon size and gap, magnification with shelf
 - **Widgets:** Clock, Battery, Calendar, Weather, System Stats, CPU, Memory, Now Playing, Agents, AI Usage with Claude, Codex and Copilot, your pick (Small / Wide / Extra Wide on the bottom dock)
 - **Groups and stacks:** app groups with grids and optional custom icons (SF Symbol + palette color); folder stacks (grid / native-style fan / list) with FSEvents, drag items out to any app; Trash tile
 - **Appearance:** match macOS icon style or Original; Liquid Glass (matches the native Dock in dark mode, or Custom with every part adjustable) or Solid (color or gradient, optional backdrop blur) background; one color picker everywhere (Brand, Neutrals, macOS and RGB presets, hex, hue, saturation, tint, shade, opacity)
-- **Native Dock:** hide via autohide-delay (save/restore), import apps and folders, open at login via `SMAppService`, optional Settings on launch
-- **Settings:** sidebar panes, live apply, global hotkey (default ⌘⇧D), Check for Updates (a newer release opens a modal that downloads, verifies, and installs it in place from the GitHub release DMG, then reopens Portside)
+- **Native Dock:** hide via autohide-delay (save/restore, also right after a crash), import apps and folders, open at login via `SMAppService`, optional Settings on launch
+- **Agent notch:** optional attached/floating island with working and attention counts, expandable session cards, plan-usage gauges, and a full Settings > Agent Notch customization pane
+- **Settings:** mouse and keyboard sidebar navigation, live apply, global hotkey (default ⌘⇧D), automatic daily update checks and notifications, plus Check for Updates (a newer release opens a modal that downloads, verifies, and installs it in place from the GitHub release DMG, then reopens Portside)
 
 Full detail: [docs/FEATURES.md](docs/FEATURES.md).
 
@@ -42,9 +43,10 @@ Full detail: [docs/FEATURES.md](docs/FEATURES.md).
 
 From [docs/CHECKLIST.md](docs/CHECKLIST.md) remaining backlog:
 
+- Hand-check signed-app update notifications and installation, notch positioning on built-in displays, and corporate-proxy Copilot access
 - Hand-check Calendar consent and Downloads permission retention in the signed app
 - Import plain file tiles from `persistent-others` (folders already import)
-- Window list in the app menu; VoiceOver / keyboard navigation
+- VoiceOver / keyboard navigation
 - Side-dock widget layout; window previews; profiles; Trash Option-click Empty
 
 ## Privacy and permissions
@@ -55,15 +57,18 @@ Portside has no telemetry and no account. Everything stays on your Mac except th
 
 | Host | When | What is sent |
 | --- | --- | --- |
-| `api.github.com`, `github.com`, `*.githubusercontent.com` | Check for Updates, Install Update | A version check and the release DMG download. No identifiers. |
+| `api.github.com`, `github.com`, `*.githubusercontent.com` | At launch and daily when automatic checks are on, Check for Updates, Install Update | A version check and the release DMG download. No identifiers. |
 | `api.open-meteo.com`, `geocoding-api.open-meteo.com` | Weather widget on | The city you type, then its coordinates |
 | `api.anthropic.com` | AI Usage widget with Claude, after you allow it | Claude Code's sign-in token, to ask for your usage |
-| `api.github.com` | AI Usage widget with Copilot, after you allow it, and only without the Copilot CLI | The GitHub CLI's token, to ask for your Copilot quota. With the Copilot CLI installed, the CLI makes this request itself. |
+| `api.github.com` | AI Usage widget with Copilot, after you allow it | The GitHub CLI's token, to ask for your Copilot quota. The optional Copilot CLI source is off by default. |
 | Spotify's artwork host (`https` only) | Now Playing with Spotify | A cover art request for the current track |
 
 **Permissions** (macOS asks when a feature first needs them):
 
-- **Accessibility:** fit maximized windows clear of the dock; raise an agent's window.
+- **Accessibility:** fit maximized windows clear of the dock; raise an agent's window; read and press items in the native Dock's tile menu.
+- **Notifications:** available update alerts. If declined, the menu bar still marks an available update.
+- **Full Disk Access:** optional, granted manually through General > Permissions for protected files such as Trash. It does not override corporate security policy.
+- **System Audio Recording:** optional actual-playback measurement. Audio buffers are reduced to levels locally and discarded, never saved or sent. Full Disk Access does not grant this permission.
 - **Calendar:** the Calendar widget's next event.
 - **Automation:** Finder (empty Trash, Trash count), System Events (Open at Login), Spotify or Music (Now Playing), Terminal or iTerm (bring an agent's tab forward).
 
@@ -74,7 +79,7 @@ Portside has no telemetry and no account. Everything stays on your Mac except th
 - Only if you click Install Hooks: entries in `~/.claude/settings.json`, `~/.codex/hooks.json` and `~/.codex/config.toml`, each backed up once to `<file>.portside.bak`. Remove Hooks undoes it.
 - With "Hide the macOS Dock" on: `autohide` and `autohide-delay` in `com.apple.dock`, restored on quit.
 
-**What widgets read:** AI Usage reads Claude Code's keychain token only after you agree, Codex's local session logs in `~/.codex/sessions`, and, only after you agree, your Copilot quota by running the Copilot CLI or `gh auth token`. Agents reads the hook files above. Battery, System Stats, CPU and Memory read local system counters. Now Playing asks Spotify or Music what is playing.
+**What widgets read:** AI Usage reads Claude Code's keychain token only after you agree, Codex's local session logs in `~/.codex/sessions`, and, only after you agree, your Copilot quota using `gh auth token`, or the Copilot CLI if separately enabled. Agents reads the hook files above. Battery, System Stats, CPU and Memory read local system counters. Now Playing asks Spotify or Music what is playing.
 
 ## Build from source
 

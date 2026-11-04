@@ -32,3 +32,17 @@ Hover and click behavior needs a person. Build and launch, then say exactly what
 3. If you added a Swift file, add it to the layout tree in `docs/ARCHITECTURE.md` with a one-line description, and `git add` it.
 4. If `dock.json` gained keys or settings changed, update `docs/DATA.md`.
 5. Final report, in order: what changed, what to hand test (short numbered list), new untracked files, known gaps.
+
+## Agent skills
+
+### Issue tracker
+
+Use GitHub Issues in `jameszangari/portside`. See [issue-tracker.md](docs/agents/issue-tracker.md).
+
+### Triage labels
+
+Use the default triage labels. See [triage-labels.md](docs/agents/triage-labels.md).
+
+### Domain docs
+
+Single-app repository using the existing domain docs. See [domain.md](docs/agents/domain.md).

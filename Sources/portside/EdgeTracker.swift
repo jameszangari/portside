@@ -68,7 +68,6 @@ final class EdgeTracker {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                DockScreen.reconcileAfterScreenChange()
                 self?.rebuildZones()
             })
             // After a Space or fullscreen switch, re-assert edge windows so
@@ -90,6 +89,13 @@ final class EdgeTracker {
             zone.window.orderOut(nil)
         }
         logger.info("edge windows hidden")
+    }
+
+    /// Fresh windows and tracking areas after the system woke: the old ones
+    /// can stop getting events even though they still report as visible.
+    func rebuild() {
+        guard isRunning else { return }
+        rebuildZones()
     }
 
     /// Keep edge zones above the current Space / fullscreen app.
@@ -166,10 +172,6 @@ final class EdgeTracker {
         }
     }
 
-    /// Primary-screen helper for callers that have not switched yet.
-    static func edgeFrame(for edge: DockEdge) -> NSRect {
-        edgeFrame(for: edge, on: DockScreen.active)
-    }
 }
 
 // MARK: - Per-screen zone

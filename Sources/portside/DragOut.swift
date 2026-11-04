@@ -250,7 +250,7 @@ struct DragOutView: View {
         // overlay panel grows to fit and AppKit does not clip the text.
         VStack(spacing: 4) {
             if state.phase == .outside, !state.label.isEmpty {
-                DockLabel(title: state.label, look: state.look)
+                DockLabel(title: state.label)
             }
             ZStack {
                 if state.phase == .poof {

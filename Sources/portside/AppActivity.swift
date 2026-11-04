@@ -9,7 +9,7 @@ import SwiftUI
 /// Declared in priority order: a tile shows only the first one that applies
 /// (a video call shows the camera, not the mic or the sound).
 enum ActivityKind: Int, Comparable, CaseIterable {
-    case camera, microphone, audio, working
+    case camera, microphone, audio, audioOutput, working
 
     static func < (a: ActivityKind, b: ActivityKind) -> Bool { a.rawValue < b.rawValue }
 
@@ -18,6 +18,7 @@ enum ActivityKind: Int, Comparable, CaseIterable {
         case .camera: "Camera in use"
         case .microphone: "Microphone in use"
         case .audio: "Playing audio"
+        case .audioOutput: "Audio output active"
         case .working: "Working"
         }
     }
@@ -29,6 +30,7 @@ struct ActivityIconSettings: Codable, Equatable {
     var camera = true
     var microphone = true
     var audio = true
+    var measureAudioPlayback = false
     var working = true
     /// Bundle ids watched for "Working" (CPU use of the app and its child
     /// processes). Opt-in per app from the right-click menu.
@@ -47,6 +49,7 @@ struct ActivityIconSettings: Codable, Equatable {
         camera = c.value(.camera, or: true)
         microphone = c.value(.microphone, or: true)
         audio = c.value(.audio, or: true)
+        measureAudioPlayback = c.value(.measureAudioPlayback, or: false)
         working = c.value(.working, or: true)
         workingApps = c.value(.workingApps, or: Self.defaultWorkingApps)
     }
@@ -55,7 +58,7 @@ struct ActivityIconSettings: Codable, Equatable {
         switch kind {
         case .camera: camera
         case .microphone: microphone
-        case .audio: audio
+        case .audio, .audioOutput: audio
         case .working: working
         }
     }
@@ -66,7 +69,9 @@ struct ActivityIconSettings: Codable, Equatable {
 /// Microphone and audio output come from CoreAudio's per-process objects
 /// (`kAudioProcessPropertyIsRunningInput` / `Output`, public since macOS
 /// 14). The camera comes from CoreMediaIO (`DeviceIsRunningSomewhere`).
-/// All three are property listeners: no polling, and no permission prompt.
+/// The base indicators use property listeners without permission prompts.
+/// Opt-in playback measurement uses private process taps through public
+/// CoreAudio APIs and requires System Audio Recording permission.
 /// macOS has no public per-process camera owner, so while a camera runs it
 /// is attributed to the apps that are also using the microphone (calls).
 ///
@@ -84,6 +89,7 @@ final class AppActivity: ObservableObject {
     @Published private(set) var byKey: [String: ActivityKind] = [:]
     /// The dock is on screen. Animated icons pause while it is not.
     @Published private(set) var dockVisible = false
+    @Published private(set) var audioMeasurementNotice: String?
 
     private(set) var settings = ActivityIconSettings()
     private let logger = Logger(subsystem: "com.james.portside", category: "AppActivity")
@@ -105,6 +111,20 @@ final class AppActivity: ObservableObject {
     private var idleStreak: [String: Int] = [:]
     private var workingKeys: Set<String> = []
     private var watched: Set<String> = []
+    private var measurePlayback = false
+    private var measuredAudio: Set<String> = []
+    private lazy var playback = AudioPlaybackMonitor(queue: queue, onChange: { [weak self] key, playing in
+        guard let self else { return }
+        if playing { self.measuredAudio.insert(key) } else { self.measuredAudio.remove(key) }
+        let keys = self.measuredAudio
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.started, self.settings.audio, self.settings.measureAudioPlayback else { return }
+            self.applyAudio(keys)
+            self.publish()
+        }
+    }, onError: { [weak self] message in
+        DispatchQueue.main.async { self?.audioMeasurementNotice = message }
+    })
 
     // Main-thread state.
     private var rawAudio: Set<String> = []
@@ -127,8 +147,8 @@ final class AppActivity: ObservableObject {
     // MARK: - Lifecycle
 
     func start(settings: ActivityIconSettings) {
-        self.settings = settings
         guard !started else { return configure(settings) }
+        self.settings = settings
         started = true
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
@@ -136,9 +156,25 @@ final class AppActivity: ObservableObject {
                 self?.appsChanged()
             })
         }
+        workspaceObservers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            self.audioDebounce.values.forEach { $0.cancel() }
+            self.audioDebounce = [:]
+            self.shownAudio = []
+            self.rawAudio = []
+            self.publish()
+            self.queue.async { [weak self] in
+                self?.playback.stop()
+                self?.measuredAudio = []
+                self?.syncProcessListeners()
+                self?.scheduleRebuild()
+            }
+        })
         let watched = watchedKeys()
+        let measure = settings.audio && settings.measureAudioPlayback
         queue.async { [weak self] in
             guard let self else { return }
+            self.measurePlayback = measure
             self.installAudioListeners()
             self.installCameraListeners()
             self.watched = watched
@@ -160,7 +196,23 @@ final class AppActivity: ObservableObject {
 
     /// Settings changed live.
     func configure(_ next: ActivityIconSettings) {
+        let changedMode = settings.measureAudioPlayback != next.measureAudioPlayback || settings.audio != next.audio
         settings = next
+        if changedMode {
+            audioMeasurementNotice = nil
+            audioDebounce.values.forEach { $0.cancel() }
+            audioDebounce = [:]
+            rawAudio = []
+            shownAudio = []
+            let measure = next.audio && next.measureAudioPlayback
+            queue.async { [weak self] in
+                guard let self else { return }
+                self.playback.stop()
+                self.measuredAudio = []
+                self.measurePlayback = measure
+                self.scheduleRebuild()
+            }
+        }
         appsChanged()
         publish()
     }
@@ -191,7 +243,7 @@ final class AppActivity: ObservableObject {
             next[key] = kind
         }
         for (key, kind) in privacy { add(key, kind) }
-        for key in shownAudio { add(key, .audio) }
+        for key in shownAudio { add(key, settings.measureAudioPlayback ? .audio : .audioOutput) }
         for key in working { add(key, .working) }
         // Also key each entry by its alias (bundle id <-> path).
         for (key, kind) in next {
@@ -222,7 +274,8 @@ final class AppActivity: ObservableObject {
                 self.publish()
             }
             audioDebounce[key] = item
-            DispatchQueue.main.asyncAfter(deadline: .now() + (want ? audioOnDelay : audioOffDelay), execute: item)
+            let delay = settings.measureAudioPlayback ? (want ? 0.1 : 0.4) : (want ? audioOnDelay : audioOffDelay)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
         }
     }
 
@@ -289,15 +342,23 @@ final class AppActivity: ObservableObject {
 
         var mic: Set<String> = []
         var audio: Set<String> = []
+        var audioOwners: [String: Set<AudioObjectID>] = [:]
         for object in Self.audioProcessObjects() {
             let input = Self.audioUInt32(object, kAudioProcessPropertyIsRunningInput) != 0
             let output = Self.audioUInt32(object, kAudioProcessPropertyIsRunningOutput) != 0
             guard input || output else { continue }
             let pid = pid_t(bitPattern: Self.audioUInt32(object, kAudioProcessPropertyPID))
+            guard pid != getpid() else { continue }
             guard let key = owner(pid: pid, bundleID: Self.audioBundleID(object)) ?? Self.proxyOwner(pid: pid, apps: apps) else { continue }
             if input { mic.insert(key) }
-            if output { audio.insert(key) }
+            if output {
+                audio.insert(key)
+                audioOwners[key, default: []].insert(object)
+            }
         }
+        if measurePlayback { playback.sync(audioOwners) }
+        let measured = measurePlayback
+        let audioSnapshot = measured ? measuredAudio : audio
         let cameraOn = cameraDevices.keys.contains { Self.cameraIsRunning($0) }
 
         var privacy: [String: ActivityKind] = [:]
@@ -313,7 +374,9 @@ final class AppActivity: ObservableObject {
             self.privacy = privacy
             self.aliases = aliases
             self.working = working
-            self.applyAudio(audio)
+            if measured == (self.settings.audio && self.settings.measureAudioPlayback) {
+                self.applyAudio(audioSnapshot)
+            }
             self.publish()
         }
     }
@@ -454,6 +517,8 @@ final class AppActivity: ObservableObject {
     }
 
     private func removeAllListeners() {
+        playback.stop()
+        measuredAudio = []
         sampler?.cancel()
         sampler = nil
         for (object, block) in processListeners {
@@ -610,8 +675,8 @@ final class AppActivity: ObservableObject {
 
 /// Small icon on a tile's top-leading corner (badges use top-trailing).
 /// Microphone and camera use the macOS privacy indicator colors (orange,
-/// green). Audio is an animated sound wave and Working is three pulsing
-/// dots, both on a dark chip. Animations pause while the dock is hidden and
+/// green). Output streams use a static speaker; measured playback animates
+/// only while sample levels exceed the silence threshold. Working uses dots. Animations pause while the dock is hidden and
 /// stay still with Reduce Motion.
 struct ActivityChip: View {
     let kind: ActivityKind
@@ -640,7 +705,7 @@ struct ActivityChip: View {
         switch kind {
         case .camera: Color(nsColor: .systemGreen)
         case .microphone: Color(nsColor: .systemOrange)
-        case .audio, .working: Color(white: 0.12, opacity: 0.88)
+        case .audio, .audioOutput, .working: Color(white: 0.12, opacity: 0.88)
         }
     }
 
@@ -654,33 +719,24 @@ struct ActivityChip: View {
             Image(systemName: "mic.fill")
                 .font(.system(size: d * 0.5, weight: .semibold))
                 .foregroundStyle(.white)
-        case .audio, .working:
+        case .audio:
+            Image(systemName: "speaker.wave.2.fill")
+                .font(.system(size: d * 0.5, weight: .semibold))
+                .foregroundStyle(.white)
+                .symbolEffect(.variableColor.iterative, options: .repeating,
+                              isActive: activity.dockVisible && !reduceMotion)
+        case .audioOutput:
+            Image(systemName: "speaker.fill")
+                .font(.system(size: d * 0.5, weight: .semibold))
+                .foregroundStyle(.white)
+        case .working:
             TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion || !activity.dockVisible)) { context in
                 let t = context.date.timeIntervalSinceReferenceDate
                 Canvas { gc, size in
-                    if kind == .audio {
-                        Self.drawWave(gc, size: size, t: reduceMotion ? 0.35 : t)
-                    } else {
-                        Self.drawDots(gc, size: size, t: reduceMotion ? nil : t)
-                    }
+                    Self.drawDots(gc, size: size, t: reduceMotion ? nil : t)
                 }
             }
             .frame(width: d * 0.62, height: d * 0.62)
-        }
-    }
-
-    /// Four bars bouncing at different rates, like a now-playing meter.
-    private static func drawWave(_ gc: GraphicsContext, size: CGSize, t: Double) {
-        let speeds = [7.1, 9.3, 6.2, 8.4]
-        let phases = [0.0, 1.7, 3.1, 0.9]
-        let count = CGFloat(speeds.count)
-        let barWidth = size.width / (count * 1.8)
-        let step = (size.width - barWidth) / (count - 1)
-        for i in 0..<speeds.count {
-            let level = 0.3 + 0.7 * abs(sin(t * speeds[i] * 0.5 + phases[i]))
-            let h = size.height * level
-            let rect = CGRect(x: CGFloat(i) * step, y: (size.height - h) / 2, width: barWidth, height: h)
-            gc.fill(Path(roundedRect: rect, cornerRadius: barWidth / 2), with: .color(.white))
         }
     }
 

@@ -28,6 +28,18 @@ enum PortsideMain {
             exit(checkUpdatesCommand())
         }
         #if DEBUG
+        if CommandLine.arguments.contains("--check-notch") {
+            exit(MainActor.assumeIsolated { AgentNotchProbe.run() })
+        }
+        if let index = CommandLine.arguments.firstIndex(of: "--render-notch-previews"), index + 1 < CommandLine.arguments.count {
+            exit(MainActor.assumeIsolated { AgentNotchProbe.render(to: CommandLine.arguments[index + 1]) })
+        }
+        if CommandLine.arguments.contains("--check-audio-levels") {
+            exit(MainActor.assumeIsolated { AudioPlaybackProbe.run(capture: CommandLine.arguments.contains("--capture")) })
+        }
+        if let index = CommandLine.arguments.firstIndex(of: "--render-label-previews"), index + 1 < CommandLine.arguments.count {
+            exit(MainActor.assumeIsolated { WidgetPreviews.renderLabels(to: CommandLine.arguments[index + 1]) })
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--render-widget-previews"), index + 1 < CommandLine.arguments.count {
             exit(MainActor.assumeIsolated { WidgetPreviews.render(to: CommandLine.arguments[index + 1]) })
         }
@@ -48,6 +60,10 @@ enum PortsideMain {
                 print("portside: \(error.localizedDescription)")
                 exit(1)
             }
+        }
+        if let flag = CommandLine.arguments.firstIndex(of: "--watch-native-dock"), flag + 1 < CommandLine.arguments.count,
+           let pid = pid_t(CommandLine.arguments[flag + 1]) {
+            NativeDock.runWatchdog(watching: pid)
         }
         NativeDock.recoverIfNeeded()
         installSignalHandlers()
@@ -145,6 +161,7 @@ struct PortsideApp: App {
         MenuBarExtra {
             Text("Portside")
             Divider()
+            UpdateMenuItem()
             Button("About Portside") {
                 appDelegate.showAbout()
             }
@@ -171,8 +188,7 @@ struct PortsideApp: App {
             // Template image (brand mark, black with alpha): macOS tints it
             // for light, dark, and tinted menu bars. Icon only, so menu bar
             // managers like Bartender see a standard-width item.
-            Image(nsImage: BrandAssets.menuBarIcon)
-                .accessibilityLabel("Portside")
+            PortsideMenuBarLabel()
         }
     }
 }
@@ -233,6 +249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Created with the delegate so the menu bar scene can observe it.
     let dockModel = DockModel.load()
     lazy var nativeDock = NativeDockController(dockModel: dockModel)
+    private var agentNotch: AgentNotch?
     private var dockEngine: DockEngine?
     private var settings: SettingsWindowController?
     private var hideHotKey: HotKey?
@@ -259,6 +276,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dockEngine = engine
         engine.onOpenSettings = { [weak self] in self?.openSettings() }
         engine.start()
+        agentNotch = AgentNotch(model: dockModel, widgets: engine.widgets)
+        UpdateMonitor.shared.start(model: dockModel)
         if dockModel.openSettingsOnLaunch { openSettings() }
         // The native Dock's own shortcut. If macOS's "Turn Dock hiding
         // on/off" shortcut is enabled it may take the keypress first.
@@ -294,6 +313,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         WindowFitter.releaseForExit(reason: "applicationWillTerminate")
+        agentNotch?.stop()
+        UpdateMonitor.shared.stop()
         dockEngine?.stop()
         NativeDockController.restoreForExit(reason: "applicationWillTerminate")
     }

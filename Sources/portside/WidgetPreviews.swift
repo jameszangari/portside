@@ -7,6 +7,36 @@ import SwiftUI
 /// layout changes can be checked without hovering the dock.
 enum WidgetPreviews {
     @MainActor
+    static func renderLabels(to directory: String) -> Int32 {
+        _ = NSApplication.shared
+        let folder = URL(fileURLWithPath: directory)
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            for (name, appearance, scheme) in [("light", NSAppearance.Name.aqua, ColorScheme.light),
+                                               ("dark", NSAppearance.Name.darkAqua, ColorScheme.dark)] {
+                NSApp.appearance = NSAppearance(named: appearance)
+                for (backdrop, color) in [("white", Color.white), ("black", Color.black)] {
+                    let view = VStack(spacing: 20) {
+                        DockLabel(title: "Safari", pointing: .bottom)
+                        DockLabel(title: "Claude 26% · 87%   Codex 12% · 38%", pointing: .left)
+                        DockLabel(title: "A long project filename that should remain readable.pdf", pointing: .right)
+                    }
+                    .padding(24).frame(width: 500, height: 230)
+                    .background(color).environment(\.colorScheme, scheme)
+                    let renderer = ImageRenderer(content: view)
+                    renderer.scale = 2
+                    guard let image = renderer.cgImage else { return 1 }
+                    let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])!
+                    let url = folder.appendingPathComponent("labels-\(name)-on-\(backdrop).png")
+                    try data.write(to: url)
+                    print(url.path)
+                }
+            }
+            return 0
+        } catch { print(error.localizedDescription); return 1 }
+    }
+
+    @MainActor
     static func render(to directory: String) -> Int32 {
         // DockLabel's background reads NSApp for the appearance.
         _ = NSApplication.shared

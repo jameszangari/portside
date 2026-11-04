@@ -68,24 +68,33 @@ extension Notification.Name {
 /// `NSScreen.main`, which tracks the key window an accessory app never has.
 enum DockScreen {
     private static var _active: NSScreen?
+    /// The active screen's last known values. `NSScreen.screens` is empty
+    /// while a closed laptop has no other display, and the dock must survive
+    /// that: layout keeps using these until a screen comes back.
+    private static var lastFrame = NSRect(x: 0, y: 0, width: 1440, height: 900)
+    private static var lastVisibleFrame = NSRect(x: 0, y: 0, width: 1440, height: 900)
+    private static var lastScale: CGFloat = 2
 
-    /// Screen the dock panel and layout use right now.
-    static var active: NSScreen {
-        if let current = _active,
-           let match = NSScreen.screens.first(where: { screensMatch($0, current) }) {
-            return match
+    /// Screen the dock panel and layout use right now. Nil with no display.
+    static var active: NSScreen? {
+        let screens = NSScreen.screens
+        let match = _active.flatMap { current in screens.first { screensMatch($0, current) } } ?? screens.first
+        if let match {
+            lastFrame = match.frame
+            lastVisibleFrame = match.visibleFrame
+            lastScale = match.backingScaleFactor
         }
-        return NSScreen.screens.first!
+        return match
     }
 
-    static var frame: NSRect { active.frame }
+    static var frame: NSRect { active?.frame ?? lastFrame }
 
     /// Frame minus the menu bar (and any native Dock reservation) on the
     /// active screen.
-    static var visibleFrame: NSRect { active.visibleFrame }
+    static var visibleFrame: NSRect { active?.visibleFrame ?? lastVisibleFrame }
 
     /// Points to pixels (2 on Retina) for the active screen.
-    static var backingScale: CGFloat { active.backingScaleFactor }
+    static var backingScale: CGFloat { active?.backingScaleFactor ?? lastScale }
 
     /// Switch the dock to `screen`. No-op if it is already active.
     @discardableResult
