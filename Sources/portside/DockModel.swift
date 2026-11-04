@@ -289,8 +289,9 @@ final class DockModel: Codable, ObservableObject {
     // MARK: - Hiding
 
     /// Native "Automatically hide and show the Dock". Off keeps the dock
-    /// revealed all the time.
-    @Published private(set) var autoHide: Bool = true
+    /// revealed all the time. Off for new users; a dock.json from before this
+    /// key existed always hid, so it decodes as on.
+    @Published private(set) var autoHide: Bool = false
 
     func setAutoHide(_ enabled: Bool) {
         guard enabled != autoHide else { return }
@@ -633,6 +634,36 @@ final class DockModel: Codable, ObservableObject {
     // MARK: - Startup
 
     /// Open Settings when Portside launches. Off by default.
+    @Published private(set) var usageCopilotCLIEnabled = false
+
+    func setUsageCopilotCLIEnabled(_ enabled: Bool) {
+        usageCopilotCLIEnabled = enabled
+        persist()
+    }
+
+    @Published private(set) var agentNotchSettings = AgentNotchSettings()
+
+    func updateAgentNotch(_ change: (inout AgentNotchSettings) -> Void, persist shouldPersist: Bool = true) {
+        var next = agentNotchSettings
+        change(&next)
+        next.normalize()
+        agentNotchSettings = next
+        if shouldPersist { persist() }
+    }
+
+    @Published private(set) var showAgentNotch = false
+    @Published private(set) var automaticUpdateChecks = true
+
+    func setShowAgentNotch(_ enabled: Bool) {
+        showAgentNotch = enabled
+        persist()
+    }
+
+    func setAutomaticUpdateChecks(_ enabled: Bool) {
+        automaticUpdateChecks = enabled
+        persist()
+    }
+
     @Published private(set) var openSettingsOnLaunch: Bool = false
 
     func setOpenSettingsOnLaunch(_ enabled: Bool) {
@@ -980,11 +1011,11 @@ final class DockModel: Codable, ObservableObject {
         case revealDelay, hideDelay, animationDuration, iconSize, iconGap, magnificationEnabled, magnifiedSize, edge, entries, widgetKinds
         case autoHide, reserveSpace, openGroupsOnHover, groupHoverDelay, groupHoverCloseGrace
         case animateOpeningApplications
-        case hideNativeDock, nativeDockExplained, openSettingsOnLaunch
+        case hideNativeDock, nativeDockExplained, openSettingsOnLaunch, showAgentNotch, automaticUpdateChecks, agentNotchSettings
         case showTrash, trashAccessHintDismissed
         case showBadges, badgeColor, badgeCustomColor
         case activityIcons
-        case stacks, layout, widgetSizes, usageProviders, usageClaudeConsent, usageCopilotConsent
+        case stacks, layout, widgetSizes, usageProviders, usageClaudeConsent, usageCopilotConsent, usageCopilotCLIEnabled
         case iconStyle, background, cornerRadius
         case showIndicators, dimHiddenApps, showRecents, recentApps
         /// Before per-style backgrounds. Read only, for migration.
@@ -1032,6 +1063,10 @@ final class DockModel: Codable, ObservableObject {
         usageClaudeConsent = try c.decodeIfPresent(Bool.self, forKey: .usageClaudeConsent) ?? false
         usageCopilotConsent = try c.decodeIfPresent(Bool.self, forKey: .usageCopilotConsent) ?? false
         openGroupsOnHover = try c.decodeIfPresent(Bool.self, forKey: .openGroupsOnHover) ?? false
+        usageCopilotCLIEnabled = c.value(.usageCopilotCLIEnabled, or: false)
+        agentNotchSettings = c.value(.agentNotchSettings, or: AgentNotchSettings())
+        showAgentNotch = c.value(.showAgentNotch, or: false)
+        automaticUpdateChecks = c.value(.automaticUpdateChecks, or: true)
         openSettingsOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .openSettingsOnLaunch) ?? false
         groupHoverDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverDelay) ?? Defaults.groupHoverDelay, to: Self.groupHoverDelayRange)
         groupHoverCloseGrace = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverCloseGrace) ?? Defaults.groupHoverCloseGrace, to: Self.groupHoverCloseGraceRange)
@@ -1096,6 +1131,10 @@ final class DockModel: Codable, ObservableObject {
         if usageClaudeConsent { try c.encode(true, forKey: .usageClaudeConsent) }
         if usageCopilotConsent { try c.encode(true, forKey: .usageCopilotConsent) }
         try c.encode(openGroupsOnHover, forKey: .openGroupsOnHover)
+        try c.encode(usageCopilotCLIEnabled, forKey: .usageCopilotCLIEnabled)
+        try c.encode(agentNotchSettings, forKey: .agentNotchSettings)
+        try c.encode(showAgentNotch, forKey: .showAgentNotch)
+        try c.encode(automaticUpdateChecks, forKey: .automaticUpdateChecks)
         try c.encode(openSettingsOnLaunch, forKey: .openSettingsOnLaunch)
         try c.encode(groupHoverDelay, forKey: .groupHoverDelay)
         try c.encode(groupHoverCloseGrace, forKey: .groupHoverCloseGrace)
@@ -1327,6 +1366,10 @@ final class DockModel: Codable, ObservableObject {
         openGroupsOnHover = old.openGroupsOnHover
         usageClaudeConsent = old.usageClaudeConsent
         usageCopilotConsent = old.usageCopilotConsent
+        usageCopilotCLIEnabled = old.usageCopilotCLIEnabled
+        agentNotchSettings = old.agentNotchSettings
+        showAgentNotch = old.showAgentNotch
+        automaticUpdateChecks = old.automaticUpdateChecks
         openSettingsOnLaunch = old.openSettingsOnLaunch
         groupHoverDelay = old.groupHoverDelay
         groupHoverCloseGrace = old.groupHoverCloseGrace

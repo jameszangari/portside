@@ -775,13 +775,21 @@ struct DockStrip: View {
             }
     }
 
+    /// Movement a press on a widget can have and still be a click.
+    private static var widgetClickSlop: CGFloat { 10 }
+
     /// Widgets do not reorder in the strip, but one dragged clearly out and
     /// released is turned off, like "Remove Widget" in its menu.
     private func widgetDragGesture(for host: WidgetHost, tile: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 4, coordinateSpace: .named(DockHover.space))
+        // Clicks are decided here too. A click on a trackpad easily moves a few
+        // points, which fails a tap (SwiftUI gives up at about 5pt) and starts
+        // a drag at an app tile's 4pt, so the click did nothing. One gesture
+        // with one threshold makes it either a click or a drag.
+        DragGesture(minimumDistance: 0, coordinateSpace: .named(DockHover.space))
             .onChanged { value in
                 let layoutID = "widget:" + host.id
                 if dragToken == nil {
+                    guard hypot(value.translation.width, value.translation.height) >= Self.widgetClickSlop else { return }
                     dragging = host.id
                     dragStartIndex = dockModel.layoutIndex(of: layoutID) ?? 0
                     dragOutside = false
@@ -811,7 +819,10 @@ struct DockStrip: View {
                 }
             }
             .onEnded { _ in
-                guard let token = dragToken else { return }
+                guard let token = dragToken else {
+                    host.activate()
+                    return
+                }
                 dragToken = nil
                 let overTrash = dragOverTrash
                 dragOverTrash = false

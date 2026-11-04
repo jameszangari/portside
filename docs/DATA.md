@@ -24,15 +24,15 @@ While "Hide the macOS Dock" is on, the native Dock's prior settings are backed u
 ~/Library/Application Support/com.james.portside/native-dock-backup.json
 ```
 
-It is deleted after a verified restore. If it exists when Portside starts, Portside restores from it first.
+It is deleted after a verified restore. If it exists when Portside starts, Portside restores from it first. If Portside dies without restoring, its watchdog child process (`--watch-native-dock`) does it right away.
 
 ## Settings controlled from the UI
 
-- Position, auto-hide, keep windows clear of the dock while hiding is off (`reserveSpace`, default `true`; needs Accessibility), icon size, icon gap (`iconGap`, points, 0 to 8, default 6), "Animate opening applications"
+- Position, auto-hide (`autoHide`, default `false` for new installs; a dock.json without the key is from before it existed and reads as `true`), keep windows clear of the dock while hiding is off (`reserveSpace`, default `true`; needs Accessibility), icon size, icon gap (`iconGap`, points, 0 to 8, default 6), "Animate opening applications"
 - Open Settings hotkey (`settingsHotkey`: `{ keyCode, modifiers }` Carbon values, default Command-Shift-D; `null` means cleared; missing key keeps the default)
 - Show Trash in dock (`showTrash`, default `true`); dismissed Full Disk Access hint (`trashAccessHintDismissed`, default `false`)
 - Show notification badges (`showBadges`, default `true`); badge color (`badgeColor`: `macOS`, `accent`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `graphite` or `custom`, default `macOS`); custom badge color (`badgeCustomColor`, a palette color as below, opacity ignored, used when `badgeColor` is `custom`)
-- Activity icons (`activityIcons`: `{ camera, microphone, audio, working, workingApps }`; the four kinds default `true`; `workingApps` is the bundle ids watched for Working, default `com.t3tools.t3code`, `com.anthropic.claudefordesktop`, `com.openai.codex`)
+- Activity icons (`activityIcons`: `{ camera, microphone, audio, working, workingApps, measureAudioPlayback }`; the four kinds default `true`; `measureAudioPlayback` defaults `false` and opts into local audio-level measurement with System Audio Recording permission; `workingApps` is the bundle ids watched for Working, default `com.t3tools.t3code`, `com.anthropic.claudefordesktop`, `com.openai.codex`)
 - Widget sizes (`widgetSizes`: `{ kind: 1 | 2 }`, bottom dock only; 1 is Small, 2 is Wide; written only for widgets not at their own size)
 - Layout (`layout`, written only once you move something: ordered ids such as an app's id, `group:<id>`, `spacer:<id>`, `widget:<kind>`, `stack:<id>`, `trash`, `running`, `separator:<id>`; missing items are slotted in beside their own kind)
 - Folder stacks (`stacks`: `{ id, path, itemOrder?, view?, sort?, foldersFirst?, showHidden?, showAsFolder? }[]`, right section before Trash; `itemOrder` is child filenames for Custom Order placement; `view` is `grid` (default), `fan`, or `list`; `sort` is `manual` (default), `name`, `dateAdded`, `dateModified`, or `kind`; the rest are written only when on)
@@ -63,3 +63,14 @@ The built app lives at `build/Portside.app` (ignored by git), with a copy of the
 The local signing certificate and private key live in your default user keychain. Its fingerprint is stored at `~/Library/Application Support/com.james.portside/signing/identity.sha1`. Keep the same identity across rebuilds. Downloads and other macOS privacy decisions are managed by macOS, outside `dock.json`.
 
 Portside no longer reads or stores any GitHub token; the repo is public. Older builds saved one in the keychain as service `com.james.portside.github-token`. You can delete that entry in Keychain Access. Expected repo visibility is the one-word file `docs/github-visibility` (`public`).
+
+## Feedback follow-up settings
+
+- `agentNotchSettings`: object for the Agent Notch pane. Defaults: `position` `attached` (`below`, `left`, `right` also valid), `display` `automatic` (`primary`, `all`), `compactStyle` `counts` (`providers`, `minimal`), `clickAction` `expand` (`focus`), `filter` `all` (`working`, `attention`), `hideWhenEmpty` true, `animate` true, `showTotal` true, `showUsage` true, `expandOnHover` true, `collapseAfterFocus` true, `showProject` true, `showHost` true, `showUpdated` true, `showProviderNames` true, `providerColors` true, `showFinished` true, `claude` true, `codex` true, `copilot` true, `showBorder` true, plus bounded sizing (`compactWidth` 184, `compactHeight` 30, `expandedWidth` 420, `cornerRadius` 22, `opacity` 1, `fontSize` 12, `rowSpacing` 8, `maxSessions` 5), timing (`hoverDelay` 0.25, `collapseDelay` 0.6, `animationDuration` 0.22), offsets (`horizontalOffset` 0, `verticalOffset` 0), and `accent` (palette color). Missing fields keep defaults; invalid enums and out-of-range numbers are clamped or replaced.
+- `showAgentNotch`: Boolean, default `false`, including older files without the key. Enables the Agent Notch panel (Settings > Agent Notch).
+- `automaticUpdateChecks`: Boolean, default `true`, including older files. Installed app bundles check at launch and every 24 hours. Turning it off cancels the pending check and schedule; manual checks remain available.
+- `usageCopilotCLIEnabled`: Boolean, default `false`, including older files. Allows the experimental Copilot subprocess source only when Copilot usage consent is also granted. Otherwise quota requests use the GitHub CLI token over HTTPS.
+
+These preferences are saved and restored by Undo Import. Portside auto-hide and native Dock hiding remain independent: fresh installs use `autoHide: false` and `hideNativeDock: true`; first-time native Dock hiding still shows its explanation. Existing choices are preserved.
+
+`lastNotifiedUpdateVersion` in Portside UserDefaults suppresses repeated system alerts for the same release across launches. It is not a dock layout setting.

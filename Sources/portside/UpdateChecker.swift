@@ -40,7 +40,7 @@ struct InstalledCopy: Identifiable, Equatable {
 
 /// Asks GitHub for the latest release of `AppInfo.repoURL`, compares its tag
 /// with `AppInfo.version`, and can download the release DMG and replace the
-/// running `.app` in place. One request per click; nothing runs in the background.
+/// running `.app` in place. UpdateMonitor also checks at launch and daily when enabled.
 ///
 /// The repo is public, so checks and downloads are unauthenticated.
 ///
@@ -51,6 +51,7 @@ struct InstalledCopy: Identifiable, Equatable {
 /// pinned references keep working. dock.json lives in Application Support and
 /// is never touched by the swap; it is copied to dock.json.before-update first.
 enum UpdateChecker {
+    @MainActor private static var installationInProgress = false
     private struct Release: Decodable {
         let tag_name: String
         let html_url: URL
@@ -130,6 +131,9 @@ enum UpdateChecker {
     /// Calls `onStep` on the main actor as the update moves along.
     @MainActor
     static func downloadAndInstall(dmgURL: URL, version: String, onStep: @escaping (UpdateStep) -> Void) async throws {
+        guard !installationInProgress else { throw UpdateError.installationInProgress }
+        installationInProgress = true
+        defer { installationInProgress = false }
         guard let destination = installedAppURL else {
             throw UpdateError.notInstalledApp
         }
@@ -531,6 +535,7 @@ enum UpdateChecker {
 }
 
 private enum UpdateError: LocalizedError {
+    case installationInProgress
     case notInstalledApp
     case notWritable(String)
     case blockedBySystem
@@ -542,6 +547,8 @@ private enum UpdateError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .installationInProgress:
+            "An update is already being installed."
         case .notInstalledApp:
             "this build isn't an installed Portside.app (use the .app from a release or build-app.sh)."
         case .notWritable(let folder):

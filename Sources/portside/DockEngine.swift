@@ -42,6 +42,10 @@ final class DockEngine {
     private var reservationUpdateQueued = false
     private var reservationObservers: [NSObjectProtocol] = []
     private var reservationSubscriptions: [AnyCancellable] = []
+    /// Wake and session observers (see `recover`).
+    private var systemObservers: [NSObjectProtocol] = []
+    private var pendingRecovery: DispatchWorkItem?
+    private var lastScreenCount = NSScreen.screens.count
     private let flipKeys = MagnifyFlipKeys()
     private var magnifySubscriptions: [AnyCancellable] = []
     private var bounceSettingSubscription: AnyCancellable?
@@ -112,7 +116,6 @@ final class DockEngine {
         self.dockPanel = DockPanel(dockModel: dockModel, strip: strip, magnifier: magnifier)
         self.edgeTracker = EdgeTracker(edge: dockModel.edge)
         hover.setEdge(dockModel.edge)
-        hover.look = { [weak dockModel] in dockModel?.look }
 
         reservation.onChange = { [weak windowFitter] _, new in windowFitter?.setReservation(new) }
         reservationSubscriptions = [
@@ -448,6 +451,7 @@ final class DockEngine {
                 self?.queueReservationUpdate(reason: "screen changed")
             })
         }
+        observeSystemChanges()
         queueReservationUpdate(reason: "engine started")
         if effectiveAutoHide {
             edgeTracker.start()
@@ -455,6 +459,73 @@ final class DockEngine {
         } else {
             dockPanel.show(animated: false)
             logger.info("engine started, auto-hide off, panel revealed, edge tracker idle")
+        }
+    }
+
+    // MARK: - Sleep, wake and displays
+
+    /// Registered once, whatever the hiding setting: a pinned dock needs the
+    /// same care as a hidden one.
+    private func observeSystemChanges() {
+        guard systemObservers.isEmpty else { return }
+        let workspace = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
+            systemObservers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.recover(reason: name.rawValue)
+            })
+        }
+        systemObservers.append(NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            DockScreen.reconcileAfterScreenChange()
+            // This also fires for the menu bar or native Dock changing size,
+            // which needs no recovery. Displays coming or going does.
+            let count = NSScreen.screens.count
+            guard count != self.lastScreenCount else { return }
+            self.lastScreenCount = count
+            self.recover(reason: "\(count) display(s)")
+        })
+    }
+
+    /// Back to a known state after the system slept or displays changed. Runs
+    /// now and once more after displays settle (they keep changing for about
+    /// a second after a wake). Event driven; none of this polls.
+    private func recover(reason: String) {
+        recoverNow(reason: reason)
+        pendingRecovery?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.pendingRecovery = nil
+            self?.recoverNow(reason: "settled after \(reason)")
+        }
+        pendingRecovery = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+    }
+
+    private func recoverNow(reason: String) {
+        logger.notice("recovering: \(reason, privacy: .public), \(NSScreen.screens.count) display(s)")
+        guard !NSScreen.screens.isEmpty else { return }
+        DockScreen.reconcileAfterScreenChange()
+        lastScreenCount = NSScreen.screens.count
+        pendingHide?.cancel()
+        pendingHide = nil
+        pendingReveal?.cancel()
+        pendingReveal = nil
+        revealSuppressedForButtonHold = false
+        dragTargets.removeAll()
+        hover.clear()
+        magnifier.reset()
+        bouncer.cancel(reason: "system woke")
+        groups.collapse(reason: "system woke", animated: false)
+        stacks.collapse(reason: "system woke", animated: false)
+        updateMagnifierSuspension()
+        dockPanel.reassert()
+        edgeTracker.rebuild()
+        queueReservationUpdate(reason: "system woke")
+        if effectiveAutoHide {
+            rearmHideIfCursorOutside(source: "system woke")
+        } else {
+            dockPanel.show(animated: false)
         }
     }
 
@@ -510,6 +581,13 @@ final class DockEngine {
         pendingHide = nil
         pendingReveal?.cancel()
         pendingReveal = nil
+        pendingRecovery?.cancel()
+        pendingRecovery = nil
+        systemObservers.forEach {
+            NotificationCenter.default.removeObserver($0)
+            NSWorkspace.shared.notificationCenter.removeObserver($0)
+        }
+        systemObservers = []
         revealSuppressedForButtonHold = false
         settingsIsKey = false
         removeMouseUpMonitor()
