@@ -288,12 +288,13 @@ private final class RightClickView: NSView {
     }
 
     func show() {
-        // Hold auto-hide across NativeDockMenu's Dock capture. Clear before
-        // popUp so the real menu's didEndTracking can re-arm hide normally.
+        // Hold across Dock capture and popUp. Settings resigns key during
+        // AXShowMenu; applying that mid-build would turn auto-hide back on
+        // and slide the dock away. didEndTracking still clears menuIsOpen
+        // (only NativeDockMenu.isCapturing is ignored there).
         MenuKeyFocus.shared.beginPresenting()
-        let menu = menuProvider?()
-        MenuKeyFocus.shared.endPresenting()
-        guard let menu else { return }
+        defer { MenuKeyFocus.shared.endPresenting() }
+        guard let menu = menuProvider?() else { return }
         // popUp puts the menu's top-left corner at the point. Screen
         // coordinates (y up) avoid any view flipping; AppKit nudges the menu
         // back on screen if needed.
@@ -330,6 +331,8 @@ final class MenuKeyFocus {
     /// Dock menu and any hide-timer races must not slide the dock away while
     /// this is set, or the tile menu never appears.
     private(set) var isPresenting = false
+    /// DockEngine flushes deferred Settings key-focus changes here.
+    var onPresentationEnded: (() -> Void)?
 
     private let panel: KeyOnlyPanel
 
@@ -377,7 +380,10 @@ final class MenuKeyFocus {
     }
 
     fileprivate func beginPresenting() { isPresenting = true }
-    fileprivate func endPresenting() { isPresenting = false }
+    fileprivate func endPresenting() {
+        isPresenting = false
+        onPresentationEnded?()
+    }
 }
 
 private final class KeyOnlyPanel: NSPanel {

@@ -116,6 +116,9 @@ final class DockEngine {
         self.dockPanel = DockPanel(dockModel: dockModel, strip: strip, magnifier: magnifier)
         self.edgeTracker = EdgeTracker(edge: dockModel.edge)
         hover.setEdge(dockModel.edge)
+        MenuKeyFocus.shared.onPresentationEnded = { [weak self] in
+            self?.flushPendingSettingsKeyFocus()
+        }
 
         reservation.onChange = { [weak windowFitter] _, new in windowFitter?.setReservation(new) }
         reservationSubscriptions = [
@@ -538,12 +541,31 @@ final class DockEngine {
         dockModel.autoHide && !settingsIsKey
     }
 
+    /// Settings key-focus change that arrived during a tile menu presentation
+    /// (NativeDockMenu's AXShowMenu makes Settings resign key). Applied when
+    /// the menu presentation ends so auto-hide does not flap mid-click.
+    private var pendingSettingsKeyFocus: Bool?
+
     /// Settings became or resigned the key window. Pin or release auto-hide
     /// without writing `dockModel.autoHide`.
     func settingsKeyFocusChanged(_ focused: Bool) {
+        if NativeDockMenu.isCapturing || MenuKeyFocus.shared.isPresenting {
+            pendingSettingsKeyFocus = focused
+            return
+        }
+        applySettingsKeyFocus(focused)
+    }
+
+    private func applySettingsKeyFocus(_ focused: Bool) {
         guard settingsIsKey != focused else { return }
         settingsIsKey = focused
         applyEffectiveAutoHide(reason: focused ? "settings focused" : "settings unfocused")
+    }
+
+    private func flushPendingSettingsKeyFocus() {
+        guard let focused = pendingSettingsKeyFocus else { return }
+        pendingSettingsKeyFocus = nil
+        applySettingsKeyFocus(focused)
     }
 
     /// Turn effective auto-hide on or off, live. Off: the edge window goes
@@ -754,8 +776,10 @@ final class DockEngine {
 
     private func rearmHideIfCursorOutside(source: String) {
         // Right-click builds the menu (and may flash the native Dock menu)
-        // before popUp; hiding mid-build leaves no menu on screen.
-        if MenuKeyFocus.shared.isPresenting || NativeDockMenu.isCapturing { return }
+        // before popUp; hiding mid-build leaves no menu on screen. The real
+        // tile menu's didEndTracking still rearms via "menu closed".
+        if NativeDockMenu.isCapturing { return }
+        if MenuKeyFocus.shared.isPresenting, source != "menu closed" { return }
         if !isCursorInsideDock(NSEvent.mouseLocation) {
             handleExit(source: source)
         }

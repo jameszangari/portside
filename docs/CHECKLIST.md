@@ -120,6 +120,7 @@ Validation note: overwriting the executable inside an already-used temporary tes
 - [x] Playback measurement: debounced tap recreate on process-set churn, preserve playing across recreate, per-app failure instead of global disable, tap UID from `kAudioTapPropertyUID`.
 - [x] Accessibility grant helper: when Settings shows Portside on but `AXIsProcessTrusted()` is false (stale TCC after update), Show Windows and Recents / Grant Access offer Reset Permission (`tccutil reset Accessibility`), Quit Portside, and a fresh grant on relaunch instead of the toggle loop.
 - [x] Tile context menu with Accessibility granted: NativeDockMenu capture no longer rearms auto-hide / dismisses before Portside's NSMenu pops up (`isCapturing` + `isPresenting`).
+- [x] Same with Settings open: Settings resigning key during Dock `AXShowMenu` is deferred until the tile menu presentation ends, so auto-hide does not flap mid-click.
 - [x] Agent Notch / Agents widget discover T3 Code runs (`statev2.sqlite`) and OpenCode sessions (`opencode.db` session_v2 busy/idle), with provider filters for OpenCode and Cursor-in-T3; hook PID walk skips short-lived shells.
 - [ ] Physical notch attach shape, crowded menu bar overlap, full screen and Reduce Motion on a tester's Mac. Context gauges and inline approval actions stay out of scope until hooks supply that data.
 - [ ] Hand-check Ableton and Windows App with Measure actual playback after the tap-churn fix.
