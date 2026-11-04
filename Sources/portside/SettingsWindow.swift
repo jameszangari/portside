@@ -167,10 +167,17 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        // Tile menus borrow key focus; if Settings grabs it back mid-open the
+        // menu dismisses. Hold the menu's key panel and defer dock pinning.
+        if MenuKeyFocus.shared.isPresenting {
+            MenuKeyFocus.shared.reclaimKey()
+            return
+        }
         onKeyFocusChanged?(true)
     }
 
     func windowDidResignKey(_ notification: Notification) {
+        if MenuKeyFocus.shared.isPresenting { return }
         onKeyFocusChanged?(false)
     }
 

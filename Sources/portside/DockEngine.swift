@@ -563,9 +563,15 @@ final class DockEngine {
     }
 
     private func flushPendingSettingsKeyFocus() {
-        guard let focused = pendingSettingsKeyFocus else { return }
-        pendingSettingsKeyFocus = nil
-        applySettingsKeyFocus(focused)
+        if let focused = pendingSettingsKeyFocus {
+            pendingSettingsKeyFocus = nil
+            applySettingsKeyFocus(focused)
+            return
+        }
+        // Settings key callbacks are swallowed while a tile menu presents;
+        // resync from the real key window so auto-hide pin matches.
+        let settingsKey = NSApp.windows.contains { $0.isKeyWindow && $0.styleMask.contains(.titled) }
+        applySettingsKeyFocus(settingsKey)
     }
 
     /// Turn effective auto-hide on or off, live. Off: the edge window goes
