@@ -86,7 +86,7 @@ Out of scope: minimized windows in the Dock, the two-finger App Expose gesture, 
 - [ ] Physical notch positioning, many menu bar items, full screen, display changes and Reduce Motion on a tester's Mac.
 - [ ] Corporate Zscaler reproduction, notification permission and signed app install/relaunch, physical sleep/wake, and macOS 26 visual checks.
 
-Known limits: the default static audio icon still appears for silent open output streams. Opt-in measurement reflects app PCM before hardware volume/mute, and very quiet or non-capturable streams may not register. Notch and dock share widget hosts and refresh timers. Update notifications remember the last notified version in Portside preferences. Full Disk Access is never granted programmatically.
+Known limits: without Measure actual playback, apps other than Spotify/Music can still show the speaker while a silent output stream stays open. Spotify and Music clear on their pause/stop notifications. Opt-in measurement reflects app PCM before hardware volume/mute, and very quiet or non-capturable streams may not register. Notch and dock share widget hosts and refresh timers. Update notifications remember the last notified version in Portside preferences. Full Disk Access is never granted programmatically.
 
 Validation note: overwriting the executable inside an already-used temporary test bundle produced one code-signature termination and one SIGILL at a compiler-generated AX array witness accessor in WindowFitter. A fresh signed temporary bundle and the original SwiftPM executable launched successfully with window fitting enabled. No production crash cause is claimed from that test-copy failure; investigate if it recurs in a clean installed build.
 
@@ -113,7 +113,10 @@ Validation note: overwriting the executable inside an already-used temporary tes
 ### Agent Notch redesign (agentnotch.app-style)
 
 - [x] Dedicated Settings > Agent Notch pane with enable toggle, live preview, Minimal/Balanced/Detailed presets, placement, compact/dashboard appearance, behavior, filters and reset.
-- [x] Compact black island with working/attention counts, pulse while working, attach/below/left/right placement and multi-display options.
+- [x] Compact black island with working/attention counts, snake-box thinking loader while working (dots under ~11pt), attach/below/left/right placement and multi-display options.
+- [x] Audio activity chip uses an animated speaker for active output streams; Measure actual playback still hides silent ones.
+- [x] Spotify/Music pause or stop clears the dock audio chip immediately via playback notifications (streams often stay hot).
+- [x] Notch Show now playing: compact audio bars while Spotify/Music play (nothing when paused), keeps island visible with no sessions.
 - [x] Expandable dashboard: session cards, pin/close, hover expand, click focus or expand, Escape and outside-click collapse, optional plan-usage bars sharing Widgets consent.
 - [x] Codable round trips, invalid-value clamps, filter/provider rules, hover/pin lifecycle via `--check-notch`; PNG previews via `--render-notch-previews` (hosting-view bitmap after ScrollView captures were empty).
 - [x] Copilot session filter toggle, optional pill border, accent color row that collapses (Form DisclosureGroup did not).

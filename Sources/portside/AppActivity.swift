@@ -134,6 +134,10 @@ final class AppActivity: ObservableObject {
     private var working: Set<String> = []
     private var aliases: [String: String] = [:]
     private var workspaceObservers: [NSObjectProtocol] = []
+    /// Spotify / Music play state from their public notifications. Open
+    /// output streams often stay hot after pause; this clears the chip then.
+    private var playerPlaying: [String: Bool] = [:]
+    private var playerObservers: [NSObjectProtocol] = []
 
     /// Audio must run this long before the wave shows (skips alert sounds),
     /// and stop this long before it goes (skips gaps between tracks).
@@ -152,7 +156,12 @@ final class AppActivity: ObservableObject {
         started = true
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
-            workspaceObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+            workspaceObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                if name == NSWorkspace.didTerminateApplicationNotification,
+                   let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                   let id = app.bundleIdentifier, self?.playerPlaying[id] != nil {
+                    self?.playerStateChanged(bundleID: id, info: ["Player State": "Stopped"])
+                }
                 self?.appsChanged()
             })
         }
@@ -170,6 +179,7 @@ final class AppActivity: ObservableObject {
                 self?.scheduleRebuild()
             }
         })
+        installPlayerObservers()
         let watched = watchedKeys()
         let measure = settings.audio && settings.measureAudioPlayback
         queue.async { [weak self] in
@@ -189,6 +199,7 @@ final class AppActivity: ObservableObject {
         started = false
         workspaceObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
         workspaceObservers.removeAll()
+        removePlayerObservers()
         audioDebounce.values.forEach { $0.cancel() }
         audioDebounce.removeAll()
         queue.async { [weak self] in self?.removeAllListeners() }
@@ -258,9 +269,10 @@ final class AppActivity: ObservableObject {
 
     /// Debounce audio so alert sounds and track gaps do not flicker.
     private func applyAudio(_ raw: Set<String>) {
-        rawAudio = raw
-        for key in raw.union(shownAudio).union(audioDebounce.keys) {
-            let want = raw.contains(key)
+        let filtered = audibleAudio(from: raw)
+        rawAudio = filtered
+        for key in filtered.union(shownAudio).union(audioDebounce.keys) {
+            let want = filtered.contains(key)
             let shown = shownAudio.contains(key)
             if want == shown {
                 audioDebounce.removeValue(forKey: key)?.cancel()
@@ -274,9 +286,67 @@ final class AppActivity: ObservableObject {
                 self.publish()
             }
             audioDebounce[key] = item
+            // Pause notifications clear known players immediately; stream-only
+            // apps still use the longer off delay so track gaps do not flicker.
             let delay = settings.measureAudioPlayback ? (want ? 0.1 : 0.4) : (want ? audioOnDelay : audioOffDelay)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
         }
+    }
+
+    /// Drops Spotify / Music keys we know are paused, even if their output
+    /// stream is still marked running.
+    private func audibleAudio(from keys: Set<String>) -> Set<String> {
+        keys.filter { key in
+            if let playing = playerPlaying[key] { return playing }
+            if let bundle = aliases.first(where: { $0.value == key })?.key,
+               let playing = playerPlaying[bundle] {
+                return playing
+            }
+            return true
+        }
+    }
+
+    private func installPlayerObservers() {
+        removePlayerObservers()
+        let center = DistributedNotificationCenter.default()
+        for player in NowPlayingWidget.players {
+            let token = center.addObserver(forName: .init(player.notification), object: nil, queue: .main) { [weak self] note in
+                self?.playerStateChanged(bundleID: player.bundleID, info: note.userInfo)
+            }
+            playerObservers.append(token)
+        }
+    }
+
+    private func removePlayerObservers() {
+        let center = DistributedNotificationCenter.default()
+        for token in playerObservers { center.removeObserver(token) }
+        playerObservers.removeAll()
+        playerPlaying.removeAll()
+    }
+
+    private func playerStateChanged(bundleID: String, info: [AnyHashable: Any]?) {
+        let state = info?["Player State"] as? String
+        let playing = state == "Playing"
+        playerPlaying[bundleID] = playing
+        if playing {
+            queue.async { [weak self] in self?.scheduleRebuild() }
+            return
+        }
+        // Pause / stop: clear now. Waiting for IsRunningOutput to drop can
+        // leave the speaker up for minutes on Spotify and Music.
+        for key in audioKeys(matching: bundleID) {
+            audioDebounce.removeValue(forKey: key)?.cancel()
+            rawAudio.remove(key)
+            shownAudio.remove(key)
+        }
+        publish()
+        logger.info("activity: \(bundleID, privacy: .public) paused/stopped, audio chip cleared")
+    }
+
+    private func audioKeys(matching bundleID: String) -> Set<String> {
+        var keys: Set<String> = [bundleID]
+        if let path = aliases[bundleID] { keys.insert(path) }
+        return keys
     }
 
     private func appsChanged() {
@@ -675,9 +745,10 @@ final class AppActivity: ObservableObject {
 
 /// Small icon on a tile's top-leading corner (badges use top-trailing).
 /// Microphone and camera use the macOS privacy indicator colors (orange,
-/// green). Output streams use a static speaker; measured playback animates
-/// only while sample levels exceed the silence threshold. Working uses dots. Animations pause while the dock is hidden and
-/// stay still with Reduce Motion.
+/// green). Open output streams and measured playback both use an animated
+/// speaker; nothing is drawn when no output is active. Opt-in measurement
+/// hides silent streams. Working uses pulsing dots. Animations pause while
+/// the dock is hidden and stay still with Reduce Motion.
 struct ActivityChip: View {
     let kind: ActivityKind
     let iconSize: CGFloat
@@ -719,37 +790,19 @@ struct ActivityChip: View {
             Image(systemName: "mic.fill")
                 .font(.system(size: d * 0.5, weight: .semibold))
                 .foregroundStyle(.white)
-        case .audio:
+        case .audio, .audioOutput:
             Image(systemName: "speaker.wave.2.fill")
                 .font(.system(size: d * 0.5, weight: .semibold))
                 .foregroundStyle(.white)
                 .symbolEffect(.variableColor.iterative, options: .repeating,
                               isActive: activity.dockVisible && !reduceMotion)
-        case .audioOutput:
-            Image(systemName: "speaker.fill")
-                .font(.system(size: d * 0.5, weight: .semibold))
-                .foregroundStyle(.white)
         case .working:
-            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion || !activity.dockVisible)) { context in
-                let t = context.date.timeIntervalSinceReferenceDate
-                Canvas { gc, size in
-                    Self.drawDots(gc, size: size, t: reduceMotion ? nil : t)
-                }
-            }
-            .frame(width: d * 0.62, height: d * 0.62)
-        }
-    }
-
-    /// Three dots pulsing in turn, like a typing indicator.
-    private static func drawDots(_ gc: GraphicsContext, size: CGSize, t: Double?) {
-        let dot = size.width / 4.2
-        let step = (size.width - dot) / 2
-        for i in 0..<3 {
-            let pulse = t.map { 0.5 + 0.5 * sin($0 * 6 - Double(i) * 0.9) } ?? 1
-            let scale = 0.7 + 0.3 * pulse
-            let side = dot * scale
-            let rect = CGRect(x: CGFloat(i) * step + (dot - side) / 2, y: (size.height - side) / 2, width: side, height: side)
-            gc.fill(Path(ellipseIn: rect), with: .color(.white.opacity(0.4 + 0.6 * pulse)))
+            ThinkingLoader(
+                style: .dots,
+                paused: reduceMotion || !activity.dockVisible,
+                size: d * 0.72,
+                color: .white
+            )
         }
     }
 }

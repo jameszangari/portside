@@ -760,9 +760,9 @@ private struct DockSettings: View {
             Section {
                 activityToggle(\.camera, "Camera", "Green, like the macOS camera dot. Shown on apps using the microphone while a camera is on.")
                 activityToggle(\.microphone, "Microphone", "Orange, like the macOS microphone dot.")
-                activityToggle(\.audio, "Audio activity", "Shows a static speaker for open audio streams, or an animated speaker for measured playback when enabled below.")
+                activityToggle(\.audio, "Audio activity", "Shows an animated speaker while an app is outputting audio. Spotify and Music clear the icon as soon as they pause or stop. Turn on Measure actual playback below to clear silent streams in other apps.")
                 if dockModel.activityIcons.audio {
-                    activityToggle(\.measureAudioPlayback, "Measure actual playback", "Requires System Audio Recording permission. Measures app audio levels in memory; audio is never recorded, saved, or sent anywhere. Silent streams show no playback icon. The permission prompt appears when an app has an active output stream.")
+                    activityToggle(\.measureAudioPlayback, "Measure actual playback", "Requires System Audio Recording permission. Measures app audio levels in memory; audio is never recorded, saved, or sent anywhere. Clears the icon when levels stay silent, including apps that keep an output stream open after pause. The permission prompt appears when an app has an active output stream.")
                     if let notice = activity.audioMeasurementNotice {
                         Text(notice).helperStyle()
                     }

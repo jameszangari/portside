@@ -81,6 +81,10 @@ struct AgentNotchSettingsView: View {
                 Toggle("Show plan usage", isOn: binding(\.showUsage))
                 Text("Usage shares your Widgets provider selections and consent. Gauges show plan usage, not session context.").helperStyle()
             }
+            Section("Media") {
+                Toggle("Show now playing", isOn: binding(\.showMedia))
+                Text("Animated bars in the compact notch while Spotify or Music is playing, same sources as the Now Playing widget. Hidden when paused or stopped. Keeps the notch visible even when no agent sessions match.").helperStyle()
+            }
             Section("Behavior") {
                 Toggle("Expand on hover", isOn: binding(\.expandOnHover))
                 if preferences.expandOnHover { slider("Hover delay", \.hoverDelay, 0...1, unit: "ms", milliseconds: true) }
@@ -92,7 +96,7 @@ struct AgentNotchSettingsView: View {
                 Toggle("Animate status and expansion", isOn: binding(\.animate))
                 if preferences.animate { slider("Animation duration", \.animationDuration, 0.1...0.5, unit: "ms", milliseconds: true) }
                 Toggle("Hide when no sessions match", isOn: binding(\.hideWhenEmpty))
-                Text("Pin the dashboard to keep it open. The close button always collapses it; clicking outside closes it when unpinned. Escape works while Portside receives keyboard events. Reduce Motion disables animation.").helperStyle()
+                Text("Pin the dashboard to keep it open. The close button always collapses it; clicking outside closes it when unpinned. Escape works while Portside receives keyboard events. Reduce Motion disables animation. Hide-when-empty still shows the notch while media is playing.").helperStyle()
             }
             Section("Sessions") {
                 Toggle("Claude Code", isOn: binding(\.claude))
@@ -165,10 +169,17 @@ struct AgentNotchSettingsPreview: View {
     var body: some View {
         VStack(spacing: 12) {
             HStack(spacing: 8) {
-                Image(systemName: "sparkles").foregroundStyle(preferences.accent.color)
-                if preferences.compactStyle == .counts { Text("2").monospacedDigit() }
                 if preferences.compactStyle == .providers {
                     Circle().fill(preferences.providerColors ? AgentProvider.named("claude").color : preferences.accent.color).frame(width: 6, height: 6)
+                } else {
+                    let loaderSize = min(16, max(10, preferences.compactHeight * 0.48))
+                    ThinkingLoader(
+                        style: ThinkingLoader.preferredStyle(for: loaderSize),
+                        paused: !preferences.animate,
+                        size: loaderSize,
+                        color: preferences.accent.color
+                    )
+                    if preferences.compactStyle == .counts { Text("2").monospacedDigit() }
                 }
                 Spacer(minLength: 12)
                 if preferences.showTotal { Text("3 agents").foregroundStyle(.white.opacity(0.6)) }

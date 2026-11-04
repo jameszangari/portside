@@ -94,7 +94,7 @@ enum AgentNotchProbe {
                 if name == "minimal" { state.preferences.compactStyle = .minimal; state.preferences.providerColors = false; state.preferences.showTotal = false }
                 let width = state.expanded ? state.preferences.expandedWidth : state.preferences.compactWidth
                 let height = state.headerHeight + (state.expanded ? AgentNotchView.dashboardHeight(preferences: state.preferences, sessionCount: agents.sessions.count) : 0)
-                let view = AgentNotchView(agents: agents, usage: nil, state: state).frame(width: width, height: height)
+                let view = AgentNotchView(agents: agents, usage: nil, nowPlaying: nil, state: state).frame(width: width, height: height)
                 // Hosting view bitmaps are more reliable than ImageRenderer for ScrollView.
                 let hosting = NSHostingView(rootView: view)
                 hosting.frame = NSRect(x: 0, y: 0, width: width, height: height)
