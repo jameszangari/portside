@@ -55,13 +55,21 @@ final class AgentStatusWidget: DockWidget {
         for url in files where url.pathExtension == "json" {
             guard let session = AgentSession(contentsOf: url) else { continue }
             // SessionEnd, or the agent quit without one: forget it.
-            if session.ended || !Self.isAlive(session.pid) {
+            if session.ended || (session.pid > 0 && !Self.isAlive(session.pid)) {
                 try? FileManager.default.removeItem(at: url)
                 continue
             }
             var located = session
-            located.host = hostName(session.pid)
+            if located.host == nil {
+                located.host = hostName(session.pid)
+            }
             next.append(located)
+        }
+        // T3 Code / OpenCode do not fire Claude hooks; merge their local DBs.
+        let discovered = AgentSessionDiscovery.discover(existing: next)
+        var seen = Set(next.map(\.id))
+        for session in discovered where seen.insert(session.id).inserted {
+            next.append(session)
         }
         next.sort { $0.updated > $1.updated }
         if next != sessions {
@@ -79,7 +87,7 @@ final class AgentStatusWidget: DockWidget {
             ?? sessions.first { $0.state == .done }
             ?? sessions.first
         guard let target else { return }
-        AgentFocus.focus(pid: target.pid, project: target.project)
+        AgentFocus.focus(session: target)
     }
 
     var body: some View {
@@ -127,24 +135,33 @@ struct AgentProvider: Hashable, Identifiable {
     /// Ring and accent color in the Usage widget.
     let color: Color
 
-    static let all = [named("claude"), named("codex"), named("copilot")]
+    static let all = [named("claude"), named("codex"), named("copilot"), named("opencode"), named("cursor")]
 
     static func named(_ id: String) -> AgentProvider {
         switch id {
-        case "claude":
-            AgentProvider(id: id, name: "Claude", vendor: "Anthropic",
-                          bundleIDs: ["com.anthropic.claudefordesktop"],
+        case "claude", "claudeAgent":
+            AgentProvider(id: "claude", name: "Claude", vendor: "Anthropic",
+                          bundleIDs: ["com.anthropic.claudefordesktop", "com.t3tools.t3code"],
                           color: Color(red: 0.85, green: 0.47, blue: 0.34))
         case "codex":
-            AgentProvider(id: id, name: "Codex", vendor: "OpenAI",
-                          bundleIDs: ["com.openai.codex"],
+            AgentProvider(id: "codex", name: "Codex", vendor: "OpenAI",
+                          bundleIDs: ["com.openai.codex", "com.t3tools.t3code"],
                           color: Color(red: 0.25, green: 0.55, blue: 1.0))
         case "copilot":
-            AgentProvider(id: id, name: "Copilot", vendor: "GitHub",
-                          bundleIDs: ["com.github.CopilotForXcode"],
+            AgentProvider(id: "copilot", name: "Copilot", vendor: "GitHub",
+                          bundleIDs: ["com.github.CopilotForXcode", "com.t3tools.t3code"],
                           color: Color(red: 0.62, green: 0.40, blue: 0.95))
+        case "opencode":
+            AgentProvider(id: "opencode", name: "OpenCode", vendor: "OpenCode",
+                          bundleIDs: ["com.t3tools.t3code"],
+                          color: Color(red: 0.95, green: 0.72, blue: 0.25))
+        case "cursor":
+            AgentProvider(id: "cursor", name: "Cursor", vendor: "Cursor",
+                          bundleIDs: ["com.t3tools.t3code"],
+                          color: Color(red: 0.45, green: 0.75, blue: 0.95))
         default:
-            AgentProvider(id: id, name: id.capitalized, vendor: id.capitalized, bundleIDs: [], color: .gray)
+            AgentProvider(id: id, name: id.capitalized, vendor: id.capitalized,
+                          bundleIDs: ["com.t3tools.t3code"], color: .gray)
         }
     }
 
@@ -161,8 +178,9 @@ struct AgentProvider: Hashable, Identifiable {
     private static var icons: [String: NSImage?] = [:]
 }
 
-/// One agent process, from its latest hook event.
+/// One agent session: a Claude/Codex hook file, or a T3 / OpenCode discovery row.
 struct AgentSession: Equatable {
+    let id: String
     let provider: AgentProvider
     let pid: pid_t
     let state: AgentState
@@ -173,6 +191,23 @@ struct AgentSession: Equatable {
     let project: String?
     /// The app it runs in ("T3 Code", "Terminal"), filled in by the widget.
     var host: String?
+    /// Bundle IDs to activate when `pid` is missing or not an app process.
+    let focusBundleIDs: [String]
+
+    init(id: String, provider: AgentProvider, pid: pid_t, state: AgentState,
+         needsAttention: Bool, ended: Bool, updated: Date, project: String?,
+         host: String?, focusBundleIDs: [String] = []) {
+        self.id = id
+        self.provider = provider
+        self.pid = pid
+        self.state = state
+        self.needsAttention = needsAttention
+        self.ended = ended
+        self.updated = updated
+        self.project = project
+        self.host = host
+        self.focusBundleIDs = focusBundleIDs
+    }
 
     init?(contentsOf url: URL) {
         guard let data = try? Data(contentsOf: url),
@@ -183,10 +218,13 @@ struct AgentSession: Equatable {
         needsAttention = event == "Notification" && ["permission_prompt", "elicitation_dialog"].contains(payload["notification_type"] as? String ?? "")
         provider = AgentProvider.named(json["provider"] as? String ?? "unknown")
         self.pid = pid_t(pid)
+        id = "hook:\(pid)"
         updated = Date(timeIntervalSince1970: json["time"] as? TimeInterval ?? 0)
         ended = event == "SessionEnd"
         project = (payload["cwd"] as? String).map { URL(fileURLWithPath: $0).lastPathComponent }
             .flatMap { $0.isEmpty || $0 == "/" ? nil : $0 }
+        host = nil
+        focusBundleIDs = []
         switch event {
         case "UserPromptSubmit", "PreToolUse", "PostToolUse":
             state = .running

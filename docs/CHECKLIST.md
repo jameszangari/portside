@@ -52,6 +52,7 @@ Out of scope: minimized windows in the Dock, the two-finger App Expose gesture, 
 
 - The native menu section draws the Dock's real menu for a few frames each time a tile menu opens, and an app that is neither running nor kept in the native Dock has no window or recents section. It lists windows the Dock lists, which can leave out other Spaces.
 - New installs start with hiding off and Keep windows clear on, but nothing asks for Accessibility until the user visits Settings, so windows can extend under the dock until then.
+- Accessibility can look granted in Settings while this process is still untrusted after replacing or re-signing the app at the same path. The grant helper explains that; the OS still requires a toggle flip or a fresh Add This Copy for the new binary.
 - The watchdog restores the native Dock after a crash but does not reopen Portside.
 - The cause of the reported "dock stops working" was found by reading the code (force unwrap with no displays, stale windows and slides after sleep), not reproduced; no crash report from a released build was available.
 - A signed-out Copilot CLI is not retried for 6 hours after signing in, unless Portside is reopened; the GitHub CLI is still used meanwhile.
@@ -63,7 +64,7 @@ Out of scope: minimized windows in the Dock, the two-finger App Expose gesture, 
 - The AI Usage Claude meter uses an undocumented Anthropic endpoint and may stop working without notice.
 - The AI Usage Copilot meter uses the CLI's experimental `account.getQuota` or GitHub's undocumented `copilot_internal/user`, and either may change. ACP has no quota method, so `copilot --acp` use is counted through the account-wide quota, not read over ACP. Only tested on a free plan against live data; paid plan parsing is tested with a stub reply.
 - The Copilot CLI is found in fixed install locations only (Homebrew, `~/.local/bin`, npm global, nvm, `gh copilot`, VS Code). Elsewhere the meter falls back to the GitHub CLI.
-- The Agents widget does not track Copilot sessions; it covers Claude Code and Codex only.
+- The Agents widget and notch discover T3 Code runs and OpenCode `session_v2` rows from local SQLite, plus Claude Code and Codex CLI hook files. Copilot still has no session writer. Zed agent threads are not read yet (compressed blobs, no busy flag). Standalone OpenCode needs a live `session_v2` busy timestamp; the authenticated HTTP API is not used.
 - Copilot has no app icon unless Copilot for Xcode is installed, so its gauge shows a "C".
 - A clicked-open group or folder closes only on a click. Cmd-Tab or a Space switch leaves it (and an auto-hiding dock) up until the next click.
 - The Settings sidebar sits flush with the window edge and the toolbar can end in a hard line, unlike the floating sidebar and soft edge in System Settings.
@@ -117,5 +118,9 @@ Validation note: overwriting the executable inside an already-used temporary tes
 - [x] Codable round trips, invalid-value clamps, filter/provider rules, hover/pin lifecycle via `--check-notch`; PNG previews via `--render-notch-previews` (hosting-view bitmap after ScrollView captures were empty).
 - [x] Copilot session filter toggle, optional pill border, accent color row that collapses (Form DisclosureGroup did not).
 - [x] Playback measurement: debounced tap recreate on process-set churn, preserve playing across recreate, per-app failure instead of global disable, tap UID from `kAudioTapPropertyUID`.
+- [x] Accessibility grant helper: when Settings already lists Portside on but `AXIsProcessTrusted()` is false (stale binary after rebuild/re-sign), Show Windows and Recents and Keep windows clear explain the mismatch, show the running path, and offer Open Accessibility Settings / Add This Copy instead of only Apple's loop dialog.
+- [x] Agent Notch / Agents widget discover T3 Code runs (`statev2.sqlite`) and OpenCode sessions (`opencode.db` session_v2 busy/idle), with provider filters for OpenCode and Cursor-in-T3; hook PID walk skips short-lived shells.
 - [ ] Physical notch attach shape, crowded menu bar overlap, full screen and Reduce Motion on a tester's Mac. Context gauges and inline approval actions stay out of scope until hooks supply that data.
 - [ ] Hand-check Ableton and Windows App with Measure actual playback after the tap-churn fix.
+- [ ] Hand-check Show Windows and Recents with a stale Accessibility entry (toggle already on): confirm the helper alert, off/on or Add This Copy, then windows/recents appear.
+- [ ] Hand-check Agent Notch with a running T3 thread and a busy OpenCode session: counts, host "T3 Code", click-to-focus, and filters for OpenCode / Cursor.

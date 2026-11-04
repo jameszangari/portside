@@ -87,7 +87,7 @@ struct AgentNotchView: View {
         Button {
             if state.expanded { state.setExpanded(false) }
             else if preferences.clickAction == .focus, let session = sessions.first {
-                AgentFocus.focus(pid: session.pid, project: session.project)
+                AgentFocus.focus(session: session)
             } else { state.setExpanded(true) }
         } label: {
             content().frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
@@ -153,7 +153,7 @@ struct AgentNotchView: View {
 
     private func sessionCard(_ session: AgentSession) -> some View {
         Button {
-            AgentFocus.focus(pid: session.pid, project: session.project)
+            AgentFocus.focus(session: session)
             if preferences.collapseAfterFocus { state.setExpanded(false) }
         } label: {
             HStack(spacing: 10) {

@@ -186,14 +186,18 @@ enum AgentHooks {
     payload=$(cat)
     [ -n "$payload" ] || payload='{}'
 
-    # The agent process: the nearest ancestor whose name matches the
-    # provider (hooks run under a shell). Falls back to the direct parent.
+    # The agent process: climb past the hook shell to a durable ancestor.
+    # Prefer a name that matches the provider; otherwise keep the highest
+    # non-shell process so Portside does not delete the session when bash exits.
     agent_pid=$PPID
     pid=$PPID
-    for _ in 1 2 3 4 5; do
+    for _ in 1 2 3 4 5 6 7 8; do
       [ -n "$pid" ] && [ "$pid" -gt 1 ] || break
-      case "$(ps -o comm= -p "$pid" 2>/dev/null)" in
-        *"$provider"*) agent_pid=$pid; break ;;
+      comm=$(ps -o comm= -p "$pid" 2>/dev/null)
+      case "$comm" in
+        *"$provider"*|*claude*|*codex*|*opencode*) agent_pid=$pid; break ;;
+        -*|bash|zsh|sh|fish|dash|'') ;;
+        *) agent_pid=$pid ;;
       esac
       pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
     done

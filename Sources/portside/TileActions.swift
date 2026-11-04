@@ -104,7 +104,9 @@ enum AppTileMenu {
             }
             if !native.entries.isEmpty { menu.addItem(.separator()) }
         } else if !AXIsProcessTrusted() {
-            menu.addItem(ClosureMenuItem("Show Windows and Recents...") { AccessibilityTrust.shared.requestAccess() })
+            menu.addItem(ClosureMenuItem("Show Windows and Recents...") {
+                AccessibilityTrust.shared.requestAccess(forFeature: "showing an app's windows and recent documents")
+            })
             menu.addItem(.separator())
         }
 

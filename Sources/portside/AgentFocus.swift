@@ -14,12 +14,27 @@ enum AgentFocus {
     /// AppleScript can wait on a busy app or the Automation prompt.
     private static let queue = DispatchQueue(label: "com.james.portside.agentfocus")
 
-    static func focus(pid: pid_t, project: String?) {
-        guard let app = hostApp(of: pid) else {
-            logger.info("agents: no app hosts pid \(pid)")
+    static func focus(session: AgentSession) {
+        focus(pid: session.pid, project: session.project, bundleIDs: session.focusBundleIDs + session.provider.bundleIDs)
+    }
+
+    static func focus(pid: pid_t, project: String?, bundleIDs: [String] = []) {
+        let app = (pid > 0 ? hostApp(of: pid) : nil)
+            ?? bundleIDs.lazy.compactMap { id in
+                NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == id }
+            }.first
+        guard let app else {
+            if let url = bundleIDs.lazy.compactMap({
+                NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0)
+            }).first {
+                bringForward(url: url)
+                logger.info("agents: launch \(url.lastPathComponent, privacy: .public)")
+            } else {
+                logger.info("agents: no app hosts pid \(pid)")
+            }
             return
         }
-        let tty = ttyPath(of: pid)
+        let tty = pid > 0 ? ttyPath(of: pid) : nil
         queue.async {
             var selected = false
             if let tty, let script = tabScript(for: app.bundleIdentifier, tty: tty) {
@@ -41,6 +56,10 @@ enum AgentFocus {
             app.activate()
             return
         }
+        bringForward(url: url)
+    }
+
+    private static func bringForward(url: URL) {
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
         NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
