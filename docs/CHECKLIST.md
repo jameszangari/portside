@@ -26,7 +26,7 @@ These were built and tested with synthetic input; a person should confirm them o
 - Check for Updates from an installed older copy: Download and Install shows its steps, Portside quits, the new version reopens with settings intact; also the failure state (Try Again, Open Release Page) and the `swift run` state
 - Portside tile: Option turns Quit into Force Quit, and with Hide the macOS Dock on, the Dock comes back after it
 - Cmd+Tab with Settings open: opening from the menu bar, the hotkey, and a dock click puts Portside first, and it is next in line after switching away
-- Tile menu (right-click and hold): window list, recents and app actions for VS Code, Finder, Spotify; choosing each does the right thing; how visible the brief native menu is, with Hide the macOS Dock on and off
+- Tile menu (right-click and hold): VS Code-style layout with recent icons, window check, Options (Keep/Remove, Open at Login, Show in Finder), top-level Add to Group and Show Working Icon, Show All Windows, Hide/Quit; same from a group grid cell (Remove from Group, then the rest); choosing a recent or window presses the native item; how visible the brief native menu flash is, with Hide the macOS Dock on and off
 - Lid closed and opened, sleep, an external display unplugged, with hiding on and off: the dock still reveals and clicks work. `NSScreen.screens` going empty could not be simulated
 - `kill -9` with Hide the macOS Dock on: the native Dock returns within a second
 - Fresh install: hiding off, then Settings > Dock explains Keep windows clear (Accessibility is not requested on its own)
@@ -50,7 +50,7 @@ Out of scope: minimized windows in the Dock, the two-finger App Expose gesture, 
 
 ## Known gaps
 
-- The native menu section draws the Dock's real menu for a few frames each time a tile menu opens, and an app that is neither running nor kept in the native Dock has no window or recents section. It lists windows the Dock lists, which can leave out other Spaces.
+- The native menu section draws the Dock's real menu for a few frames each time a tile menu opens, and an app that is neither running nor kept in the native Dock has no window or recents section. It lists windows the Dock lists, which can leave out other Spaces. Recent-item icons are inferred from the title (no AX URL), so a project folder renamed to look like a file can get the wrong glyph. Assign To (Spaces) is not in Options.
 - New installs start with hiding off and Keep windows clear on, but nothing asks for Accessibility until the user visits Settings, so windows can extend under the dock until then.
 - Accessibility can look granted in Settings while this process is still untrusted after an update (stale TCC row keyed to an old code signature). Toggling the switch does not rewrite it. Grant Access runs `tccutil reset Accessibility com.james.portside`, then asks to quit and relaunch so macOS can prompt for a fresh grant.
 - The watchdog restores the native Dock after a crash but does not reopen Portside.

@@ -27,7 +27,7 @@ macOS asks for permissions as features need them; see [Privacy and permissions](
 ## Features
 
 - **Reveal:** event-driven edge tracking, non-activating panel, slide animation, multi-display, file-drag reveal, notification badges, windows fit clear of the pinned dock (Accessibility)
-- **Apps:** pin, reorder, drag-out remove, Finder drops, running apps, recent apps, indicator and hidden-app options, Open at Login, native modifier clicks, launch bounce, the native Dock's window list, recent documents and app actions in the tile menu (Accessibility)
+- **Apps:** pin, reorder, drag-out remove, Finder drops, running apps, recent apps, indicator and hidden-app options, Open at Login, native modifier clicks, launch bounce, native-style tile menu (recents with icons, windows, Options, Show All Windows; Accessibility)
 - **Activity icons:** camera (green), microphone (orange), audio output (static speaker or opt-in measured playback animation), working (CPU-based, per app)
 - **Layout:** Bottom / Left / Right, live icon size and gap, magnification with shelf
 - **Widgets:** Clock, Battery, Calendar, Weather, System Stats, CPU, Memory, Now Playing, Agents, AI Usage with Claude, Codex and Copilot, your pick (Small / Wide / Extra Wide on the bottom dock)
