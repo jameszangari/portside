@@ -166,7 +166,7 @@ struct PortsideApp: App {
                 appDelegate.showAbout()
             }
             Button("Settings...") {
-                appDelegate.openSettings()
+                appDelegate.runOpenSettingsCommand()
             }
             .keyboardShortcut(",")
             Button("Add App to Dock...") {
@@ -255,6 +255,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hideHotKey: HotKey?
     private var settingsHotKey: HotKey?
     private var settingsHotKeyObserver: AnyCancellable?
+    private let commands = CommandRegistry()
+    private static let openSettingsCommand = CommandID("portside.openSettings")!
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // An SPM executable has no bundle, so LSUIElement in Info.plist is
@@ -270,15 +272,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if Bundle.main.bundleURL.pathExtension != "app" {
             NSApp.applicationIconImage = AppIcon.image
         }
+        registerCommands()
         nativeDock.applyAtLaunch()
         BackgroundCursor.enable()
         let engine = DockEngine(dockModel: dockModel)
         dockEngine = engine
-        engine.onOpenSettings = { [weak self] in self?.openSettings() }
+        engine.onOpenSettings = { [weak self] in self?.runOpenSettingsCommand() }
         engine.start()
         agentNotch = AgentNotch(model: dockModel, widgets: engine.widgets)
         UpdateMonitor.shared.start(model: dockModel)
-        if dockModel.openSettingsOnLaunch { openSettings() }
+        if dockModel.openSettingsOnLaunch { runOpenSettingsCommand() }
         // The native Dock's own shortcut. If macOS's "Turn Dock hiding
         // on/off" shortcut is enabled it may take the keypress first.
         hideHotKey = HotKey(keyCode: kVK_ANSI_D, modifiers: cmdKey | optionKey, name: "Cmd+Option+D") { [weak self] in
@@ -296,7 +299,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsHotKey = nil
         guard let chord else { return }
         settingsHotKey = HotKey(chord: chord, name: "Open Settings \(chord.displayString)") { [weak self] in
-            self?.openSettings()
+            self?.runOpenSettingsCommand()
+        }
+    }
+
+    private func registerCommands() {
+        let descriptor = CommandDescriptor(
+            id: Self.openSettingsCommand,
+            title: "Open Settings",
+            keywords: ["preferences", "dock"],
+            unavailableReason: { [weak self] in self?.dockEngine == nil ? "Portside is still starting." : nil },
+            handler: { [weak self] _ in
+                self?.openSettings()
+                return .success(nil)
+            }
+        )
+        MainActor.assumeIsolated {
+            do {
+                try commands.register(descriptor)
+            } catch {
+                NSLog("portside: command registration failed: \(error)")
+            }
+        }
+    }
+
+    func runOpenSettingsCommand() {
+        Task { @MainActor [commands] in
+            _ = await commands.execute(Self.openSettingsCommand)
         }
     }
 
@@ -307,7 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Clicking Portside's icon in the native Dock (it is there while
     /// Settings is open) brings Settings forward, like any app.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        openSettings()
+        runOpenSettingsCommand()
         return false
     }
 
