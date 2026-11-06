@@ -58,6 +58,7 @@ Sources/portside/
   AgentSessionDiscovery.swift  Read-only T3 statev2.sqlite and OpenCode opencode.db session rows for the Agents notch
   AudioPlayback.swift       Public process taps, local RMS playback gate and temporary audio-device lifecycle
   AudioPlaybackProbe.swift  Debug synthetic-stream and playback-gate verification
+  Core/Commands/CommandRegistry.swift  Typed command descriptors and one main-actor executor (validate input, availability reason, cancellation); Open Settings is the first command
   AppActivity.swift         Per-app activity icons: mic, camera, audio (CoreAudio/CoreMediaIO listeners), Working (CPU sampler)
   ThinkingLoader.swift      Snake-box / pulsing-dot thinking loaders and compact notch audio bars
   TileActions.swift         Modifier clicks (Cmd, Option) and the AppKit tile menu with Force Quit
