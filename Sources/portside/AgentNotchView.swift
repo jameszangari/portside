@@ -16,10 +16,16 @@ struct AgentNotchView: View {
         preferences.showMedia && nowPlaying?.track?.isPlaying == true
     }
 
+    /// A collapsed pill in a short menu bar cannot take the full radius
+    /// (a 24pt bar with 16pt corners would turn it into a lozenge).
+    private var bottomRadius: CGFloat {
+        state.expanded ? preferences.cornerRadius : min(preferences.cornerRadius, state.headerHeight / 2)
+    }
+
     static func dashboardHeight(preferences: AgentNotchSettings, sessionCount: Int) -> CGFloat {
         let rowHeight = preferences.fontSize * 2 + 34
         let rows = min(preferences.maxSessions, max(1, sessionCount))
-        return min(650, 86 + Double(rows) * (rowHeight + preferences.rowSpacing) + (preferences.showUsage ? 154 : 0))
+        return min(650, 86 + Double(rows) * (rowHeight + preferences.rowSpacing) + (preferences.showUsage ? 172 : 0))
     }
 
     var body: some View {
@@ -33,12 +39,12 @@ struct AgentNotchView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(.black.opacity(preferences.opacity))
-        .clipShape(UnevenRoundedRectangle(topLeadingRadius: state.notchWidth > 0 ? 6 : preferences.cornerRadius,
-                                         bottomLeadingRadius: preferences.cornerRadius,
-                                         bottomTrailingRadius: preferences.cornerRadius,
-                                         topTrailingRadius: state.notchWidth > 0 ? 6 : preferences.cornerRadius))
+        .clipShape(UnevenRoundedRectangle(topLeadingRadius: state.topAttached ? 6 : preferences.cornerRadius,
+                                         bottomLeadingRadius: bottomRadius,
+                                         bottomTrailingRadius: bottomRadius,
+                                         topTrailingRadius: state.topAttached ? 6 : preferences.cornerRadius))
         .overlay {
-            if preferences.showBorder, state.notchWidth == 0 {
+            if preferences.showBorder, !state.topAttached {
                 RoundedRectangle(cornerRadius: preferences.cornerRadius)
                     .strokeBorder(.white.opacity(0.1), lineWidth: 0.5)
                     .allowsHitTesting(false)
@@ -273,6 +279,20 @@ private struct NotchUsageDetails: View {
                                 .monospacedDigit().frame(width: 34, alignment: .trailing)
                         }.font(.system(size: 10))
                         .help(window.resetsAt.map { "Resets \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Reset time unavailable")
+                        if let used = window.used, let limit = window.limit {
+                            // Request quotas (Copilot): the count behind the percentage.
+                            HStack(spacing: 4) {
+                                Text("\(used.formatted()) / \(limit.formatted()) \(window.unit ?? "requests")")
+                                    .monospacedDigit()
+                                Spacer(minLength: 4)
+                                if let reset = window.resetsAt {
+                                    Text("Resets \(reset.formatted(.dateTime.month(.abbreviated).day()))")
+                                }
+                            }
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(.white.opacity(0.5))
+                            .padding(.leading, 38)
+                        }
                     }
                 }
             }
@@ -280,4 +300,5 @@ private struct NotchUsageDetails: View {
         .padding(12)
         .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
     }
+
 }

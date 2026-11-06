@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 import os.log
 
 private let dropLogger = Logger(subsystem: "com.james.portside", category: "FileDrop")
@@ -11,15 +12,23 @@ private let dropLogger = Logger(subsystem: "com.james.portside", category: "File
 ///   open grid) deposits into that folder instead.
 /// - `.pinFolders`: every item is a folder (not an app). Dropping pins them
 ///   as folder stacks in the right section.
+/// - `.pinLinks`: no files, only non-file URLs (a Network server dragged
+///   from Finder, a web link). Dropping pins them as link tiles among the
+///   stacks, like the native Dock's url-tile.
 /// - `.open`: anything else. App tiles that can open the items highlight;
 ///   folder stacks accept a deposit into the folder.
 ///
 /// In any mode the Trash tile takes the drop instead when every item can
 /// be moved to the Trash (`canTrash(using:)`).
 final class FileDropSession {
-    enum Mode { case pinApps, pinFolders, open }
+    enum Mode { case pinApps, pinFolders, pinLinks, open }
+
+    /// What the strip accepts: files, plus plain URLs for link tiles.
+    static let dropTypes: [UTType] = [.fileURL, .url]
 
     private(set) var urls: [URL] = []
+    /// Non-file URLs on the drag pasteboard. Only read when there are no files.
+    private(set) var links: [URL] = []
     private(set) var mode: Mode = .open
     /// Per drag: app id -> can open every dragged item.
     private var verdicts: [String: Bool] = [:]
@@ -33,10 +42,17 @@ final class FileDropSession {
             forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]
         ) as? [URL] ?? []
         urls = objects
+        links = []
         verdicts = [:]
         trashVerdict = nil
         depositVerdict = nil
         if urls.isEmpty {
+            let all = NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self]) as? [URL] ?? []
+            links = all.filter { !$0.isFileURL && $0.scheme?.isEmpty == false }
+        }
+        if urls.isEmpty, !links.isEmpty {
+            mode = .pinLinks
+        } else if urls.isEmpty {
             mode = .pinApps
         } else if urls.allSatisfy({ PinnedApp(appURL: $0) != nil }) {
             mode = .pinApps
@@ -49,13 +65,16 @@ final class FileDropSession {
         switch mode {
         case .pinApps: label = "pin apps"
         case .pinFolders: label = "pin folders"
+        case .pinLinks: label = "pin links"
         case .open: label = "open"
         }
-        dropLogger.info("drag over strip: \(self.urls.count) item(s), mode \(label, privacy: .public)")
+        let types = NSPasteboard(name: .drag).types?.map(\.rawValue).joined(separator: ",") ?? ""
+        dropLogger.info("drag over strip: \(self.urls.count) file(s), \(self.links.count) link(s), mode \(label, privacy: .public), types \(types, privacy: .public)")
     }
 
     func end() {
         urls = []
+        links = []
         verdicts = [:]
         trashVerdict = nil
         depositVerdict = nil

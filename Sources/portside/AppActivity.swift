@@ -77,7 +77,9 @@ struct ActivityIconSettings: Codable, Equatable {
 ///
 /// "Working" is a CPU heuristic: the app plus all its child processes (an
 /// agent CLI, a build it started), sampled every 2s and only while a watched
-/// app is running. That timer is outside the reveal/hide path.
+/// app is running. That timer is outside the reveal/hide path. Agent hosts
+/// (T3 Code, Claude, Codex) use the Agents widget's sessions instead while it
+/// runs, so their tiles match the Agent Notch rather than idle CPU spikes.
 ///
 /// React analogy: a store fed by event subscriptions; tiles read
 /// `activity(for:)` and re-render when `byKey` changes.
@@ -132,6 +134,9 @@ final class AppActivity: ObservableObject {
     private var audioDebounce: [String: DispatchWorkItem] = [:]
     private var privacy: [String: ActivityKind] = [:]
     private var working: Set<String> = []
+    /// Bundle ids of apps hosting a running agent session, from the Agents
+    /// widget. Nil while it is not running: agent hosts fall back to CPU.
+    private var agentWorking: Set<String>?
     private var aliases: [String: String] = [:]
     private var workspaceObservers: [NSObjectProtocol] = []
     /// Spotify / Music play state from their public notifications. Open
@@ -239,6 +244,20 @@ final class AppActivity: ObservableObject {
         return byKey[DockBadges.standardPath(app.path)]
     }
 
+    /// Apps whose "Working" follows agent sessions instead of CPU.
+    static let agentHosts: Set<String> = [
+        "com.t3tools.t3code",
+        "com.anthropic.claudefordesktop",
+        "com.openai.codex",
+    ]
+
+    /// Running agent sessions changed (nil: the Agents widget stopped).
+    func setAgentWorking(_ bundleIDs: Set<String>?) {
+        guard bundleIDs != agentWorking else { return }
+        agentWorking = bundleIDs
+        publish()
+    }
+
     /// The strongest activity among a group's members.
     func activity(forGroup group: FolderGroup) -> ActivityKind? {
         group.apps.compactMap(activity(for:)).min()
@@ -255,7 +274,9 @@ final class AppActivity: ObservableObject {
         }
         for (key, kind) in privacy { add(key, kind) }
         for key in shownAudio { add(key, settings.measureAudioPlayback ? .audio : .audioOutput) }
-        for key in working { add(key, .working) }
+        // Agent hosts: the notch's session state wins over CPU.
+        for key in working where agentWorking == nil || !Self.agentHosts.contains(key) { add(key, .working) }
+        for key in agentWorking ?? [] where settings.workingApps.contains(key) { add(key, .working) }
         // Also key each entry by its alias (bundle id <-> path).
         for (key, kind) in next {
             if let alias = aliases[key], next[alias] == nil { next[alias] = kind }

@@ -53,7 +53,7 @@ enum WidgetPreviews {
                                                       UsageWindow(label: "7d", percent: 71, resetsAt: nil)], note: nil),
             ProviderUsage(provider: codex, windows: [UsageWindow(label: "5h", percent: 12, resetsAt: nil),
                                                      UsageWindow(label: "7d", percent: 30, resetsAt: nil)], note: nil),
-            ProviderUsage(provider: copilot, windows: [UsageWindow(label: "Prem", percent: 45, resetsAt: nil)], note: nil),
+            ProviderUsage(provider: copilot, windows: [UsageWindow(label: "AI", percent: 2.4, resetsAt: nil, used: 1204, limit: 50000, unit: "AI credits")], note: nil),
         ]
         let clock = ClockWidget(), stats = SystemStatsWidget()
         clock.refresh(); stats.refresh()

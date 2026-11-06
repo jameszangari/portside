@@ -253,12 +253,21 @@ struct RingGauge: View {
         .padding(line / 2)
         .frame(width: outer, height: outer)
         .frame(width: drawn, height: drawn)
-        .overlay(alignment: .bottomTrailing) {
+        .overlay {
+            // A badge on the ring at its bottom-trailing 45 degree point.
+            // Pinned to the tile's corner instead, the chrome's rounded
+            // corner clipped it to a colored sliver.
             if let cornerSymbol, tile >= 28 {
+                let badge = drawn * 0.3
+                let reach = outer / 2 * 0.7071
                 Image(systemName: cornerSymbol)
-                    .font(.system(size: drawn * 0.12, weight: .bold))
-                    .foregroundStyle(cornerColor)
-                    .padding(drawn * 0.04)
+                    .font(.system(size: badge * 0.55, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: badge, height: badge)
+                    .background(Circle().fill(cornerColor))
+                    // Tile-colored outline separates the badge from the ring.
+                    .background(Circle().fill(.regularMaterial).padding(-max(1, line * 0.4)))
+                    .offset(x: reach, y: reach)
             }
         }
     }

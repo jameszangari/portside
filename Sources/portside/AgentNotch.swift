@@ -8,6 +8,9 @@ final class AgentNotchPresentation: ObservableObject {
     @Published var preferences = AgentNotchSettings()
     @Published var headerHeight: CGFloat = 30
     @Published var notchWidth: CGFloat = 0
+    /// Hangs from the screen's top edge (around the notch, or inside the
+    /// menu bar on a display without one): square-ish top corners, no border.
+    @Published var topAttached = false
     @Published var compactWidth: CGFloat = 184
     var onExpansion: (() -> Void)?
     private var hoverTask: DispatchWorkItem?
@@ -131,7 +134,7 @@ final class AgentNotch {
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             panel.isOpaque = false
             panel.backgroundColor = .clear
-            panel.hasShadow = true
+            panel.hasShadow = preferences.showBorder
             panel.hidesOnDeactivate = false
             state.onExpansion = { [weak self] in self?.layoutPanels() }
             panel.contentView = NSHostingView(rootView: AgentNotchView(agents: agents, usage: usage, nowPlaying: nowPlaying, state: state))
@@ -157,17 +160,23 @@ final class AgentNotch {
         for surface in surfaces {
             let screen = surface.screen
             let state = surface.state
-            let attached = screen.safeAreaInsets.top > 0 && preferences.position == .attached
-            let beside = screen.safeAreaInsets.top > 0 && (preferences.position == .left || preferences.position == .right)
+            let notched = screen.safeAreaInsets.top > 0
+            let attached = notched && preferences.position == .attached
+            // No notch to wrap: attached mode sits inside the menu bar instead,
+            // hanging from the top edge at the bar's height.
+            let inMenuBar = !notched && preferences.position == .attached
+            let beside = notched && (preferences.position == .left || preferences.position == .right)
             let notchWidth = max(0, (screen.auxiliaryTopRightArea?.minX ?? screen.frame.midX)
                                  - (screen.auxiliaryTopLeftArea?.maxX ?? screen.frame.midX))
             state.notchWidth = attached ? notchWidth : 0
-            state.headerHeight = attached ? max(screen.safeAreaInsets.top, preferences.compactHeight) : preferences.compactHeight
+            state.topAttached = attached || inMenuBar
+            state.headerHeight = attached ? max(screen.safeAreaInsets.top, preferences.compactHeight)
+                : inMenuBar ? Self.menuBarHeight(on: screen) : preferences.compactHeight
             state.compactWidth = min(screen.frame.width - 24, preferences.compactWidth + state.notchWidth)
             let width = state.expanded ? min(screen.frame.width - 24, max(preferences.expandedWidth, state.compactWidth)) : state.compactWidth
             let contentHeight = AgentNotchView.dashboardHeight(preferences: preferences, sessionCount: sessions.count)
             let height = min(screen.visibleFrame.height - 16, state.headerHeight + (state.expanded ? contentHeight : 0))
-            var x = screen.frame.midX - width / 2 + (attached ? 0 : preferences.horizontalOffset)
+            var x = screen.frame.midX - width / 2 + (state.topAttached ? 0 : preferences.horizontalOffset)
             if beside {
                 x = preferences.position == .left
                     ? (screen.auxiliaryTopLeftArea?.maxX ?? screen.frame.midX - 100) - width - 6
@@ -175,8 +184,14 @@ final class AgentNotch {
                 x += preferences.horizontalOffset
             }
             x = min(screen.frame.maxX - width - 8, max(screen.frame.minX + 8, x))
-            let top = attached || beside ? screen.frame.maxY : min(screen.visibleFrame.maxY, screen.frame.maxY - screen.safeAreaInsets.top) - 4
-            let frame = NSRect(x: x, y: top - height - (attached ? 0 : preferences.verticalOffset), width: width, height: height)
+            let top = state.topAttached || beside ? screen.frame.maxY : min(screen.visibleFrame.maxY, screen.frame.maxY - screen.safeAreaInsets.top) - 4
+            let frame = NSRect(x: x, y: top - height - (state.topAttached ? 0 : preferences.verticalOffset), width: width, height: height)
+            // The window shadow is the other half of the border: it rims the
+            // pill's edge, so "Show border" off turns it off too.
+            if surface.panel.hasShadow != preferences.showBorder {
+                surface.panel.hasShadow = preferences.showBorder
+                surface.panel.invalidateShadow()
+            }
             let animate = preferences.animate && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && surface.panel.isVisible
             if surface.panel.frame != frame {
                 NSAnimationContext.runAnimationGroup { context in
@@ -188,5 +203,13 @@ final class AgentNotch {
             if preferences.hideWhenEmpty && sessions.isEmpty && !playing && !state.expanded { surface.panel.orderOut(nil) }
             else if !surface.panel.isVisible { surface.panel.orderFrontRegardless() }
         }
+    }
+
+    /// The menu bar's height on `screen`: the strip above `visibleFrame`.
+    /// Falls back to the system status bar thickness when the menu bar
+    /// auto-hides or this display has none.
+    private static func menuBarHeight(on screen: NSScreen) -> CGFloat {
+        let bar = screen.frame.maxY - screen.visibleFrame.maxY
+        return bar > 0 ? bar : NSStatusBar.system.thickness
     }
 }

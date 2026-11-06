@@ -133,14 +133,24 @@ struct UsageWindow: Equatable {
     let label: String
     let percent: Double
     let resetsAt: Date?
+    /// Requests used and allowed this window, for quotas counted in requests
+    /// (Copilot). Nil for percentage-only windows. `used` can pass `limit`
+    /// when overage is allowed.
+    let used: Int?
+    let limit: Int?
+    /// What `used` counts ("premium requests", "AI credits").
+    let unit: String?
 
     /// Data from before the window reset counts as empty, with the next
     /// reset unknown.
-    init(label: String, percent: Double, resetsAt: Date?) {
+    init(label: String, percent: Double, resetsAt: Date?, used: Int? = nil, limit: Int? = nil, unit: String? = nil) {
         let expired = resetsAt.map { $0 < Date() } ?? false
         self.label = label
         self.resetsAt = expired ? nil : resetsAt
         self.percent = expired ? 0 : min(max(percent, 0), 100)
+        self.used = expired ? (limit == nil ? nil : 0) : used
+        self.limit = limit
+        self.unit = unit
     }
 
     /// "5h", "7d" from a length in minutes.
@@ -175,7 +185,7 @@ struct ProviderUsage: Equatable {
             return "\(provider.name) " + windows.map(percent).joined(separator: " · ")
         }
         return windows.map { window in
-            let name = ["5h": "Session", "7d": "Weekly", "Prem": "Premium"][window.label] ?? window.label
+            let name = ["5h": "Session", "7d": "Weekly", "Prem": "Premium", "AI": "AI credits"][window.label] ?? window.label
             return "\(name) \(percent(window))"
         }.joined(separator: " · ")
     }
@@ -400,6 +410,8 @@ enum UsageFetcher {
         let unlimited: Bool
         let entitlement: Double
         let percentRemaining: Double?
+        /// Requests left, when the source reports a count.
+        var remaining: Double? = nil
         let resetsAt: Date?
     }
 
@@ -438,26 +450,48 @@ enum UsageFetcher {
                             : status == 404 ? "No Copilot plan" : "Usage unavailable")
             }
             let reset = (json["quota_reset_date"] as? String).flatMap(parseDay)
+            // Key names only, so new quota kinds (enterprise AI credits) show up in the log.
+            logger.info("usage copilot: quota kinds \(snapshots.keys.sorted().joined(separator: ","), privacy: .public)")
             finish(snapshots.map { key, value in
                 CopilotQuota(key: key, unlimited: value["unlimited"] as? Bool ?? false,
                              entitlement: (value["entitlement"] as? NSNumber)?.doubleValue ?? 0,
                              percentRemaining: (value["percent_remaining"] as? NSNumber)?.doubleValue,
+                             remaining: (value["remaining"] as? NSNumber)?.doubleValue,
                              resetsAt: reset)
             })
         }.resume()
     }
 
-    /// Premium requests first, then Chat and Code. Free plans have no premium
-    /// quota and paid plans usually have unlimited Chat and Code, so both
-    /// kinds are left out.
+    /// Known kinds first (AI credits, premium requests, Chat, Code), then any
+    /// other limited quota GitHub adds. Unlimited and zero-entitlement kinds
+    /// (no premium quota on Free, unlimited Chat on paid plans) are left out.
     private static func copilotWindows(_ quotas: [CopilotQuota]) -> [UsageWindow] {
-        [("premium_interactions", "Prem"), ("chat", "Chat"), ("completions", "Code")].compactMap { key, label in
+        let known: [(key: String, label: String, unit: String)] = [
+            ("premium_interactions", "Prem", "premium requests"),
+            ("chat", "Chat", "chats"),
+            ("completions", "Code", "completions"),
+        ]
+        let knownKeys = Set(known.map(\.key))
+        let others = quotas.map(\.key).filter { !knownKeys.contains($0) }.sorted().map { key in
+            // Enterprise and Business plans meter "AI credits" (pooled, often
+            // tens of thousands). The exact key is undocumented, so any key
+            // naming credits is read that way.
+            key.lowercased().contains("credit")
+                ? (key: key, label: "AI", unit: "AI credits")
+                : (key: key, label: String(key.prefix(4)).capitalized, unit: key.replacingOccurrences(of: "_", with: " "))
+        }
+        let credits = others.filter { $0.unit == "AI credits" }
+        return (credits + known + others.filter { $0.unit != "AI credits" }).compactMap { key, label, unit in
             guard let quota = quotas.first(where: { $0.key == key }), !quota.unlimited, quota.entitlement > 0,
-                  let remaining = quota.percentRemaining else { return nil }
+                  let remaining = quota.percentRemaining
+                    ?? quota.remaining.map({ $0 / quota.entitlement * 100 }) else { return nil }
             // The CLI can report a reset date of "now". `UsageWindow` would
             // read that as expired and show 0%, so only keep future dates.
             let resetsAt = quota.resetsAt.flatMap { $0 > Date() ? $0 : nil }
-            return UsageWindow(label: label, percent: 100 - remaining, resetsAt: resetsAt)
+            // The count when reported, else derived from the percentage.
+            let used = quota.remaining.map { quota.entitlement - $0 } ?? quota.entitlement * (100 - remaining) / 100
+            return UsageWindow(label: label, percent: 100 - remaining, resetsAt: resetsAt,
+                               used: Int(max(0, used).rounded()), limit: Int(quota.entitlement.rounded()), unit: unit)
         }
     }
 
@@ -580,8 +614,13 @@ enum UsageFetcher {
             CopilotQuota(key: key, unlimited: value["isUnlimitedEntitlement"] as? Bool ?? false,
                          entitlement: (value["entitlementRequests"] as? NSNumber)?.doubleValue ?? 0,
                          percentRemaining: (value["remainingPercentage"] as? NSNumber)?.doubleValue,
+                         remaining: (value["usedRequests"] as? NSNumber).map { quotaEntitlement(value) - $0.doubleValue },
                          resetsAt: (value["resetDate"] as? String).flatMap(parseDate))
         }
+    }
+
+    private static func quotaEntitlement(_ value: [String: Any]) -> Double {
+        (value["entitlementRequests"] as? NSNumber)?.doubleValue ?? 0
     }
 
     /// Consumes complete `Content-Length` frames, returning the result of

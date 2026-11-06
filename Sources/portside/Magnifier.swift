@@ -82,15 +82,23 @@ final class Magnifier: ObservableObject {
     var maxDrawnSize: CGFloat { isActive ? max(magnifiedSize, minTileLength) : 0 }
 
     /// Upper bound on how far a magnified tile can move from its slot along
-    /// the strip, or grow away from the edge.
+    /// the strip, or grow away from the edge. A wide widget grows along the
+    /// strip in proportion to its width.
     var maxDisplacement: CGFloat {
         guard isActive else { return 0 }
-        return max(0, magnifiedSize - minTileLength) * (Self.radius + 1)
+        return max(0, magnifiedSize - minTileLength) * (Self.radius + 1) * maxLengthRatio
     }
 
     var isMagnified: Bool { layout.focus != nil }
 
     private var minTileLength: CGFloat { tiles.map(\.length).min() ?? DockModel.iconSizeRange.upperBound }
+
+    /// The longest tile relative to the shortest (1 with app tiles only,
+    /// more with a Wide widget).
+    private var maxLengthRatio: CGFloat {
+        guard let longest = tiles.map(\.length).max(), minTileLength > 0 else { return 1 }
+        return max(1, longest / minTileLength)
+    }
 
     private static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
@@ -236,9 +244,14 @@ final class Magnifier: ObservableObject {
 
     func presentedFrame(base: CGRect, scale: CGFloat, shift: CGFloat) -> CGRect {
         var frame = base
+        // How far the tile rises away from the edge: its icon's thickness
+        // times the growth. Apps' frames include the running dot's room along
+        // that axis, so the shorter side is the icon's; a Wide widget is wider
+        // than it is tall and grows along the strip more than it rises.
+        let thickness = min(base.width, base.height)
         if edge.isVertical {
             // Side docks: the icon is as tall as the tile and grows sideways.
-            let lift = (scale - 1) * base.height
+            let lift = (scale - 1) * thickness
             frame.size.height = base.height * scale
             frame.origin.y = base.midY + shift - frame.height / 2
             frame.size.width = base.width + lift
@@ -255,7 +268,7 @@ final class Magnifier: ObservableObject {
             }
         } else {
             // Bottom dock: the icon is as wide as the tile and grows upward.
-            let lift = (scale - 1) * base.width
+            let lift = (scale - 1) * thickness
             frame.size.width = base.width * scale
             frame.origin.x = base.midX + shift - frame.width / 2
             frame.origin.y = base.minY - lift
@@ -276,16 +289,20 @@ final class Magnifier: ObservableObject {
     }
 
     private func computeLayout(focus: CGFloat) -> MagnifyLayout {
-        let slot = (tiles.map(\.length).max() ?? 0) + iconGap
-        guard slot > 0 else { return MagnifyLayout() }
+        // The bell is measured in app-tile slots, and every tile grows by the
+        // same factor: a Wide widget stays proportionally wider.
+        let reference = minTileLength
+        let slot = reference + iconGap
+        guard slot > 0, reference > 0 else { return MagnifyLayout() }
+        let factor = max(0, magnifiedSize / reference - 1)
 
-        // Growth of each tile along the strip (it also rises by this much).
+        // Growth of each tile along the strip.
         var growth: [CGFloat] = []
         growth.reserveCapacity(tiles.count)
         for tile in tiles {
             let distance = abs(tile.start + tile.length / 2 - focus) / slot
             let weight = distance >= Self.radius ? 0 : (1 + cos(.pi * distance / Self.radius)) / 2
-            growth.append(max(0, magnifiedSize - tile.length) * weight)
+            growth.append(tile.length * factor * weight)
         }
 
         // Growth left of the focus, with the tile under it counted pro rata.
@@ -318,9 +335,13 @@ final class Magnifier: ObservableObject {
             result.scales[tile.id] = 1 + grow / tile.length
             result.shifts[tile.id] = before + grow / 2 - lead
             result.growths[tile.id] = grow
+            // Rise away from the edge: the icon's thickness times the same
+            // factor. Equals `grow` for a square tile.
+            let lift = grow * reference / tile.length
+            result.lifts[tile.id] = lift
             result.steps.append(.init(center: tile.start + tile.length / 2, growthThrough: before + grow))
             before += grow
-            result.maxLift = max(result.maxLift, grow)
+            result.maxLift = max(result.maxLift, lift)
         }
         result.growthAtFocus = lead
         result.leading = lead
@@ -334,7 +355,10 @@ final class Magnifier: ObservableObject {
         let extra = max(0, magnifiedSize - minTileLength).rounded(.up)
         // The bell covers about `radius` tiles' worth of growth in total;
         // one more slot of margin keeps the widened shelf inside the window.
-        let side = extra * min(CGFloat(tiles.count), Self.radius + 1)
+        // Tiles count in units of the shortest one, so a Wide widget is worth
+        // its width in slots.
+        let units = tiles.reduce(0) { $0 + $1.length } / max(minTileLength, 1)
+        let side = extra * min(units, (Self.radius + 1) * maxLengthRatio)
         let next = MagnifyRoom(far: extra, side: side)
         guard next != room else { return }
         room = next
@@ -427,6 +451,8 @@ struct MagnifyLayout: Equatable {
     var shifts: [String: CGFloat] = [:]
     /// Per tile id: how much it grows (along the strip and away from the edge).
     var growths: [String: CGFloat] = [:]
+    /// Per tile id: how far it rises away from the screen edge.
+    var lifts: [String: CGFloat] = [:]
     /// Tile centers with the growth up to and including each, for shifting
     /// items that do not magnify (widgets, separators).
     var steps: [Step] = []
@@ -580,14 +606,15 @@ private struct ObservedMagnifyEffect: ViewModifier {
             // Real frame changes (not a render transform): AppKit hit-tests
             // and anchors the menu with the view's frame.
             let grow = magnifier.layout.growths[id] ?? 0
+            let lift = magnifier.layout.lifts[id] ?? 0
             let shift = magnifier.layout.shifts[id] ?? 0
             switch edge {
             case .bottom:
-                content.padding(.top, -grow).padding(.horizontal, -grow / 2).offset(x: shift)
+                content.padding(.top, -lift).padding(.horizontal, -grow / 2).offset(x: shift)
             case .left:
-                content.padding(.trailing, -grow).padding(.vertical, -grow / 2).offset(y: shift)
+                content.padding(.trailing, -lift).padding(.vertical, -grow / 2).offset(y: shift)
             case .right:
-                content.padding(.leading, -grow).padding(.vertical, -grow / 2).offset(y: shift)
+                content.padding(.leading, -lift).padding(.vertical, -grow / 2).offset(y: shift)
             }
         } else if case .fixed = target {
             // Measured outside the transforms, so this is the unmagnified slot.

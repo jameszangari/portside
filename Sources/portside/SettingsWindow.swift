@@ -5,10 +5,11 @@ import SwiftUI
 /// and its own dock); closing it hands focus back to the app that was
 /// frontmost before and returns Portside to an accessory app.
 ///
-/// While Settings is the key window, DockEngine temporarily suppresses
-/// auto-hide so the strip stays visible for live preview. Losing key
-/// status (another app, miniaturize) or closing restores the saved
-/// auto-hide preference without flipping the Settings toggle.
+/// While Settings is the key window on the current Space, DockEngine
+/// temporarily suppresses auto-hide so the strip stays visible for live
+/// preview. Losing key status (another app, miniaturize), switching to
+/// another Space, or closing restores the saved auto-hide preference
+/// without flipping the Settings toggle.
 ///
 /// Every control writes straight to `DockModel`, which persists and
 /// publishes, so the dock updates live (like a controlled input in React).
@@ -36,6 +37,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var previousApp: NSRunningApplication?
     private var activationObserver: NSObjectProtocol?
     private var reservationObserver: NSObjectProtocol?
+    private var spaceObserver: NSObjectProtocol?
     /// Top-left corner `placeCentered` last set. While the window is still
     /// there, a reservation change re-centers it; once moved, it stays put.
     private var placedTopLeft: NSPoint?
@@ -76,6 +78,17 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         trash.refresh(reason: "Settings opened")
         if let front = NSWorkspace.shared.frontmostApplication, front != .current {
             previousApp = front
+        }
+        if spaceObserver == nil {
+            // Settings left on another Space must not keep the dock pinned
+            // (the edge would not reveal there); coming back pins it again.
+            spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                self?.reportFocus()
+                // The window's Space flag can trail the notification by a turn.
+                DispatchQueue.main.async { self?.reportFocus() }
+            }
         }
         if activationObserver == nil {
             activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
@@ -133,6 +146,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.toolbar = NSToolbar(identifier: "PortsideSettings")
         window.toolbarStyle = .unifiedCompact
         window.isReleasedWhenClosed = false
+        // Opening Settings from another Space brings it here instead of
+        // switching back to the Space it was left on.
+        window.collectionBehavior.insert(.moveToActiveSpace)
         window.delegate = self
         // Do not restore a saved frame: position is always the primary
         // screen center (see placeCentered).
@@ -173,16 +189,25 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             MenuKeyFocus.shared.reclaimKey()
             return
         }
-        onKeyFocusChanged?(true)
+        reportFocus()
     }
 
     func windowDidResignKey(_ notification: Notification) {
         if MenuKeyFocus.shared.isPresenting { return }
-        onKeyFocusChanged?(false)
+        reportFocus()
+    }
+
+    /// Focused means key and on the active Space. DockEngine ignores repeats.
+    private func reportFocus(closing: Bool = false) {
+        onKeyFocusChanged?(!closing && window?.isKeyWindow == true && window?.isOnActiveSpace == true)
     }
 
     func windowWillClose(_ notification: Notification) {
-        onKeyFocusChanged?(false)
+        reportFocus(closing: true)
+        if let spaceObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
+        }
+        spaceObserver = nil
         if let activationObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(activationObserver)
         }

@@ -46,6 +46,7 @@ final class AgentStatusWidget: DockWidget {
     func stop() {
         watcher?.cancel()
         watcher = nil
+        AppActivity.shared.setAgentWorking(nil)
     }
 
     func refresh() {
@@ -72,6 +73,7 @@ final class AgentStatusWidget: DockWidget {
             next.append(session)
         }
         next.sort { $0.updated > $1.updated }
+        AppActivity.shared.setAgentWorking(workingHosts(next))
         if next != sessions {
             sessions = next
             let running = next.filter { $0.state == .running }.count
@@ -104,6 +106,29 @@ final class AgentStatusWidget: DockWidget {
             }
             return parts.joined(separator: " · ")
         }.joined(separator: "   ")
+    }
+
+    /// Bundle ids of the apps hosting a running session: the agent's own
+    /// app ancestor, else the app a discovered row belongs to (T3 Code).
+    private func workingHosts(_ sessions: [AgentSession]) -> Set<String> {
+        var ids = Set<String>()
+        for session in sessions where session.state == .running {
+            if session.pid > 0, let id = hostBundleID(session.pid) {
+                ids.insert(id)
+            } else {
+                ids.formUnion(session.focusBundleIDs)
+            }
+        }
+        return ids
+    }
+
+    private var hostBundleIDs: [pid_t: String?] = [:]
+
+    private func hostBundleID(_ pid: pid_t) -> String? {
+        if let cached = hostBundleIDs[pid] { return cached }
+        let id = AgentFocus.hostApp(of: pid)?.bundleIdentifier
+        hostBundleIDs[pid] = id
+        return id
     }
 
     /// Host app per agent pid; an agent never changes host.

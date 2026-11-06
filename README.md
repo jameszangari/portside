@@ -31,10 +31,10 @@ macOS asks for permissions as features need them; see [Privacy and permissions](
 - **Activity icons:** camera (green), microphone (orange), animated speaker while audio output is active (opt-in measurement hides silent streams), working dots (CPU-based, per app)
 - **Layout:** Bottom / Left / Right, live icon size and gap, magnification with shelf
 - **Widgets:** Clock, Battery, Calendar, Weather, System Stats, CPU, Memory, Now Playing, Agents, AI Usage with Claude, Codex and Copilot, your pick (Small / Wide / Extra Wide on the bottom dock)
-- **Groups and stacks:** app groups with grids and optional custom icons (SF Symbol + palette color); folder stacks (grid / native-style fan / list) with FSEvents, drag items out to any app; Trash tile
+- **Groups and stacks:** app groups with grids and optional custom icons (SF Symbol + palette color); folder stacks (grid / native-style fan / list) with FSEvents, drag items out to any app; network shares that mount again on click; Network server and web link tiles; Trash tile
 - **Appearance:** match macOS icon style or Original; Liquid Glass (matches the native Dock in dark mode, or Custom with every part adjustable) or Solid (color or gradient, optional backdrop blur) background; one color picker everywhere (Brand, Neutrals, macOS and RGB presets, hex, hue, saturation, tint, shade, opacity)
 - **Native Dock:** hide via autohide-delay (save/restore, also right after a crash), import apps and folders, open at login via `SMAppService`, optional Settings on launch
-- **Agent notch:** optional attached/floating island with a snake-box thinking loader while agents work, audio bars while Spotify/Music play, attention counts, expandable session cards, plan-usage gauges, and a full Settings > Agent Notch customization pane
+- **Agent notch:** optional island attached to the notch (inside the menu bar on displays without one) or floating with a snake-box thinking loader while agents work, audio bars while Spotify/Music play, attention counts, expandable session cards, plan-usage gauges, and a full Settings > Agent Notch customization pane
 - **Settings:** mouse and keyboard sidebar navigation, live apply, global hotkey (default ⌘⇧D), automatic daily update checks and notifications, plus Check for Updates (a newer release opens a modal that downloads, verifies, and installs it in place from the GitHub release DMG, then reopens Portside)
 
 Full detail: [docs/FEATURES.md](docs/FEATURES.md).

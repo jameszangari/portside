@@ -91,6 +91,9 @@ final class GroupController: ObservableObject {
     /// The open grid came from hovering, so the next click on its tile
     /// keeps it open instead of toggling it shut.
     private var openedByHover = false
+    /// The grid was hover-opened when renaming started. Editing pins it;
+    /// ending the rename hands it back to hover-close.
+    private var renameFromHover = false
     private let logger = Logger(subsystem: "com.james.portside", category: "Groups")
 
     init(dockModel: DockModel, runningApps: RunningApps, hover: DockHover, bouncer: LaunchBouncer, dragOut: DragOutController, badges: DockBadges) {
@@ -203,6 +206,8 @@ final class GroupController: ObservableObject {
         if expandedID != groupID {
             bouncer.cancelGridBounce(reason: "switched group")
         }
+        // Closing or switching: the grid is going away, not back to hover.
+        renameFromHover = false
         if isEditing { endRename(commit: true) }
         let started = CACurrentMediaTime()
         expandedID = groupID
@@ -245,6 +250,8 @@ final class GroupController: ObservableObject {
             if !animated { finishCollapse(reason: reason) }
             return
         }
+        // Closing or switching: the grid is going away, not back to hover.
+        renameFromHover = false
         if isEditing { endRename(commit: true) }
         // Before the close animation: the bounce window sits above the grid
         // and would otherwise float over it while it fades.
@@ -299,6 +306,7 @@ final class GroupController: ObservableObject {
         }
         pendingRenameID = nil
         cancelHoverClose()
+        renameFromHover = openedByHover
         openedByHover = false
         draftName = group.name
         editingID = groupID
@@ -318,7 +326,14 @@ final class GroupController: ObservableObject {
         editingID = nil
         overlay.endKeyFocus()
         logger.info("rename \(commit ? "committed" : "canceled", privacy: .public): \(old, privacy: .public) -> \(now, privacy: .public), overlay key: \(self.overlay.isKey)")
+        if renameFromHover {
+            renameFromHover = false
+            openedByHover = true
+        }
         onEditingChanged?(false)
+        // Already outside (Return pressed with the cursor away): close as
+        // hover would have. Otherwise leaving the grid closes it.
+        if openedByHover { scheduleHoverCloseIfHoverOpened() }
     }
 
     // MARK: - Strip events

@@ -25,8 +25,9 @@ final class EdgeTracker {
     /// The file drag left the edge zone or ended (`reason`: exited, ended).
     var onDragExited: ((String) -> Void)?
 
-    /// Pasteboard types that reveal the dock when dragged to the edge.
-    static let dragTypes: [NSPasteboard.PasteboardType] = [.fileURL]
+    /// Pasteboard types that reveal the dock when dragged to the edge:
+    /// files, and plain URLs (Network servers, web links) for link tiles.
+    static let dragTypes: [NSPasteboard.PasteboardType] = [.fileURL, .URL]
 
     /// Thickness (points) of the edge-trigger zone. The window takes every
     /// click inside it, so it is a single point: the row (or column) the
@@ -42,6 +43,9 @@ final class EdgeTracker {
     private var zones: [EdgeZone] = []
     private let logger = Logger(subsystem: "com.james.portside", category: "EdgeTracker")
     private var observers: [NSObjectProtocol] = []
+    /// On NSWorkspace's own center, which is the only one that posts
+    /// Space changes.
+    private var workspaceObservers: [NSObjectProtocol] = []
     private var isRunning = false
 
     init(edge: DockEdge) {
@@ -51,6 +55,9 @@ final class EdgeTracker {
     deinit {
         for observer in observers {
             NotificationCenter.default.removeObserver(observer)
+        }
+        for observer in workspaceObservers {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
         tearDownZones()
     }
@@ -73,7 +80,7 @@ final class EdgeTracker {
             // After a Space or fullscreen switch, re-assert edge windows so
             // they stay above the new Space's content (canJoinAllSpaces alone
             // is not always enough for ordering).
-            observers.append(center.addObserver(
+            workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
                 forName: NSWorkspace.activeSpaceDidChangeNotification,
                 object: nil,
                 queue: .main

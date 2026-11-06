@@ -570,7 +570,7 @@ final class DockEngine {
         }
         // Settings key callbacks are swallowed while a tile menu presents;
         // resync from the real key window so auto-hide pin matches.
-        let settingsKey = NSApp.windows.contains { $0.isKeyWindow && $0.styleMask.contains(.titled) }
+        let settingsKey = NSApp.windows.contains { $0.isKeyWindow && $0.isOnActiveSpace && $0.styleMask.contains(.titled) }
         applySettingsKeyFocus(settingsKey)
     }
 

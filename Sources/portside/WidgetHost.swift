@@ -72,7 +72,10 @@ private struct WidgetContainer<W: DockWidget>: View {
     @ObservedObject var widget: W
 
     var body: some View {
+        // The tile magnifies like an app icon; its hover frame stays the
+        // unmagnified slot (outside the transform).
         widget.body
+            .magnifiedIcon(id: "widget:" + widget.id)
             .dockHoverTarget(id: "widget:" + widget.id, title: widget.hoverTitle)
             .contentShape(Rectangle())
     }

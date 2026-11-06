@@ -34,6 +34,11 @@ struct StackTileView: View {
                 let menu = NSMenu()
                 menu.autoenablesItems = false
                 menu.addItem(ClosureMenuItem("Open") { onOpen() })
+                if stack.isLink {
+                    menu.addItem(.separator())
+                    menu.addItem(ClosureMenuItem("Remove from Dock", onRemove))
+                    return menu
+                }
                 menu.addItem(ClosureMenuItem("Show in Finder") { StackFinder.show(stack.url) })
                 if let dockModel {
                     menu.addItem(.separator())
@@ -54,13 +59,14 @@ struct StackTileView: View {
     }
 
     @ViewBuilder private var icon: some View {
-        if preview.isEmpty { folderIcon } else { gridIcon }
+        if stack.isLink || preview.isEmpty { folderIcon } else { gridIcon }
     }
 
     /// Just the folder's own icon (Downloads, Documents and so on keep their
     /// native artwork), the same size as an app icon, with no card behind it.
+    /// Link tiles show the system server or web location icon.
     private var folderIcon: some View {
-        Image(nsImage: icons.icon(for: stack.url))
+        Image(nsImage: stack.link.map(LinkIcon.image(for:)) ?? icons.icon(for: stack.url))
             .resizable()
             .interpolation(.high)
             .frame(width: size * IconMetrics.fullBleedScale, height: size * IconMetrics.fullBleedScale)
@@ -119,6 +125,21 @@ struct StackTileView: View {
         Color.clear
             .frame(width: 4, height: 4)
             .magnifiedIndicator(id: stack.hoverID)
+    }
+}
+
+/// Icons for link tiles: the Finder server icon for file-sharing schemes,
+/// the web location icon for everything else.
+enum LinkIcon {
+    static let serverSchemes: Set<String> = ["smb", "cifs", "afp", "nfs", "ftp", "sftp", "vnc", "webdav", "webdavs"]
+
+    static func image(for link: URL) -> NSImage {
+        if serverSchemes.contains(link.scheme?.lowercased() ?? ""),
+           let server = NSImage(named: NSImage.networkName) {
+            return server
+        }
+        let type = UTType("com.apple.web-internet-location") ?? .url
+        return NSWorkspace.shared.icon(for: type)
     }
 }
 
