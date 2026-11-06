@@ -52,6 +52,8 @@ struct CommandDescriptor {
     let input: CommandInputSchema
     /// nil when the command can run now, otherwise the reason it cannot.
     let unavailableReason: () -> String?
+    /// Scopes that must be granted at validation and again just before the handler.
+    let requiredPermissions: [PermissionScope]
     /// Read-only executor: the handler returns an outcome and the registry
     /// owns validation, availability and cancellation.
     let handler: @MainActor (CommandInput) async -> Result<String?, CommandFailure>
@@ -62,6 +64,7 @@ struct CommandDescriptor {
         keywords: [String] = [],
         input: CommandInputSchema = .none,
         unavailableReason: @escaping () -> String? = { nil },
+        requiredPermissions: [PermissionScope] = [],
         handler: @escaping @MainActor (CommandInput) async -> Result<String?, CommandFailure>
     ) {
         self.id = id
@@ -69,6 +72,7 @@ struct CommandDescriptor {
         self.keywords = keywords
         self.input = input
         self.unavailableReason = unavailableReason
+        self.requiredPermissions = requiredPermissions
         self.handler = handler
     }
 }
@@ -88,7 +92,11 @@ enum CommandRegistryError: Error, Equatable {
 final class CommandRegistry {
     private var commands: [CommandID: CommandDescriptor] = [:]
 
-    nonisolated init() {}
+    private let permissions: PermissionGate
+
+    nonisolated init(permissions: PermissionGate = PermissionGate()) {
+        self.permissions = permissions
+    }
 
     var descriptors: [CommandDescriptor] {
         commands.values.sorted { $0.id.rawValue < $1.id.rawValue }
@@ -103,14 +111,21 @@ final class CommandRegistry {
         commands[id]
     }
 
-    /// Validates, checks availability, runs the handler, and returns exactly
+    /// Validates, checks permissions and availability, runs the handler, and returns exactly
     /// one result. Canceling the calling task yields `.canceled`, including
     /// when the handler finished after the cancel.
     func execute(_ id: CommandID, input: CommandInput = .none) async -> CommandResult {
         guard let command = commands[id] else { return .unknownCommand }
         if let problem = Self.validate(input, against: command.input) { return .invalidInput(problem) }
+        let ticket: PermissionTicket
+        switch permissions.prepare(command.requiredPermissions) {
+        case .failure(let denial): return .unavailable(denial.reason)
+        case .success(let issued): ticket = issued
+        }
         if let reason = command.unavailableReason() { return .unavailable(reason) }
         if Task.isCancelled { return .canceled }
+        // Permission can be revoked after validation; read it again now.
+        if let denial = permissions.authorizeExecution(ticket) { return .unavailable(denial.reason) }
         let outcome = await command.handler(input)
         if Task.isCancelled { return .canceled }
         switch outcome {
