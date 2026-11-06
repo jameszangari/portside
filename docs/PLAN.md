@@ -1,5 +1,7 @@
 # Portside: Architecture Plan
 
+For the proposed next product phases, see the [Portside 2.0 roadmap](ROADMAP_2_0.md) and [incremental implementation plan](IMPLEMENTATION_PLAN_2_0.md). This original plan is preserved as historical design intent; current completion status stays in [CHECKLIST.md](CHECKLIST.md).
+
 **Project:** `portside`, a native macOS dock replacement for Apple Silicon (macOS 26 or later).
 **Goal:** A fast, event-driven dock: widgets, folders, running indicators, with none of the polling-based sluggishness some docks have.
 

@@ -1,5 +1,7 @@
 # Architecture
 
+Future shared registries, permission boundaries and local inference are proposed in [ARCHITECTURE_2_0.md](ARCHITECTURE_2_0.md). The components below describe the current implementation.
+
 How Portside is put together. See also [PLAN.md](PLAN.md) for the original milestones.
 
 ## How it works
