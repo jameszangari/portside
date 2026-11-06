@@ -255,7 +255,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hideHotKey: HotKey?
     private var settingsHotKey: HotKey?
     private var settingsHotKeyObserver: AnyCancellable?
-    private let commands = CommandRegistry()
+    private let permissions = PermissionGate()
+    private lazy var commands = CommandRegistry(permissions: permissions)
     private static let openSettingsCommand = CommandID("portside.openSettings")!
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -315,6 +316,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         )
         MainActor.assumeIsolated {
+            permissions.register(AccessibilityPermissionAdapter())
             do {
                 try commands.register(descriptor)
             } catch {

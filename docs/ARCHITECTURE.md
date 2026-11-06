@@ -59,6 +59,7 @@ Sources/portside/
   AudioPlayback.swift       Public process taps, local RMS playback gate and temporary audio-device lifecycle
   AudioPlaybackProbe.swift  Debug synthetic-stream and playback-gate verification
   Core/Commands/CommandRegistry.swift  Typed command descriptors and one main-actor executor (validate input, availability reason, cancellation); Open Settings is the first command
+  Core/Permissions/PermissionGate.swift  Permission scopes (Accessibility, app-level), observe-only adapters, ticket recheck before a command runs; never prompts at startup
   AppActivity.swift         Per-app activity icons: mic, camera, audio (CoreAudio/CoreMediaIO listeners), Working (CPU sampler)
   ThinkingLoader.swift      Snake-box / pulsing-dot thinking loaders and compact notch audio bars
   TileActions.swift         Modifier clicks (Cmd, Option) and the AppKit tile menu with Force Quit
