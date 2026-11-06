@@ -280,8 +280,7 @@ struct DockStrip: View {
         // hover target frames to screen coordinates.
         .coordinateSpace(name: DockHover.space)
         .onPreferenceChange(HoverTargetsKey.self) { targets in
-            // Widgets get hover labels but never grow.
-            magnifier.updateTiles(targets.filter { !$0.id.hasPrefix("widget:") })
+            magnifier.updateTiles(targets)
             hover.updateTargets(targets)
             tileFrames = targets
         }
@@ -359,10 +358,9 @@ struct DockStrip: View {
         } else if id.hasPrefix("widget:"), let host = widgetByID[String(id.dropFirst("widget:".count))] {
             host.view
                 .environment(\.widgetSize, shownSize(host, edge: edge))
-                .magnifiedShift()
                 .opacity(dragging == host.id ? 0 : 1)
                 .gesture(widgetDragGesture(for: host, tile: tile))
-                .appKitContextMenu(edge: edge) { widgetMenu(host, edge: edge) }
+                .appKitContextMenu(edge: edge, magnifyID: id) { widgetMenu(host, edge: edge) }
         } else if let folder = stackByID[id] {
             StackTileView(
                 stack: folder,

@@ -84,7 +84,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             // (the edge would not reveal there); coming back pins it again.
             spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
                 forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
-            ) { [weak self] _ in self?.reportFocus() }
+            ) { [weak self] _ in
+                self?.reportFocus()
+                // The window's Space flag can trail the notification by a turn.
+                DispatchQueue.main.async { self?.reportFocus() }
+            }
         }
         if activationObserver == nil {
             activationObserver = NSWorkspace.shared.notificationCenter.addObserver(

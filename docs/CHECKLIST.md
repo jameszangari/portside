@@ -36,6 +36,11 @@ These were built and tested with synthetic input; a person should confirm them o
 - Hover labels in light mode over dark windows (dark mode was checked over white and black)
 - Network share stack (#26): pin a mounted share, eject it, click the tile: it mounts and opens. Drag a server from Finder's Network onto the dock: a link tile appears and opens Finder's connection. The drag-pasteboard types Finder uses for Network servers were not observed; the strip logs them (`FileDrop` category) on every drag
 - Agent Notch on an external display without a notch (#24): Attached sits inside the menu bar, centered, at the bar's height
+- Agent Notch > Show border off: no rim at all, including the window shadow (it used to leave a faint edge); on, the border and shadow return
+- Magnification with widgets: Small, Wide and Extra Wide widgets grow with the falloff and keep their proportions; clicks, right-click, drag to reorder and hover labels follow the magnified widget; a dock with several wide widgets stays on screen and does not clip at the panel's sides
+- Hover-open a group, click the pencil, click Done (or press Return), move away: the grid closes like any hover-opened grid. Click-opened groups stay pinned after renaming
+- Working dots on T3 Code (and a group holding it) appear only while the Agent Notch shows a running session, not on idle CPU
+- Agent Notch usage: Copilot rows show `used / total` with the unit and reset date under the bar; on a Business or Enterprise account, confirm an AI credits row appears (the quota key is undocumented; the `Widgets` log lists the kinds GitHub sent); expanded height still fits Claude, Codex and Copilot
 - Battery charging badge (#25) at small and large icon sizes
 - Settings on another Space (#27): switch away with Settings focused, the edge reveals the dock there; the hotkey brings Settings to the current Space
 - Glass rim over white pages and text: no colored specks in Match macOS or Custom with Refraction on, and the rim bend still looks right, including while magnifying

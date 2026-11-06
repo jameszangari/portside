@@ -25,7 +25,7 @@ struct AgentNotchView: View {
     static func dashboardHeight(preferences: AgentNotchSettings, sessionCount: Int) -> CGFloat {
         let rowHeight = preferences.fontSize * 2 + 34
         let rows = min(preferences.maxSessions, max(1, sessionCount))
-        return min(650, 86 + Double(rows) * (rowHeight + preferences.rowSpacing) + (preferences.showUsage ? 154 : 0))
+        return min(650, 86 + Double(rows) * (rowHeight + preferences.rowSpacing) + (preferences.showUsage ? 172 : 0))
     }
 
     var body: some View {
@@ -279,6 +279,20 @@ private struct NotchUsageDetails: View {
                                 .monospacedDigit().frame(width: 34, alignment: .trailing)
                         }.font(.system(size: 10))
                         .help(window.resetsAt.map { "Resets \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Reset time unavailable")
+                        if let used = window.used, let limit = window.limit {
+                            // Request quotas (Copilot): the count behind the percentage.
+                            HStack(spacing: 4) {
+                                Text("\(used.formatted()) / \(limit.formatted()) \(window.unit ?? "requests")")
+                                    .monospacedDigit()
+                                Spacer(minLength: 4)
+                                if let reset = window.resetsAt {
+                                    Text("Resets \(reset.formatted(.dateTime.month(.abbreviated).day()))")
+                                }
+                            }
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(.white.opacity(0.5))
+                            .padding(.leading, 38)
+                        }
                     }
                 }
             }
@@ -286,4 +300,5 @@ private struct NotchUsageDetails: View {
         .padding(12)
         .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
     }
+
 }

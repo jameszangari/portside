@@ -134,7 +134,7 @@ final class AgentNotch {
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             panel.isOpaque = false
             panel.backgroundColor = .clear
-            panel.hasShadow = true
+            panel.hasShadow = preferences.showBorder
             panel.hidesOnDeactivate = false
             state.onExpansion = { [weak self] in self?.layoutPanels() }
             panel.contentView = NSHostingView(rootView: AgentNotchView(agents: agents, usage: usage, nowPlaying: nowPlaying, state: state))
@@ -186,6 +186,12 @@ final class AgentNotch {
             x = min(screen.frame.maxX - width - 8, max(screen.frame.minX + 8, x))
             let top = state.topAttached || beside ? screen.frame.maxY : min(screen.visibleFrame.maxY, screen.frame.maxY - screen.safeAreaInsets.top) - 4
             let frame = NSRect(x: x, y: top - height - (state.topAttached ? 0 : preferences.verticalOffset), width: width, height: height)
+            // The window shadow is the other half of the border: it rims the
+            // pill's edge, so "Show border" off turns it off too.
+            if surface.panel.hasShadow != preferences.showBorder {
+                surface.panel.hasShadow = preferences.showBorder
+                surface.panel.invalidateShadow()
+            }
             let animate = preferences.animate && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && surface.panel.isVisible
             if surface.panel.frame != frame {
                 NSAnimationContext.runAnimationGroup { context in
