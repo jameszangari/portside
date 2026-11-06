@@ -118,6 +118,10 @@ Sources/portside/
     UsageWidget.swift       Claude / Codex 5-hour and weekly, Copilot monthly usage meters
   Support/                  Bundled resources: AppIcon-<px>.png (actool's flat render of AppIcon.icon) and MenuBarIcon-<px>.png
 Sources/AppLoginItemList/   C helper: read session Open at Login list (LSSharedFileList)
+Tests/portsideTests/        XCTest target (`@testable import portside`); run with CFFIXED_USER_HOME, see docs/BASELINE_2_0.md
+  FixtureLoader.swift       Reads JSON fixtures from Fixtures/ by source path (no resource bundle)
+  SettingsFixtureTests.swift dock.json legacy migration, unknown-key carry-forward and round trip, by value
+  Fixtures/                 dock.json fixtures (legacy-flat-pins.json)
 scripts/
   swift-env.sh              Shared SPM env (disables Explicitly Built Modules by default)
   gen-version.sh            Writes BuildInfo.swift from VERSION and git

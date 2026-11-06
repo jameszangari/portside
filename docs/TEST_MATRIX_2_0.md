@@ -60,7 +60,7 @@ These are proposed budgets to measure in CORE-01, not claims about current perfo
 
 ## Execution procedure
 
-Follow [BUILD.md](BUILD.md) and [AGENTS.md](../AGENTS.md). Run `source scripts/swift-env.sh`, then `swift build`. Never run SwiftPM commands concurrently against one `.build`. CORE-01 adds the test target; after that, `swift test` is required for changed contracts. Before then use existing debug probes where relevant; do not claim a nonexistent test suite passed.
+Follow [BUILD.md](BUILD.md) and [AGENTS.md](../AGENTS.md). Run `source scripts/swift-env.sh`, then `swift build`. Never run SwiftPM commands concurrently against one `.build`. CORE-01 added the test target ([baseline record](BASELINE_2_0.md)); `CFFIXED_USER_HOME=/tmp/<dir> swift test` is required for changed contracts. Where no test covers a contract, use the existing debug probes and do not claim a test passed.
 
 For launch smoke, use a fresh `CFFIXED_USER_HOME=/tmp/<unique-test-directory>` with a deliberately seeded `dock.json`: left/right edge, native Dock hiding off, window reservation off, widgets/usage/notch/automatic updates off. Verify the file's exact keys against current DockModel. Use `swift run --skip-build portside`, confirm survival, then terminate only that test process with SIGTERM. A temporary home is not a substitute for disabling network/permission-triggering modules and does not sandbox all OS state. Never change `/Applications`, other app preferences or daily-use Dock settings while testing.
 

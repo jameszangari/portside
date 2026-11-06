@@ -10,6 +10,7 @@ Portside becomes a native control center for launching, switching, development, 
 - [Architecture and permission boundaries](ARCHITECTURE_2_0.md): shared services, local inference, data lifecycle, feasibility decisions.
 - [Validation and release gates](TEST_MATRIX_2_0.md): automated checks, physical Mac checks, performance budgets.
 - [REA investigation playbook](REA_RESEARCH_2_0.md): study existing implementations and turn evidence into original Portside behavior.
+- [Baseline record](BASELINE_2_0.md): P2-CORE-01 test seam, probe inventory, hand-check procedures and run results.
 
 This extends [PLAN.md](PLAN.md), which retains the original A-F milestones, Dock parity, and historical decisions. [CHECKLIST.md](CHECKLIST.md) remains the source of truth for shipped work and outstanding hand checks. [FEATURES.md](FEATURES.md) describes only implemented features. New tickets use `P2-*` planning IDs, not GitHub issue numbers. Create tracker issues as implementation begins and link them beside those IDs.
 

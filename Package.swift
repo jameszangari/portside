@@ -32,6 +32,14 @@ let package = Package(
             linkerSettings: [
                 .unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", infoPlist])
             ]
+        ),
+        // Run with CFFIXED_USER_HOME set (see docs/BASELINE_2_0.md): model
+        // setters persist to dock.json under the home folder.
+        .testTarget(
+            name: "portsideTests",
+            dependencies: ["portside"],
+            path: "Tests/portsideTests",
+            exclude: ["Fixtures"]
         )
     ]
 )

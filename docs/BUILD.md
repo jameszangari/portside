@@ -13,6 +13,7 @@ Faster SPM builds on Xcode 26/27: turn off Explicitly Built Modules (large plann
 source scripts/swift-env.sh   # once per shell; sets SWIFT_ENABLE_EXPLICIT_MODULES=NO
 swift build
 swift run portside
+CFFIXED_USER_HOME=/tmp/portside-tests swift test   # keeps tests away from your dock.json
 ```
 
 Measured on an M4 Max with Xcode 27.2: clean debug ~27s default vs ~9s with that env; incremental stays ~1 to 3s either way. Release compile is ~19s either way. If `.build` grows past several hundred MB (SDK PCM cache), `swift package clean` resets it. Do not run two SwiftPM builds in this repo at once; they wait on one `.build` lock.

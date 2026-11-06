@@ -10,7 +10,7 @@ Portside is a native macOS dock replacement in Swift (SwiftUI and AppKit), built
 ## Rules
 
 1. **SwiftPM only.** Never hand-write an `.xcodeproj` or `project.pbxproj`.
-2. **Build and run.** `source scripts/swift-env.sh`, then `swift build` after each batch of changes, reading the real output, and `swift run portside` to catch launch crashes. A clean build is not proof it works. Never run two SwiftPM commands against `.build` in parallel; they serialize on a lock and look hung.
+2. **Build and run.** `source scripts/swift-env.sh`, then `swift build` after each batch of changes, reading the real output, `CFFIXED_USER_HOME=/tmp/portside-tests swift test` when a covered contract changes, and `swift run portside` to catch launch crashes. A clean build is not proof it works. Never run two SwiftPM commands against `.build` in parallel; they serialize on a lock and look hung.
 3. **If you repeat an action twice with the same result, stop and rethink.**
 4. **Responsiveness is the point.** No polling timers in the reveal/hide path. Allowed: one cancelable hide-delay timer, widget refresh, running-app cache refresh. Reveal starts within about one frame of the cursor touching the edge; the first click works without stealing focus.
 5. **Public APIs by default.** A private API goes in its own file behind `dlopen`/`dlsym` with a graceful fallback, and gets a line in the Notes section of `docs/ARCHITECTURE.md`.

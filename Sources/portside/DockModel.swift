@@ -1190,7 +1190,13 @@ final class DockModel: Codable, ObservableObject {
     /// (written by a newer Portside) are kept, so running an older copy never
     /// drops newer settings. Keys this build knows are always its own values.
     private static func carryingForwardUnknownKeys(into encoded: Data) -> Data {
-        guard let existing = try? Data(contentsOf: storageURL),
+        mergingUnknownKeys(from: try? Data(contentsOf: storageURL), into: encoded)
+    }
+
+    /// The merge behind `carryingForwardUnknownKeys`, without file access, so
+    /// tests can feed it fixture data.
+    static func mergingUnknownKeys(from existing: Data?, into encoded: Data) -> Data {
+        guard let existing,
               let old = try? JSONSerialization.jsonObject(with: existing) as? [String: Any] else { return encoded }
         let unknown = old.filter { !knownKeys.contains($0.key) }
         guard !unknown.isEmpty,
