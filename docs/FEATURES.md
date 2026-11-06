@@ -1,5 +1,7 @@
 # Features
 
+This page lists implemented capabilities. Proposed Command Center, switcher, developer, menu bar, workspace, studio and local-AI work lives in the [Portside 2.0 roadmap](ROADMAP_2_0.md); it is not part of the feature list below.
+
 Full feature list. The [README](../README.md) keeps a short summary.
 
 ## Reveal and hide

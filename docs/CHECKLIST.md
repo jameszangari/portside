@@ -2,6 +2,14 @@
 
 Status of the milestones in `docs/PLAN.md`, what still needs a hand check, and the backlog. The long dated build log that used to live here was removed for the public release; it is in the git history.
 
+## Portside 2.0 planning (2026-11-06)
+
+- [x] Added a phased [roadmap and UX direction](ROADMAP_2_0.md), [incremental tickets and first PR sequence](IMPLEMENTATION_PLAN_2_0.md), [architecture proposal](ARCHITECTURE_2_0.md), [test matrix](TEST_MATRIX_2_0.md), and [REA research workflow](REA_RESEARCH_2_0.md).
+- [x] Planning validation: local Markdown file links and all 63 ticket IDs/dependencies checked (no cycles); existing plan bodies preserved; `swift build` passed. The built executable survived an isolated six-second launch and exited cleanly on SIGTERM. The earlier `swift run --skip-build` wrapper check was inconclusive; no physical UI, signed-app or new-feature tests are claimed.
+- [ ] Implement P2-CORE-01 baseline/test seams, then the sequenced first PRs. All implementation tickets remain proposed; this documentation update ships no new app features.
+- [ ] Complete version-specific REA behavior investigations and public API feasibility gates for the reference utilities. The initial Bartender plist check establishes identity only.
+- [ ] Retain and complete the existing signed-app, physical display, consent, updater and managed-Mac hand checks below before expanding release claims.
+
 ## Roadmap
 
 - [x] **A:** Edge tracker, non-activating panel, slide animation

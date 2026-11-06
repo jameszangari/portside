@@ -41,7 +41,9 @@ Full detail: [docs/FEATURES.md](docs/FEATURES.md).
 
 ## Planned
 
-From [docs/CHECKLIST.md](docs/CHECKLIST.md) remaining backlog:
+The proposed [Portside 2.0 roadmap](docs/ROADMAP_2_0.md) extends Portside into a native Command Center, app/window switcher, developer server manager, smart workspaces, studio companion and agent supervisor, with optional local-only AI. Menu bar management is gated on public API feasibility. See the [incremental tickets and first PRs](docs/IMPLEMENTATION_PLAN_2_0.md) for implementation order. These capabilities are planned, not shipped.
+
+Existing [docs/CHECKLIST.md](docs/CHECKLIST.md) backlog remains:
 
 - Hand-check signed-app update notifications and installation, notch positioning on built-in displays, and corporate-proxy Copilot access
 - Hand-check Calendar consent and Downloads permission retention in the signed app
@@ -108,6 +110,11 @@ Contributing: [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md
 | [BUILD.md](docs/BUILD.md) | Requirements, SPM, `.app`, signing, versioning |
 | [DATA.md](docs/DATA.md) | `dock.json`, backups, signing identity paths |
 | [PLAN.md](docs/PLAN.md) | Original milestones A to F |
+| [ROADMAP_2_0.md](docs/ROADMAP_2_0.md) | Phases, UX journeys, release gates and replacement scope |
+| [IMPLEMENTATION_PLAN_2_0.md](docs/IMPLEMENTATION_PLAN_2_0.md) | Small tickets, dependencies, acceptance criteria and first PRs |
+| [ARCHITECTURE_2_0.md](docs/ARCHITECTURE_2_0.md) | Proposed registries, permissions and local-only intelligence |
+| [TEST_MATRIX_2_0.md](docs/TEST_MATRIX_2_0.md) | Validation matrix, performance budgets and rollout gates |
+| [REA_RESEARCH_2_0.md](docs/REA_RESEARCH_2_0.md) | Reference-app investigation and evidence workflow |
 | [CHECKLIST.md](docs/CHECKLIST.md) | Status and backlog |
 | [Brand](design/README.md) | Sail identity, wordmarks, tokens |
 
