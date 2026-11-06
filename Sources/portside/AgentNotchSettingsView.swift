@@ -33,7 +33,7 @@ struct AgentNotchSettingsView: View {
                     slider("Horizontal offset", \.horizontalOffset, -300...300, unit: "pt")
                     slider("Distance from top", \.verticalOffset, 0...80, unit: "pt")
                 }
-                Text("Attached mode wraps the camera housing and keeps its center clear. Other displays use a floating island below the menu bar. Left and right positions can overlap menu items.").helperStyle()
+                Text("Attached mode wraps the camera housing and keeps its center clear. On displays without a notch it sits inside the menu bar, centered. Below the notch floats under the menu bar. Left and right positions can overlap menu items.").helperStyle()
             }
             Section("Compact appearance") {
                 Picker("Style", selection: binding(\.compactStyle)) {

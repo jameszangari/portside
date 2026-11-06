@@ -261,7 +261,7 @@ struct DockStrip: View {
         // dock); the shelf itself is outside this, on the system scheme.
         .dockContentScheme(dockModel.look)
         .magnifiedShelf(dockModel.look)
-        .onDrop(of: [.fileURL], delegate: FileDropDelegate(
+        .onDrop(of: FileDropSession.dropTypes, delegate: FileDropDelegate(
             dockModel: dockModel, interactions: interactions, session: fileDrop, targetID: $dropTargetID,
             stackInsertIndex: $stackInsertIndex, entryInsertIndex: $entryInsertIndex,
             tileFrames: tileFrames, apps: dropApps(extras: extras), trash: showsTrash ? trash : nil,
@@ -1164,7 +1164,7 @@ private struct FileDropDelegate: DropDelegate {
     let vertical: Bool
 
     func validateDrop(info: DropInfo) -> Bool {
-        info.hasItemsConforming(to: [.fileURL])
+        info.hasItemsConforming(to: FileDropSession.dropTypes)
     }
 
     func dropEntered(info: DropInfo) {
@@ -1221,7 +1221,7 @@ private struct FileDropDelegate: DropDelegate {
             interactions.onDragOverGroupTile?(nil)
             setEntryInsert(appInsertIndex(info))
             return DropProposal(operation: .copy)
-        case .pinFolders:
+        case .pinFolders, .pinLinks:
             setTarget(nil)
             setEntryInsert(nil)
             appSpringLoad.cancel()
@@ -1287,6 +1287,12 @@ private struct FileDropDelegate: DropDelegate {
             return withTransaction(pinTx) {
                 pinFolders(at: stackAt ?? dockModel.stacks.count)
             }
+        case .pinLinks:
+            var pinTx = Transaction()
+            pinTx.disablesAnimations = true
+            return withTransaction(pinTx) {
+                pinLinks(at: stackAt ?? dockModel.stacks.count)
+            }
         case .open:
             if let stackID = depositStackID, session.canDeposit() {
                 stackController.deposit(session.urls, into: stackID)
@@ -1309,9 +1315,15 @@ private struct FileDropDelegate: DropDelegate {
         }
     }
 
+    /// A folder stack under the cursor. Link tiles take no deposits.
     private func stackUnderCursor(_ info: DropInfo) -> String? {
         guard let id = tileUnderCursor(info), id.hasPrefix("stack:") else { return nil }
-        return String(id.dropFirst("stack:".count))
+        return folderStackID(id)
+    }
+
+    private func folderStackID(_ hoverID: String) -> String? {
+        let id = String(hoverID.dropFirst("stack:".count))
+        return dockModel.stacks.contains { $0.id == id && !$0.isLink } ? id : nil
     }
 
     private func groupUnderCursor(_ info: DropInfo) -> String? {
@@ -1347,7 +1359,7 @@ private struct FileDropDelegate: DropDelegate {
             $0.id.hasPrefix("group:") ? String($0.id.dropFirst("group:".count)) : nil
         })
         let stackID = hit.flatMap {
-            $0.id.hasPrefix("stack:") ? String($0.id.dropFirst("stack:".count)) : nil
+            $0.id.hasPrefix("stack:") ? folderStackID($0.id) : nil
         }
         interactions.onDragOverStackTile?(stackID)
         if let stackID, session.canDeposit() {
@@ -1404,6 +1416,19 @@ private struct FileDropDelegate: DropDelegate {
                 pinned += 1
                 at += 1
                 stripLogger.info("pinned folder stack: \(url.lastPathComponent, privacy: .public) at \(at - 1)")
+            }
+        }
+        return pinned > 0
+    }
+
+    private func pinLinks(at index: Int) -> Bool {
+        var pinned = 0
+        var at = index
+        for link in session.links {
+            if dockModel.addLink(link, at: at) != nil {
+                pinned += 1
+                at += 1
+                stripLogger.info("pinned link tile (\(link.scheme ?? "?", privacy: .public)) at \(at - 1)")
             }
         }
         return pinned > 0

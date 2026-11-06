@@ -50,6 +50,14 @@ struct FolderStack: Hashable, Identifiable {
     var showHidden = false
     /// Tile shows the folder's own icon instead of a mini grid of contents.
     var showAsFolder = false
+    /// Server URL (smb://, afp://, nfs://) of the network share the folder
+    /// lives on. Nil for local folders. Clicking the tile while the share is
+    /// not mounted mounts it again, like the native Dock.
+    var remountURL: String?
+    /// Set for a link tile instead of a folder: a server (smb://, afp://,
+    /// vnc://) or web URL, like the native Dock's url-tile. `path` is empty,
+    /// and clicking opens the URL instead of a grid.
+    var linkURL: String?
 
     init(id: String = UUID().uuidString, path: String, itemOrder: [String] = []) {
         self.id = id
@@ -64,12 +72,37 @@ struct FolderStack: Hashable, Identifiable {
         // Reject app bundles; other packages can still pin as folders.
         if url.pathExtension.lowercased() == "app" { return nil }
         self.init(path: url.path)
+        remountURL = Self.remountURL(for: url)
     }
+
+    /// A link tile for a non-file URL (a Network server from Finder, a web link).
+    init?(link: URL) {
+        guard !link.isFileURL, let scheme = link.scheme, !scheme.isEmpty else { return nil }
+        self.init(path: "")
+        linkURL = link.absoluteString
+    }
+
+    var isLink: Bool { linkURL != nil }
+
+    var link: URL? { linkURL.flatMap(URL.init(string:)) }
 
     var url: URL { URL(fileURLWithPath: path, isDirectory: true) }
 
+    /// The share is gone (disconnected, or the Mac slept) but can be mounted again.
+    var needsRemount: Bool {
+        remountURL != nil && !FileManager.default.fileExists(atPath: path)
+    }
+
+    /// The server URL of the network volume holding `url`, or nil on a local volume.
+    static func remountURL(for url: URL) -> String? {
+        let values = try? url.resourceValues(forKeys: [.volumeIsLocalKey, .volumeURLForRemountingKey])
+        guard values?.volumeIsLocal == false else { return nil }
+        return values?.volumeURLForRemounting?.absoluteString
+    }
+
     var displayName: String {
-        FileManager.default.displayName(atPath: path)
+        if let link { return link.host ?? link.absoluteString }
+        return FileManager.default.displayName(atPath: path)
     }
 
     var hoverID: String { "stack:" + id }
@@ -77,7 +110,7 @@ struct FolderStack: Hashable, Identifiable {
 
 extension FolderStack: Codable {
     private enum CodingKeys: String, CodingKey {
-        case id, path, itemOrder, view, sort, foldersFirst, showHidden, showAsFolder
+        case id, path, itemOrder, view, sort, foldersFirst, showHidden, showAsFolder, remountURL, linkURL
     }
 
     init(from decoder: Decoder) throws {
@@ -91,6 +124,8 @@ extension FolderStack: Codable {
         foldersFirst = (try? c.decodeIfPresent(Bool.self, forKey: .foldersFirst)) ?? false
         showHidden = (try? c.decodeIfPresent(Bool.self, forKey: .showHidden)) ?? false
         showAsFolder = (try? c.decodeIfPresent(Bool.self, forKey: .showAsFolder)) ?? false
+        remountURL = try? c.decodeIfPresent(String.self, forKey: .remountURL)
+        linkURL = try? c.decodeIfPresent(String.self, forKey: .linkURL)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -105,6 +140,8 @@ extension FolderStack: Codable {
         if foldersFirst { try c.encode(true, forKey: .foldersFirst) }
         if showHidden { try c.encode(true, forKey: .showHidden) }
         if showAsFolder { try c.encode(true, forKey: .showAsFolder) }
+        try c.encodeIfPresent(remountURL, forKey: .remountURL)
+        try c.encodeIfPresent(linkURL, forKey: .linkURL)
     }
 }
 
@@ -142,7 +179,8 @@ final class StackContents: ObservableObject {
             stopWatching(id)
             publish(id, nil, reason: "removed")
         }
-        for stack in stacks {
+        // Link tiles have nothing on disk to list or watch.
+        for stack in stacks where !stack.isLink {
             if streams[stack.id] == nil {
                 watch(stack)
                 watchedPaths[stack.id] = stack
@@ -164,6 +202,7 @@ final class StackContents: ObservableObject {
     }
 
     func refresh(_ stack: FolderStack, reason: String) {
+        guard !stack.isLink else { return }
         let id = stack.id
         if reading.contains(id) {
             readAgain[id] = stack

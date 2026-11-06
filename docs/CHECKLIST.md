@@ -34,6 +34,10 @@ These were built and tested with synthetic input; a person should confirm them o
 - Copilot CLI from a Homebrew cask (quarantined) on a tester's Mac: no "Not Opened" alert
 - Settings sidebar on macOS 26: header, rows and Check for Updates share one left edge (checked on 27 only)
 - Hover labels in light mode over dark windows (dark mode was checked over white and black)
+- Network share stack (#26): pin a mounted share, eject it, click the tile: it mounts and opens. Drag a server from Finder's Network onto the dock: a link tile appears and opens Finder's connection. The drag-pasteboard types Finder uses for Network servers were not observed; the strip logs them (`FileDrop` category) on every drag
+- Agent Notch on an external display without a notch (#24): Attached sits inside the menu bar, centered, at the bar's height
+- Battery charging badge (#25) at small and large icon sizes
+- Settings on another Space (#27): switch away with Settings focused, the edge reveals the dock there; the hotkey brings Settings to the current Space
 - Glass rim over white pages and text: no colored specks in Match macOS or Custom with Refraction on, and the rim bend still looks right, including while magnifying
 
 ## Backlog
@@ -66,6 +70,8 @@ Out of scope: minimized windows in the Dock, the two-finger App Expose gesture, 
 - The Copilot CLI is found in fixed install locations only (Homebrew, `~/.local/bin`, npm global, nvm, `gh copilot`, VS Code). Elsewhere the meter falls back to the GitHub CLI.
 - The Agents widget and notch discover T3 Code runs and OpenCode `session_v2` rows from local SQLite, plus Claude Code and Codex CLI hook files. Copilot still has no session writer. Zed agent threads are not read yet (compressed blobs, no busy flag). Standalone OpenCode needs a live `session_v2` busy timestamp; the authenticated HTTP API is not used.
 - Copilot has no app icon unless Copilot for Xcode is installed, so its gauge shows a "C".
+- Link tiles use the generic network icon for servers, not Finder's per-device icon (Mac, NAS). Dragging Finder's top-level Network item is untested.
+- A network share stack whose server is gone can stall its first listing while macOS times out the dead mount.
 - A clicked-open group or folder closes only on a click. Cmd-Tab or a Space switch leaves it (and an auto-hiding dock) up until the next click.
 - The Settings sidebar sits flush with the window edge and the toolbar can end in a hard line, unlike the floating sidebar and soft edge in System Settings.
 - The lens rim has no chromatic aberration now, and it was not compared against the native Dock's rim, which may have some. The lens rewrites its filter when resized, so one frame of fringe is possible before it is removed again. Not checked after moving the Liquid Glass slider in System Settings.

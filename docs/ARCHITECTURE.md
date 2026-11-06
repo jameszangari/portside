@@ -60,11 +60,12 @@ Sources/portside/
   ThinkingLoader.swift      Snake-box / pulsing-dot thinking loaders and compact notch audio bars
   TileActions.swift         Modifier clicks (Cmd, Option) and the AppKit tile menu with Force Quit
   AppLoginItem.swift        Open at Login checkbox: SMAppService for Portside, System Events for other apps
-  FileDrop.swift            Per-drag state for pin apps/folders, open, deposit, and Trash drops
+  FileDrop.swift            Per-drag state for pin apps/folders/links, open, deposit, and Trash drops
   AppSpringLoad.swift       File drag resting on a running app brings it forward
   Trash.swift               Native Trash tile, directory watcher, Finder actions
   TrashDrop.swift           Confirm when a dock tile is dropped on Trash
-  FolderStack.swift         Folder stack model and FSEvents contents
+  FolderStack.swift         Folder stack model (folders, network shares, link tiles) and FSEvents contents
+  NetworkShare.swift        Mounts a disconnected network share again by its server URL (NetFS)
   StackController.swift     Stack open/close, drag-open, deposit into folder
   StackViews.swift          Stack tile, grid/list popover, and fan
   StackItemDrag.swift       Drag a stack item out as a file (AppKit dragging session)

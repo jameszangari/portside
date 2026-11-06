@@ -48,6 +48,7 @@ final class DockPanel {
     /// Incremented on every show/hide so stale animation completions can be ignored.
     private var generation = 0
     private var screenObservers: [NSObjectProtocol] = []
+    private var workspaceObservers: [NSObjectProtocol] = []
     /// Last size the strip reported. Nil until its first layout.
     private var measuredContentSize: CGSize?
 
@@ -149,7 +150,8 @@ final class DockPanel {
             self?.relocateForActiveScreen()
         })
         // Stay above content after a Space / fullscreen switch.
-        screenObservers.append(center.addObserver(
+        // NSWorkspace notifications only arrive on its own center.
+        workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification,
             object: nil,
             queue: .main
@@ -162,6 +164,9 @@ final class DockPanel {
     deinit {
         for observer in screenObservers {
             NotificationCenter.default.removeObserver(observer)
+        }
+        for observer in workspaceObservers {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
     }
 

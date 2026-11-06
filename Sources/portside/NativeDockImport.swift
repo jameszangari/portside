@@ -72,6 +72,19 @@ enum NativeDockImport {
         }
         for tile in tiles("persistent-others") {
             let type = tile["tile-type"] as? String
+            // Server and web links: tile-data.url._CFURLString.
+            if type == "url-tile" {
+                if let data = tile["tile-data"] as? [String: Any],
+                   let urlData = data["url"] as? [String: Any],
+                   let urlString = urlData["_CFURLString"] as? String,
+                   let link = URL(string: urlString), let stack = FolderStack(link: link),
+                   !snapshot.folderStacks.contains(where: { $0.linkURL == stack.linkURL }) {
+                    snapshot.folderStacks.append(stack)
+                } else {
+                    snapshot.othersSkipped += 1
+                }
+                continue
+            }
             guard type == "directory-tile" || type == "file-tile" || type == nil,
                   let data = tile["tile-data"] as? [String: Any],
                   let fileData = data["file-data"] as? [String: Any],

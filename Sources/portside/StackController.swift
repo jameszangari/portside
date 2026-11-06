@@ -31,6 +31,9 @@ final class StackController: ObservableObject {
     private var dragTileStackID: String?
     private(set) var isDragOverGrid = false
     private var openedByHover = false
+    /// Stack ids with a network share mount in flight, so repeat clicks do
+    /// not start another.
+    private var remounting: Set<String> = []
     private let logger = Logger(subsystem: "com.james.portside", category: "Stacks")
 
     init(dockModel: DockModel, hover: DockHover) {
@@ -92,8 +95,32 @@ final class StackController: ObservableObject {
                 return
             }
             collapse(reason: "tile clicked")
+        } else if let stack = dockModel.stacks.first(where: { $0.id == stackID }), let link = stack.link {
+            collapse(reason: "link tile clicked", animated: false)
+            openLink(link)
+        } else if let stack = dockModel.stacks.first(where: { $0.id == stackID }), stack.needsRemount {
+            remount(stack)
         } else {
             expand(stackID)
+        }
+    }
+
+    /// Mount the stack's network share again, then open the stack. NetFS uses
+    /// saved Keychain credentials and asks for a password only when needed.
+    /// If it fails, Finder gets the server URL (its Connect to Server flow).
+    private func remount(_ stack: FolderStack) {
+        guard let string = stack.remountURL, let serverURL = URL(string: string),
+              remounting.insert(stack.id).inserted else { return }
+        logger.info("remounting share for \(stack.displayName, privacy: .public)")
+        NetworkShare.mount(serverURL) { [weak self] mounted in
+            guard let self else { return }
+            self.remounting.remove(stack.id)
+            if mounted, FileManager.default.fileExists(atPath: stack.path) {
+                self.expand(stack.id)
+            } else {
+                self.logger.info("remount failed, handing \(serverURL.scheme ?? "?", privacy: .public) URL to Finder")
+                NSWorkspace.shared.open(serverURL)
+            }
         }
     }
 
@@ -107,12 +134,16 @@ final class StackController: ObservableObject {
             return
         }
         isClosing = false
-        guard let stack = dockModel.stacks.first(where: { $0.id == stackID }),
+        guard let stack = dockModel.stacks.first(where: { $0.id == stackID }), !stack.isLink,
               let anchor = hover.screenFrame(forTargetID: stack.hoverID) else { return }
         expandedID = stackID
         openedByHover = byHover
         hover.isSuppressed = true
         contents.refresh(stack, reason: "expand")
+        // Stacks pinned before remounting existed learn their server here.
+        if stack.remountURL == nil, let remountURL = FolderStack.remountURL(for: stack.url) {
+            dockModel.updateStack(id: stackID) { $0.remountURL = remountURL }
+        }
         let edge = hover.edge
         let content = StackPopoverView(
             stackID: stackID,
@@ -219,7 +250,18 @@ final class StackController: ObservableObject {
     func openFolder(_ stackID: String) {
         guard let stack = dockModel.stacks.first(where: { $0.id == stackID }) else { return }
         collapse(reason: "open in Finder", animated: false)
-        NSWorkspace.shared.open(stack.url)
+        if let link = stack.link {
+            openLink(link)
+        } else {
+            NSWorkspace.shared.open(stack.url)
+        }
+    }
+
+    /// A server URL goes to Finder, which mounts it or shows Connect to
+    /// Server; a web URL goes to the default browser.
+    private func openLink(_ link: URL) {
+        logger.info("opening link tile (\(link.scheme ?? "?", privacy: .public))")
+        NSWorkspace.shared.open(link)
     }
 
     func open(_ item: StackItem) {
@@ -235,7 +277,7 @@ final class StackController: ObservableObject {
     /// Move (same volume) or copy dropped files into the folder.
     /// `at` is the display index in the open grid (nil appends).
     func deposit(_ urls: [URL], into stackID: String, at index: Int? = nil) {
-        guard let stack = dockModel.stacks.first(where: { $0.id == stackID }) else { return }
+        guard let stack = dockModel.stacks.first(where: { $0.id == stackID }), !stack.isLink else { return }
         let destDir = stack.url
         let seed = contents.items(for: stack).map { $0.url.lastPathComponent }
         let insertAt = index ?? seed.count

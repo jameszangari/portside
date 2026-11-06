@@ -553,7 +553,21 @@ final class DockModel: Codable, ObservableObject {
     @discardableResult
     func addStack(folderURL: URL, at index: Int? = nil) -> FolderStack? {
         guard let stack = FolderStack(folderURL: folderURL) else { return nil }
-        if stacks.contains(where: { $0.path == stack.path }) { return nil }
+        if stacks.contains(where: { !$0.isLink && $0.path == stack.path }) { return nil }
+        var list = stacks
+        let at = min(max(index ?? list.count, 0), list.count)
+        list.insert(stack, at: at)
+        stacks = list
+        persist()
+        return stack
+    }
+
+    /// Pins a server or web URL as a link tile among the stacks. No-ops if
+    /// the URL is already pinned or is a file URL.
+    @discardableResult
+    func addLink(_ link: URL, at index: Int? = nil) -> FolderStack? {
+        guard let stack = FolderStack(link: link) else { return nil }
+        if stacks.contains(where: { $0.linkURL == stack.linkURL }) { return nil }
         var list = stacks
         let at = min(max(index ?? list.count, 0), list.count)
         list.insert(stack, at: at)
@@ -1323,8 +1337,9 @@ final class DockModel: Codable, ObservableObject {
             let new = native.apps.filter { !have.contains($0.id) }
             list.append(contentsOf: new.map(DockEntry.app))
             result.added = new.count
-            let havePaths = Set(stacks.map(\.path))
-            for stack in native.folderStacks where !havePaths.contains(stack.path) {
+            // Links have no path; they match on their URL.
+            let haveStacks = Set(stacks.map { $0.linkURL ?? $0.path })
+            for stack in native.folderStacks where !haveStacks.contains(stack.linkURL ?? stack.path) {
                 stacks.append(stack)
             }
         }
