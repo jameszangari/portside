@@ -121,8 +121,8 @@ struct CommandCenterView: View {
     private var footer: some View {
         HStack(spacing: 8) {
             if let notice = state.notice {
-                Image(systemName: notice.kind == .canceled ? "xmark.circle" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(notice.kind == .canceled ? Color.secondary : Color.orange)
+                Image(systemName: Self.symbol(notice.kind))
+                    .foregroundStyle(notice.kind == .canceled || notice.kind == .succeeded ? Color.secondary : Color.orange)
                     .accessibilityHidden(true)
                 Text(notice.message)
                     .lineLimit(1)
@@ -153,6 +153,14 @@ struct CommandCenterView: View {
         .frame(height: 34)
         .accessibilityElement(children: .contain)
     }
+
+    private static func symbol(_ kind: CommandCenterNotice.Kind) -> String {
+        switch kind {
+        case .canceled: return "xmark.circle"
+        case .succeeded: return "checkmark.circle"
+        case .unavailable, .failed: return "exclamationmark.triangle.fill"
+        }
+    }
 }
 
 // MARK: - Rows
@@ -170,11 +178,12 @@ private struct CommandCenterRow: View {
                     Text(item.title)
                         .font(.system(size: 13))
                         .foregroundStyle(item.unavailableReason == nil ? .primary : .secondary)
-                    if let reason = item.unavailableReason {
-                        Text(reason)
+                    if let line = item.unavailableReason ?? item.detail {
+                        Text(line)
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                            .truncationMode(.tail)
                     }
                 }
                 Spacer(minLength: 8)
@@ -195,7 +204,7 @@ private struct CommandCenterRow: View {
         .focusable(false)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(item.title)
-        .accessibilityValue(item.unavailableReason.map { "Unavailable. \($0)" } ?? item.subtitle)
+        .accessibilityValue(item.unavailableReason.map { "Unavailable. \($0)" } ?? [item.detail, item.subtitle].compactMap { $0 }.joined(separator: ". "))
         .accessibilityHint(item.unavailableReason == nil ? item.primaryTitle : "")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
@@ -330,7 +339,13 @@ private struct CommandCenterDetails: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let item {
+            if let item, !item.facts.isEmpty {
+                // A server card: what the listing said, nothing guessed.
+                ForEach(Array(item.facts.enumerated()), id: \.offset) { _, fact in
+                    row(fact.label, fact.value)
+                }
+                if let reason = item.unavailableReason { row("Status", "Unavailable. \(reason)") }
+            } else if let item {
                 row("Status", item.unavailableReason.map { "Unavailable. \($0)" } ?? "Available")
                 row(item.kind == .command ? "Module" : "Kind", item.subtitle)
                 row("Result ID", item.id.rawValue)

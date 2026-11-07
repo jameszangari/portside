@@ -4,7 +4,7 @@ import XCTest
 
 /// Listening sockets opened by this test process, so the only listeners
 /// these tests look for are their own. Closed on `close()` or deinit.
-private final class OwnedListeners {
+final class OwnedListeners {
     private(set) var descriptors: [Int32] = []
     private(set) var port: UInt16 = 0
 

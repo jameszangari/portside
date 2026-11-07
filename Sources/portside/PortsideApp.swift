@@ -279,6 +279,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var commands = CommandRegistry(permissions: permissions)
     private lazy var modules = ModuleRegistry(commands: commands, permissions: permissions)
     /// Apple's on-device model; an isolated launch can pick the fake (see `FakeLocalModelProvider.fromEnvironment`).
+    /// Server rows for Command Center; empty until a server search or Refresh.
+    private let localServers = LocalServerStore()
     private let intelligence = ModelRouter(provider: FakeLocalModelProvider.fromEnvironment() ?? AppleOnDeviceModelProvider())
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -348,7 +350,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 runningApps: { [weak self] in
                     (self?.dockEngine?.runningApps.apps ?? []).compactMap(CommandCenterApp.init(running:))
                 },
-                history: .shared
+                history: .shared,
+                servers: localServers
             )
             let center = CommandCenter(commands: commands, moduleTitle: { [modules] namespace in
                 modules.modules.first { $0.id.rawValue == namespace }?.title
@@ -363,6 +366,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try modules.register(core)
                 try modules.register(commandCenterModule)
                 try modules.register(IntelligenceModule(router: intelligence))
+                try modules.register(LocalServersModule(store: localServers, actions: .live))
                 modules.enableSaved(dockModel.modules, restricted: dockModel.restrictedMode)
             } catch {
                 NSLog("portside: command registration failed: \(error)")

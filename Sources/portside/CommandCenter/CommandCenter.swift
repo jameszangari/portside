@@ -29,6 +29,11 @@ final class CommandCenter: ObservableObject {
     private var observers: [NSObjectProtocol] = []
     private var previousApp: NSRunningApplication?
     private var runTask: Task<Void, Never>?
+    /// The running command updates the panel; closing it cancels the run.
+    private var runStaysOpen = false
+    /// The listing a server query started. One per session, canceled on close.
+    private var serverTask: Task<Void, Never>?
+    private var serverListingRequested = false
     private var pendingAnnouncement: DispatchWorkItem?
     /// Top center of the panel in screen coordinates, fixed while it is open
     /// so a result count change grows the panel downward.
@@ -94,6 +99,7 @@ final class CommandCenter: ObservableObject {
     func send(_ event: CommandCenterEvent) -> Bool {
         let outcome = state.send(event)
         for effect in outcome.effects { perform(effect) }
+        if case .query = event, outcome.handled { listServersIfAsked() }
         if state.isVisible { syncFocus() }
         return outcome.handled
     }
@@ -112,6 +118,7 @@ final class CommandCenter: ObservableObject {
         case .focusPanel: panel?.makeKey()
         case .dismiss(let restoreFocus): dismiss(restoreFocus: restoreFocus)
         case .run(let id): run(id)
+        case .runAction(let id, let index): run(id, action: index)
         case .cancelRun: runTask?.cancel()
         case .search(let request):
             searcher.start(request, items: state.items) { [weak self] request, ids in
@@ -138,6 +145,11 @@ final class CommandCenter: ObservableObject {
         panel.makeKey()
         if let searchField { panel.makeFirstResponder(searchField) }
         installMonitors()
+        serverListingRequested = false
+        sources.servers?.onChange = { [weak self] in
+            guard let self, self.state.isVisible else { return }
+            self.send(.catalog(self.snapshot()))
+        }
         // The app list catches up in the background; the panel never waits.
         sources.applications?.refresh { [weak self] in
             guard let self, self.state.isVisible else { return }
@@ -148,6 +160,12 @@ final class CommandCenter: ObservableObject {
     private func dismiss(restoreFocus: Bool) {
         removeMonitors()
         searcher.cancel()
+        // Server listings exist only for this panel session.
+        serverTask?.cancel()
+        serverTask = nil
+        if runStaysOpen { runTask?.cancel() }
+        sources.servers?.onChange = nil
+        sources.servers?.endSession()
         pendingAnnouncement?.cancel()
         let previous = previousApp
         previousApp = nil
@@ -172,16 +190,38 @@ final class CommandCenter: ObservableObject {
         return frontmostPID == ownPID
     }
 
-    private func run(_ id: CommandCenterResultID) {
+    private func run(_ id: CommandCenterResultID, action: Int? = nil) {
         runTask?.cancel()
-        guard let invocation = state.item(id)?.invocation else {
+        let item = state.item(id)
+        let more = item?.moreActions ?? []
+        let chosen = action.map { more.indices.contains($0) ? more[$0].invocation : nil } ?? item?.invocation
+        guard let invocation = chosen else {
             send(.finished(id, .unknownCommand))
             return
         }
+        runStaysOpen = invocation.staysOpen
         runTask = Task { @MainActor [weak self, commands] in
             let result = await commands.execute(invocation.command, input: invocation.input)
             self?.send(.finished(id, result))
         }
+    }
+
+    /// A query that asks for servers (a port, "port", "server") lists them
+    /// once per session through the registry, so a module that is off lists
+    /// nothing. Later listings need Refresh; nothing repeats on a timer.
+    private func listServersIfAsked() {
+        guard Self.shouldListServers(state.query, store: sources.servers, alreadyRequested: serverListingRequested) else { return }
+        serverListingRequested = true
+        serverTask = Task { @MainActor [commands] in
+            _ = await commands.execute(LocalServersModule.refreshCommand)
+        }
+    }
+
+    /// Only for a server query, only while the module runs, and only when
+    /// this session has neither a list nor a listing in flight.
+    static func shouldListServers(_ query: String, store: LocalServerStore?, alreadyRequested: Bool) -> Bool {
+        guard !alreadyRequested, let store, store.isActive, store.snapshot == nil, store.loading == 0 else { return false }
+        return LocalServerText.isServerQuery(CommandCenterRanker.terms(query))
     }
 
     /// Coalesced so fast arrow presses or typing speak only the last state.

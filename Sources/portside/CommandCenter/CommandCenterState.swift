@@ -1,12 +1,25 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// One result row: a registry command, an app, a Settings pane or a
-/// quicklink. Built from a fresh snapshot each time the panel opens (see
-/// `CommandCenterCatalog`).
+/// One labeled line of a details screen (a server card).
+struct CommandCenterFact: Equatable, Sendable {
+    let label: String
+    let value: String
+}
+
+/// An extra Action Panel row that runs its own registry command.
+struct CommandCenterItemAction: Equatable, Sendable {
+    let title: String
+    let symbolName: String
+    let invocation: CommandInvocation
+}
+
+/// One result row: a registry command, an app, a Settings pane, a
+/// quicklink or a local server. Built from a fresh snapshot each time the
+/// panel opens (see `CommandCenterCatalog`).
 struct CommandCenterItem: Equatable, Identifiable, Sendable {
     enum Kind: String, Equatable, Sendable {
-        case command, application, settings, quicklink
+        case command, application, settings, quicklink, server
     }
 
     let id: CommandCenterResultID
@@ -31,6 +44,14 @@ struct CommandCenterItem: Equatable, Identifiable, Sendable {
     var copyTitle = "Copy Command ID"
     /// Frecency at snapshot time, 0 when never picked. Ranks before title.
     var usage: Double = 0
+    /// Second line of the row when available (a server's PID and binds).
+    var detail: String?
+    /// When set, the details screen shows these instead of the generic rows.
+    var facts: [CommandCenterFact] = []
+    /// Action Panel rows after Show Details, each its own registry command.
+    var moreActions: [CommandCenterItemAction] = []
+    /// Also matches any server query (a port number, "port", "server").
+    var matchesServerQueries = false
 
     init(
         id: CommandCenterResultID, kind: Kind, title: String, subtitle: String = "", symbolName: String? = nil,
@@ -65,8 +86,10 @@ struct CommandCenterItem: Equatable, Identifiable, Sendable {
     }
 }
 
-enum CommandCenterActionKind: String, Equatable, CaseIterable {
+enum CommandCenterActionKind: Hashable {
     case run, showDetails, copyID
+    /// `moreActions[index]` of the item.
+    case more(Int)
 }
 
 /// One row of the Action Panel (Cmd+K).
@@ -94,7 +117,7 @@ enum CommandCenterScreen: Equatable {
 
 /// The footer message after Return could not run something.
 struct CommandCenterNotice: Equatable {
-    enum Kind: Equatable { case unavailable, failed, canceled }
+    enum Kind: Equatable { case unavailable, failed, canceled, succeeded }
     let kind: Kind
     let message: String
 }
@@ -172,6 +195,8 @@ enum CommandCenterEffect: Equatable {
     case dismiss(restoreFocus: Bool)
     /// Execute the item's invocation through the registry.
     case run(CommandCenterResultID)
+    /// Execute the item's `moreActions[index]` through the registry.
+    case runAction(CommandCenterResultID, Int)
     case cancelRun
     /// Rank `query` against the current items off the main thread, then
     /// send `.results`. Cancels any search in flight.
@@ -221,6 +246,8 @@ struct CommandCenterState: Equatable {
     private(set) var actionPanel: ActionPanel?
     private(set) var stack: [CommandCenterScreen] = []
     private(set) var running: CommandCenterResultID?
+    /// The running invocation keeps the panel open when it succeeds.
+    private var runStaysOpen = false
     private(set) var notice: CommandCenterNotice?
     /// Bumped by every query change and catalog refresh. Only results for
     /// the latest generation are applied.
@@ -254,7 +281,14 @@ struct CommandCenterState: Equatable {
         if stack.last != .details(item.id) {
             list.append(CommandCenterAction(kind: .showDetails, title: "Show Details", symbolName: "info.circle", shortcut: "⌘↩"))
         }
-        list.append(CommandCenterAction(kind: .copyID, title: item.copyTitle, symbolName: "doc.on.doc"))
+        for (index, action) in item.moreActions.enumerated() {
+            list.append(CommandCenterAction(kind: .more(index), title: action.title, symbolName: action.symbolName,
+                                            disabledReason: item.unavailableReason))
+        }
+        // A server's copies go through the registry (primary and more actions).
+        if item.kind != .server {
+            list.append(CommandCenterAction(kind: .copyID, title: item.copyTitle, symbolName: "doc.on.doc"))
+        }
         return list
     }
 
@@ -287,12 +321,15 @@ struct CommandCenterState: Equatable {
             return .handled(request.preservesSelection ? [] : [.announce(resultsAnnouncement)])
         case .catalog(let fresh):
             guard isVisible else { return .ignored }
+            // The Local Servers row at the top stands in until servers arrive;
+            // the first match takes the selection then.
+            let placeholder = selection != nil && results.first?.id == selection && selectedItem?.matchesServerQueries == true
             items = fresh
             // A row that vanished mid-session closes its panel or screen.
             if let panel = actionPanel, item(panel.itemID) == nil { actionPanel = nil }
             let kept = stack.filter { item($0.itemID) != nil }
             stack = kept
-            return .handled(search(preservingSelection: true))
+            return .handled(search(preservingSelection: !placeholder))
         case .actionQuery(let text):
             guard var panel = actionPanel, text != panel.query else { return .ignored }
             panel.query = text
@@ -419,7 +456,20 @@ struct CommandCenterState: Equatable {
         }
         notice = nil
         running = id
+        runStaysOpen = item.invocation.staysOpen
         return [.run(id)]
+    }
+
+    private mutating func runAction(_ id: CommandCenterResultID, _ index: Int) -> [CommandCenterEffect] {
+        guard let item = item(id), item.moreActions.indices.contains(index) else { return [] }
+        if let reason = item.unavailableReason {
+            notice = CommandCenterNotice(kind: .unavailable, message: reason)
+            return [.announce("\(item.title) is unavailable. \(reason)")]
+        }
+        notice = nil
+        running = id
+        runStaysOpen = item.moreActions[index].invocation.staysOpen
+        return [.runAction(id, index)]
     }
 
     private mutating func perform(_ kind: CommandCenterActionKind) -> [CommandCenterEffect] {
@@ -430,6 +480,7 @@ struct CommandCenterState: Equatable {
         case .run: return primary(item.id)
         case .showDetails: return push(.details(item.id))
         case .copyID: return [.copy(item.copyValue)] + dismiss(restoreFocus: true, cancelRun: false)
+        case .more(let index): return runAction(item.id, index)
         }
     }
 
@@ -449,10 +500,18 @@ struct CommandCenterState: Equatable {
 
     private mutating func finish(_ id: CommandCenterResultID, _ result: CommandResult) -> [CommandCenterEffect] {
         let title = item(id)?.title ?? id.rawValue
+        let staysOpen = runStaysOpen
+        runStaysOpen = false
+        // Server rows name one process for one session: never kept in history.
+        let usage: [CommandCenterEffect] = item(id)?.kind == .server ? [] : [.recordUsage(id)]
         switch result {
+        case .success(let message) where staysOpen:
+            // It updated the panel (a refresh): stay, and say what happened.
+            notice = message.map { CommandCenterNotice(kind: .succeeded, message: $0) }
+            return usage + [.announce(message ?? "\(title) finished.")]
         case .success:
             // The command did its work (and may have moved focus): just hide.
-            return [.recordUsage(id)] + dismiss(restoreFocus: false, cancelRun: false)
+            return usage + dismiss(restoreFocus: false, cancelRun: false)
         case .canceled:
             notice = CommandCenterNotice(kind: .canceled, message: "\(title) was canceled.")
         case .unavailable(let reason):

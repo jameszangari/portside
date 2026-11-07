@@ -2,8 +2,10 @@ import Foundation
 
 /// Stable identifier of one Command Center result, unique across providers:
 /// `command:<CommandID>`, `app:<bundle id, lowercased>` (`app:<path>` for an
-/// app without one), `settings:<pane>`, `quicklink:<uuid, lowercased>`.
-/// Selection, the Action Panel, screens and history all key on it.
+/// app without one), `settings:<pane>`, `quicklink:<uuid, lowercased>`,
+/// `server:<port>-<pid>-<start>` (see `LocalServer.key`).
+/// Selection, the Action Panel, screens and history all key on it. Server
+/// IDs live for one session and are never written to history.
 struct CommandCenterResultID: Hashable, Comparable, Sendable, CustomStringConvertible {
     let rawValue: String
 
@@ -27,6 +29,8 @@ struct CommandCenterResultID: Hashable, Comparable, Sendable, CustomStringConver
 
     static func quicklink(_ id: UUID) -> Self { Self(unchecked: "quicklink:\(id.uuidString.lowercased())") }
 
+    static func server(_ key: String) -> Self { Self(unchecked: "server:\(key)") }
+
     static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
 
     var description: String { rawValue }
@@ -37,6 +41,8 @@ struct CommandCenterResultID: Hashable, Comparable, Sendable, CustomStringConver
 struct CommandInvocation: Equatable, Sendable {
     let command: CommandID
     var input: CommandInput = .none
+    /// Success keeps the panel open (a refresh that updates its rows).
+    var staysOpen = false
 }
 
 /// A query plus the generation it belongs to. Results from an older
@@ -105,6 +111,7 @@ enum CommandCenterRanker {
         if terms.allSatisfy({ term in titleWords.contains { $0.hasPrefix(term) } || keywordWords.contains { $0.hasPrefix(term) } }) {
             return Match(tier: .keywords)
         }
+        if item.matchesServerQueries, LocalServerText.isServerQuery(terms) { return Match(tier: .keywords) }
         // Initials and fuzzy take one word only: "vsc", not "v sc".
         guard terms.count == 1, let term = terms.first, term.count >= fuzzyMinimum else { return nil }
         if String(titleWords.compactMap(\.first)).hasPrefix(term) {
