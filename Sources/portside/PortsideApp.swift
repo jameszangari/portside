@@ -257,7 +257,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsHotKeyObserver: AnyCancellable?
     private let permissions = PermissionGate()
     private lazy var commands = CommandRegistry(permissions: permissions)
-    private static let openSettingsCommand = CommandID("portside.openSettings")!
+    private lazy var modules = ModuleRegistry(commands: commands, permissions: permissions)
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // An SPM executable has no bundle, so LSUIElement in Info.plist is
@@ -305,20 +305,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func registerCommands() {
-        let descriptor = CommandDescriptor(
-            id: Self.openSettingsCommand,
-            title: "Open Settings",
-            keywords: ["preferences", "dock"],
-            unavailableReason: { [weak self] in self?.dockEngine == nil ? "Portside is still starting." : nil },
-            handler: { [weak self] _ in
-                self?.openSettings()
-                return .success(nil)
-            }
-        )
         MainActor.assumeIsolated {
             permissions.register(AccessibilityPermissionAdapter())
+            let core = PortsideCoreModule(
+                isStarting: { [weak self] in self?.dockEngine == nil },
+                openSettings: { [weak self] in self?.openSettings() }
+            )
             do {
-                try commands.register(descriptor)
+                try modules.register(core)
+                modules.enable(core.id)
             } catch {
                 NSLog("portside: command registration failed: \(error)")
             }
@@ -327,7 +322,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func runOpenSettingsCommand() {
         Task { @MainActor [commands] in
-            _ = await commands.execute(Self.openSettingsCommand)
+            _ = await commands.execute(PortsideCoreModule.openSettingsCommand)
         }
     }
 
@@ -345,6 +340,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         WindowFitter.releaseForExit(reason: "applicationWillTerminate")
         agentNotch?.stop()
+        MainActor.assumeIsolated { modules.stopAll() }
         UpdateMonitor.shared.stop()
         dockEngine?.stop()
         NativeDockController.restoreForExit(reason: "applicationWillTerminate")

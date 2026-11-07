@@ -12,10 +12,13 @@ struct CommandID: Hashable, CustomStringConvertible {
         self.rawValue = rawValue
     }
 
-    private static func isValidPart(_ part: Substring) -> Bool {
+    static func isValidPart<S: StringProtocol>(_ part: S) -> Bool {
         guard let first = part.first, first.isASCII, first.isLowercase else { return false }
         return part.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
     }
+
+    /// The part before the dot; for module commands, the owning module's ID.
+    var namespace: String { String(rawValue.prefix { $0 != "." }) }
 
     var description: String { rawValue }
 }
