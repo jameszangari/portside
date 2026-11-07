@@ -31,7 +31,8 @@ final class CommandCenter: ObservableObject {
     private var runTask: Task<Void, Never>?
     /// The running command updates the panel; closing it cancels the run.
     private var runStaysOpen = false
-    /// The listing a server query started. One per session, canceled on close.
+    /// The listing a server query started. One per session, canceled on
+    /// close or when the query no longer wants servers.
     private var serverTask: Task<Void, Never>?
     private var serverListingRequested = false
     private var pendingAnnouncement: DispatchWorkItem?
@@ -97,9 +98,10 @@ final class CommandCenter: ObservableObject {
     /// Sends one event and performs its effects. Returns whether it was consumed.
     @discardableResult
     func send(_ event: CommandCenterEvent) -> Bool {
+        let query = state.query
         let outcome = state.send(event)
         for effect in outcome.effects { perform(effect) }
-        if case .query = event, outcome.handled { listServersIfAsked() }
+        if state.query != query { queryChanged() }
         if state.isVisible { syncFocus() }
         return outcome.handled
     }
@@ -149,6 +151,13 @@ final class CommandCenter: ObservableObject {
         sources.servers?.onChange = { [weak self] in
             guard let self, self.state.isVisible else { return }
             self.send(.catalog(self.snapshot()))
+            // A listing canceled by an earlier query lists again if this one wants it.
+            self.listServersIfAsked()
+        }
+        sources.portLookup?.onChange = { [weak self] in
+            guard let self, self.state.isVisible else { return }
+            self.send(.catalog(self.snapshot()))
+            self.listServersIfAsked()
         }
         // The app list catches up in the background; the panel never waits.
         sources.applications?.refresh { [weak self] in
@@ -166,6 +175,9 @@ final class CommandCenter: ObservableObject {
         if runStaysOpen { runTask?.cancel() }
         sources.servers?.onChange = nil
         sources.servers?.endSession()
+        // A port question still being read is canceled; its answer is dropped.
+        sources.portLookup?.onChange = nil
+        sources.portLookup?.end()
         pendingAnnouncement?.cancel()
         let previous = previousApp
         previousApp = nil
@@ -206,22 +218,55 @@ final class CommandCenter: ObservableObject {
         }
     }
 
+    /// The port lookup follows the query (canceling a question in flight),
+    /// a listing the new query does not want stops, and one it wants starts.
+    private func queryChanged() {
+        guard state.isVisible else { return }
+        if let lookup = sources.portLookup {
+            let before = lookup.current
+            let refresh = commands.descriptor(for: LocalServersModule.refreshCommand)
+            lookup.update(state.query, serversUnavailable: refresh.map { $0.unavailableReason() } ?? PortLookup.Message.noServers)
+            if lookup.current != before { send(.catalog(snapshot())) }
+        }
+        if let task = serverTask, !Self.wantsServers(state.query, lookup: sources.portLookup) {
+            task.cancel()
+            serverTask = nil
+            serverListingRequested = false
+        }
+        listServersIfAsked()
+    }
+
     /// A query that asks for servers (a port, "port", "server") lists them
     /// once per session through the registry, so a module that is off lists
     /// nothing. Later listings need Refresh; nothing repeats on a timer.
     private func listServersIfAsked() {
-        guard Self.shouldListServers(state.query, store: sources.servers, alreadyRequested: serverListingRequested) else { return }
+        guard Self.shouldListServers(state.query, store: sources.servers, alreadyRequested: serverListingRequested,
+                                     lookup: sources.portLookup) else { return }
         serverListingRequested = true
         serverTask = Task { @MainActor [commands] in
             _ = await commands.execute(LocalServersModule.refreshCommand)
         }
     }
 
-    /// Only for a server query, only while the module runs, and only when
-    /// this session has neither a list nor a listing in flight.
-    static func shouldListServers(_ query: String, store: LocalServerStore?, alreadyRequested: Bool) -> Bool {
+    /// Only for a query that wants servers, only while the module runs, and
+    /// only when this session has neither a list nor a listing in flight.
+    static func shouldListServers(_ query: String, store: LocalServerStore?, alreadyRequested: Bool, lookup: PortLookup? = nil) -> Bool {
         guard !alreadyRequested, let store, store.isActive, store.snapshot == nil, store.loading == 0 else { return false }
-        return LocalServerText.isServerQuery(CommandCenterRanker.terms(query))
+        return wantsServers(query, lookup: lookup)
+    }
+
+    /// A bare port or a server word wants the listing. A port question
+    /// wants it only once the model's proposal passed validation, and a
+    /// question that needs more detail never does.
+    static func wantsServers(_ query: String, lookup: PortLookup?) -> Bool {
+        let browse = LocalServerText.isServerQuery(CommandCenterRanker.terms(query))
+        guard let lookup else { return browse }
+        switch PortQuery.classify(query) {
+        case .none: return browse
+        case .port: return true
+        case .clarify: return false
+        case .interpret: return lookup.wantsListing(query)
+        }
     }
 
     /// Coalesced so fast arrow presses or typing speak only the last state.

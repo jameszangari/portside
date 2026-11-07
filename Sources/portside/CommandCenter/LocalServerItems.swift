@@ -144,8 +144,12 @@ extension CommandCenterCatalog {
     /// The Local Servers status row (the refresh command, always listed so
     /// a server search shows loading, empty, failed or turned-off states)
     /// plus one row per listed server. Every row runs a `localServers`
-    /// registry command; nothing here lists or opens anything.
-    static func serverItems(_ store: LocalServerStore?, registry: CommandRegistry, moduleTitle: (String) -> String?) -> [CommandCenterItem] {
+    /// registry command; nothing here lists or opens anything. Servers on
+    /// `answering.port` rank first for that lookup's query.
+    static func serverItems(
+        _ store: LocalServerStore?, registry: CommandRegistry, moduleTitle: (String) -> String?,
+        answering: (key: String, port: UInt16)? = nil
+    ) -> [CommandCenterItem] {
         guard let refresh = registry.descriptor(for: LocalServersModule.refreshCommand) else { return [] }
         let module = moduleTitle(LocalServersModule.moduleID.rawValue) ?? "Local Servers"
         let reason = refresh.unavailableReason()
@@ -191,6 +195,7 @@ extension CommandCenterCatalog {
             if !server.process.hasVerifiedIdentity { detail += " · identity unknown" }
             item.detail = detail
             item.facts = LocalServerText.facts(server, snapshot: snapshot)
+            if let answering, answering.port == server.port { item.answers = answering.key }
             var actions = [
                 CommandCenterItemAction(title: "Copy Port \(server.port)", symbolName: "number",
                                         invocation: CommandInvocation(command: LocalServersModule.copyPortCommand, input: input)),
