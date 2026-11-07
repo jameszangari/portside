@@ -57,12 +57,20 @@ protocol LocalModelProvider: AnyObject, Sendable {
     /// Answers one request. Throws `LocalModelError`, or `CancellationError`
     /// once the task is canceled; should stop work promptly when it is.
     func respond(to request: LocalModelRequest) async throws -> LocalModelResponse
+    /// Proposes one intent for `request.prompt` from the closed `IntentKind`
+    /// set. The result is untrusted; the router validates it. Same errors
+    /// and cancellation as `respond`.
+    func proposeIntent(for request: LocalModelRequest) async throws -> RawIntentProposal
     /// Releases sessions and resources Portside owns. Called when the module
     /// stops. Never unloads a model another app is using.
     func releaseResources() async
 }
 
 extension LocalModelProvider {
+    func proposeIntent(for request: LocalModelRequest) async throws -> RawIntentProposal {
+        throw LocalModelError.failed("\(displayName) cannot propose intents.")
+    }
+
     func releaseResources() async {}
 }
 

@@ -100,10 +100,43 @@ final class ModelRouter: ObservableObject {
     /// Runs one request if the provider is ready now. Canceling the calling
     /// task returns `.canceled` at once.
     func respond(to prompt: String, maxOutputCharacters: Int = LocalModelRequest.maxOutputCharacters) async -> IntelligenceOutcome {
-        guard isActive else { return .disabled }
-        guard current == nil else { return .busy }
-        if let problem = Self.validate(prompt, maxOutputCharacters: maxOutputCharacters) { return .invalidRequest(problem) }
-        if Task.isCancelled { return .canceled }
+        let request = LocalModelRequest(prompt: prompt, maxOutputCharacters: maxOutputCharacters)
+        switch await run(request, { try await $0.respond(to: request) }) {
+        case .finished(let response):
+            return .completed(LocalModelResponse(text: String(response.text.prefix(maxOutputCharacters))))
+        case .stopped(let outcome): return outcome
+        }
+    }
+
+    /// Asks the provider for one typed intent and validates it against
+    /// `text` with `IntentValidator`. Same rules as `respond`: one at a time,
+    /// availability at use time, deadline, cancel, and a late proposal is
+    /// dropped, so a canceled or timed-out request never yields `.proposed`.
+    /// Nothing is executed here.
+    func proposeIntent(for text: String) async -> IntentOutcome {
+        let request = LocalModelRequest(prompt: text, maxOutputCharacters: IntentValidator.maxOutputCharacters)
+        switch await run(request, { try await $0.proposeIntent(for: request) }) {
+        case .finished(let proposal): return IntentValidator.validate(proposal, request: text)
+        case .stopped(let outcome): return .stopped(outcome)
+        }
+    }
+
+    private enum Step<T> {
+        case finished(T)
+        /// Never `.completed`.
+        case stopped(IntelligenceOutcome)
+    }
+
+    private func run<T: Sendable>(
+        _ request: LocalModelRequest,
+        _ operation: @escaping @Sendable (any LocalModelProvider) async throws -> T
+    ) async -> Step<T> {
+        guard isActive else { return .stopped(.disabled) }
+        guard current == nil else { return .stopped(.busy) }
+        if let problem = Self.validate(request.prompt, maxOutputCharacters: request.maxOutputCharacters) {
+            return .stopped(.invalidRequest(problem))
+        }
+        if Task.isCancelled { return .stopped(.canceled) }
         let run = LocalModelRun()
         current = run
         updateState()
@@ -112,7 +145,7 @@ final class ModelRouter: ObservableObject {
             updateState()
         }
         return await withTaskCancellationHandler {
-            await perform(LocalModelRequest(prompt: prompt, maxOutputCharacters: maxOutputCharacters), run: run)
+            await perform(run: run, operation)
         } onCancel: {
             Task { @MainActor in run.cancel() }
         }
@@ -129,27 +162,29 @@ final class ModelRouter: ObservableObject {
         return nil
     }
 
-    private func perform(_ request: LocalModelRequest, run: LocalModelRun) async -> IntelligenceOutcome {
+    private func perform<T: Sendable>(
+        run: LocalModelRun,
+        _ operation: @escaping @Sendable (any LocalModelProvider) async throws -> T
+    ) async -> Step<T> {
         // Checked at use time: Apple Intelligence can be turned off at any moment.
-        guard let availability = await readAvailability(run: run) else { return .canceled }
+        guard let availability = await readAvailability(run: run) else { return .stopped(.canceled) }
         switch availability {
         case .available: break
-        case .unsupported(let reason): return .unsupported(reason)
-        case .unavailable(let reason): return .unavailable(reason)
-        case .notReady(let reason): return .notReady(reason)
+        case .unsupported(let reason): return .stopped(.unsupported(reason))
+        case .unavailable(let reason): return .stopped(.unavailable(reason))
+        case .notReady(let reason): return .stopped(.notReady(reason))
         }
         let provider = provider
-        let outcome = await run.race(timeout: requestTimeout) { try await provider.respond(to: request) }
-        guard isActive, !run.isCanceled else { return .canceled }
+        let outcome = await run.race(timeout: requestTimeout) { try await operation(provider) }
+        guard isActive, !run.isCanceled else { return .stopped(.canceled) }
         switch outcome {
-        case .value(let response):
-            return .completed(LocalModelResponse(text: String(response.text.prefix(request.maxOutputCharacters))))
-        case .error(LocalModelError.refused(let reason)): return .refused(reason)
-        case .error(LocalModelError.failed(let reason)): return .failed(reason)
-        case .error(is CancellationError): return .canceled
-        case .error: return .failed("\(provider.displayName) stopped with an error.")
-        case .timedOut: return .timedOut
-        case .canceled: return .canceled
+        case .value(let value): return .finished(value)
+        case .error(LocalModelError.refused(let reason)): return .stopped(.refused(reason))
+        case .error(LocalModelError.failed(let reason)): return .stopped(.failed(reason))
+        case .error(is CancellationError): return .stopped(.canceled)
+        case .error: return .stopped(.failed("\(provider.displayName) stopped with an error."))
+        case .timedOut: return .stopped(.timedOut)
+        case .canceled: return .stopped(.canceled)
         }
     }
 

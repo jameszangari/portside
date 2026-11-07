@@ -275,8 +275,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let permissions = PermissionGate()
     private lazy var commands = CommandRegistry(permissions: permissions)
     private lazy var modules = ModuleRegistry(commands: commands, permissions: permissions)
-    /// No provider ships yet; an isolated launch can pick the fake (see `FakeLocalModelProvider.fromEnvironment`).
-    private let intelligence = ModelRouter(provider: FakeLocalModelProvider.fromEnvironment() ?? NoLocalModelProvider())
+    /// Apple's on-device model; an isolated launch can pick the fake (see `FakeLocalModelProvider.fromEnvironment`).
+    private let intelligence = ModelRouter(provider: FakeLocalModelProvider.fromEnvironment() ?? AppleOnDeviceModelProvider())
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // An SPM executable has no bundle, so LSUIElement in Info.plist is
