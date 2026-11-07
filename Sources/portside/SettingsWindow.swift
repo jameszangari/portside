@@ -922,6 +922,7 @@ private struct GeneralSettings: View {
     @State private var importStatus: String?
     @State private var otherCopies: [InstalledCopy] = []
     @ObservedObject private var commandCenterStatus = CommandCenterStatus.shared
+    @ObservedObject private var switcherStatus = SwitcherStatus.shared
 
     /// Why the Command Center shortcut may not fire: a Portside or enabled
     /// macOS shortcut on the same keys, or macOS refusing the registration.
@@ -931,9 +932,23 @@ private struct GeneralSettings: View {
         let portside: [(name: String, chord: HotkeyChord?)] = [
             ("Open Settings", dockModel.settingsHotkey),
             ("dock hiding", .dockHiding),
+            ("App Switcher", switcherStatus.isEnabled ? dockModel.switcherHotkey : nil),
         ]
         return HotkeyConflicts.conflict(for: chord, system: HotkeyConflicts.systemHotkeys(), portside: portside)
             ?? (commandCenterStatus.isEnabled ? commandCenterStatus.hotkeyFailure : nil)
+    }
+
+    /// Same read-only checks for the app switcher's shortcut.
+    private var switcherWarning: String? {
+        guard let chord = dockModel.switcherHotkey else { return nil }
+        let portside: [(name: String, chord: HotkeyChord?)] = [
+            ("Open Settings", dockModel.settingsHotkey),
+            ("dock hiding", .dockHiding),
+            ("Command Center", commandCenterStatus.isEnabled ? dockModel.commandCenterHotkey : nil),
+        ]
+        return SwitcherShortcut.refusal(for: chord)
+            ?? HotkeyConflicts.conflict(for: chord, system: HotkeyConflicts.systemHotkeys(), portside: portside)
+            ?? (switcherStatus.isEnabled ? switcherStatus.hotkeyFailure : nil)
     }
 
     /// Import clamps the native icon size to what fits, like the slider.
@@ -973,10 +988,26 @@ private struct GeneralSettings: View {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                     }
                 }
+                HotkeyRecorderButton(
+                    title: "App Switcher",
+                    chord: dockModel.switcherHotkey,
+                    defaultChord: SwitcherShortcut.defaultChord,
+                    refusal: SwitcherShortcut.refusal,
+                    onChange: { dockModel.setSwitcherHotkey($0) }
+                )
+                if !switcherStatus.isEnabled {
+                    Text("App Switcher is off. Turn it on in Integrations.").helperStyle()
+                } else if let warning = switcherWarning {
+                    Label {
+                        Text(warning).helperStyle()
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    }
+                }
             } header: {
                 Text("Keyboard")
             } footer: {
-                Text("Open Settings works from any app. Default ⌘⇧D. The menu bar Settings… item always uses ⌘,. Command Center searches apps, Portside's commands, Settings panes and quicklinks. Default ⌥Space; while it is on it is also in the menu bar menu.")
+                Text("Open Settings works from any app. Default ⌘⇧D. The menu bar Settings… item always uses ⌘,. Command Center searches apps, Portside's commands, Settings panes and quicklinks. Default ⌥Space; while it is on it is also in the menu bar menu. App Switcher lists running apps, most recently used first. Default ⌥Tab: tap it for the previous app, or hold ⌥ and press Tab (Shift-Tab or the arrow keys to go back), then let go. Esc cancels. ⌘Tab stays macOS's.")
                     .footerStyle()
             }
 

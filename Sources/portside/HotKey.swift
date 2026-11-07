@@ -122,11 +122,11 @@ struct HotkeyChord: Codable, Equatable, Hashable {
     )
 
     /// At least Command or Control, so a bare letter never becomes a hotkey.
-    /// Option-Space is the one exception: Option alone with a letter types a
-    /// character (Option-E, Option-U), Space does not.
+    /// Option-Space and Option-Tab are the exceptions: Option alone with a
+    /// letter types a character (Option-E, Option-U), Space and Tab do not.
     var isRegisterable: Bool {
         modifiers & UInt32(cmdKey | controlKey) != 0
-            || (keyCode == UInt32(kVK_Space) && modifiers & UInt32(optionKey) != 0)
+            || ((keyCode == UInt32(kVK_Space) || keyCode == UInt32(kVK_Tab)) && modifiers & UInt32(optionKey) != 0)
     }
 
     /// Symbols macOS shows in menus: ⌃⌥⇧⌘ plus the key.
@@ -249,6 +249,8 @@ struct HotkeyRecorderButton: View {
     let title: String
     let chord: HotkeyChord?
     let defaultChord: HotkeyChord
+    /// Why a chord this shortcut cannot use is refused (the switcher refuses ⌘Tab).
+    var refusal: (HotkeyChord) -> String? = { _ in nil }
     let onChange: (HotkeyChord?) -> Void
 
     @State private var recording = false
@@ -307,7 +309,11 @@ struct HotkeyRecorderButton: View {
             return true
         }
         guard let next = HotkeyChord.from(event: event) else {
-            rejected = "Include ⌘ or ⌃ (⌥ alone works only with Space)."
+            rejected = "Include ⌘ or ⌃ (⌥ alone works only with Space or Tab)."
+            return true
+        }
+        if let reason = refusal(next) {
+            rejected = reason
             return true
         }
         onChange(next)
