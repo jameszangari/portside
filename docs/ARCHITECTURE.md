@@ -63,6 +63,7 @@ Sources/portside/
   Core/Modules/ModuleRegistry.swift  Module enable/disable, dependency states (permission, other module), start/stop with a context that cancels tasks and releases observers; gates module commands
   Core/Modules/PortsideCoreModule.swift  The always-on (required) `portside` module; provides Open Settings
   Core/Modules/ModuleSettings.swift  The `modules` object in dock.json, kept as raw JSON so unknown modules and nested keys round-trip; optional modules default off
+  Core/Modules/IntegrationSettings.swift  State and actions behind Settings > Integrations: module rows, permission rows (live, never requested on read), restricted work-Mac preset
   AppActivity.swift         Per-app activity icons: mic, camera, audio (CoreAudio/CoreMediaIO listeners), Working (CPU sampler)
   ThinkingLoader.swift      Snake-box / pulsing-dot thinking loaders and compact notch audio bars
   TileActions.swift         Modifier clicks (Cmd, Option) and the AppKit tile menu with Force Quit
@@ -107,6 +108,7 @@ Sources/portside/
   AgentNotchPreferences.swift Agent notch settings model, filters and value bounds
   AgentNotchView.swift      Compact header, expandable session dashboard and usage bars
   AgentNotchSettingsView.swift Settings > Agent Notch pane, presets and live preview
+  IntegrationsSettingsView.swift Settings > Integrations pane: modules, permissions with reasons and fallbacks, restricted mode
   AgentNotchProbe.swift     Debug only: `--check-notch` and `--render-notch-previews`
   UpdateMonitor.swift       Optional daily release discovery, system notifications and menu bar update offer
   UpdateChecker.swift       Update check + in-place install (GitHub release DMG vs AppInfo.version)

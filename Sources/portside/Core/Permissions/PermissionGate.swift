@@ -32,11 +32,15 @@ enum PermissionState: Equatable {
 protocol PermissionAdapter {
     var scope: PermissionScope { get }
     func currentState() -> PermissionState
+    /// Whether `request` can start anything. Settings shows a request
+    /// button only when this is true.
+    var canRequest: Bool { get }
     /// Explicit user action only. Adapters that cannot ask return false.
     func request(forFeature feature: String) -> Bool
 }
 
 extension PermissionAdapter {
+    var canRequest: Bool { false }
     func request(forFeature feature: String) -> Bool { false }
 }
 
@@ -45,6 +49,7 @@ extension PermissionAdapter {
 @MainActor
 struct AccessibilityPermissionAdapter: PermissionAdapter {
     let scope = PermissionScope.accessibility
+    let canRequest = true
 
     func currentState() -> PermissionState {
         AXIsProcessTrusted() ? .granted : .denied
@@ -74,6 +79,8 @@ struct AppPermissionAdapter: PermissionAdapter {
         self.state = state
         self.requester = request
     }
+
+    var canRequest: Bool { requester != nil }
 
     func currentState() -> PermissionState { state() }
 
@@ -108,13 +115,21 @@ struct PermissionDenial: Error, Equatable {
 @MainActor
 final class PermissionGate {
     private var adapters: [PermissionScope: any PermissionAdapter] = [:]
+    /// Registered scopes, in registration order, for Settings.
+    private(set) var scopes: [PermissionScope] = []
 
     nonisolated init() {}
 
     /// Registering reads nothing and prompts for nothing. A second adapter
     /// for the same scope replaces the first.
     func register(_ adapter: any PermissionAdapter) {
+        if adapters[adapter.scope] == nil { scopes.append(adapter.scope) }
         adapters[adapter.scope] = adapter
+    }
+
+    /// Whether an explicit request can be made for this scope. Reads nothing.
+    func canRequest(_ scope: PermissionScope) -> Bool {
+        adapters[scope]?.canRequest ?? false
     }
 
     /// Live state. A scope with no adapter is `unavailable`.

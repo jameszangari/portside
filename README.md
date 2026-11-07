@@ -35,7 +35,7 @@ macOS asks for permissions as features need them; see [Privacy and permissions](
 - **Appearance:** match macOS icon style or Original; Liquid Glass (matches the native Dock in dark mode, or Custom with every part adjustable) or Solid (color or gradient, optional backdrop blur) background; one color picker everywhere (Brand, Neutrals, macOS and RGB presets, hex, hue, saturation, tint, shade, opacity)
 - **Native Dock:** hide via autohide-delay (save/restore, also right after a crash), import apps and folders, open at login via `SMAppService`, optional Settings on launch
 - **Agent notch:** optional island attached to the notch (inside the menu bar on displays without one) or floating with a snake-box thinking loader while agents work, audio bars while Spotify/Music play, attention counts, expandable session cards, plan-usage gauges, and a full Settings > Agent Notch customization pane
-- **Settings:** mouse and keyboard sidebar navigation, live apply, global hotkey (default ⌘⇧D), automatic daily update checks and notifications, plus Check for Updates (a newer release opens a modal that downloads, verifies, and installs it in place from the GitHub release DMG, then reopens Portside)
+- **Settings:** mouse and keyboard sidebar navigation, live apply, an Integrations pane (modules, live permission status with reasons and fallbacks, restricted mode for work Macs), global hotkey (default ⌘⇧D), automatic daily update checks and notifications, plus Check for Updates (a newer release opens a modal that downloads, verifies, and installs it in place from the GitHub release DMG, then reopens Portside)
 
 Full detail: [docs/FEATURES.md](docs/FEATURES.md).
 
