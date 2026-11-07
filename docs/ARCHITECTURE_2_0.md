@@ -29,7 +29,7 @@ New files may live under `Core/Commands`, `Core/Windows`, `Core/Modules`, `Core/
 | `ModuleRegistry` | Capability declarations, enabled state, dependency readiness, start/stop, subscription lifetime | Another Dock coordinator or duplicate widget refresh loops |
 | `PermissionGate` | OS permission observations, module/data scopes, execution approval, denial reason | Granting TCC, overriding MDM, treating saved consent as current OS permission |
 | `IntelligenceEngine` | Deterministic-vs-model routing, context minimization, typed intent proposals | Executing model output directly |
-| `ModelRouter` / `LocalModelProvider` | Availability, inference, cancellation, provider-specific limits and lifecycle | Silent cloud fallback or automatic runtime installation |
+| `ModelRouter` / `LocalModelProvider` (foundation built, P2-AI-01; no real provider yet) | Availability, inference, cancellation, provider-specific limits and lifecycle | Silent cloud fallback or automatic runtime installation |
 | `LocalContextStore` | Explicitly opted-in metadata with provenance, scope, retention, deletion | Ambient clipboard/document/screenshot collection |
 | `AgentOrchestrator` | Bounded plan state and receipts through registry/gate | Separate powerful tools that bypass command approval |
 

@@ -40,6 +40,10 @@ struct IntegrationsSettingsView: View {
                 }
             }
 
+            if let router = integrations.intelligence {
+                IntelligenceSettingsSection(router: router)
+            }
+
             Section("Permissions") {
                 ForEach(integrations.permissions) { row in
                     PermissionSettingsRow(row: row, request: { integrations.request(row.scope) })
@@ -47,12 +51,21 @@ struct IntegrationsSettingsView: View {
                 fullDiskAccessRow
             }
         }
-        .onAppear { integrations.reload() }
+        .onAppear { reloadAll() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            integrations.reload()
+            reloadAll()
         }
         // The OS posts an Accessibility change; AccessibilityTrust relays it.
         .onChange(of: accessibility.isTrusted) { integrations.reload() }
+    }
+
+    /// Module rows, permissions, and the local model's availability (read
+    /// only while Local Intelligence is on).
+    private func reloadAll() {
+        integrations.reload()
+        if let router = integrations.intelligence {
+            Task { await router.refreshAvailability() }
+        }
     }
 
     /// Not a gate scope: nothing in Portside requires it, so there is no
@@ -64,6 +77,43 @@ struct IntegrationsSettingsView: View {
                 .helperStyle()
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// Local Intelligence: the provider and its live availability. The switch
+/// is the module row above; this section only reports and rechecks.
+private struct IntelligenceSettingsSection: View {
+    @ObservedObject var router: ModelRouter
+
+    var body: some View {
+        Section {
+            LabeledContent("Provider", value: router.provider.displayName)
+            VStack(alignment: .leading, spacing: 3) {
+                LabeledContent("Status") {
+                    Label(router.state.label, systemImage: router.state.symbol)
+                        .foregroundStyle(router.state == .ready ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                }
+                Text(router.state.detail).helperStyle()
+            }
+            .accessibilityElement(children: .combine)
+            Button("Check Again") {
+                Task { await router.refreshAvailability() }
+            }
+            .disabled(!canCheck)
+            .accessibilityHint("Asks the local provider whether it can run. Nothing is downloaded or sent.")
+        } header: {
+            Text("Local Intelligence")
+        } footer: {
+            Text("Runs only on this Mac. Portside sends no requests to hosted AI services, never falls back to the cloud, never downloads a model or starts a runtime, and runs nothing in the background. Nothing uses it yet; search and commands work the same with it off.")
+                .footerStyle()
+        }
+    }
+
+    private var canCheck: Bool {
+        switch router.state {
+        case .disabled, .checking, .busy: return false
+        default: return true
+        }
     }
 }
 
