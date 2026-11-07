@@ -7,6 +7,8 @@ import Foundation
 final class PortsideCoreModule: PortsideModule {
     static let moduleID = ModuleID("portside")!
     static let openSettingsCommand = CommandID("portside.openSettings")!
+    /// Input: a `SettingsTab` raw value. Command Center's Settings rows run it.
+    static let openSettingsPaneCommand = CommandID("portside.openSettingsPane")!
     static let toggleDockHidingCommand = CommandID("portside.toggleDockHiding")!
     static let showAboutCommand = CommandID("portside.showAbout")!
     static let quitCommand = CommandID("portside.quit")!
@@ -18,6 +20,7 @@ final class PortsideCoreModule: PortsideModule {
 
     private let isStarting: () -> Bool
     private let openSettings: () -> Void
+    private let openSettingsPane: (SettingsTab) -> Void
     private let toggleDockHiding: () -> Void
     private let showAbout: () -> Void
     private let quit: () -> Void
@@ -26,12 +29,14 @@ final class PortsideCoreModule: PortsideModule {
     init(
         isStarting: @escaping () -> Bool,
         openSettings: @escaping () -> Void,
+        openSettingsPane: @escaping (SettingsTab) -> Void = { _ in },
         toggleDockHiding: @escaping () -> Void = {},
         showAbout: @escaping () -> Void = {},
         quit: @escaping () -> Void = {}
     ) {
         self.isStarting = isStarting
         self.openSettings = openSettings
+        self.openSettingsPane = openSettingsPane
         self.toggleDockHiding = toggleDockHiding
         self.showAbout = showAbout
         self.quit = quit
@@ -48,6 +53,21 @@ final class PortsideCoreModule: PortsideModule {
                 unavailableReason: starting,
                 handler: { [openSettings] _ in
                     openSettings()
+                    return .success(nil)
+                }
+            ),
+            CommandDescriptor(
+                id: Self.openSettingsPaneCommand,
+                title: "Open Settings Pane",
+                keywords: ["preferences"],
+                symbolName: "gearshape",
+                input: .string(maxLength: 32),
+                unavailableReason: starting,
+                handler: { [openSettingsPane] input in
+                    guard case .string(let raw) = input, let tab = SettingsTab(rawValue: raw) else {
+                        return .failure(CommandFailure(reason: "There is no such Settings pane."))
+                    }
+                    openSettingsPane(tab)
                     return .success(nil)
                 }
             ),

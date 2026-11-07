@@ -13,7 +13,8 @@ import os.log
 /// used when `DockModel.revealDelay > 0` (it is 0 by default).
 final class DockEngine {
     let dockModel: DockModel
-    private let runningApps: RunningApps
+    /// Also read by Command Center for its running-app rows.
+    let runningApps: RunningApps
     /// Live widgets; Settings previews them.
     let widgets: WidgetStore
     /// Shared with the Settings window for the icon size fit limit.

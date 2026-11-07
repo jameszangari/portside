@@ -2,20 +2,23 @@ import AppKit
 import os.log
 import SwiftUI
 
-/// Command Center: a key-capable, non-activating search panel over the
-/// command registry. The frontmost app stays active while it is open (like
+/// Command Center: a key-capable, non-activating search panel over apps,
+/// registry commands, Settings panes and quicklinks. The frontmost app stays active while it is open (like
 /// Spotlight), so cancel normally needs no focus hand-back; focus is restored
 /// only if Portside itself became active during the session.
 ///
 /// `CommandCenterState` decides every transition; this class performs the
-/// effects (panel, focus, running a command, VoiceOver). It installs a key
-/// monitor only while the panel is visible and never polls.
+/// effects (panel, focus, ranking off the main thread, running a command
+/// through the registry, history, VoiceOver). It installs a key monitor
+/// only while the panel is visible and never polls.
 @MainActor
 final class CommandCenter: ObservableObject {
     @Published private(set) var state = CommandCenterState()
 
     private let commands: CommandRegistry
     private let moduleTitle: (String) -> String?
+    private let sources: CommandCenterSources
+    private let searcher = CommandCenterSearcher()
     private let logger = Logger(subsystem: "com.james.portside", category: "CommandCenter")
     private var hotkey: CommandCenterHotkey!
     /// The `commandCenter` module runs. Off: no shortcut, and opening does nothing.
@@ -34,16 +37,19 @@ final class CommandCenter: ObservableObject {
     weak var searchField: NSTextField?
     weak var actionField: NSTextField?
 
-    /// `moduleTitle` maps a command namespace to its module's title. The
-    /// registrar and report are for tests; the default is Carbon.
+    /// `moduleTitle` maps a command namespace to its module's title.
+    /// `sources` adds apps, quicklinks and history. The registrar and report
+    /// are for tests; the default is Carbon.
     init(
         commands: CommandRegistry,
         moduleTitle: @escaping (String) -> String?,
+        sources: CommandCenterSources = CommandCenterSources(),
         registrar: @escaping CommandCenterHotkey.Registrar = CommandCenterHotkey.carbon,
         report: @escaping (String?) -> Void = { CommandCenterStatus.shared.hotkeyFailure = $0 }
     ) {
         self.commands = commands
         self.moduleTitle = moduleTitle
+        self.sources = sources
         hotkey = CommandCenterHotkey(registrar: registrar, report: report) { [weak self] in
             MainActor.assumeIsolated { self?.hotkeyPressed() }
         }
@@ -92,19 +98,10 @@ final class CommandCenter: ObservableObject {
         return outcome.handled
     }
 
-    /// Fresh registry read: titles and availability as of this moment.
-    private func snapshot() -> [CommandCenterItem] {
-        commands.descriptors.map { descriptor in
-            CommandCenterItem(
-                id: descriptor.id,
-                title: descriptor.title,
-                subtitle: moduleTitle(descriptor.id.namespace) ?? descriptor.id.namespace,
-                symbolName: descriptor.symbolName,
-                keywords: descriptor.keywords,
-                unavailableReason: descriptor.unavailableReason(),
-                permissions: descriptor.requiredPermissions.map(\.description)
-            )
-        }
+    /// Fresh read of every provider: titles and availability as of this
+    /// moment. In memory only; the app scan runs separately.
+    func snapshot() -> [CommandCenterItem] {
+        CommandCenterCatalog.items(registry: commands, moduleTitle: moduleTitle, sources: sources)
     }
 
     // MARK: Effects
@@ -116,6 +113,11 @@ final class CommandCenter: ObservableObject {
         case .dismiss(let restoreFocus): dismiss(restoreFocus: restoreFocus)
         case .run(let id): run(id)
         case .cancelRun: runTask?.cancel()
+        case .search(let request):
+            searcher.start(request, items: state.items) { [weak self] request, ids in
+                self?.send(.results(request, ids))
+            }
+        case .recordUsage(let id): sources.history?.record(id, at: sources.now())
         case .copy(let text):
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
@@ -136,10 +138,16 @@ final class CommandCenter: ObservableObject {
         panel.makeKey()
         if let searchField { panel.makeFirstResponder(searchField) }
         installMonitors()
+        // The app list catches up in the background; the panel never waits.
+        sources.applications?.refresh { [weak self] in
+            guard let self, self.state.isVisible else { return }
+            self.send(.catalog(self.snapshot()))
+        }
     }
 
     private func dismiss(restoreFocus: Bool) {
         removeMonitors()
+        searcher.cancel()
         pendingAnnouncement?.cancel()
         let previous = previousApp
         previousApp = nil
@@ -164,10 +172,14 @@ final class CommandCenter: ObservableObject {
         return frontmostPID == ownPID
     }
 
-    private func run(_ id: CommandID) {
+    private func run(_ id: CommandCenterResultID) {
         runTask?.cancel()
+        guard let invocation = state.item(id)?.invocation else {
+            send(.finished(id, .unknownCommand))
+            return
+        }
         runTask = Task { @MainActor [weak self, commands] in
-            let result = await commands.execute(id)
+            let result = await commands.execute(invocation.command, input: invocation.input)
             self?.send(.finished(id, result))
         }
     }

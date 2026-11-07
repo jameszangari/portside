@@ -1,19 +1,68 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// One result row: a registry command as Command Center shows it. Built
-/// from a fresh registry snapshot each time the panel opens.
-struct CommandCenterItem: Equatable, Identifiable {
-    let id: CommandID
+/// One result row: a registry command, an app, a Settings pane or a
+/// quicklink. Built from a fresh snapshot each time the panel opens (see
+/// `CommandCenterCatalog`).
+struct CommandCenterItem: Equatable, Identifiable, Sendable {
+    enum Kind: String, Equatable, Sendable {
+        case command, application, settings, quicklink
+    }
+
+    let id: CommandCenterResultID
+    var kind: Kind
     let title: String
-    /// The owning module's title.
+    /// The owning module's title, or the kind ("Application", "Running").
     var subtitle: String = ""
     var symbolName: String?
+    /// App bundle whose icon replaces `symbolName`.
+    var iconPath: String?
     var keywords: [String] = []
-    /// nil when the command can run, otherwise why it cannot. Shown in the row.
+    /// nil when it can run, otherwise why it cannot. Shown in the row.
     var unavailableReason: String?
     /// Required permission scopes, by name, for the details screen.
     var permissions: [String] = []
+    /// The registry command Return runs.
+    var invocation: CommandInvocation
+    /// Title of the primary action ("Run Command", "Open Application").
+    var primaryTitle = "Run Command"
+    /// What Copy puts on the pasteboard, and the action's title.
+    var copyValue: String
+    var copyTitle = "Copy Command ID"
+    /// Frecency at snapshot time, 0 when never picked. Ranks before title.
+    var usage: Double = 0
+
+    init(
+        id: CommandCenterResultID, kind: Kind, title: String, subtitle: String = "", symbolName: String? = nil,
+        iconPath: String? = nil, keywords: [String] = [], unavailableReason: String? = nil, permissions: [String] = [],
+        invocation: CommandInvocation, primaryTitle: String, copyValue: String, copyTitle: String, usage: Double = 0
+    ) {
+        self.id = id
+        self.kind = kind
+        self.title = title
+        self.subtitle = subtitle
+        self.symbolName = symbolName
+        self.iconPath = iconPath
+        self.keywords = keywords
+        self.unavailableReason = unavailableReason
+        self.permissions = permissions
+        self.invocation = invocation
+        self.primaryTitle = primaryTitle
+        self.copyValue = copyValue
+        self.copyTitle = copyTitle
+        self.usage = usage
+    }
+
+    /// A registry command without input, as listed by itself.
+    init(id: CommandID, title: String, subtitle: String = "", symbolName: String? = nil, keywords: [String] = [],
+         unavailableReason: String? = nil, permissions: [String] = [], usage: Double = 0) {
+        self.init(
+            id: .command(id), kind: .command, title: title, subtitle: subtitle, symbolName: symbolName,
+            keywords: keywords, unavailableReason: unavailableReason, permissions: permissions,
+            invocation: CommandInvocation(command: id), primaryTitle: "Run Command",
+            copyValue: id.rawValue, copyTitle: "Copy Command ID", usage: usage
+        )
+    }
 }
 
 enum CommandCenterActionKind: String, Equatable, CaseIterable {
@@ -34,9 +83,9 @@ struct CommandCenterAction: Equatable, Identifiable {
 
 /// A pushed view. Esc or Backspace pops one level.
 enum CommandCenterScreen: Equatable {
-    case details(CommandID)
+    case details(CommandCenterResultID)
 
-    var itemID: CommandID {
+    var itemID: CommandCenterResultID {
         switch self {
         case .details(let id): return id
         }
@@ -92,17 +141,21 @@ enum CommandCenterEvent: Equatable {
     /// Global hotkey: show when hidden, hide when visible and key.
     case hotkey([CommandCenterItem], panelIsKey: Bool)
     case query(String)
+    /// Ranked IDs for a `.search` request. Dropped unless it is the latest.
+    case results(CommandCenterSearchRequest, [CommandCenterResultID])
+    /// A fresher snapshot while open (the app list finished loading).
+    case catalog([CommandCenterItem])
     case actionQuery(String)
     case key(CommandCenterKey)
     /// Mouse: click a row (select and run its primary action).
-    case activate(CommandID)
+    case activate(CommandCenterResultID)
     /// Mouse: click an action in the Action Panel.
     case performAction(CommandCenterActionKind)
     /// Mouse: the footer Actions button.
     case toggleActions
     /// Mouse: the back button of a pushed screen.
     case back
-    case finished(CommandID, CommandResult)
+    case finished(CommandCenterResultID, CommandResult)
     /// Another app or window took key focus. Hide, never take focus back.
     case focusLost
 }
@@ -117,8 +170,14 @@ enum CommandCenterEffect: Equatable {
     /// Order out. `restoreFocus` reactivates the recorded app when
     /// Portside took activation during the session.
     case dismiss(restoreFocus: Bool)
-    case run(CommandID)
+    /// Execute the item's invocation through the registry.
+    case run(CommandCenterResultID)
     case cancelRun
+    /// Rank `query` against the current items off the main thread, then
+    /// send `.results`. Cancels any search in flight.
+    case search(CommandCenterSearchRequest)
+    /// A result ran successfully: count it for ranking.
+    case recordUsage(CommandCenterResultID)
     case copy(String)
     /// VoiceOver announcement. The controller coalesces rapid ones.
     case announce(String)
@@ -145,21 +204,30 @@ struct CommandCenterState: Equatable {
     }
 
     struct ActionPanel: Equatable {
-        let itemID: CommandID
+        let itemID: CommandCenterResultID
         var query = ""
         var highlight: CommandCenterActionKind?
     }
 
     private(set) var isVisible = false
     private(set) var query = ""
-    private(set) var items: [CommandCenterItem] = []
+    private(set) var items: [CommandCenterItem] = [] {
+        didSet { positions = Dictionary(items.enumerated().map { ($1.id, $0) }) { first, _ in first } }
+    }
+    private var positions: [CommandCenterResultID: Int] = [:]
     private(set) var results: [CommandCenterItem] = []
-    /// Keyed by ID, so it survives a re-filter.
-    private(set) var selection: CommandID?
+    /// Keyed by ID, so it survives a re-rank.
+    private(set) var selection: CommandCenterResultID?
     private(set) var actionPanel: ActionPanel?
     private(set) var stack: [CommandCenterScreen] = []
-    private(set) var running: CommandID?
+    private(set) var running: CommandCenterResultID?
     private(set) var notice: CommandCenterNotice?
+    /// Bumped by every query change and catalog refresh. Only results for
+    /// the latest generation are applied.
+    private(set) var searchGeneration = 0
+    /// A search is in flight; `results` still shows the previous query's.
+    var isSearching: Bool { pendingSearch != nil }
+    private var pendingSearch: CommandCenterSearchRequest?
 
     var mode: Mode {
         if !isVisible { return .hidden }
@@ -171,7 +239,7 @@ struct CommandCenterState: Equatable {
 
     var selectedItem: CommandCenterItem? { selection.flatMap(item) }
 
-    func item(_ id: CommandID) -> CommandCenterItem? { items.first { $0.id == id } }
+    func item(_ id: CommandCenterResultID) -> CommandCenterItem? { positions[id].map { items[$0] } }
 
     /// The item Cmd+K and Return act on: the pushed screen's, else the selection.
     var targetItem: CommandCenterItem? {
@@ -181,12 +249,12 @@ struct CommandCenterState: Equatable {
 
     /// Every action for `item` in the current context, before the panel filter.
     func actions(for item: CommandCenterItem) -> [CommandCenterAction] {
-        var list = [CommandCenterAction(kind: .run, title: "Run Command", symbolName: "return", shortcut: "↩",
+        var list = [CommandCenterAction(kind: .run, title: item.primaryTitle, symbolName: "return", shortcut: "↩",
                                         disabledReason: item.unavailableReason)]
         if stack.last != .details(item.id) {
             list.append(CommandCenterAction(kind: .showDetails, title: "Show Details", symbolName: "info.circle", shortcut: "⌘↩"))
         }
-        list.append(CommandCenterAction(kind: .copyID, title: "Copy Command ID", symbolName: "doc.on.doc"))
+        list.append(CommandCenterAction(kind: .copyID, title: item.copyTitle, symbolName: "doc.on.doc"))
         return list
     }
 
@@ -211,8 +279,20 @@ struct CommandCenterState: Equatable {
             guard isVisible, text != query else { return .ignored }
             query = text
             notice = nil
-            refilter(resetSelection: true)
-            return .handled([.announce(resultsAnnouncement)])
+            return .handled(search(preservingSelection: false))
+        case .results(let request, let ids):
+            guard isVisible, request == pendingSearch else { return .ignored }
+            pendingSearch = nil
+            apply(ids, resetSelection: !request.preservesSelection)
+            return .handled(request.preservesSelection ? [] : [.announce(resultsAnnouncement)])
+        case .catalog(let fresh):
+            guard isVisible else { return .ignored }
+            items = fresh
+            // A row that vanished mid-session closes its panel or screen.
+            if let panel = actionPanel, item(panel.itemID) == nil { actionPanel = nil }
+            let kept = stack.filter { item($0.itemID) != nil }
+            stack = kept
+            return .handled(search(preservingSelection: true))
         case .actionQuery(let text):
             guard var panel = actionPanel, text != panel.query else { return .ignored }
             panel.query = text
@@ -252,8 +332,8 @@ struct CommandCenterState: Equatable {
     private mutating func present(_ items: [CommandCenterItem]) -> CommandCenterOutcome {
         self = CommandCenterState()
         isVisible = true
-        self.items = Self.sorted(items)
-        refilter(resetSelection: true)
+        self.items = items
+        apply(CommandCenterRanker.defaultOrder(items).map(\.id), resetSelection: true)
         return .handled([.present, .announce("Command Center. \(resultsAnnouncement)")])
     }
 
@@ -276,6 +356,7 @@ struct CommandCenterState: Equatable {
             default: return .handled()
             }
         }
+        if [.up, .down, .return, .commandReturn, .commandK].contains(key) { flushPendingSearch() }
         switch key {
         case .escape:
             // One step per press: Action Panel, pushed screen, query, window.
@@ -287,7 +368,7 @@ struct CommandCenterState: Equatable {
             if !query.isEmpty {
                 query = ""
                 notice = nil
-                refilter(resetSelection: true)
+                _ = search(preservingSelection: false)
                 return .handled([.announce("Search cleared. \(resultsAnnouncement)")])
             }
             return .handled(dismiss(restoreFocus: true, cancelRun: true))
@@ -330,7 +411,7 @@ struct CommandCenterState: Equatable {
 
     // MARK: Steps
 
-    private mutating func primary(_ id: CommandID) -> [CommandCenterEffect] {
+    private mutating func primary(_ id: CommandCenterResultID) -> [CommandCenterEffect] {
         guard let item = item(id) else { return [] }
         if let reason = item.unavailableReason {
             notice = CommandCenterNotice(kind: .unavailable, message: reason)
@@ -348,7 +429,7 @@ struct CommandCenterState: Equatable {
         switch kind {
         case .run: return primary(item.id)
         case .showDetails: return push(.details(item.id))
-        case .copyID: return [.copy(item.id.rawValue)] + dismiss(restoreFocus: true, cancelRun: false)
+        case .copyID: return [.copy(item.copyValue)] + dismiss(restoreFocus: true, cancelRun: false)
         }
     }
 
@@ -366,18 +447,18 @@ struct CommandCenterState: Equatable {
         return [.announce("Back to search. \(resultsAnnouncement)")]
     }
 
-    private mutating func finish(_ id: CommandID, _ result: CommandResult) -> [CommandCenterEffect] {
+    private mutating func finish(_ id: CommandCenterResultID, _ result: CommandResult) -> [CommandCenterEffect] {
         let title = item(id)?.title ?? id.rawValue
         switch result {
         case .success:
             // The command did its work (and may have moved focus): just hide.
-            return dismiss(restoreFocus: false, cancelRun: false)
+            return [.recordUsage(id)] + dismiss(restoreFocus: false, cancelRun: false)
         case .canceled:
             notice = CommandCenterNotice(kind: .canceled, message: "\(title) was canceled.")
         case .unavailable(let reason):
             // Availability changed since the snapshot: mark the row too.
-            if let index = items.firstIndex(where: { $0.id == id }) { items[index].unavailableReason = reason }
-            refilter(resetSelection: false)
+            if let index = positions[id] { items[index].unavailableReason = reason }
+            apply(results.map(\.id), resetSelection: false)
             notice = CommandCenterNotice(kind: .unavailable, message: reason)
         case .failed(let reason), .invalidInput(let reason):
             notice = CommandCenterNotice(kind: .failed, message: reason)
@@ -412,8 +493,34 @@ struct CommandCenterState: Equatable {
         return [.announce(text)]
     }
 
-    private mutating func refilter(resetSelection: Bool) {
-        results = Self.filter(items, query: query)
+    /// New generation for the current query. An empty query is the default
+    /// list, ranked right here (it is the first frame on open and after Esc
+    /// clears); anything else is ranked off the main thread.
+    private mutating func search(preservingSelection: Bool) -> [CommandCenterEffect] {
+        searchGeneration += 1
+        if CommandCenterRanker.terms(query).isEmpty {
+            pendingSearch = nil
+            apply(CommandCenterRanker.defaultOrder(items).map(\.id), resetSelection: !preservingSelection)
+            return preservingSelection ? [] : [.announce(resultsAnnouncement)]
+        }
+        let request = CommandCenterSearchRequest(generation: searchGeneration, query: query, preservesSelection: preservingSelection)
+        pendingSearch = request
+        return [.search(request)]
+    }
+
+    /// A key that acts on the list arrived before the off-main ranking:
+    /// rank here so it acts on the latest query, never the previous one.
+    /// The late delivery for this generation is then dropped.
+    private mutating func flushPendingSearch() {
+        guard let request = pendingSearch else { return }
+        pendingSearch = nil
+        apply(CommandCenterRanker.rank(items, query: request.query) ?? [], resetSelection: !request.preservesSelection)
+    }
+
+    /// Shows `ids` in order. The selection stays on its row when asked and
+    /// the row is still there, otherwise it moves to the first result.
+    private mutating func apply(_ ids: [CommandCenterResultID], resetSelection: Bool) {
+        results = ids.compactMap(item)
         if resetSelection || !results.contains(where: { $0.id == selection }) {
             selection = results.first?.id
         }
@@ -421,54 +528,21 @@ struct CommandCenterState: Equatable {
 
     private var resultsAnnouncement: String {
         switch results.count {
-        case 0: return "No matching commands."
-        case 1: return "1 command."
-        default: return "\(results.count) commands."
+        case 0: return "No results."
+        case 1: return "1 result."
+        default: return "\(results.count) results."
         }
     }
 
     // MARK: Filtering
 
-    /// Title order, then ID, so equal titles never swap between sessions.
-    static func sorted(_ items: [CommandCenterItem]) -> [CommandCenterItem] {
-        items.sorted { lhs, rhs in
-            let left = lhs.title.lowercased(), right = rhs.title.lowercased()
-            return left != right ? left < right : lhs.id.rawValue < rhs.id.rawValue
-        }
-    }
-
-    /// Static CMD-01 filter: every word of the query must start a word of the
-    /// title or a keyword (case and diacritic insensitive). Title-prefix
-    /// matches come first; otherwise the input order is kept. Ranking and
-    /// other providers are CMD-02.
-    static func filter(_ items: [CommandCenterItem], query: String) -> [CommandCenterItem] {
-        let terms = normalize(query).split(whereSeparator: \.isWhitespace).map(String.init)
-        guard !terms.isEmpty else { return items }
-        var leading: [CommandCenterItem] = []
-        var other: [CommandCenterItem] = []
-        for item in items {
-            let title = normalize(item.title)
-            let words = words(title) + item.keywords.flatMap { words(normalize($0)) }
-            guard terms.allSatisfy({ term in words.contains { $0.hasPrefix(term) } }) else { continue }
-            if title.hasPrefix(terms[0]) { leading.append(item) } else { other.append(item) }
-        }
-        return leading + other
-    }
-
+    /// Action Panel filter: every query word starts a word of the title.
     static func filterActions(_ actions: [CommandCenterAction], query: String) -> [CommandCenterAction] {
-        let terms = normalize(query).split(whereSeparator: \.isWhitespace).map(String.init)
+        let terms = CommandCenterRanker.terms(query)
         guard !terms.isEmpty else { return actions }
         return actions.filter { action in
-            let words = words(normalize(action.title))
+            let words = CommandCenterRanker.words(CommandCenterRanker.normalize(action.title))
             return terms.allSatisfy { term in words.contains { $0.hasPrefix(term) } }
         }
-    }
-
-    private static func normalize(_ text: String) -> String {
-        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
-    }
-
-    private static func words(_ text: String) -> [String] {
-        text.split { !$0.isLetter && !$0.isNumber }.map(String.init)
     }
 }
