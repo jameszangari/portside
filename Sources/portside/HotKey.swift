@@ -13,6 +13,8 @@ import SwiftUI
 final class HotKey {
     private var ref: EventHotKeyRef?
     private let id: UInt32
+    private let keyCode: UInt32
+    private let modifiers: UInt32
     private let action: () -> Void
     /// Weak, so dropping the last reference runs `deinit` and unregisters.
     private static var handlers: [UInt32: WeakHotKey] = [:]
@@ -24,6 +26,8 @@ final class HotKey {
     /// flags (`cmdKey | optionKey`). Nil if macOS refused the registration.
     init?(keyCode: Int, modifiers: Int, name: String, action: @escaping () -> Void) {
         self.action = action
+        self.keyCode = UInt32(keyCode)
+        self.modifiers = UInt32(modifiers)
         id = HotKey.nextID
         HotKey.nextID += 1
         guard HotKey.installHandlerIfNeeded() else { return nil }
@@ -40,6 +44,26 @@ final class HotKey {
 
     convenience init?(chord: HotkeyChord, name: String, action: @escaping () -> Void) {
         self.init(keyCode: Int(chord.keyCode), modifiers: Int(chord.modifiers), name: name, action: action)
+    }
+
+    /// While suspended every hotkey is unregistered, so the shortcut
+    /// recorder sees chords Portside itself holds (a registered chord never
+    /// reaches the app as a key event).
+    private(set) static var isSuspended = false
+
+    static func setSuspended(_ suspended: Bool) {
+        guard suspended != isSuspended else { return }
+        isSuspended = suspended
+        for hotKey in handlers.values.compactMap(\.value) {
+            if suspended {
+                if let ref = hotKey.ref { UnregisterEventHotKey(ref) }
+                hotKey.ref = nil
+            } else if hotKey.ref == nil {
+                // One registered during the pause (a new chord) is already live.
+                let hotKeyID = EventHotKeyID(signature: OSType(0x5053_4844), id: hotKey.id)
+                RegisterEventHotKey(hotKey.keyCode, hotKey.modifiers, hotKeyID, GetEventDispatcherTarget(), 0, &hotKey.ref)
+            }
+        }
     }
 
     deinit {
@@ -228,12 +252,15 @@ struct HotkeyRecorderButton: View {
     let onChange: (HotkeyChord?) -> Void
 
     @State private var recording = false
+    /// Why the last key was not taken, shown under the row while recording.
+    @State private var rejected: String?
 
     var body: some View {
         HStack {
             Text(title)
             Spacer()
             Button {
+                rejected = nil
                 recording = true
             } label: {
                 Text(recording ? "Type shortcut…" : (chord?.displayString ?? "None"))
@@ -262,6 +289,9 @@ struct HotkeyRecorderButton: View {
                 handleCapture(event)
             }
         )
+        if recording, let rejected {
+            Text(rejected).font(.system(size: 12)).foregroundStyle(.secondary)
+        }
     }
 
     private func handleCapture(_ event: NSEvent) -> Bool {
@@ -276,7 +306,10 @@ struct HotkeyRecorderButton: View {
             recording = false
             return true
         }
-        guard let next = HotkeyChord.from(event: event) else { return false }
+        guard let next = HotkeyChord.from(event: event) else {
+            rejected = "Include ⌘ or ⌃ (⌥ alone works only with Space)."
+            return true
+        }
         onChange(next)
         recording = false
         return true
@@ -307,6 +340,7 @@ private struct HotkeyCaptureRepresentable: NSViewRepresentable {
         func setActive(_ active: Bool) {
             if active {
                 guard monitor == nil else { return }
+                HotKey.setSuspended(true)
                 monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                     guard let self, let handler = self.handler else { return event }
                     return handler(event) ? nil : event
@@ -314,11 +348,15 @@ private struct HotkeyCaptureRepresentable: NSViewRepresentable {
             } else if let monitor {
                 NSEvent.removeMonitor(monitor)
                 self.monitor = nil
+                HotKey.setSuspended(false)
             }
         }
 
         deinit {
-            if let monitor { NSEvent.removeMonitor(monitor) }
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+                HotKey.setSuspended(false)
+            }
         }
     }
 }

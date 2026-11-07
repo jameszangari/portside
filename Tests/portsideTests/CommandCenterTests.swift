@@ -509,6 +509,22 @@ final class CommandCenterHotkeyTests: XCTestCase {
         first = nil
         XCTAssertNotNil(HotKey(chord: chord, name: "test again") {}, "deinit released it")
     }
+
+    /// The recorder suspends every hotkey so it can capture chords Portside
+    /// holds: while suspended the chord is free, after resume it is held again.
+    func testSuspendFreesChordsForTheRecorderAndResumeRestores() throws {
+        let chord = HotkeyChord(keyCode: UInt32(kVK_F18), modifiers: UInt32(cmdKey | optionKey | controlKey | shiftKey))
+        let held = HotKey(chord: chord, name: "test held") {}
+        guard held != nil else { throw XCTSkip("Carbon hotkeys unavailable in this session") }
+        HotKey.setSuspended(true)
+        defer { HotKey.setSuspended(false) }
+        var probe: HotKey? = HotKey(chord: chord, name: "test probe") {}
+        XCTAssertNotNil(probe, "suspended: the chord is free")
+        probe = nil
+        HotKey.setSuspended(false)
+        XCTAssertNil(HotKey(chord: chord, name: "test duplicate") {}, "resumed: held again")
+        withExtendedLifetime(held) {}
+    }
 }
 
 final class HotkeyConflictTests: XCTestCase {
