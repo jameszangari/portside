@@ -52,6 +52,15 @@ struct AppSnapshot: Equatable {
     let windowAccess: WindowAccess
 }
 
+/// One window to focus, from `WindowRegistry.focusTarget`. `handle` is the
+/// source's (an `AXElementKey` in production); `app` is the launch it was
+/// read from, so a reused pid is refused.
+struct WindowFocusTarget: Equatable {
+    let window: WindowID
+    let app: RunningAppRecord
+    let handle: AnyHashable
+}
+
 struct WindowSnapshot: Equatable {
     let id: WindowID
     let title: String
@@ -253,6 +262,16 @@ final class WindowRegistry: ObservableObject {
     func app(_ key: AppKey) -> AppSnapshot? {
         guard current(key) != nil else { return nil }
         return snapshot.apps.first { $0.key == key }
+    }
+
+    /// What focusing a window needs: the source's handle for it and the
+    /// launch it belongs to. Nil when the window closed, its app quit, or the
+    /// id belongs to an earlier launch. Read right before acting; the
+    /// focuser checks the launch again before its first Accessibility call.
+    func focusTarget(_ id: WindowID) -> WindowFocusTarget? {
+        guard let entry = current(id.app), entry.windows[id] != nil,
+              let handle = entry.ids.first(where: { $0.value == id })?.key else { return nil }
+        return WindowFocusTarget(window: id, app: entry.record, handle: handle)
     }
 
     // MARK: App events (from RunningApps)

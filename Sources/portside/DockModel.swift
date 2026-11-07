@@ -360,6 +360,32 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    /// What the app switcher lists: apps (the default) or windows.
+    @Published private(set) var switcherMode: SwitcherMode = .apps
+
+    func setSwitcherMode(_ mode: SwitcherMode) {
+        guard mode != switcherMode else { return }
+        switcherMode = mode
+        persist()
+    }
+
+    /// Whether / starts title search while the switcher is open.
+    @Published private(set) var switcherTitleSearch = true
+
+    func setSwitcherTitleSearch(_ enabled: Bool) {
+        guard enabled != switcherTitleSearch else { return }
+        switcherTitleSearch = enabled
+        persist()
+    }
+
+    /// Both switcher choices, current values first, for `SwitcherModule`.
+    var switcherPreferences: AnyPublisher<SwitcherPreferences, Never> {
+        $switcherMode.combineLatest($switcherTitleSearch)
+            .map { SwitcherPreferences(mode: $0, titleSearch: $1) }
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
+
     /// Command Center quicklinks, in Settings order. URLs are kept as typed;
     /// `QuicklinkURL` decides at use whether one may open.
     @Published private(set) var commandCenterQuicklinks: [Quicklink] = []
@@ -1131,6 +1157,7 @@ final class DockModel: Codable, ObservableObject {
         /// Before per-style backgrounds. Read only, for migration.
         case backgroundStyle, backgroundFrost, backgroundTint
         case settingsHotkey, commandCenterHotkey, commandCenterQuicklinks, switcherHotkey
+        case switcherMode, switcherTitleSearch
         /// Before Milestone D: a flat list of apps. Read only, for migration.
         case pinnedApps
     }
@@ -1239,6 +1266,8 @@ final class DockModel: Codable, ObservableObject {
         } else {
             switcherHotkey = SwitcherShortcut.defaultChord
         }
+        switcherMode = c.value(.switcherMode, or: SwitcherMode.apps)
+        switcherTitleSearch = c.value(.switcherTitleSearch, or: true)
         var seenQuicklinks = Set<UUID>()
         commandCenterQuicklinks = Array(c.value(.commandCenterQuicklinks, or: [DecodedQuicklink]())
             .compactMap(\.value)
@@ -1311,6 +1340,8 @@ final class DockModel: Codable, ObservableObject {
         } else {
             try c.encodeNil(forKey: .switcherHotkey)
         }
+        try c.encode(switcherMode, forKey: .switcherMode)
+        try c.encode(switcherTitleSearch, forKey: .switcherTitleSearch)
         if !commandCenterQuicklinks.isEmpty { try c.encode(commandCenterQuicklinks, forKey: .commandCenterQuicklinks) }
     }
 
@@ -1561,6 +1592,8 @@ final class DockModel: Codable, ObservableObject {
         settingsHotkey = old.settingsHotkey
         commandCenterHotkey = old.commandCenterHotkey
         switcherHotkey = old.switcherHotkey
+        switcherMode = old.switcherMode
+        switcherTitleSearch = old.switcherTitleSearch
         commandCenterQuicklinks = old.commandCenterQuicklinks
         openGroupsOnHover = old.openGroupsOnHover
         usageClaudeConsent = old.usageClaudeConsent

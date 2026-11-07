@@ -11,6 +11,11 @@ struct SwitcherActions {
     var frontmostPID: @MainActor () -> pid_t?
     /// Brings a running app forward (unhiding it). false when it is gone.
     var activate: @MainActor (SwitcherItem) -> Bool
+    /// Brings one window forward; the result arrives on main. Defaults to
+    /// refusing, so a test that does not set it never touches Accessibility.
+    var focus: @MainActor (WindowFocusTarget, @escaping @MainActor (WindowFocusResult) -> Void) -> Void = { _, done in done(.refused) }
+    /// Display names for window rows, empty with one display.
+    var displayNames: @MainActor () -> [CGDirectDisplayID: String] = { [:] }
     /// How long the shortcut must be held before the panel shows. A quicker
     /// release switches without the panel ever appearing.
     var revealDelay: DispatchTimeInterval = .milliseconds(100)
@@ -31,8 +36,17 @@ struct SwitcherActions {
                 app.activate()
             }
             return true
-        }
+        },
+        focus: WindowFocuser.focus,
+        displayNames: WindowFocuser.displayNames
     )
+}
+
+/// The switcher's saved choices (`switcherMode`, `switcherTitleSearch`).
+struct SwitcherPreferences: Equatable {
+    var mode = SwitcherMode.apps
+    /// `/` latches title search while the switcher is open.
+    var titleSearch = true
 }
 
 /// Draws the switcher. The live one is `SwitcherPanelPresenter`; tests use a
@@ -55,10 +69,10 @@ final class SwitcherStatus: ObservableObject {
     @Published var hotkeyFailure: String?
 }
 
-/// The standalone app-first switcher (P2-SW-01). A registered Carbon
-/// shortcut (default ⌥Tab, never ⌘Tab) opens it; apps come from
-/// `WindowRegistry` snapshots in recent-activation order, so it needs no
-/// Accessibility. While open the panel is key without activating Portside,
+/// The standalone switcher (P2-SW-01, windows P2-SW-02). A registered
+/// Carbon shortcut (default ⌥Tab, never ⌘Tab) opens it; apps and windows
+/// come from `WindowRegistry` snapshots in recent order, so apps need no
+/// Accessibility and windows reuse the registry's observers. While open the panel is key without activating Portside,
 /// so it reads Tab, arrows, Return, Escape and the modifier release as
 /// ordinary local events: no event tap, no polling.
 ///
@@ -79,6 +93,9 @@ final class AppSwitcher: ObservableObject {
     private var registryWatch: AnyCancellable?
     private var revealWork: DispatchWorkItem?
     private var required: NSEvent.ModifierFlags = []
+    private(set) var preferences = SwitcherPreferences()
+    /// Display names read when the switcher opened, kept while it is open.
+    private var displays: [CGDirectDisplayID: String] = [:]
 
     init(
         registry: WindowRegistry,
@@ -114,7 +131,7 @@ final class AppSwitcher: ObservableObject {
             registryWatch = registry.$snapshot.dropFirst().sink { [weak self] snapshot in
                 MainActor.assumeIsolated {
                     guard let self, self.state.isOpen else { return }
-                    self.send(.appsChanged(snapshot.apps.map(SwitcherItem.init)))
+                    self.send(.appsChanged(SwitcherCatalog.items(snapshot, mode: self.preferences.mode, displays: self.displays)))
                 }
             }
         } else {
@@ -139,12 +156,22 @@ final class AppSwitcher: ObservableObject {
         }
     }
 
+    /// Takes effect the next time the switcher opens.
+    func setPreferences(_ preferences: SwitcherPreferences) {
+        self.preferences = preferences
+    }
+
+    /// Whether window titles can be listed at all (Accessibility allowed).
+    var windowsAvailable: Bool { registry.snapshot.accessibilityGranted }
+
     /// The shortcut fired. Its own keyDown never reaches the panel (Carbon
     /// takes it), so a second press while open arrives here too.
     func hotkeyPressed() {
         guard isEnabled else { return }
         let held = SwitcherModifiers.isHeld(actions.modifierFlags(), required: required)
-        send(.trigger(items: registry.snapshot.apps.map(SwitcherItem.init), frontmost: actions.frontmostPID(), held: held))
+        if !state.isOpen { displays = actions.displayNames() }
+        let items = SwitcherCatalog.items(registry.snapshot, mode: preferences.mode, displays: displays)
+        send(.trigger(items: items, frontmost: actions.frontmostPID(), held: held))
         // A release between the press and the panel taking key went to the
         // other app. Read the keyboard once now; the reveal reads it again.
         if state.isOpen { recheckModifiers() }
@@ -155,6 +182,8 @@ final class AppSwitcher: ObservableObject {
     @discardableResult
     func keyPressed(_ key: SwitcherKey) -> Bool {
         guard state.isOpen else { return false }
+        // Search turned off in Settings: / is swallowed like any other key.
+        if key == .search, !preferences.titleSearch { return true }
         send(.key(key))
         return true
     }
@@ -164,8 +193,8 @@ final class AppSwitcher: ObservableObject {
         send(.modifiersReleased)
     }
 
-    func choose(_ key: AppKey) {
-        send(.choose(key))
+    func choose(_ id: SwitcherItem.ID, window: WindowID? = nil) {
+        send(.choose(id, window: window))
     }
 
     func focusLost() {
@@ -212,6 +241,18 @@ final class AppSwitcher: ObservableObject {
             guard registry.app(item.key) != nil, actions.activate(item) else {
                 logger.info("switcher target \(item.name, privacy: .public) is gone; nothing activated")
                 return
+            }
+        case .focus(let item, let window):
+            // Checked right before acting: a closed window, a quit app or a
+            // reused pid has no target, and nothing else is focused instead.
+            guard let target = registry.focusTarget(window.id) else {
+                logger.info("switcher window of \(item.name, privacy: .public) is gone; nothing focused")
+                return
+            }
+            actions.focus(target) { [logger] result in
+                if result != .focused {
+                    logger.info("switcher window of \(item.name, privacy: .public) not focused: \(String(describing: result), privacy: .public)")
+                }
             }
         case .announce(let message):
             presenter.announce(message)

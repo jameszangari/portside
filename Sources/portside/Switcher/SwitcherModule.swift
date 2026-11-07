@@ -11,19 +11,24 @@ final class SwitcherModule: PortsideModule {
 
     let id = SwitcherModule.moduleID
     let title = "App Switcher"
-    let summary = "Switch between running apps from the keyboard, most recently used first, with its own shortcut (default ⌥Tab, set in General > Keyboard). Tap it for the previous app; hold it and press Tab or Shift-Tab to choose, then let go. Native ⌘Tab is unchanged."
+    let summary = "Switch between running apps or their windows from the keyboard, most recently used first, with its own shortcut (default ⌥Tab, set in General > Keyboard). Tap it for the previous app; hold it and press Tab or Shift-Tab to choose, Down for a window, / to search window titles, then let go. Native ⌘Tab is unchanged."
     let fallback = "⌘Tab, the dock and Command Center still switch apps."
-    /// A Carbon hotkey is not key interception, and it shows only app names
-    /// and icons. It works without Accessibility.
+    /// A Carbon hotkey is not key interception, and it shows only app names,
+    /// icons and window titles (titles only with Accessibility; without it,
+    /// apps only).
     let isSensitive = false
 
     private let switcher: AppSwitcher
     private let chords: AnyPublisher<HotkeyChord?, Never>
+    private let preferences: AnyPublisher<SwitcherPreferences, Never>
 
-    /// `chords` publishes the saved shortcut, current value first.
-    init(switcher: AppSwitcher, chords: AnyPublisher<HotkeyChord?, Never>) {
+    /// `chords` publishes the saved shortcut and `preferences` the mode and
+    /// search choice, current values first.
+    init(switcher: AppSwitcher, chords: AnyPublisher<HotkeyChord?, Never>,
+         preferences: AnyPublisher<SwitcherPreferences, Never> = Just(SwitcherPreferences()).eraseToAnyPublisher()) {
         self.switcher = switcher
         self.chords = chords
+        self.preferences = preferences
     }
 
     func start(_ context: ModuleContext) throws {
@@ -31,8 +36,12 @@ final class SwitcherModule: PortsideModule {
         let subscription = chords.sink { [switcher] chord in
             MainActor.assumeIsolated { switcher.setHotkey(chord) }
         }
+        let choices = preferences.sink { [switcher] preferences in
+            MainActor.assumeIsolated { switcher.setPreferences(preferences) }
+        }
         context.onStop { [switcher] in
             subscription.cancel()
+            choices.cancel()
             MainActor.assumeIsolated { switcher.setEnabled(false) }
         }
     }

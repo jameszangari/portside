@@ -85,9 +85,9 @@ final class SwitcherStateTests: XCTestCase {
         var state = opened()
         XCTAssertEqual(state.send(.key(.commit)), [.dismiss, .activate(b)])
         state = opened()
-        XCTAssertEqual(state.send(.choose(c.key)), [.dismiss, .activate(c)])
+        XCTAssertEqual(state.send(.choose(.app(c.key))), [.dismiss, .activate(c)])
         state = opened()
-        XCTAssertEqual(state.send(.choose(item(99, "Gone").key)), [], "a key not in the list is ignored")
+        XCTAssertEqual(state.send(.choose(.app(item(99, "Gone").key))), [], "a key not in the list is ignored")
         XCTAssertTrue(state.isOpen)
     }
 
@@ -150,12 +150,12 @@ final class SwitcherStateTests: XCTestCase {
         _ = state.send(.appsChanged([a, relaunched, c]))
         XCTAssertEqual(state.items, [a, c, relaunched], "the old launch left; the new one is new")
         XCTAssertEqual(state.selectedItem, c)
-        XCTAssertEqual(state.send(.choose(b.key)), [], "the earlier launch's key no longer matches")
+        XCTAssertEqual(state.send(.choose(.app(b.key))), [], "the earlier launch's key no longer matches")
     }
 
     func testEventsWhileHiddenDoNothing() {
         var state = SwitcherState()
-        for event: SwitcherEvent in [.modifiersReleased, .revealDue, .focusLost, .disable, .key(.commit), .appsChanged(apps), .choose(a.key)] {
+        for event: SwitcherEvent in [.modifiersReleased, .revealDue, .focusLost, .disable, .key(.commit), .appsChanged(apps), .choose(.app(a.key))] {
             XCTAssertEqual(state.send(event), [], "\(event)")
         }
         XCTAssertEqual(state, SwitcherState())
@@ -522,7 +522,7 @@ final class AppSwitcherTests: XCTestCase {
         switcher.hotkeyPressed()
         switcher.revealDue()
         let charlieKey = try XCTUnwrap(switcher.state.items.first { $0.name == "Charlie" }?.key)
-        switcher.choose(charlieKey)
+        switcher.choose(.app(charlieKey))
         XCTAssertEqual(activated, ["Charlie"])
     }
 }
