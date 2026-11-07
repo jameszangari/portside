@@ -414,7 +414,7 @@ private struct SettingsSidebar: View {
         // Author and build details don't fit the sidebar; hover shows them.
         .help(AppInfo.versionLine)
         .padding(.horizontal, rowLeading)
-        .padding(.top, 4)
+        .padding(.top, 18)
         .padding(.bottom, 10)
     }
 
