@@ -44,7 +44,7 @@ Use observed behavior to inform an independent implementation. Do not commit dec
 
 ## Report template
 
-Create a small report under `docs/research/` when the associated investigation runs. Completed so far: [P2-REA-01](research/P2-REA-01-command-center-interaction.md) (docs and metadata only, no runtime journey). Other tickets remain not started.
+Create a small report under `docs/research/` when the associated investigation runs. Completed so far: [P2-REA-01](research/P2-REA-01-command-center-interaction.md) (docs and metadata only, no runtime journey) and [P2-REA-02](research/P2-REA-02-portkiller.md) (upstream MIT source at the matching tag plus owned disposable-process experiments; REA not needed, PortKiller not driven). Other tickets remain not started.
 
 ```text
 Question and planning ID:
