@@ -34,6 +34,9 @@ enum PortsideMain {
         if let index = CommandLine.arguments.firstIndex(of: "--render-notch-previews"), index + 1 < CommandLine.arguments.count {
             exit(MainActor.assumeIsolated { AgentNotchProbe.render(to: CommandLine.arguments[index + 1]) })
         }
+        if CommandLine.arguments.contains("--check-windows") {
+            exit(MainActor.assumeIsolated { WindowRegistryProbe.run() })
+        }
         if CommandLine.arguments.contains("--check-audio-levels") {
             exit(MainActor.assumeIsolated { AudioPlaybackProbe.run(capture: CommandLine.arguments.contains("--capture")) })
         }

@@ -60,6 +60,7 @@ Hidden command-line probes in `PortsideApp.swift`. Run each with `CFFIXED_USER_H
 | `--watch-native-dock <pid>` | all | Internal crash watchdog child | Restores the native Dock when the watched PID exits |
 | `--check-notch` | debug | Notch settings, filters and hover/pin lifecycle checks | None outside the process |
 | `--render-notch-previews <dir>` | debug | Notch PNG previews | Writes PNGs |
+| `--check-windows` | debug | Live `WindowRegistry` start/settle/release against open apps; prints counts only | Read-only Accessibility calls to running apps when the terminal has the permission; never requests it |
 | `--check-audio-levels [--capture]` | debug | Playback gate checks; `--capture` adds a real process tap | `--capture` needs System Audio Recording permission |
 | `--render-label-previews <dir>` / `--render-widget-previews <dir>` | debug | Label and widget PNG previews | Writes PNGs |
 

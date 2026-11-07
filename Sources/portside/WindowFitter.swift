@@ -55,6 +55,9 @@ final class WindowFitter {
     private static let axTimeout: Float = 0.25
     /// Below this, a fitted window would be useless; leave it alone.
     private static let minimumLength: CGFloat = 120
+    /// The fitter's own observer notifications. `WindowRegistry` keeps
+    /// separate observers and never registers move or resize.
+    static let observedNotifications = [kAXWindowCreatedNotification, kAXWindowMovedNotification, kAXWindowResizedNotification]
 
     private let logger = Logger(subsystem: "com.james.portside", category: "WindowFitter")
     private let queue = DispatchQueue(label: "com.james.portside.windowfit", qos: .userInitiated)
@@ -243,7 +246,7 @@ final class WindowFitter {
         AXUIElementSetMessagingTimeout(app, Self.axTimeout)
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         var notReady = false
-        for name in [kAXWindowCreatedNotification, kAXWindowMovedNotification, kAXWindowResizedNotification] {
+        for name in Self.observedNotifications {
             let result = AXObserverAddNotification(observer, app, name as CFString, refcon)
             if result == .cannotComplete { notReady = true }
         }
