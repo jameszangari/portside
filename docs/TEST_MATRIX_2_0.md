@@ -64,7 +64,7 @@ Follow [BUILD.md](BUILD.md) and [AGENTS.md](../AGENTS.md). Run `source scripts/s
 
 For launch smoke, use a fresh `CFFIXED_USER_HOME=/tmp/<unique-test-directory>` with a deliberately seeded `dock.json`: left/right edge, native Dock hiding off, window reservation off, widgets/usage/notch/automatic updates off. Verify the file's exact keys against current DockModel. Use `swift run --skip-build portside`, confirm survival, then terminate only that test process with SIGTERM. A temporary home is not a substitute for disabling network/permission-triggering modules and does not sandbox all OS state. Never change `/Applications`, other app preferences or daily-use Dock settings while testing.
 
-Existing focused debug probes include `--check-notch` and `--check-audio-levels` (without `--capture` unless an actual tap test is explicitly intended). UI probes and physical hover/click remain separate. Stable signing identity is necessary for realistic TCC tests; ad hoc permission resets are not proof of release behavior. Crash/kill and signed-update installation tests belong in a disposable account or separately agreed test setup.
+Existing focused debug probes include `--check-notch`, `--check-windows` and `--check-audio-levels` (without `--capture` unless an actual tap test is explicitly intended). UI probes and physical hover/click remain separate. Stable signing identity is necessary for realistic TCC tests; ad hoc permission resets are not proof of release behavior. Crash/kill and signed-update installation tests belong in a disposable account or separately agreed test setup.
 
 ## Release decision and result record
 

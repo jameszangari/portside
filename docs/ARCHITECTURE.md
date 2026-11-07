@@ -33,6 +33,7 @@ How Portside is put together. See also [PLAN.md](PLAN.md) for the original miles
 - The system's Cmd+Option+D shortcut toggles the native Dock's auto-hide. While Portside hides the native Dock, it makes the native Dock appear until restore.
 - Opening Settings turns Portside into a regular app (visible in Cmd+Tab and the native Dock) until the window closes. It activates with `activate(ignoringOtherApps:)`: plain `activate()` straight after `setActivationPolicy(.regular)` was dropped, and Portside then sat last in Cmd+Tab (measured with `lsappinfo visibleProcessList`). While Settings is the key window, auto-hide is suppressed so the strip stays visible; the saved preference is unchanged.
 - Cmd+Option+D may conflict with the system's own "Turn Dock hiding on/off" shortcut. Disable that one in System Settings to use Portside's.
+- `WindowRegistry` uses public Accessibility only (`AXObserver`, `AXUIElementCopyMultipleAttributeValues`, 0.25s messaging timeouts) and never asks for the permission: without it, apps still list in recent order with no windows. App launch, quit, activation and hide come from the existing `RunningApps` workspace observers (`RunningApps.onEvent`), not new ones. Every AX call runs on a serial lane per app, so a hung app delays only its own windows, and a read gives up on the whole app at its first timeout. Changes during a read queue one more read. Window ids are ephemeral (app pid plus a launch generation plus a serial); a pid seen with a different launch date is a new app, and answers from an earlier launch or from before a revoke are dropped. The registry's observers are its own, on their own thread, and register create, close, title, minimize and focus only; move and resize stay with `WindowFitter`, which is unchanged. There is no CG window number: the public AX API does not give one.
 - Reserved space uses public Accessibility only (`AXObserver`, `AXUIElementSetAttributeValue`), active while hiding is off and Accessibility is granted. No app can shrink `visibleFrame` for others, so windows land under the dock first and are fitted after they settle (60ms, or 300ms after an animation or a re-fit: macOS re-applies Window > Fill's frame for 150 to 300ms after its last event). AX calls block on the target app, so observers run on their own thread and fitting on a serial queue with 0.25s AX timeouts; the reveal path never waits on another app. A window that resets its size three times in 2s, or refuses the frame twice, is left alone. When the reservation changes, windows flush with the old dock edge follow it (new depth on the same edge, otherwise the `visibleFrame` edge) and windows flush with the screen edge are fitted; on quit (including SIGTERM/SIGINT/SIGHUP) fitted windows are released synchronously so no dead band is left behind.
 
 ## Project layout
@@ -64,6 +65,8 @@ Sources/portside/
   Core/Modules/PortsideCoreModule.swift  The always-on (required) `portside` module; provides Open Settings
   Core/Modules/ModuleSettings.swift  The `modules` object in dock.json, kept as raw JSON so unknown modules and nested keys round-trip; optional modules default off
   Core/Modules/IntegrationSettings.swift  State and actions behind Settings > Integrations: module rows, permission rows (live, never requested on read), restricted work-Mac preset
+  Core/Windows/WindowRegistry.swift  Shared app and window snapshots (ephemeral ids, titles, focus, display, recent order), fed by RunningApps events; idle until a feature adds a client; app-only without Accessibility
+  Core/Windows/AXWindowSource.swift  Accessibility window reads and create/close/title/minimize/focus observers for the registry, off the main thread; production wiring (`WindowRegistry.live`)
   AppActivity.swift         Per-app activity icons: mic, camera, audio (CoreAudio/CoreMediaIO listeners), Working (CPU sampler)
   ThinkingLoader.swift      Snake-box / pulsing-dot thinking loaders and compact notch audio bars
   TileActions.swift         Modifier clicks (Cmd, Option) and the AppKit tile menu with Force Quit
@@ -110,6 +113,7 @@ Sources/portside/
   AgentNotchSettingsView.swift Settings > Agent Notch pane, presets and live preview
   IntegrationsSettingsView.swift Settings > Integrations pane: modules, permissions with reasons and fallbacks, restricted mode
   AgentNotchProbe.swift     Debug only: `--check-notch` and `--render-notch-previews`
+  WindowRegistryProbe.swift Debug only: `--check-windows`, runs the live registry for up to 3s and prints counts (no names or titles)
   UpdateMonitor.swift       Optional daily release discovery, system notifications and menu bar update offer
   UpdateChecker.swift       Update check + in-place install (GitHub release DMG vs AppInfo.version)
   WidgetProtocol.swift      Widget plugin protocol, sizes, and the shared spacing rule (WidgetLayout, EvenRow)

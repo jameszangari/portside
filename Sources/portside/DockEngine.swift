@@ -39,6 +39,9 @@ final class DockEngine {
     let reservation = DockReservation()
     /// Fits other apps' windows clear of the reservation.
     private let windowFitter = WindowFitter()
+    /// Shared app and window snapshots for 2.0 features. Idle until a
+    /// feature adds a client.
+    let windowRegistry: WindowRegistry
     private var reservationUpdateQueued = false
     private var reservationObservers: [NSObjectProtocol] = []
     private var reservationSubscriptions: [AnyCancellable] = []
@@ -106,6 +109,7 @@ final class DockEngine {
             if let quit = PinnedApp(runningApp: app) { dockModel?.noteAppQuit(quit) }
         }
         self.runningApps = runningApps
+        self.windowRegistry = MainActor.assumeIsolated { WindowRegistry.live(runningApps: runningApps) }
         self.widgets = WidgetStore(dockModel: dockModel)
         self.layout = DockLayout()
         self.hover = DockHover(overlay: OverlayPanel())

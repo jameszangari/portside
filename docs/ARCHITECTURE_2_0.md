@@ -25,7 +25,7 @@ New files may live under `Core/Commands`, `Core/Windows`, `Core/Modules`, `Core/
 | Service | Owns | Must not own |
 | --- | --- | --- |
 | `CommandRegistry` | Stable namespaced command IDs; typed input/output schema; availability; search metadata; risk/scope; cancellation; native handlers | UI, raw model prompts, unrestricted shell execution |
-| `WindowRegistry` | App/window snapshots, ephemeral identity, MRU and display association; bounded AX observation | Reveal timing, persistent claims that a CG window number identifies the same window forever |
+| `WindowRegistry` (built, P2-CORE-06) | App/window snapshots, ephemeral identity, MRU and display association; bounded AX observation | Reveal timing, persistent claims that a CG window number identifies the same window forever, moving or fitting windows |
 | `ModuleRegistry` | Capability declarations, enabled state, dependency readiness, start/stop, subscription lifetime | Another Dock coordinator or duplicate widget refresh loops |
 | `PermissionGate` | OS permission observations, module/data scopes, execution approval, denial reason | Granting TCC, overriding MDM, treating saved consent as current OS permission |
 | `IntelligenceEngine` | Deterministic-vs-model routing, context minimization, typed intent proposals | Executing model output directly |
