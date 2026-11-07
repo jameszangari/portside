@@ -11,6 +11,7 @@ final class PortsideCoreModule: PortsideModule {
     let id = PortsideCoreModule.moduleID
     let title = "Portside"
     let isRequired = true
+    let summary = "The dock, Settings and Portside's built-in commands. Always on."
 
     private let isStarting: () -> Bool
     private let openSettings: () -> Void

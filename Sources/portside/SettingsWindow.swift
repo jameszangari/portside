@@ -28,6 +28,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let badges: DockBadges
     private let nativeDock: NativeDockController
     private let widgets: WidgetStore
+    private let integrations: IntegrationSettings
     /// Read from the system each time the window opens.
     private let launchAtLogin = LaunchAtLogin()
     private var window: NSWindow?
@@ -42,8 +43,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// there, a reservation change re-centers it; once moved, it stays put.
     private var placedTopLeft: NSPoint?
 
-    init(dockModel: DockModel, layout: DockLayout, nativeDock: NativeDockController, trash: TrashController, badges: DockBadges, widgets: WidgetStore) {
+    init(dockModel: DockModel, layout: DockLayout, nativeDock: NativeDockController, trash: TrashController, badges: DockBadges, widgets: WidgetStore, integrations: IntegrationSettings) {
         self.widgets = widgets
+        self.integrations = integrations
         self.dockModel = dockModel
         self.layout = layout
         self.nativeDock = nativeDock
@@ -126,7 +128,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private func makeWindow() -> NSWindow {
         let hosting = NSHostingController(rootView: SettingsView(
             dockModel: dockModel, layout: layout, nativeDock: nativeDock,
-            launchAtLogin: launchAtLogin, trash: trash, badges: badges, widgets: widgets
+            launchAtLogin: launchAtLogin, trash: trash, badges: badges, widgets: widgets,
+            integrations: integrations
         ))
         // Fixed size, like System Settings: panes scroll instead of growing
         // the window. The toolbar carries the pane title.
@@ -281,7 +284,7 @@ extension Text {
 // MARK: - Root
 
 private enum SettingsTab: String, CaseIterable, Identifiable {
-    case dock, appearance, widgets, groups, notch, general
+    case dock, appearance, widgets, groups, notch, integrations, general
 
     var id: String { rawValue }
 
@@ -292,6 +295,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .widgets: "Widgets"
         case .groups: "Groups"
         case .notch: "Agent Notch"
+        case .integrations: "Integrations"
         case .general: "General"
         }
     }
@@ -303,6 +307,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .widgets: "square.grid.2x2"
         case .groups: "folder"
         case .notch: "macbook.gen2"
+        case .integrations: "puzzlepiece.extension"
         case .general: "gearshape"
         }
     }
@@ -319,6 +324,7 @@ struct SettingsView: View {
     let trash: TrashController
     @ObservedObject var badges: DockBadges
     let widgets: WidgetStore
+    let integrations: IntegrationSettings
 
     @State private var tab: SettingsTab = Self.initialTab
 
@@ -345,6 +351,7 @@ struct SettingsView: View {
                 case .widgets: WidgetSettings(dockModel: dockModel, widgets: widgets)
                 case .groups: GroupSettings(dockModel: dockModel)
                 case .notch: AgentNotchSettingsView(model: dockModel)
+                case .integrations: IntegrationsSettingsView(integrations: integrations)
                 case .general: GeneralSettings(dockModel: dockModel, layout: layout, nativeDock: nativeDock, launchAtLogin: launchAtLogin)
                 }
             }

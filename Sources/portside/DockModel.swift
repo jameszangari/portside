@@ -698,6 +698,17 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    /// Restricted work-Mac preset: sensitive optional modules stay off, at
+    /// launch and in Settings, while this is on. Turning it off enables
+    /// nothing. Import and Undo Import leave it alone.
+    @Published private(set) var restrictedMode = false
+
+    func setRestrictedMode(_ on: Bool) {
+        guard on != restrictedMode else { return }
+        restrictedMode = on
+        persist()
+    }
+
     /// dock.json layout version, separate from `savedByVersion`. 0 is a file
     /// from before the key existed. Bump it only with a migration step, a
     /// fixture and a DATA.md note.
@@ -1044,7 +1055,7 @@ final class DockModel: Codable, ObservableObject {
         /// App version that last wrote the file. Lets a downgrade back the file up first.
         case savedByVersion
         /// Layout version of the file, see `settingsSchema`.
-        case settingsSchema, modules
+        case settingsSchema, modules, restrictedMode
         case revealDelay, hideDelay, animationDuration, iconSize, iconGap, magnificationEnabled, magnifiedSize, edge, entries, widgetKinds
         case autoHide, reserveSpace, openGroupsOnHover, groupHoverDelay, groupHoverCloseGrace
         case animateOpeningApplications
@@ -1067,6 +1078,7 @@ final class DockModel: Codable, ObservableObject {
         loadedSchema = max(c.value(.settingsSchema, or: 0), 0)
         // Any JSON reads, so a malformed value is kept and treated as no choices.
         modules = c.value(.modules, or: ModuleSettings())
+        restrictedMode = c.value(.restrictedMode, or: false)
         revealDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .revealDelay) ?? Defaults.revealDelay, to: Self.revealDelayRange)
         hideDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .hideDelay) ?? Defaults.hideDelay, to: Self.hideDelayRange)
         animationDuration = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .animationDuration) ?? Defaults.animationDuration, to: Self.animationDurationRange)
@@ -1145,6 +1157,7 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(AppInfo.version, forKey: .savedByVersion)
         try c.encode(max(Self.settingsSchema, loadedSchema), forKey: .settingsSchema)
         if !modules.isEmpty { try c.encode(modules, forKey: .modules) }
+        if restrictedMode { try c.encode(restrictedMode, forKey: .restrictedMode) }
         try c.encode(revealDelay, forKey: .revealDelay)
         try c.encode(hideDelay, forKey: .hideDelay)
         try c.encode(animationDuration, forKey: .animationDuration)

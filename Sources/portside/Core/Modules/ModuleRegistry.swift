@@ -41,6 +41,14 @@ protocol PortsideModule: AnyObject {
     /// Core Portside behavior that always runs. Optional modules (the
     /// default) start off and run only when saved settings turn them on.
     var isRequired: Bool { get }
+    /// Settings copy: what the module does, and what still works while it
+    /// is off or waiting.
+    var summary: String { get }
+    var fallback: String { get }
+    /// Turned off and kept off by the restricted work-Mac preset (scripts,
+    /// capture, hooks, external runtimes, indexing, interception). Optional
+    /// modules count as sensitive unless they say otherwise.
+    var isSensitive: Bool { get }
     var dependencies: [ModuleDependency] { get }
     /// Commands in this module's namespace. Registered once with the module
     /// and unavailable whenever it is not running.
@@ -51,6 +59,9 @@ protocol PortsideModule: AnyObject {
 
 extension PortsideModule {
     var isRequired: Bool { false }
+    var summary: String { "" }
+    var fallback: String { "" }
+    var isSensitive: Bool { !isRequired }
     var dependencies: [ModuleDependency] { [] }
     func commands() -> [CommandDescriptor] { [] }
     func stop() {}
@@ -159,6 +170,9 @@ final class ModuleRegistry {
 
     func state(of id: ModuleID) -> ModuleState? { entries[id]?.state }
 
+    /// Registered modules, in registration order, for Settings.
+    var modules: [any PortsideModule] { order.compactMap { entries[$0]?.module } }
+
     func isEnabled(_ id: ModuleID) -> Bool { entries[id]?.enabled ?? false }
 
     /// Resources held by the running activation; zero when not running.
@@ -188,11 +202,13 @@ final class ModuleRegistry {
 
     /// Launch path: enables required modules and the optional ones `settings`
     /// turned on. Everything else stays off. Saved choices for modules that
-    /// are not registered are ignored here and kept in the settings.
-    func enableSaved(_ settings: ModuleSettings) {
+    /// are not registered are ignored here and kept in the settings. With
+    /// `restricted`, sensitive optional modules stay off whatever is saved.
+    func enableSaved(_ settings: ModuleSettings, restricted: Bool = false) {
         for id in order {
             guard let entry = entries[id],
-                  settings.isEnabled(id, required: entry.module.isRequired) else { continue }
+                  settings.isEnabled(id, required: entry.module.isRequired),
+                  !(restricted && !entry.module.isRequired && entry.module.isSensitive) else { continue }
             enable(id)
         }
     }
