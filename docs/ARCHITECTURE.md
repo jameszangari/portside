@@ -60,6 +60,8 @@ Sources/portside/
   AudioPlaybackProbe.swift  Debug synthetic-stream and playback-gate verification
   Core/Commands/CommandRegistry.swift  Typed command descriptors and one main-actor executor (validate input, availability reason, cancellation); Open Settings is the first command
   Core/Permissions/PermissionGate.swift  Permission scopes (Accessibility, app-level), observe-only adapters, ticket recheck before a command runs; never prompts at startup
+  Core/Modules/ModuleRegistry.swift  Module enable/disable, dependency states (permission, other module), start/stop with a context that cancels tasks and releases observers; gates module commands
+  Core/Modules/PortsideCoreModule.swift  The always-on `portside` module; provides Open Settings
   AppActivity.swift         Per-app activity icons: mic, camera, audio (CoreAudio/CoreMediaIO listeners), Working (CPU sampler)
   ThinkingLoader.swift      Snake-box / pulsing-dot thinking loaders and compact notch audio bars
   TileActions.swift         Modifier clicks (Cmd, Option) and the AppKit tile menu with Force Quit
