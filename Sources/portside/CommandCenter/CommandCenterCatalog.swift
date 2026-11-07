@@ -31,16 +31,19 @@ struct CommandCenterSources {
     var runningApps: @MainActor () -> [CommandCenterApp] = { [] }
     var history: CommandCenterHistory?
     var now: () -> Date = Date.init
+    /// Listener snapshot for server rows; nil leaves only the status row.
+    var servers: LocalServerStore?
 }
 
 /// Builds the snapshot Command Center opens with: registry commands without
-/// input, Settings panes, quicklinks and apps. Each provider gets its own
+/// input, Settings panes, quicklinks, apps and local servers. Each provider gets its own
 /// result ID prefix (see `CommandCenterResultID`), and every row runs a
 /// registry command, so availability and permissions come from the registry.
 @MainActor
 enum CommandCenterCatalog {
     static func items(registry: CommandRegistry, moduleTitle: (String) -> String?, sources: CommandCenterSources) -> [CommandCenterItem] {
-        var items = commandItems(registry.descriptors, moduleTitle: moduleTitle)
+        // The refresh command is the Local Servers status row instead.
+        var items = commandItems(registry.descriptors.filter { $0.id != LocalServersModule.refreshCommand }, moduleTitle: moduleTitle)
         items += settingsItems(openPane: registry.descriptor(for: PortsideCoreModule.openSettingsPaneCommand))
         items += quicklinkItems(sources.quicklinks(), open: registry.descriptor(for: CommandCenterModule.openQuicklinkCommand))
         items += applicationItems(
@@ -48,6 +51,7 @@ enum CommandCenterCatalog {
             running: sources.runningApps(),
             open: registry.descriptor(for: CommandCenterModule.openAppCommand)
         )
+        items += serverItems(sources.servers, registry: registry, moduleTitle: moduleTitle)
         guard let history = sources.history, !history.isEmpty else { return items }
         let now = sources.now()
         return items.map { item in

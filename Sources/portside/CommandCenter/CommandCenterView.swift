@@ -19,16 +19,22 @@ struct CommandCenterView: View {
             footer
         }
         .frame(width: CommandCenterLayout.width)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: CommandCenterLayout.cornerRadius, style: .continuous))
+        // Drawn over the glass, not as part of its content, so opening the
+        // Action Panel does not change how the window's glass reads.
         .overlay(alignment: .bottomTrailing) {
             if state.actionPanel != nil {
+                // Capped 8 pt under the header so it never covers the search
+                // field; a long action list scrolls instead of growing the window.
                 CommandCenterActionPanel(center: center)
+                    .padding(.top, 60)
                     .padding(.trailing, 10)
                     .padding(.bottom, 40)
+                    .frame(maxHeight: .infinity, alignment: .bottomTrailing)
                     .transition(reduceMotion ? .identity : .opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing)))
             }
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: state.actionPanel != nil)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: CommandCenterLayout.cornerRadius, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Command Center")
     }
@@ -88,7 +94,7 @@ struct CommandCenterView: View {
         }
     }
 
-    /// Tall enough for the Action Panel to fit above the footer.
+    /// Tall enough for a short Action Panel to fit above the footer.
     private static let minContentHeight: CGFloat = 176
 
     private var results: some View {
@@ -121,8 +127,8 @@ struct CommandCenterView: View {
     private var footer: some View {
         HStack(spacing: 8) {
             if let notice = state.notice {
-                Image(systemName: notice.kind == .canceled ? "xmark.circle" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(notice.kind == .canceled ? Color.secondary : Color.orange)
+                Image(systemName: Self.symbol(notice.kind))
+                    .foregroundStyle(notice.kind == .canceled || notice.kind == .succeeded ? Color.secondary : Color.orange)
                     .accessibilityHidden(true)
                 Text(notice.message)
                     .lineLimit(1)
@@ -153,6 +159,14 @@ struct CommandCenterView: View {
         .frame(height: 34)
         .accessibilityElement(children: .contain)
     }
+
+    private static func symbol(_ kind: CommandCenterNotice.Kind) -> String {
+        switch kind {
+        case .canceled: return "xmark.circle"
+        case .succeeded: return "checkmark.circle"
+        case .unavailable, .failed: return "exclamationmark.triangle.fill"
+        }
+    }
 }
 
 // MARK: - Rows
@@ -170,11 +184,12 @@ private struct CommandCenterRow: View {
                     Text(item.title)
                         .font(.system(size: 13))
                         .foregroundStyle(item.unavailableReason == nil ? .primary : .secondary)
-                    if let reason = item.unavailableReason {
-                        Text(reason)
+                    if let line = item.unavailableReason ?? item.detail {
+                        Text(line)
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                            .truncationMode(.tail)
                     }
                 }
                 Spacer(minLength: 8)
@@ -195,7 +210,7 @@ private struct CommandCenterRow: View {
         .focusable(false)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(item.title)
-        .accessibilityValue(item.unavailableReason.map { "Unavailable. \($0)" } ?? item.subtitle)
+        .accessibilityValue(item.unavailableReason.map { "Unavailable. \($0)" } ?? [item.detail, item.subtitle].compactMap { $0 }.joined(separator: ". "))
         .accessibilityHint(item.unavailableReason == nil ? item.primaryTitle : "")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
@@ -264,49 +279,23 @@ private struct CommandCenterActionPanel: View {
     @ObservedObject var center: CommandCenter
 
     var body: some View {
-        let state = center.state
         VStack(spacing: 0) {
-            VStack(spacing: 0) {
-                ForEach(state.visibleActions) { action in
-                    Button { center.send(.performAction(action.kind)) } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: action.symbolName)
-                                .frame(width: 18)
-                                .foregroundStyle(.secondary)
-                            Text(action.title)
-                                .foregroundStyle(action.disabledReason == nil ? .primary : .secondary)
-                            Spacer(minLength: 8)
-                            if let shortcut = action.shortcut {
-                                Text(shortcut).foregroundStyle(.secondary)
-                            }
+            // The list at its own height when it fits, otherwise scrolling
+            // with the highlighted action kept in view.
+            ViewThatFits(in: .vertical) {
+                list
+                ScrollViewReader { proxy in
+                    ScrollView { list }
+                        .onChange(of: center.state.actionPanel?.highlight) { _, highlight in
+                            guard let highlight else { return }
+                            proxy.scrollTo(highlight)
                         }
-                        .font(.system(size: 13))
-                        .padding(.horizontal, 8)
-                        .frame(height: 30)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(action.kind == state.actionPanel?.highlight ? Color.primary.opacity(0.1) : .clear)
-                        )
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .focusable(false)
-                    .accessibilityLabel(action.title)
-                    .accessibilityValue(action.disabledReason.map { "Unavailable. \($0)" } ?? "")
-                    .accessibilityAddTraits(action.kind == state.actionPanel?.highlight ? [.isButton, .isSelected] : .isButton)
-                }
-                if state.visibleActions.isEmpty {
-                    Text("No matching actions")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 30)
                 }
             }
-            .padding(6)
             Divider()
             CommandCenterTextField(
                 placeholder: "Search actions",
-                text: state.actionPanel?.query ?? "",
+                text: center.state.actionPanel?.query ?? "",
                 fontSize: 13,
                 onChange: { center.send(.actionQuery($0)) },
                 onCreate: { center.actionField = $0 }
@@ -321,6 +310,48 @@ private struct CommandCenterActionPanel: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Actions")
     }
+
+    private var list: some View {
+        let state = center.state
+        return VStack(spacing: 0) {
+            ForEach(state.visibleActions) { action in
+                Button { center.send(.performAction(action.kind)) } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: action.symbolName)
+                            .frame(width: 18)
+                            .foregroundStyle(.secondary)
+                        Text(action.title)
+                            .foregroundStyle(action.disabledReason == nil ? .primary : .secondary)
+                        Spacer(minLength: 8)
+                        if let shortcut = action.shortcut {
+                            Text(shortcut).foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.system(size: 13))
+                    .padding(.horizontal, 8)
+                    .frame(height: 30)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(action.kind == state.actionPanel?.highlight ? Color.primary.opacity(0.1) : .clear)
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .accessibilityLabel(action.title)
+                .accessibilityValue(action.disabledReason.map { "Unavailable. \($0)" } ?? "")
+                .accessibilityAddTraits(action.kind == state.actionPanel?.highlight ? [.isButton, .isSelected] : .isButton)
+                .id(action.kind)
+            }
+            if state.visibleActions.isEmpty {
+                Text("No matching actions")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 30)
+            }
+        }
+        .padding(6)
+    }
 }
 
 // MARK: - Details screen
@@ -330,7 +361,13 @@ private struct CommandCenterDetails: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let item {
+            if let item, !item.facts.isEmpty {
+                // A server card: what the listing said, nothing guessed.
+                ForEach(Array(item.facts.enumerated()), id: \.offset) { _, fact in
+                    row(fact.label, fact.value)
+                }
+                if let reason = item.unavailableReason { row("Status", "Unavailable. \(reason)") }
+            } else if let item {
                 row("Status", item.unavailableReason.map { "Unavailable. \($0)" } ?? "Available")
                 row(item.kind == .command ? "Module" : "Kind", item.subtitle)
                 row("Result ID", item.id.rawValue)
