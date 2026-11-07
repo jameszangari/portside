@@ -686,6 +686,27 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    // MARK: - Modules
+
+    /// Saved module choices (`modules` in dock.json). Optional modules stay
+    /// off until turned on here; unknown modules and keys are kept as read.
+    @Published private(set) var modules = ModuleSettings()
+
+    func setModuleEnabled(_ id: ModuleID, _ enabled: Bool) {
+        guard modules.savedEnabled(id) != enabled else { return }
+        modules.setEnabled(enabled, for: id)
+        persist()
+    }
+
+    /// dock.json layout version, separate from `savedByVersion`. 0 is a file
+    /// from before the key existed. Bump it only with a migration step, a
+    /// fixture and a DATA.md note.
+    static let settingsSchema = 1
+
+    /// Schema of the file this model was read from. A newer one is written
+    /// back unchanged, so this build never claims to have migrated it down.
+    private var loadedSchema = DockModel.settingsSchema
+
     // MARK: - Groups on hover
 
     /// Open a group's grid by hovering its tile (after `groupHoverDelay`).
@@ -1022,6 +1043,8 @@ final class DockModel: Codable, ObservableObject {
     private enum CodingKeys: String, CodingKey, CaseIterable {
         /// App version that last wrote the file. Lets a downgrade back the file up first.
         case savedByVersion
+        /// Layout version of the file, see `settingsSchema`.
+        case settingsSchema, modules
         case revealDelay, hideDelay, animationDuration, iconSize, iconGap, magnificationEnabled, magnifiedSize, edge, entries, widgetKinds
         case autoHide, reserveSpace, openGroupsOnHover, groupHoverDelay, groupHoverCloseGrace
         case animateOpeningApplications
@@ -1041,6 +1064,9 @@ final class DockModel: Codable, ObservableObject {
 
     required init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        loadedSchema = max(c.value(.settingsSchema, or: 0), 0)
+        // Any JSON reads, so a malformed value is kept and treated as no choices.
+        modules = c.value(.modules, or: ModuleSettings())
         revealDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .revealDelay) ?? Defaults.revealDelay, to: Self.revealDelayRange)
         hideDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .hideDelay) ?? Defaults.hideDelay, to: Self.hideDelayRange)
         animationDuration = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .animationDuration) ?? Defaults.animationDuration, to: Self.animationDurationRange)
@@ -1117,6 +1143,8 @@ final class DockModel: Codable, ObservableObject {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(AppInfo.version, forKey: .savedByVersion)
+        try c.encode(max(Self.settingsSchema, loadedSchema), forKey: .settingsSchema)
+        if !modules.isEmpty { try c.encode(modules, forKey: .modules) }
         try c.encode(revealDelay, forKey: .revealDelay)
         try c.encode(hideDelay, forKey: .hideDelay)
         try c.encode(animationDuration, forKey: .animationDuration)
@@ -1236,6 +1264,34 @@ final class DockModel: Codable, ObservableObject {
         }
     }
 
+    private struct SchemaProbe: Decodable { var settingsSchema: Int? }
+
+    /// Schema of a raw file: 0 when the key is missing or not an integer.
+    static func schema(of data: Data) -> Int {
+        max(((try? JSONDecoder().decode(SchemaProbe.self, from: data))?.settingsSchema) ?? 0, 0)
+    }
+
+    /// A readable file from another schema is copied aside once before this
+    /// build can save over it: `dock.json.schema-<n>` for an older one (the
+    /// rollback copy), `dock.json.from-schema-<n>` for a newer one. An
+    /// existing copy is never replaced, so the first original survives.
+    @discardableResult
+    static func backUpForSchemaChange(_ data: Data, in directory: URL) -> URL? {
+        let schema = schema(of: data)
+        guard schema != settingsSchema else { return nil }
+        let name = schema < settingsSchema ? "dock.json.schema-\(schema)" : "dock.json.from-schema-\(schema)"
+        let backup = directory.appendingPathComponent(name)
+        guard !FileManager.default.fileExists(atPath: backup.path) else { return nil }
+        do {
+            try data.write(to: backup, options: .withoutOverwriting)
+            logger.info("dock.json schema \(schema) differs from \(settingsSchema); copied to \(name, privacy: .public)")
+            return backup
+        } catch {
+            logger.error("could not back up dock.json before a schema change: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
+
     /// An existing file that fails to decode is moved aside, never overwritten.
     private static func setAsideUnreadable(_ error: Error) {
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
@@ -1264,6 +1320,7 @@ final class DockModel: Codable, ObservableObject {
             backUpIfDowngrading(data)
             do {
                 let model = try JSONDecoder().decode(DockModel.self, from: data)
+                backUpForSchemaChange(data, in: storageURL.deletingLastPathComponent())
                 logger.info("loaded \(model.entries.count) entries (\(model.allPinnedApps.count) apps, \(model.groups.count) groups) from dock.json")
                 return model
             } catch {

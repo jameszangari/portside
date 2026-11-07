@@ -38,6 +38,9 @@ enum ModuleState: Equatable {
 protocol PortsideModule: AnyObject {
     var id: ModuleID { get }
     var title: String { get }
+    /// Core Portside behavior that always runs. Optional modules (the
+    /// default) start off and run only when saved settings turn them on.
+    var isRequired: Bool { get }
     var dependencies: [ModuleDependency] { get }
     /// Commands in this module's namespace. Registered once with the module
     /// and unavailable whenever it is not running.
@@ -47,6 +50,7 @@ protocol PortsideModule: AnyObject {
 }
 
 extension PortsideModule {
+    var isRequired: Bool { false }
     var dependencies: [ModuleDependency] { [] }
     func commands() -> [CommandDescriptor] { [] }
     func stop() {}
@@ -180,6 +184,17 @@ final class ModuleRegistry {
             reconcile()
         }
         return entry.state
+    }
+
+    /// Launch path: enables required modules and the optional ones `settings`
+    /// turned on. Everything else stays off. Saved choices for modules that
+    /// are not registered are ignored here and kept in the settings.
+    func enableSaved(_ settings: ModuleSettings) {
+        for id in order {
+            guard let entry = entries[id],
+                  settings.isEnabled(id, required: entry.module.isRequired) else { continue }
+            enable(id)
+        }
     }
 
     /// Re-reads dependencies after an outside change (a permission granted
