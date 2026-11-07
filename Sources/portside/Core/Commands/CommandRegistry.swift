@@ -52,6 +52,8 @@ struct CommandDescriptor {
     let id: CommandID
     let title: String
     let keywords: [String]
+    /// SF Symbol shown beside the title in Command Center. nil uses a generic one.
+    let symbolName: String?
     let input: CommandInputSchema
     /// nil when the command can run now, otherwise the reason it cannot.
     let unavailableReason: () -> String?
@@ -65,6 +67,7 @@ struct CommandDescriptor {
         id: CommandID,
         title: String,
         keywords: [String] = [],
+        symbolName: String? = nil,
         input: CommandInputSchema = .none,
         unavailableReason: @escaping () -> String? = { nil },
         requiredPermissions: [PermissionScope] = [],
@@ -73,6 +76,7 @@ struct CommandDescriptor {
         self.id = id
         self.title = title
         self.keywords = keywords
+        self.symbolName = symbolName
         self.input = input
         self.unavailableReason = unavailableReason
         self.requiredPermissions = requiredPermissions

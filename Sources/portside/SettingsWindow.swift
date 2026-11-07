@@ -902,6 +902,20 @@ private struct GeneralSettings: View {
     @State private var canUndoImport = DockModel.hasBeforeImport
     @State private var importStatus: String?
     @State private var otherCopies: [InstalledCopy] = []
+    @ObservedObject private var commandCenterStatus = CommandCenterStatus.shared
+
+    /// Why the Command Center shortcut may not fire: a Portside or enabled
+    /// macOS shortcut on the same keys, or macOS refusing the registration.
+    /// Read only; nothing here changes another shortcut.
+    private var commandCenterWarning: String? {
+        guard let chord = dockModel.commandCenterHotkey else { return nil }
+        let portside: [(name: String, chord: HotkeyChord?)] = [
+            ("Open Settings", dockModel.settingsHotkey),
+            ("dock hiding", .dockHiding),
+        ]
+        return HotkeyConflicts.conflict(for: chord, system: HotkeyConflicts.systemHotkeys(), portside: portside)
+            ?? (commandCenterStatus.isEnabled ? commandCenterStatus.hotkeyFailure : nil)
+    }
 
     /// Import clamps the native icon size to what fits, like the slider.
     private var maxIconSize: CGFloat {
@@ -925,10 +939,25 @@ private struct GeneralSettings: View {
                     defaultChord: .settingsDefault,
                     onChange: { dockModel.setSettingsHotkey($0) }
                 )
+                HotkeyRecorderButton(
+                    title: "Command Center",
+                    chord: dockModel.commandCenterHotkey,
+                    defaultChord: .commandCenterDefault,
+                    onChange: { dockModel.setCommandCenterHotkey($0) }
+                )
+                if !commandCenterStatus.isEnabled {
+                    Text("Command Center is off. Turn it on in Integrations.").helperStyle()
+                } else if let warning = commandCenterWarning {
+                    Label {
+                        Text(warning).helperStyle()
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    }
+                }
             } header: {
                 Text("Keyboard")
             } footer: {
-                Text("Opens Settings from any app. Default ⌘⇧D. The menu bar Settings… item always uses ⌘,.")
+                Text("Open Settings works from any app. Default ⌘⇧D. The menu bar Settings… item always uses ⌘,. Command Center searches Portside's commands. Default ⌥Space; while it is on it is also in the menu bar menu.")
                     .footerStyle()
             }
 

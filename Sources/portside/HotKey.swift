@@ -14,7 +14,8 @@ final class HotKey {
     private var ref: EventHotKeyRef?
     private let id: UInt32
     private let action: () -> Void
-    private static var handlers: [UInt32: HotKey] = [:]
+    /// Weak, so dropping the last reference runs `deinit` and unregisters.
+    private static var handlers: [UInt32: WeakHotKey] = [:]
     private static var eventHandler: EventHandlerRef?
     private static var nextID: UInt32 = 1
     private static let logger = Logger(subsystem: "com.james.portside", category: "HotKey")
@@ -33,7 +34,7 @@ final class HotKey {
             HotKey.logger.error("hotkey \(name, privacy: .public) not registered (status \(status))")
             return nil
         }
-        HotKey.handlers[id] = self
+        HotKey.handlers[id] = WeakHotKey(value: self)
         HotKey.logger.info("hotkey \(name, privacy: .public) registered")
     }
 
@@ -53,7 +54,7 @@ final class HotKey {
             var hotKeyID = EventHotKeyID()
             let read = GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
                                          nil, MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID)
-            guard read == noErr, let hotKey = HotKey.handlers[hotKeyID.id] else { return OSStatus(eventNotHandledErr) }
+            guard read == noErr, let hotKey = HotKey.handlers[hotKeyID.id]?.value else { return OSStatus(eventNotHandledErr) }
             DispatchQueue.main.async { hotKey.action() }
             return noErr
         }, 1, &spec, nil, &eventHandler)
@@ -62,6 +63,10 @@ final class HotKey {
         }
         return status == noErr
     }
+}
+
+private struct WeakHotKey {
+    weak var value: HotKey?
 }
 
 // MARK: - Chord
@@ -80,9 +85,24 @@ struct HotkeyChord: Codable, Equatable, Hashable {
         modifiers: UInt32(cmdKey | shiftKey)
     )
 
+    /// The fixed dock hiding shortcut, Command-Option-D, as on the native Dock.
+    static let dockHiding = HotkeyChord(
+        keyCode: UInt32(kVK_ANSI_D),
+        modifiers: UInt32(cmdKey | optionKey)
+    )
+
+    /// Default for Command Center: Option-Space. Spotlight keeps Cmd-Space.
+    static let commandCenterDefault = HotkeyChord(
+        keyCode: UInt32(kVK_Space),
+        modifiers: UInt32(optionKey)
+    )
+
     /// At least Command or Control, so a bare letter never becomes a hotkey.
+    /// Option-Space is the one exception: Option alone with a letter types a
+    /// character (Option-E, Option-U), Space does not.
     var isRegisterable: Bool {
         modifiers & UInt32(cmdKey | controlKey) != 0
+            || (keyCode == UInt32(kVK_Space) && modifiers & UInt32(optionKey) != 0)
     }
 
     /// Symbols macOS shows in menus: ⌃⌥⇧⌘ plus the key.
@@ -97,7 +117,7 @@ struct HotkeyChord: Codable, Equatable, Hashable {
     }
 
     /// Build from a key-down event. Returns nil for Escape, bare modifiers,
-    /// or chords without Command/Control.
+    /// or chords that are not `isRegisterable`.
     static func from(event: NSEvent) -> HotkeyChord? {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         // Modifier-only presses have empty characters and a modifier keyCode.

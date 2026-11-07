@@ -327,6 +327,22 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    /// Global shortcut that opens Command Center. Nil means none is
+    /// registered. Default is Option-Space (`HotkeyChord.commandCenterDefault`).
+    @Published private(set) var commandCenterHotkey: HotkeyChord? = .commandCenterDefault
+
+    func setCommandCenterHotkey(_ chord: HotkeyChord?) {
+        let next: HotkeyChord?
+        if let chord {
+            next = chord.isRegisterable ? chord : commandCenterHotkey
+        } else {
+            next = nil
+        }
+        guard next != commandCenterHotkey else { return }
+        commandCenterHotkey = next
+        persist()
+    }
+
     // MARK: - Trash
 
     /// "Show Trash in dock": the Trash tile at the far end of the dock.
@@ -1068,7 +1084,7 @@ final class DockModel: Codable, ObservableObject {
         case showIndicators, dimHiddenApps, showRecents, recentApps
         /// Before per-style backgrounds. Read only, for migration.
         case backgroundStyle, backgroundFrost, backgroundTint
-        case settingsHotkey
+        case settingsHotkey, commandCenterHotkey
         /// Before Milestone D: a flat list of apps. Read only, for migration.
         case pinnedApps
     }
@@ -1150,6 +1166,20 @@ final class DockModel: Codable, ObservableObject {
         } else {
             settingsHotkey = .settingsDefault
         }
+        // Same rules as `settingsHotkey`: null is cleared, missing is the default.
+        if c.contains(.commandCenterHotkey) {
+            // A malformed value keeps the default instead of failing the file.
+            do {
+                commandCenterHotkey = try c.decodeIfPresent(HotkeyChord.self, forKey: .commandCenterHotkey)
+            } catch {
+                commandCenterHotkey = .commandCenterDefault
+            }
+            if let chord = commandCenterHotkey, !chord.isRegisterable {
+                commandCenterHotkey = .commandCenterDefault
+            }
+        } else {
+            commandCenterHotkey = .commandCenterDefault
+        }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1206,6 +1236,11 @@ final class DockModel: Codable, ObservableObject {
             try c.encode(settingsHotkey, forKey: .settingsHotkey)
         } else {
             try c.encodeNil(forKey: .settingsHotkey)
+        }
+        if let commandCenterHotkey {
+            try c.encode(commandCenterHotkey, forKey: .commandCenterHotkey)
+        } else {
+            try c.encodeNil(forKey: .commandCenterHotkey)
         }
     }
 
@@ -1454,6 +1489,7 @@ final class DockModel: Codable, ObservableObject {
         showBadges = old.showBadges
         activityIcons = old.activityIcons
         settingsHotkey = old.settingsHotkey
+        commandCenterHotkey = old.commandCenterHotkey
         openGroupsOnHover = old.openGroupsOnHover
         usageClaudeConsent = old.usageClaudeConsent
         usageCopilotConsent = old.usageCopilotConsent
