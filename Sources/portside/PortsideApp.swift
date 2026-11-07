@@ -351,7 +351,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     (self?.dockEngine?.runningApps.apps ?? []).compactMap(CommandCenterApp.init(running:))
                 },
                 history: .shared,
-                servers: localServers
+                servers: localServers,
+                portLookup: PortLookup(router: intelligence)
             )
             let center = CommandCenter(commands: commands, moduleTitle: { [modules] namespace in
                 modules.modules.first { $0.id.rawValue == namespace }?.title

@@ -15,11 +15,13 @@ struct CommandCenterItemAction: Equatable, Sendable {
 }
 
 /// One result row: a registry command, an app, a Settings pane, a
-/// quicklink or a local server. Built from a fresh snapshot each time the
+/// quicklink, a local server or the port lookup. Built from a fresh snapshot each time the
 /// panel opens (see `CommandCenterCatalog`).
 struct CommandCenterItem: Equatable, Identifiable, Sendable {
     enum Kind: String, Equatable, Sendable {
         case command, application, settings, quicklink, server
+        /// The port lookup's status row for the current query.
+        case lookup
     }
 
     let id: CommandCenterResultID
@@ -52,6 +54,12 @@ struct CommandCenterItem: Equatable, Identifiable, Sendable {
     var moreActions: [CommandCenterItemAction] = []
     /// Also matches any server query (a port number, "port", "server").
     var matchesServerQueries = false
+    /// Ranks first for exactly this query (`CommandCenterRanker.answerKey`):
+    /// the port lookup's row and the server cards it found.
+    var answers: String?
+    /// Return replaces the query with this instead of running a command
+    /// (the numeric search a port lookup offers).
+    var queryReplacement: String?
 
     init(
         id: CommandCenterResultID, kind: Kind, title: String, subtitle: String = "", symbolName: String? = nil,
@@ -286,7 +294,7 @@ struct CommandCenterState: Equatable {
                                             disabledReason: item.unavailableReason))
         }
         // A server's copies go through the registry (primary and more actions).
-        if item.kind != .server {
+        if item.kind != .server, item.kind != .lookup {
             list.append(CommandCenterAction(kind: .copyID, title: item.copyTitle, symbolName: "doc.on.doc"))
         }
         return list
@@ -321,15 +329,18 @@ struct CommandCenterState: Equatable {
             return .handled(request.preservesSelection ? [] : [.announce(resultsAnnouncement)])
         case .catalog(let fresh):
             guard isVisible else { return .ignored }
-            // The Local Servers row at the top stands in until servers arrive;
-            // the first match takes the selection then.
-            let placeholder = selection != nil && results.first?.id == selection && selectedItem?.matchesServerQueries == true
+            // The Local Servers or port lookup row at the top stands in until
+            // servers arrive; the first match takes the selection then. A query
+            // whose results have not landed yet keeps its fresh selection too.
+            let placeholder = selection != nil && results.first?.id == selection
+                && (selectedItem?.matchesServerQueries == true || selectedItem?.answers != nil)
+            let queryPending = pendingSearch.map { !$0.preservesSelection } ?? false
             items = fresh
             // A row that vanished mid-session closes its panel or screen.
             if let panel = actionPanel, item(panel.itemID) == nil { actionPanel = nil }
             let kept = stack.filter { item($0.itemID) != nil }
             stack = kept
-            return .handled(search(preservingSelection: !placeholder))
+            return .handled(search(preservingSelection: !placeholder && !queryPending))
         case .actionQuery(let text):
             guard var panel = actionPanel, text != panel.query else { return .ignored }
             panel.query = text
@@ -454,6 +465,13 @@ struct CommandCenterState: Equatable {
             notice = CommandCenterNotice(kind: .unavailable, message: reason)
             return [.announce("\(item.title) is unavailable. \(reason)")]
         }
+        if let replacement = item.queryReplacement {
+            // Search instead of run: the field shows the new query.
+            stack = []
+            query = replacement
+            notice = nil
+            return search(preservingSelection: false) + [.announce("Searching \(replacement).")]
+        }
         notice = nil
         running = id
         runStaysOpen = item.invocation.staysOpen
@@ -502,8 +520,9 @@ struct CommandCenterState: Equatable {
         let title = item(id)?.title ?? id.rawValue
         let staysOpen = runStaysOpen
         runStaysOpen = false
-        // Server rows name one process for one session: never kept in history.
-        let usage: [CommandCenterEffect] = item(id)?.kind == .server ? [] : [.recordUsage(id)]
+        // Server and lookup rows belong to one session: never kept in history.
+        let kind = item(id)?.kind
+        let usage: [CommandCenterEffect] = kind == .server || kind == .lookup ? [] : [.recordUsage(id)]
         switch result {
         case .success(let message) where staysOpen:
             // It updated the panel (a refresh): stay, and say what happened.

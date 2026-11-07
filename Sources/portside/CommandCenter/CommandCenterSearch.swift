@@ -3,9 +3,9 @@ import Foundation
 /// Stable identifier of one Command Center result, unique across providers:
 /// `command:<CommandID>`, `app:<bundle id, lowercased>` (`app:<path>` for an
 /// app without one), `settings:<pane>`, `quicklink:<uuid, lowercased>`,
-/// `server:<port>-<pid>-<start>` (see `LocalServer.key`).
+/// `server:<port>-<pid>-<start>` (see `LocalServer.key`), `lookup:port`.
 /// Selection, the Action Panel, screens and history all key on it. Server
-/// IDs live for one session and are never written to history.
+/// and lookup IDs live for one session and are never written to history.
 struct CommandCenterResultID: Hashable, Comparable, Sendable, CustomStringConvertible {
     let rawValue: String
 
@@ -30,6 +30,8 @@ struct CommandCenterResultID: Hashable, Comparable, Sendable, CustomStringConver
     static func quicklink(_ id: UUID) -> Self { Self(unchecked: "quicklink:\(id.uuidString.lowercased())") }
 
     static func server(_ key: String) -> Self { Self(unchecked: "server:\(key)") }
+
+    static let portLookup = Self(unchecked: "lookup:port")
 
     static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
 
@@ -61,6 +63,8 @@ struct CommandCenterSearchRequest: Equatable, Sendable {
 enum CommandCenterRanker {
     /// Lower is better.
     enum Tier: Int, Comparable {
+        /// The item answers exactly this query (a port lookup and its servers).
+        case answer
         /// The whole title equals the query.
         case exact
         /// The title starts with the query.
@@ -79,7 +83,8 @@ enum CommandCenterRanker {
 
     struct Match: Equatable {
         let tier: Tier
-        /// Fuzzy only: how spread out the letters are. Lower is tighter.
+        /// Fuzzy: how spread out the letters are, lower is tighter. Answer:
+        /// server cards (0) before the lookup row (1).
         var spread = 0
     }
 
@@ -99,8 +104,17 @@ enum CommandCenterRanker {
         words(normalize(query))
     }
 
+    /// The query as an answer key: its terms, space separated, so case,
+    /// accents and punctuation do not start a new lookup.
+    static func answerKey(_ query: String) -> String {
+        terms(query).joined(separator: " ")
+    }
+
     static func match(_ item: CommandCenterItem, terms: [String]) -> Match? {
         guard !terms.isEmpty else { return Match(tier: .exact) }
+        if let answer = item.answers, answer == terms.joined(separator: " ") {
+            return Match(tier: .answer, spread: item.kind == .lookup ? 1 : 0)
+        }
         let title = normalize(item.title)
         let titleWords = words(title)
         let joined = terms.joined(separator: " ")

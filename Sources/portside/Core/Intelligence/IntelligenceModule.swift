@@ -3,16 +3,17 @@ import Foundation
 /// The optional `intelligence` module. Off by default like every optional
 /// module, and sensitive, so the restricted work-Mac preset holds it off.
 /// Running, it activates the router and reads the provider's availability
-/// once; stopping cancels any request and releases the provider. Nothing in
-/// Portside depends on it and it adds no commands yet: search and commands
-/// work the same while it is off.
+/// once; stopping cancels any request and releases the provider. It adds
+/// no commands. Command Center's port lookup asks it to read a port
+/// question; while it is off that lookup offers a numeric search instead,
+/// and search and commands work the same.
 @MainActor
 final class IntelligenceModule: PortsideModule {
     static let moduleID = ModuleID("intelligence")!
 
     let id = IntelligenceModule.moduleID
     let title = "Local Intelligence"
-    let summary = "On-device models only. Portside sends nothing to hosted services, has no cloud fallback, and never downloads a model or starts a runtime."
+    let summary = "Reads port questions such as \"What's using port 5173?\" in Command Center with an on-device model only. Portside sends nothing to hosted services, has no cloud fallback, and never downloads a model or starts a runtime."
     let fallback = "Search, commands and the dock work the same without it."
 
     private let router: ModelRouter

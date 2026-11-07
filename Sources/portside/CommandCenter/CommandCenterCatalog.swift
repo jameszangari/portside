@@ -33,10 +33,12 @@ struct CommandCenterSources {
     var now: () -> Date = Date.init
     /// Listener snapshot for server rows; nil leaves only the status row.
     var servers: LocalServerStore?
+    /// Natural-language and numeric port lookup; nil adds no lookup row.
+    var portLookup: PortLookup?
 }
 
 /// Builds the snapshot Command Center opens with: registry commands without
-/// input, Settings panes, quicklinks, apps and local servers. Each provider gets its own
+/// input, Settings panes, quicklinks, apps, local servers and the port lookup. Each provider gets its own
 /// result ID prefix (see `CommandCenterResultID`), and every row runs a
 /// registry command, so availability and permissions come from the registry.
 @MainActor
@@ -51,7 +53,10 @@ enum CommandCenterCatalog {
             running: sources.runningApps(),
             open: registry.descriptor(for: CommandCenterModule.openAppCommand)
         )
-        items += serverItems(sources.servers, registry: registry, moduleTitle: moduleTitle)
+        items += serverItems(sources.servers, registry: registry, moduleTitle: moduleTitle, answering: answer(sources.portLookup))
+        if let lookup = lookupItem(sources.portLookup, store: sources.servers, refresh: registry.descriptor(for: LocalServersModule.refreshCommand)) {
+            items.append(lookup)
+        }
         guard let history = sources.history, !history.isEmpty else { return items }
         let now = sources.now()
         return items.map { item in
@@ -151,6 +156,12 @@ enum CommandCenterCatalog {
             ))
         }
         return items
+    }
+
+    /// The query a port lookup answers and its port, once there is a port to show.
+    private static func answer(_ lookup: PortLookup?) -> (key: String, port: UInt16)? {
+        guard let state = lookup?.current, case .port(let port, _) = state.phase else { return nil }
+        return (state.key, port)
     }
 
     private static func unavailableReason(_ descriptor: CommandDescriptor?) -> String? {
