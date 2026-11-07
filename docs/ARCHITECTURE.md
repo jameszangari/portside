@@ -78,6 +78,10 @@ Sources/portside/
   CommandCenter/CommandCenterModule.swift  The optional `commandCenter` module (off by default, not sensitive): owns the shortcut and enables the panel only while running; Open Application and Open Quicklink commands with injectable actions
   CommandCenter/CommandCenterView.swift  SwiftUI panel: search field, results with app icons and unavailable reasons, details screen, footer hints, Action Panel
   CommandCenter/HotkeyConflicts.swift  Read-only conflict check (Portside and enabled macOS shortcuts via `CopySymbolicHotKeys`), Command Center hotkey registration and status
+  Core/Intelligence/LocalModelProvider.swift  `LocalModelProvider` protocol (availability, bounded request, cancel, release; on-device or loopback only), request bounds, errors, and the shipped `NoLocalModelProvider` (unsupported, never infers)
+  Core/Intelligence/FakeLocalModelProvider.swift  Deterministic scripted provider for tests and isolated launches (`PORTSIDE_INTELLIGENCE_FAKE`, honored only under a /tmp home); reads and sends nothing
+  Core/Intelligence/ModelRouter.swift  Local-only provider lifecycle and state (disabled, checking, ready, busy, unsupported, unavailable, not ready); one request at a time with use-time availability, deadline, cancel and late-answer drop
+  Core/Intelligence/IntelligenceModule.swift  The optional `intelligence` module (off by default, sensitive): activates the router while running and releases it on stop; Settings status text
   AppActivity.swift         Per-app activity icons: mic, camera, audio (CoreAudio/CoreMediaIO listeners), Working (CPU sampler)
   ThinkingLoader.swift      Snake-box / pulsing-dot thinking loaders and compact notch audio bars
   TileActions.swift         Modifier clicks (Cmd, Option) and the AppKit tile menu with Force Quit

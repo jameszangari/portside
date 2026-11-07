@@ -42,14 +42,18 @@ final class IntegrationSettings: ObservableObject {
     @Published private(set) var permissions: [PermissionRow] = []
     @Published private(set) var restricted = false
 
+    /// Local Intelligence status for its section; nil hides the section.
+    let intelligence: ModelRouter?
+
     private let registry: ModuleRegistry
     private let gate: PermissionGate
     private let model: DockModel
 
-    init(registry: ModuleRegistry, permissions: PermissionGate, model: DockModel) {
+    init(registry: ModuleRegistry, permissions: PermissionGate, model: DockModel, intelligence: ModelRouter? = nil) {
         self.registry = registry
         self.gate = permissions
         self.model = model
+        self.intelligence = intelligence
         reload()
     }
 

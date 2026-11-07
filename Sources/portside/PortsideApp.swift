@@ -275,6 +275,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let permissions = PermissionGate()
     private lazy var commands = CommandRegistry(permissions: permissions)
     private lazy var modules = ModuleRegistry(commands: commands, permissions: permissions)
+    /// No provider ships yet; an isolated launch can pick the fake (see `FakeLocalModelProvider.fromEnvironment`).
+    private let intelligence = ModelRouter(provider: FakeLocalModelProvider.fromEnvironment() ?? NoLocalModelProvider())
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // An SPM executable has no bundle, so LSUIElement in Info.plist is
@@ -357,6 +359,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 try modules.register(core)
                 try modules.register(commandCenterModule)
+                try modules.register(IntelligenceModule(router: intelligence))
                 modules.enableSaved(dockModel.modules, restricted: dockModel.restrictedMode)
             } catch {
                 NSLog("portside: command registration failed: \(error)")
@@ -402,7 +405,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             SettingsWindowController(
                 dockModel: dockModel, layout: dockEngine.layout, nativeDock: nativeDock, trash: dockEngine.trash,
                 badges: dockEngine.badges, widgets: dockEngine.widgets,
-                integrations: IntegrationSettings(registry: modules, permissions: permissions, model: dockModel)
+                integrations: IntegrationSettings(registry: modules, permissions: permissions, model: dockModel, intelligence: intelligence)
             )
         }
         controller.onActivationPolicyChanged = { [weak dockEngine] in dockEngine?.activationPolicyChanged() }
