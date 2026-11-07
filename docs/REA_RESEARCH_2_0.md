@@ -44,7 +44,7 @@ Use observed behavior to inform an independent implementation. Do not commit dec
 
 ## Report template
 
-Create a small report under `docs/research/` when the associated investigation runs. That directory and reports are future artifacts, not existing completed investigations.
+Create a small report under `docs/research/` when the associated investigation runs. Completed so far: [P2-REA-01](research/P2-REA-01-command-center-interaction.md) (docs and metadata only, no runtime journey). Other tickets remain not started.
 
 ```text
 Question and planning ID:
