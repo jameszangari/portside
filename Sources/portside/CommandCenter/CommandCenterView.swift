@@ -19,6 +19,9 @@ struct CommandCenterView: View {
             footer
         }
         .frame(width: CommandCenterLayout.width)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: CommandCenterLayout.cornerRadius, style: .continuous))
+        // Drawn over the glass, not as part of its content, so opening the
+        // Action Panel does not change how the window's glass reads.
         .overlay(alignment: .bottomTrailing) {
             if state.actionPanel != nil {
                 CommandCenterActionPanel(center: center)
@@ -28,7 +31,6 @@ struct CommandCenterView: View {
             }
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: state.actionPanel != nil)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: CommandCenterLayout.cornerRadius, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Command Center")
     }
@@ -78,22 +80,31 @@ struct CommandCenterView: View {
     @ViewBuilder private var content: some View {
         if let screen = state.stack.last {
             CommandCenterDetails(item: state.item(screen.itemID))
-                .frame(minHeight: Self.minContentHeight, alignment: .top)
+                .frame(minHeight: contentMinHeight, alignment: .top)
         } else if state.results.isEmpty {
             Text("No results")
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, minHeight: Self.minContentHeight)
+                .frame(maxWidth: .infinity, minHeight: contentMinHeight)
         } else {
             results
         }
     }
 
-    /// Tall enough for the Action Panel to fit above the footer.
+    /// Tall enough for a short Action Panel to fit above the footer.
     private static let minContentHeight: CGFloat = 176
+
+    /// Grows while the Action Panel is open so it never covers the search
+    /// field. Sized for the item's full action list, so filtering the
+    /// panel does not resize the window.
+    private var contentMinHeight: CGFloat {
+        guard let panel = state.actionPanel, let item = state.item(panel.itemID) else { return Self.minContentHeight }
+        // The panel sits 5 pt above the footer divider; keep 8 pt under the header.
+        return max(Self.minContentHeight, CommandCenterActionPanel.height(rows: state.actions(for: item).count) + 13)
+    }
 
     private var results: some View {
         let rows = min(max(state.results.count, 1), CommandCenterLayout.visibleRows)
-        let height = max(CGFloat(rows) * CommandCenterLayout.rowHeight + 12, Self.minContentHeight)
+        let height = max(CGFloat(rows) * CommandCenterLayout.rowHeight + 12, contentMinHeight)
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
@@ -272,6 +283,14 @@ private struct CommandCenterKeyHint: View {
 private struct CommandCenterActionPanel: View {
     @ObservedObject var center: CommandCenter
 
+    static let rowHeight: CGFloat = 30
+    static let fieldHeight: CGFloat = 34
+
+    /// Rows, list padding, divider and filter field.
+    static func height(rows: Int) -> CGFloat {
+        CGFloat(max(rows, 1)) * rowHeight + 12 + 1 + fieldHeight
+    }
+
     var body: some View {
         let state = center.state
         VStack(spacing: 0) {
@@ -291,7 +310,7 @@ private struct CommandCenterActionPanel: View {
                         }
                         .font(.system(size: 13))
                         .padding(.horizontal, 8)
-                        .frame(height: 30)
+                        .frame(height: Self.rowHeight)
                         .background(
                             RoundedRectangle(cornerRadius: 7, style: .continuous)
                                 .fill(action.kind == state.actionPanel?.highlight ? Color.primary.opacity(0.1) : .clear)
@@ -321,7 +340,7 @@ private struct CommandCenterActionPanel: View {
                 onCreate: { center.actionField = $0 }
             )
             .padding(.horizontal, 12)
-            .frame(height: 34)
+            .frame(height: Self.fieldHeight)
         }
         .frame(width: 280)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
