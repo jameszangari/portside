@@ -33,6 +33,7 @@ How Portside is put together. See also [PLAN.md](PLAN.md) for the original miles
 - The system's Cmd+Option+D shortcut toggles the native Dock's auto-hide. While Portside hides the native Dock, it makes the native Dock appear until restore.
 - Opening Settings turns Portside into a regular app (visible in Cmd+Tab and the native Dock) until the window closes. It activates with `activate(ignoringOtherApps:)`: plain `activate()` straight after `setActivationPolicy(.regular)` was dropped, and Portside then sat last in Cmd+Tab (measured with `lsappinfo visibleProcessList`). While Settings is the key window, auto-hide is suppressed so the strip stays visible; the saved preference is unchanged.
 - Cmd+Option+D may conflict with the system's own "Turn Dock hiding on/off" shortcut. Disable that one in System Settings to use Portside's.
+- Command Center uses public APIs only. The shortcut is Carbon `RegisterEventHotKey` (no Accessibility or Input Monitoring); `HotKey` keeps its handlers weakly so releasing one unregisters it (before CMD-01 a cleared or changed Settings shortcut stayed registered). Conflicts are read, never changed: Portside's own chords, then `CopySymbolicHotKeys` (public HIToolbox; modifiers are Carbon flags, checked on macOS 27.0.1) for enabled macOS shortcuts such as Spotlight's ⌘Space, plus Carbon refusing a chord another app holds (`eventHotKeyExistsErr`). The panel is a borderless `.nonactivatingPanel` that can become key but never main, so the frontmost app stays active and Portside does not activate; ordering out hands keys back. A local key monitor is installed only while the panel is open and skips every key while the field editor has marked text (IME). The previous app is reactivated on cancel only if Portside became active during the session; another app becoming active, or the panel losing key, closes it without taking focus back. The Dock, overlay and notch panels are unchanged. Everything is behind the optional `commandCenter` module: off, nothing is registered.
 - `WindowRegistry` uses public Accessibility only (`AXObserver`, `AXUIElementCopyMultipleAttributeValues`, 0.25s messaging timeouts) and never asks for the permission: without it, apps still list in recent order with no windows. App launch, quit, activation and hide come from the existing `RunningApps` workspace observers (`RunningApps.onEvent`), not new ones. Every AX call runs on a serial lane per app, so a hung app delays only its own windows, and a read gives up on the whole app at its first timeout. Changes during a read queue one more read. Window ids are ephemeral (app pid plus a launch generation plus a serial); a pid seen with a different launch date is a new app, and answers from an earlier launch or from before a revoke are dropped. The registry's observers are its own, on their own thread, and register create, close, title, minimize and focus only; move and resize stay with `WindowFitter`, which is unchanged. There is no CG window number: the public AX API does not give one.
 - Reserved space uses public Accessibility only (`AXObserver`, `AXUIElementSetAttributeValue`), active while hiding is off and Accessibility is granted. No app can shrink `visibleFrame` for others, so windows land under the dock first and are fitted after they settle (60ms, or 300ms after an animation or a re-fit: macOS re-applies Window > Fill's frame for 150 to 300ms after its last event). AX calls block on the target app, so observers run on their own thread and fitting on a serial queue with 0.25s AX timeouts; the reveal path never waits on another app. A window that resets its size three times in 2s, or refuses the frame twice, is left alone. When the reservation changes, windows flush with the old dock edge follow it (new depth on the same edge, otherwise the `visibleFrame` edge) and windows flush with the screen edge are fitted; on quit (including SIGTERM/SIGINT/SIGHUP) fitted windows are released synchronously so no dead band is left behind.
 
@@ -59,14 +60,19 @@ Sources/portside/
   AgentSessionDiscovery.swift  Read-only T3 statev2.sqlite and OpenCode opencode.db session rows for the Agents notch
   AudioPlayback.swift       Public process taps, local RMS playback gate and temporary audio-device lifecycle
   AudioPlaybackProbe.swift  Debug synthetic-stream and playback-gate verification
-  Core/Commands/CommandRegistry.swift  Typed command descriptors and one main-actor executor (validate input, availability reason, cancellation); Open Settings is the first command
+  Core/Commands/CommandRegistry.swift  Typed command descriptors (title, keywords, SF Symbol) and one main-actor executor (validate input, availability reason, cancellation)
   Core/Permissions/PermissionGate.swift  Permission scopes (Accessibility, app-level), observe-only adapters, ticket recheck before a command runs; never prompts at startup
   Core/Modules/ModuleRegistry.swift  Module enable/disable, dependency states (permission, other module), start/stop with a context that cancels tasks and releases observers; gates module commands
-  Core/Modules/PortsideCoreModule.swift  The always-on (required) `portside` module; provides Open Settings
+  Core/Modules/PortsideCoreModule.swift  The always-on (required) `portside` module; provides Open Settings, Toggle Dock Hiding, About Portside and Quit Portside
   Core/Modules/ModuleSettings.swift  The `modules` object in dock.json, kept as raw JSON so unknown modules and nested keys round-trip; optional modules default off
   Core/Modules/IntegrationSettings.swift  State and actions behind Settings > Integrations: module rows, permission rows (live, never requested on read), restricted work-Mac preset
   Core/Windows/WindowRegistry.swift  Shared app and window snapshots (ephemeral ids, titles, focus, display, recent order), fed by RunningApps events; idle until a feature adds a client; app-only without Accessibility
   Core/Windows/AXWindowSource.swift  Accessibility window reads and create/close/title/minimize/focus observers for the registry, off the main thread; production wiring (`WindowRegistry.live`)
+  CommandCenter/CommandCenterState.swift  Command Center state machine (P2-REA-01): query, selection, Action Panel, screen stack, run and cancel, Escape ladder, key mapping with IME pass-through; no AppKit side effects
+  CommandCenter/CommandCenter.swift  Key-capable non-activating search panel, key monitor while open, focus capture and restore, command execution through the registry, VoiceOver announcements
+  CommandCenter/CommandCenterModule.swift  The optional `commandCenter` module (off by default, not sensitive): owns the shortcut and enables the panel only while running
+  CommandCenter/CommandCenterView.swift  SwiftUI panel: search field, results with unavailable reasons, details screen, footer hints, Action Panel
+  CommandCenter/HotkeyConflicts.swift  Read-only conflict check (Portside and enabled macOS shortcuts via `CopySymbolicHotKeys`), Command Center hotkey registration and status
   AppActivity.swift         Per-app activity icons: mic, camera, audio (CoreAudio/CoreMediaIO listeners), Working (CPU sampler)
   ThinkingLoader.swift      Snake-box / pulsing-dot thinking loaders and compact notch audio bars
   TileActions.swift         Modifier clicks (Cmd, Option) and the AppKit tile menu with Force Quit
@@ -101,7 +107,7 @@ Sources/portside/
   DockAppearance.swift      Icon style and dock background options, background modifier, icon style observer
   SeeThroughGlass.swift     Guarded private glass variant, the see-through lens in Liquid Glass
   NativeDockGlass.swift     Guarded rebuild of the native Dock glass, measured against the real Dock
-  HotKey.swift              Global hotkeys (Carbon RegisterEventHotKey), chord model, Settings shortcut recorder
+  HotKey.swift              Global hotkeys (Carbon RegisterEventHotKey, released on deinit), chord model, Settings shortcut recorder
   BackgroundCursor.swift    Guarded SkyLight call for the resize cursor
   AppIcon.swift             App icon: system-rendered in Portside.app, bundled PNGs under swift run, PNG export
   BrandAssets.swift         Safe resource bundle lookup (no Bundle.module), menu bar template icon
@@ -130,6 +136,7 @@ Sources/portside/
   Support/                  Bundled resources: AppIcon-<px>.png (actool's flat render of AppIcon.icon) and MenuBarIcon-<px>.png
 Sources/AppLoginItemList/   C helper: read session Open at Login list (LSSharedFileList)
 Tests/portsideTests/        XCTest target (`@testable import portside`); run with CFFIXED_USER_HOME, see docs/BASELINE_2_0.md
+  CommandCenterTests.swift  Command Center transitions, keys and IME, focus restore rule, hotkey lifecycle, conflicts, `commandCenterHotkey` decoding
   FixtureLoader.swift       Reads JSON fixtures from Fixtures/ by source path (no resource bundle)
   SettingsFixtureTests.swift dock.json legacy migration, unknown-key carry-forward and round trip, by value
   ModuleSettingsTests.swift Module choices, schema stamp, backups, rollback, malformed and future-schema files, saved choices at launch

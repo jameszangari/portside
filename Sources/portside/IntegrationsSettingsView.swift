@@ -35,7 +35,7 @@ struct IntegrationsSettingsView: View {
                 Text("Modules")
             } footer: {
                 if !integrations.modules.contains(where: { !$0.isRequired }) {
-                    Text("No optional modules are in this build yet. Planned ones, such as Command Center, appear here, off, once they work.")
+                    Text("No optional modules are in this build yet.")
                         .footerStyle()
                 }
             }

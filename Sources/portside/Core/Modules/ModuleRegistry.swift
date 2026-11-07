@@ -322,6 +322,7 @@ final class ModuleRegistry {
             id: descriptor.id,
             title: descriptor.title,
             keywords: descriptor.keywords,
+            symbolName: descriptor.symbolName,
             input: descriptor.input,
             unavailableReason: { [weak self] in
                 guard let self else { return "\(title) is turned off." }

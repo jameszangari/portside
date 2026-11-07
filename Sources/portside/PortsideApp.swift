@@ -172,6 +172,7 @@ struct PortsideApp: App {
                 appDelegate.runOpenSettingsCommand()
             }
             .keyboardShortcut(",")
+            CommandCenterMenuItem { appDelegate.openCommandCenter() }
             Button("Add App to Dock...") {
                 appDelegate.addApps()
             }
@@ -218,6 +219,18 @@ private struct WidgetsMenu: View {
     }
 }
 
+/// Shown only while the Command Center module is on.
+private struct CommandCenterMenuItem: View {
+    @ObservedObject private var status = CommandCenterStatus.shared
+    let open: () -> Void
+
+    var body: some View {
+        if status.isEnabled {
+            Button("Command Center", action: open)
+        }
+    }
+}
+
 /// Same wording as the native Dock's divider menu. The shortcut shown here
 /// is the global Cmd+Option+D hotkey.
 private struct HidingMenuItem: View {
@@ -258,6 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hideHotKey: HotKey?
     private var settingsHotKey: HotKey?
     private var settingsHotKeyObserver: AnyCancellable?
+    private var commandCenter: CommandCenter?
     private let permissions = PermissionGate()
     private lazy var commands = CommandRegistry(permissions: permissions)
     private lazy var modules = ModuleRegistry(commands: commands, permissions: permissions)
@@ -288,7 +302,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if dockModel.openSettingsOnLaunch { runOpenSettingsCommand() }
         // The native Dock's own shortcut. If macOS's "Turn Dock hiding
         // on/off" shortcut is enabled it may take the keypress first.
-        hideHotKey = HotKey(keyCode: kVK_ANSI_D, modifiers: cmdKey | optionKey, name: "Cmd+Option+D") { [weak self] in
+        hideHotKey = HotKey(chord: .dockHiding, name: "Cmd+Option+D") { [weak self] in
             self?.toggleAutoHide()
         }
         // Re-register whenever Settings changes the chord (including Clear).
@@ -297,6 +311,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] chord in
                 self?.registerSettingsHotKey(chord)
             }
+    }
+
+    /// Menu bar entry. The global shortcut toggles it the same way.
+    func openCommandCenter() {
+        MainActor.assumeIsolated { commandCenter?.open() }
     }
 
     private func registerSettingsHotKey(_ chord: HotkeyChord?) {
@@ -312,10 +331,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             permissions.register(AccessibilityPermissionAdapter())
             let core = PortsideCoreModule(
                 isStarting: { [weak self] in self?.dockEngine == nil },
-                openSettings: { [weak self] in self?.openSettings() }
+                openSettings: { [weak self] in self?.openSettings() },
+                toggleDockHiding: { [weak self] in self?.toggleAutoHide() },
+                showAbout: { [weak self] in self?.showAbout() },
+                quit: { NSApp.terminate(nil) }
+            )
+            let center = CommandCenter(commands: commands) { [modules] namespace in
+                modules.modules.first { $0.id.rawValue == namespace }?.title
+            }
+            commandCenter = center
+            let commandCenterModule = CommandCenterModule(
+                center: center,
+                chords: dockModel.$commandCenterHotkey.eraseToAnyPublisher()
             )
             do {
                 try modules.register(core)
+                try modules.register(commandCenterModule)
                 modules.enableSaved(dockModel.modules, restricted: dockModel.restrictedMode)
             } catch {
                 NSLog("portside: command registration failed: \(error)")

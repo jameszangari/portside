@@ -13,8 +13,11 @@ import SwiftUI
 final class HotKey {
     private var ref: EventHotKeyRef?
     private let id: UInt32
+    private let keyCode: UInt32
+    private let modifiers: UInt32
     private let action: () -> Void
-    private static var handlers: [UInt32: HotKey] = [:]
+    /// Weak, so dropping the last reference runs `deinit` and unregisters.
+    private static var handlers: [UInt32: WeakHotKey] = [:]
     private static var eventHandler: EventHandlerRef?
     private static var nextID: UInt32 = 1
     private static let logger = Logger(subsystem: "com.james.portside", category: "HotKey")
@@ -23,6 +26,8 @@ final class HotKey {
     /// flags (`cmdKey | optionKey`). Nil if macOS refused the registration.
     init?(keyCode: Int, modifiers: Int, name: String, action: @escaping () -> Void) {
         self.action = action
+        self.keyCode = UInt32(keyCode)
+        self.modifiers = UInt32(modifiers)
         id = HotKey.nextID
         HotKey.nextID += 1
         guard HotKey.installHandlerIfNeeded() else { return nil }
@@ -33,12 +38,32 @@ final class HotKey {
             HotKey.logger.error("hotkey \(name, privacy: .public) not registered (status \(status))")
             return nil
         }
-        HotKey.handlers[id] = self
+        HotKey.handlers[id] = WeakHotKey(value: self)
         HotKey.logger.info("hotkey \(name, privacy: .public) registered")
     }
 
     convenience init?(chord: HotkeyChord, name: String, action: @escaping () -> Void) {
         self.init(keyCode: Int(chord.keyCode), modifiers: Int(chord.modifiers), name: name, action: action)
+    }
+
+    /// While suspended every hotkey is unregistered, so the shortcut
+    /// recorder sees chords Portside itself holds (a registered chord never
+    /// reaches the app as a key event).
+    private(set) static var isSuspended = false
+
+    static func setSuspended(_ suspended: Bool) {
+        guard suspended != isSuspended else { return }
+        isSuspended = suspended
+        for hotKey in handlers.values.compactMap(\.value) {
+            if suspended {
+                if let ref = hotKey.ref { UnregisterEventHotKey(ref) }
+                hotKey.ref = nil
+            } else if hotKey.ref == nil {
+                // One registered during the pause (a new chord) is already live.
+                let hotKeyID = EventHotKeyID(signature: OSType(0x5053_4844), id: hotKey.id)
+                RegisterEventHotKey(hotKey.keyCode, hotKey.modifiers, hotKeyID, GetEventDispatcherTarget(), 0, &hotKey.ref)
+            }
+        }
     }
 
     deinit {
@@ -53,7 +78,7 @@ final class HotKey {
             var hotKeyID = EventHotKeyID()
             let read = GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
                                          nil, MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID)
-            guard read == noErr, let hotKey = HotKey.handlers[hotKeyID.id] else { return OSStatus(eventNotHandledErr) }
+            guard read == noErr, let hotKey = HotKey.handlers[hotKeyID.id]?.value else { return OSStatus(eventNotHandledErr) }
             DispatchQueue.main.async { hotKey.action() }
             return noErr
         }, 1, &spec, nil, &eventHandler)
@@ -62,6 +87,10 @@ final class HotKey {
         }
         return status == noErr
     }
+}
+
+private struct WeakHotKey {
+    weak var value: HotKey?
 }
 
 // MARK: - Chord
@@ -80,9 +109,24 @@ struct HotkeyChord: Codable, Equatable, Hashable {
         modifiers: UInt32(cmdKey | shiftKey)
     )
 
+    /// The fixed dock hiding shortcut, Command-Option-D, as on the native Dock.
+    static let dockHiding = HotkeyChord(
+        keyCode: UInt32(kVK_ANSI_D),
+        modifiers: UInt32(cmdKey | optionKey)
+    )
+
+    /// Default for Command Center: Option-Space. Spotlight keeps Cmd-Space.
+    static let commandCenterDefault = HotkeyChord(
+        keyCode: UInt32(kVK_Space),
+        modifiers: UInt32(optionKey)
+    )
+
     /// At least Command or Control, so a bare letter never becomes a hotkey.
+    /// Option-Space is the one exception: Option alone with a letter types a
+    /// character (Option-E, Option-U), Space does not.
     var isRegisterable: Bool {
         modifiers & UInt32(cmdKey | controlKey) != 0
+            || (keyCode == UInt32(kVK_Space) && modifiers & UInt32(optionKey) != 0)
     }
 
     /// Symbols macOS shows in menus: ⌃⌥⇧⌘ plus the key.
@@ -97,7 +141,7 @@ struct HotkeyChord: Codable, Equatable, Hashable {
     }
 
     /// Build from a key-down event. Returns nil for Escape, bare modifiers,
-    /// or chords without Command/Control.
+    /// or chords that are not `isRegisterable`.
     static func from(event: NSEvent) -> HotkeyChord? {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         // Modifier-only presses have empty characters and a modifier keyCode.
@@ -208,12 +252,15 @@ struct HotkeyRecorderButton: View {
     let onChange: (HotkeyChord?) -> Void
 
     @State private var recording = false
+    /// Why the last key was not taken, shown under the row while recording.
+    @State private var rejected: String?
 
     var body: some View {
         HStack {
             Text(title)
             Spacer()
             Button {
+                rejected = nil
                 recording = true
             } label: {
                 Text(recording ? "Type shortcut…" : (chord?.displayString ?? "None"))
@@ -242,6 +289,9 @@ struct HotkeyRecorderButton: View {
                 handleCapture(event)
             }
         )
+        if recording, let rejected {
+            Text(rejected).font(.system(size: 12)).foregroundStyle(.secondary)
+        }
     }
 
     private func handleCapture(_ event: NSEvent) -> Bool {
@@ -256,7 +306,10 @@ struct HotkeyRecorderButton: View {
             recording = false
             return true
         }
-        guard let next = HotkeyChord.from(event: event) else { return false }
+        guard let next = HotkeyChord.from(event: event) else {
+            rejected = "Include ⌘ or ⌃ (⌥ alone works only with Space)."
+            return true
+        }
         onChange(next)
         recording = false
         return true
@@ -287,6 +340,7 @@ private struct HotkeyCaptureRepresentable: NSViewRepresentable {
         func setActive(_ active: Bool) {
             if active {
                 guard monitor == nil else { return }
+                HotKey.setSuspended(true)
                 monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                     guard let self, let handler = self.handler else { return event }
                     return handler(event) ? nil : event
@@ -294,11 +348,15 @@ private struct HotkeyCaptureRepresentable: NSViewRepresentable {
             } else if let monitor {
                 NSEvent.removeMonitor(monitor)
                 self.monitor = nil
+                HotKey.setSuspended(false)
             }
         }
 
         deinit {
-            if let monitor { NSEvent.removeMonitor(monitor) }
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+                HotKey.setSuspended(false)
+            }
         }
     }
 }
