@@ -31,12 +31,17 @@ Status of the milestones in `docs/PLAN.md`, what still needs a hand check, and t
 - [x] **C:** Widget protocol and widgets (Clock, Calendar, Weather, System Stats, Battery, then CPU, Memory, Now Playing, Agents, AI Usage)
 - [x] **D:** App groups (expand and collapse, custom icons)
 - [x] **E:** Settings window (sidebar panes, live apply, global hotkey)
+- [x] **Issue #36:** Lower the sidebar identity header so Portside aligns with Layout instead of the version. Build and isolated launch passed; Accessibility geometry measured a 0.5-point difference, down from 13.5 points.
+- [x] **Nightly integration:** Sync production v1.9.0 and the Settings sidebar alignment fix from main while retaining Portside 2.0 commands, permissions, module registry, settings migration, and Integrations pane. Combined README Settings descriptions; no new features added.
+- Nightly sync validation: `swift build` passed; isolated SwiftPM suite passed all 57 tests. Isolated left-edge `swift run portside` stayed running for 8 seconds, then exited cleanly on SIGTERM without creating a native Dock backup. Existing test compiler warnings remain; Settings alignment, Integrations interaction, hover, and first-click behavior still need a person.
 - [x] **F:** Hide the macOS Dock (autohide-delay only, exact save and restore), Open at Login (`SMAppService`), `.app` bundle, notification badges, Developer ID signing and notarization, DMG release, in-place Check for Updates
 - [x] **P1-P3 parity:** context menus, Trash, folder stacks (grid, fan, list), spacers, spring-load, magnification, multi-display, fullscreen and Spaces, windows fit clear of the dock, activity icons
 
 ## Needs a hand check
 
 These were built and tested with synthetic input; a person should confirm them on a real machine:
+
+- Issue #36: Settings sidebar app title aligns with the Dock pane's Layout heading; confirm the spacing in the signed app and other panes.
 
 - Open at Login from the app tile menu (Automation prompt, no focus steal)
 - Two displays: the dock follows the cursor's display; dragging a window across the edge does not reveal
