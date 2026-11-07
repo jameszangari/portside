@@ -87,7 +87,7 @@ Dangerous actions such as terminate, delete, settings changes and scripts need c
 
 ## Persistence and privacy
 
-Keep user-facing flags/configuration in `dock.json`; introduce an explicit schema version distinct from `savedByVersion`. Existing backups and unknown top-level key preservation remain. Test nested forward compatibility before adding nested module settings; current [DATA.md](DATA.md) explicitly warns unknown nested values can be lost. Permission status is queried from macOS, not restored as granted from JSON.
+Keep user-facing flags/configuration in `dock.json`; an explicit `settingsSchema` distinct from `savedByVersion` and a raw-preserving `modules` object exist since P2-CORE-05 (see [DATA.md](DATA.md)). Existing backups and unknown top-level key preservation remain. Test nested forward compatibility before adding nested module settings; current [DATA.md](DATA.md) explicitly warns unknown nested values can be lost. Permission status is queried from macOS, not restored as granted from JSON.
 
 Use separate versioned stores under Portside Application Support for optional search metadata, workspace definitions and minimal execution receipts. Set private directory/file permissions; cap size and retention. Clipboard history needs at-rest protection, pause/exclusion controls, expiry and deletion before shipping. No plaintext clipboard or raw prompts in logs/backups. Window previews stay memory-only with byte/age caps; discard on lock, revoke and module disable. Scoped-file bookmarks are refreshed when stale and access ends when no longer needed. Deleting a scope also purges derived metadata/embeddings and pending model context.
 

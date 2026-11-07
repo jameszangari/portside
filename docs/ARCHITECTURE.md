@@ -61,7 +61,8 @@ Sources/portside/
   Core/Commands/CommandRegistry.swift  Typed command descriptors and one main-actor executor (validate input, availability reason, cancellation); Open Settings is the first command
   Core/Permissions/PermissionGate.swift  Permission scopes (Accessibility, app-level), observe-only adapters, ticket recheck before a command runs; never prompts at startup
   Core/Modules/ModuleRegistry.swift  Module enable/disable, dependency states (permission, other module), start/stop with a context that cancels tasks and releases observers; gates module commands
-  Core/Modules/PortsideCoreModule.swift  The always-on `portside` module; provides Open Settings
+  Core/Modules/PortsideCoreModule.swift  The always-on (required) `portside` module; provides Open Settings
+  Core/Modules/ModuleSettings.swift  The `modules` object in dock.json, kept as raw JSON so unknown modules and nested keys round-trip; optional modules default off
   AppActivity.swift         Per-app activity icons: mic, camera, audio (CoreAudio/CoreMediaIO listeners), Working (CPU sampler)
   ThinkingLoader.swift      Snake-box / pulsing-dot thinking loaders and compact notch audio bars
   TileActions.swift         Modifier clicks (Cmd, Option) and the AppKit tile menu with Force Quit
@@ -125,7 +126,8 @@ Sources/AppLoginItemList/   C helper: read session Open at Login list (LSSharedF
 Tests/portsideTests/        XCTest target (`@testable import portside`); run with CFFIXED_USER_HOME, see docs/BASELINE_2_0.md
   FixtureLoader.swift       Reads JSON fixtures from Fixtures/ by source path (no resource bundle)
   SettingsFixtureTests.swift dock.json legacy migration, unknown-key carry-forward and round trip, by value
-  Fixtures/                 dock.json fixtures (legacy-flat-pins.json)
+  ModuleSettingsTests.swift Module choices, schema stamp, backups, rollback, malformed and future-schema files, saved choices at launch
+  Fixtures/                 dock.json fixtures (legacy-flat-pins, modules-current, malformed-modules, future-schema, truncated)
 scripts/
   swift-env.sh              Shared SPM env (disables Explicitly Built Modules by default)
   gen-version.sh            Writes BuildInfo.swift from VERSION and git

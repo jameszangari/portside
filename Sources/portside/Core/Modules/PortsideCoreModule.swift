@@ -10,6 +10,7 @@ final class PortsideCoreModule: PortsideModule {
 
     let id = PortsideCoreModule.moduleID
     let title = "Portside"
+    let isRequired = true
 
     private let isStarting: () -> Bool
     private let openSettings: () -> Void

@@ -12,8 +12,11 @@ Keeping preferences across versions:
 
 - `savedByVersion`: the Portside version that last wrote the file.
 - Top-level keys this build does not know (written by a newer build) are kept on every save, so running an older copy does not drop newer settings. Builds up to 0.5.0 do not do this.
-- If the file was written by a newer version, it is copied once to `dock.json.from-<version>` before this build saves anything (nested values an older build does not know can still be lost).
+- If the file was written by a newer version, it is copied once to `dock.json.from-<version>` before this build saves anything (nested values an older build does not know can still be lost, except inside `modules`, which is kept whole).
 - A file that cannot be read is moved to `dock.json.unreadable-<timestamp>` instead of being overwritten, then a fresh layout is seeded.
+- `settingsSchema`: the layout version of the file (integer, currently `1`), separate from `savedByVersion`. A file without it (or with a non-integer value) is schema 0, from before 2.0 work. Schema 0 to 1 only adds keys, so nothing is rewritten in place; the next save stamps `1`. A file with a higher schema than this build knows is loaded with per-key fallbacks and saved with its higher number kept, so this build never claims to have migrated it down.
+- Before a readable file from another schema can be saved over, it is copied once: `dock.json.schema-<n>` for an older schema (the rollback copy) and `dock.json.from-schema-<n>` for a newer one. An existing copy is never replaced, so the first original survives later launches.
+- Rollback after a schema migration: quit Portside, copy `dock.json.schema-<n>` over `dock.json`, then start the older build (or this one, which migrates it again). Builds from 0.5.0 on keep `settingsSchema` and `modules` as unknown top-level keys.
 - Check for Updates copies the file to `dock.json.before-update` right before replacing the app. The app swap itself never touches this folder.
 
 Update steps are logged to `~/Library/Logs/Portside/update.log`.
@@ -52,6 +55,7 @@ It is deleted after a verified restore. If it exists when Portside starts, Ports
   - Solid `border`: `isOn` (default on), `width` (points, 0.5 to 6), `color` (palette color; default white at 15% opacity). A plain Bool from older builds still loads as on or off
 - Native Dock options: `showIndicators` (default true), `showRecents` (default true, like macOS), `recentApps` (up to 3 `PinnedApp`, most recent first; absent when empty), `dimHiddenApps` (default false)
 - Open Settings on launch (`openSettingsOnLaunch`, default `false`)
+- Modules (`modules`: `{ "<moduleId>": { "enabled": Bool, ...module settings } }`, written only once a choice is saved). Required modules (`portside`, which provides Open Settings) always run whatever is saved. Optional modules run only with `enabled: true`, so a module added by an update starts off, and a missing, non-Bool or malformed entry also reads as off. The whole object is kept as read: unknown module ids, unknown nested keys and even a value that is not an object are written back unchanged; only turning a module on or off rewrites that one entry's `enabled` (replacing a malformed entry or `modules` value it cannot hold). No settings UI yet (P2-CORE-08). Permission state is never stored here; it is read from macOS.
 - Hide the macOS Dock (`hideNativeDock`, default `true`, plus `nativeDockExplained` once the first-time dialog was confirmed)
 - Import from macOS Dock and Undo last import (nothing new stored in `dock.json`; imported apps, spacers, position, and icon size land in `entries`, `edge`, and `iconSize`). Entries may include `{ type: "spacer", spacer: { id, size } }` (`regular` or `small`).
 - Open Portside at login: not stored by Portside. macOS keeps it (System Settings > General > Login Items).

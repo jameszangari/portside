@@ -313,7 +313,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             do {
                 try modules.register(core)
-                modules.enable(core.id)
+                modules.enableSaved(dockModel.modules)
             } catch {
                 NSLog("portside: command registration failed: \(error)")
             }
