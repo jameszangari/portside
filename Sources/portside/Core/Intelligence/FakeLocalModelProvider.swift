@@ -5,6 +5,8 @@ import Foundation
 actor FakeLocalModelProvider: LocalModelProvider {
     enum Reply: Sendable {
         case answer(String)
+        /// A typed proposal, for `proposeIntent`.
+        case intent(RawIntentProposal)
         case refuse(String)
         case fail(String)
         /// Waits until canceled.
@@ -12,6 +14,8 @@ actor FakeLocalModelProvider: LocalModelProvider {
         /// Ignores cancellation and answers only after `finishStalled`, to
         /// prove the router does not wait for a provider that will not stop.
         case stall(String)
+        /// `stall` for `proposeIntent`.
+        case stallIntent(RawIntentProposal)
     }
 
     nonisolated let id = "fake"
@@ -27,7 +31,8 @@ actor FakeLocalModelProvider: LocalModelProvider {
     private(set) var cancellations = 0
     private(set) var releases = 0
 
-    /// `replies` are used in order; once they run out every request answers "ok".
+    /// `replies` are used in order; once they run out every request answers
+    /// "ok" and every intent request proposes `unsupported`.
     init(availability: LocalModelAvailability = .available, replies: [Reply] = []) {
         current = availability
         self.replies = replies
@@ -53,9 +58,25 @@ actor FakeLocalModelProvider: LocalModelProvider {
 
     func respond(to request: LocalModelRequest) async throws -> LocalModelResponse {
         requests.append(request)
-        let reply = replies.isEmpty ? .answer("ok") : replies.removeFirst()
-        switch reply {
+        switch try await settle(replies.isEmpty ? .answer("ok") : replies.removeFirst()) {
         case .answer(let text): return LocalModelResponse(text: text)
+        default: throw LocalModelError.failed("The test provider proposed an intent.")
+        }
+    }
+
+    func proposeIntent(for request: LocalModelRequest) async throws -> RawIntentProposal {
+        requests.append(request)
+        let fallback = Reply.intent(RawIntentProposal(kind: IntentKind.unsupported.rawValue, port: nil))
+        switch try await settle(replies.isEmpty ? fallback : replies.removeFirst()) {
+        case .intent(let proposal): return proposal
+        default: throw LocalModelError.failed("The test provider answered with text.")
+        }
+    }
+
+    /// Waits out `hang` and the stalls, then returns an `answer` or `intent`.
+    private func settle(_ reply: Reply) async throws -> Reply {
+        switch reply {
+        case .answer, .intent: return reply
         case .refuse(let reason): throw LocalModelError.refused(reason)
         case .fail(let reason): throw LocalModelError.failed(reason)
         case .hang:
@@ -63,10 +84,13 @@ actor FakeLocalModelProvider: LocalModelProvider {
                 cancellations += 1
                 throw CancellationError()
             }
-            return LocalModelResponse(text: "late")
+            return .answer("late")
         case .stall(let text):
             await withCheckedContinuation { stalled.append($0) }
-            return LocalModelResponse(text: text)
+            return .answer(text)
+        case .stallIntent(let proposal):
+            await withCheckedContinuation { stalled.append($0) }
+            return .intent(proposal)
         }
     }
 
