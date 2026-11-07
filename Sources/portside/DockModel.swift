@@ -343,6 +343,23 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    /// Global shortcut that opens the app switcher. Nil means none is
+    /// registered. Default is Option-Tab (`SwitcherShortcut.defaultChord`);
+    /// ⌘Tab is never accepted (`SwitcherShortcut.refusal`).
+    @Published private(set) var switcherHotkey: HotkeyChord? = SwitcherShortcut.defaultChord
+
+    func setSwitcherHotkey(_ chord: HotkeyChord?) {
+        let next: HotkeyChord?
+        if let chord {
+            next = SwitcherShortcut.isAllowed(chord) ? chord : switcherHotkey
+        } else {
+            next = nil
+        }
+        guard next != switcherHotkey else { return }
+        switcherHotkey = next
+        persist()
+    }
+
     /// Command Center quicklinks, in Settings order. URLs are kept as typed;
     /// `QuicklinkURL` decides at use whether one may open.
     @Published private(set) var commandCenterQuicklinks: [Quicklink] = []
@@ -1113,7 +1130,7 @@ final class DockModel: Codable, ObservableObject {
         case showIndicators, dimHiddenApps, showRecents, recentApps
         /// Before per-style backgrounds. Read only, for migration.
         case backgroundStyle, backgroundFrost, backgroundTint
-        case settingsHotkey, commandCenterHotkey, commandCenterQuicklinks
+        case settingsHotkey, commandCenterHotkey, commandCenterQuicklinks, switcherHotkey
         /// Before Milestone D: a flat list of apps. Read only, for migration.
         case pinnedApps
     }
@@ -1209,6 +1226,19 @@ final class DockModel: Codable, ObservableObject {
         } else {
             commandCenterHotkey = .commandCenterDefault
         }
+        // Same rules again; a chord the switcher refuses (⌘Tab) is the default.
+        if c.contains(.switcherHotkey) {
+            do {
+                switcherHotkey = try c.decodeIfPresent(HotkeyChord.self, forKey: .switcherHotkey)
+            } catch {
+                switcherHotkey = SwitcherShortcut.defaultChord
+            }
+            if let chord = switcherHotkey, !SwitcherShortcut.isAllowed(chord) {
+                switcherHotkey = SwitcherShortcut.defaultChord
+            }
+        } else {
+            switcherHotkey = SwitcherShortcut.defaultChord
+        }
         var seenQuicklinks = Set<UUID>()
         commandCenterQuicklinks = Array(c.value(.commandCenterQuicklinks, or: [DecodedQuicklink]())
             .compactMap(\.value)
@@ -1275,6 +1305,11 @@ final class DockModel: Codable, ObservableObject {
             try c.encode(commandCenterHotkey, forKey: .commandCenterHotkey)
         } else {
             try c.encodeNil(forKey: .commandCenterHotkey)
+        }
+        if let switcherHotkey {
+            try c.encode(switcherHotkey, forKey: .switcherHotkey)
+        } else {
+            try c.encodeNil(forKey: .switcherHotkey)
         }
         if !commandCenterQuicklinks.isEmpty { try c.encode(commandCenterQuicklinks, forKey: .commandCenterQuicklinks) }
     }
@@ -1525,6 +1560,7 @@ final class DockModel: Codable, ObservableObject {
         activityIcons = old.activityIcons
         settingsHotkey = old.settingsHotkey
         commandCenterHotkey = old.commandCenterHotkey
+        switcherHotkey = old.switcherHotkey
         commandCenterQuicklinks = old.commandCenterQuicklinks
         openGroupsOnHover = old.openGroupsOnHover
         usageClaudeConsent = old.usageClaudeConsent

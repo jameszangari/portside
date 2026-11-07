@@ -302,6 +302,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         BackgroundCursor.enable()
         let engine = DockEngine(dockModel: dockModel)
         dockEngine = engine
+        registerSwitcher(registry: engine.windowRegistry)
         engine.onOpenSettings = { [weak self] in self?.runOpenSettingsCommand() }
         engine.start()
         agentNotch = AgentNotch(model: dockModel, widgets: engine.widgets)
@@ -371,6 +372,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 modules.enableSaved(dockModel.modules, restricted: dockModel.restrictedMode)
             } catch {
                 NSLog("portside: command registration failed: \(error)")
+            }
+        }
+    }
+
+    /// After the engine exists, because the switcher is a client of its
+    /// window registry. Enabled the same way `enableSaved` enables the rest.
+    private func registerSwitcher(registry: WindowRegistry) {
+        MainActor.assumeIsolated {
+            let module = SwitcherModule(
+                switcher: AppSwitcher(registry: registry),
+                chords: dockModel.$switcherHotkey.eraseToAnyPublisher()
+            )
+            do {
+                try modules.register(module)
+                if dockModel.modules.isEnabled(SwitcherModule.moduleID, required: false) {
+                    modules.enable(SwitcherModule.moduleID)
+                }
+            } catch {
+                NSLog("portside: switcher registration failed: \(error)")
             }
         }
     }
