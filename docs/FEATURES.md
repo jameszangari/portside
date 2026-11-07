@@ -1,6 +1,6 @@
 # Features
 
-This page lists implemented capabilities. The Command Center panel with app, command, Settings and quicklink search is built (below); the Local Intelligence switch and Apple on-device model availability are built, with nothing in Portside using the model yet (below); file search, clipboard and snippets, the switcher, developer, menu bar, workspace, studio and local-AI features live in the [Portside 2.0 roadmap](ROADMAP_2_0.md) and are not part of the feature list.
+This page lists implemented capabilities. The Command Center panel with app, command, Settings and quicklink search is built (below); the Local Intelligence switch and Apple on-device model availability are built, with nothing in Portside using the model yet (below); a read-only TCP listener snapshot service (lsof plus libproc identity) is built and tested with no UI or caller yet, so it is not in the list below; file search, clipboard and snippets, the switcher, developer, menu bar, workspace, studio and local-AI features live in the [Portside 2.0 roadmap](ROADMAP_2_0.md) and are not part of the feature list.
 
 Full feature list. The [README](../README.md) keeps a short summary.
 
