@@ -3,7 +3,7 @@ import Foundation
 /// Stable, namespaced command identifier: `module.name`, lowercase ASCII
 /// letters and digits with camelCase allowed after the first character of
 /// each part (for example `portside.openSettings`).
-struct CommandID: Hashable, CustomStringConvertible {
+struct CommandID: Hashable, Sendable, CustomStringConvertible {
     let rawValue: String
 
     init?(_ rawValue: String) {
@@ -31,7 +31,7 @@ enum CommandInputSchema: Equatable {
     case integer(ClosedRange<Int>)
 }
 
-enum CommandInput: Equatable {
+enum CommandInput: Equatable, Sendable {
     case none
     case string(String)
     case integer(Int)

@@ -35,14 +35,14 @@ macOS asks for permissions as features need them; see [Privacy and permissions](
 - **Appearance:** match macOS icon style or Original; Liquid Glass (matches the native Dock in dark mode, or Custom with every part adjustable) or Solid (color or gradient, optional backdrop blur) background; one color picker everywhere (Brand, Neutrals, macOS and RGB presets, hex, hue, saturation, tint, shade, opacity)
 - **Native Dock:** hide via autohide-delay (save/restore, also right after a crash), import apps and folders, open at login via `SMAppService`, optional Settings on launch
 - **Agent notch:** optional island attached to the notch (inside the menu bar on displays without one) or floating with a snake-box thinking loader while agents work, audio bars while Spotify/Music play, attention counts, expandable session cards, plan-usage gauges, and a full Settings > Agent Notch customization pane
-- **Command Center:** optional (Settings > Integrations, off by default) ⌥Space search panel for Portside's commands without leaving the current app; keyboard first (arrows, Return, Esc ladder, Cmd+K actions), unavailable reasons, IME safe, VoiceOver labels, configurable shortcut with conflict warnings
+- **Command Center:** optional (Settings > Integrations, off by default) ⌥Space search panel without leaving the current app: installed and running apps (launch or switch), Portside's commands, Settings panes and your own quicklinks (https, http, mailto and System Settings links only); fuzzy matching with deterministic ranking boosted by recent and frequent picks (clearable history); keyboard first (arrows, Return, Esc ladder, Cmd+K actions), unavailable reasons, IME safe, VoiceOver labels, configurable shortcut with conflict warnings
 - **Settings:** mouse and keyboard sidebar navigation, app title aligned with the Layout heading, live apply, an Integrations pane (modules, live permission status with reasons and fallbacks, restricted mode for work Macs), global hotkeys (Settings ⌘⇧D, Command Center ⌥Space), automatic daily update checks and notifications, plus Check for Updates (a newer release opens a modal that downloads, verifies, and installs it in place from the GitHub release DMG, then reopens Portside)
 
 Full detail: [docs/FEATURES.md](docs/FEATURES.md).
 
 ## Planned
 
-The proposed [Portside 2.0 roadmap](docs/ROADMAP_2_0.md) extends the Command Center with app, Settings and quicklink results, and adds an app/window switcher, developer server manager, smart workspaces, studio companion and agent supervisor, with optional local-only AI. Menu bar management is gated on public API feasibility. See the [incremental tickets and first PRs](docs/IMPLEMENTATION_PLAN_2_0.md) for implementation order. These capabilities are planned, not shipped.
+The proposed [Portside 2.0 roadmap](docs/ROADMAP_2_0.md) extends the Command Center with scoped file search and other optional tools, and adds an app/window switcher, developer server manager, smart workspaces, studio companion and agent supervisor, with optional local-only AI. Menu bar management is gated on public API feasibility. See the [incremental tickets and first PRs](docs/IMPLEMENTATION_PLAN_2_0.md) for implementation order. These capabilities are planned, not shipped.
 
 Existing [docs/CHECKLIST.md](docs/CHECKLIST.md) backlog remains:
 

@@ -332,17 +332,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let core = PortsideCoreModule(
                 isStarting: { [weak self] in self?.dockEngine == nil },
                 openSettings: { [weak self] in self?.openSettings() },
+                openSettingsPane: { [weak self] tab in self?.openSettings(tab: tab) },
                 toggleDockHiding: { [weak self] in self?.toggleAutoHide() },
                 showAbout: { [weak self] in self?.showAbout() },
                 quit: { NSApp.terminate(nil) }
             )
-            let center = CommandCenter(commands: commands) { [modules] namespace in
+            let sources = CommandCenterSources(
+                quicklinks: { [dockModel] in dockModel.commandCenterQuicklinks },
+                applications: CommandCenterAppIndex(),
+                runningApps: { [weak self] in
+                    (self?.dockEngine?.runningApps.apps ?? []).compactMap(CommandCenterApp.init(running:))
+                },
+                history: .shared
+            )
+            let center = CommandCenter(commands: commands, moduleTitle: { [modules] namespace in
                 modules.modules.first { $0.id.rawValue == namespace }?.title
-            }
+            }, sources: sources)
             commandCenter = center
             let commandCenterModule = CommandCenterModule(
                 center: center,
-                chords: dockModel.$commandCenterHotkey.eraseToAnyPublisher()
+                chords: dockModel.$commandCenterHotkey.eraseToAnyPublisher(),
+                actions: .live(quicklinks: { [dockModel] in dockModel.commandCenterQuicklinks })
             )
             do {
                 try modules.register(core)
@@ -385,8 +395,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// A normal window, so Portside activates while it is open. The dock
-    /// panel itself stays non-activating.
-    func openSettings() {
+    /// panel itself stays non-activating. `tab` picks the pane first.
+    func openSettings(tab: SettingsTab? = nil) {
         guard let dockEngine else { return }
         let controller = settings ?? MainActor.assumeIsolated {
             SettingsWindowController(
@@ -403,7 +413,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             dockEngine?.reservation.usableFrame(of: screen) ?? screen.visibleFrame
         }
         settings = controller
-        controller.show()
+        if let tab { controller.show(tab: tab) } else { controller.show() }
     }
 
     /// The standard About panel with the brand icon, the version from

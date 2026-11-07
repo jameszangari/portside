@@ -343,6 +343,35 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    /// Command Center quicklinks, in Settings order. URLs are kept as typed;
+    /// `QuicklinkURL` decides at use whether one may open.
+    @Published private(set) var commandCenterQuicklinks: [Quicklink] = []
+
+    /// Appends an empty quicklink and returns its id. Nil at the limit.
+    @discardableResult
+    func addQuicklink(name: String = "", url: String = "") -> UUID? {
+        guard commandCenterQuicklinks.count < Quicklink.listLimit else { return nil }
+        let link = Quicklink(name: name, url: url)
+        commandCenterQuicklinks.append(link)
+        persist()
+        return link.id
+    }
+
+    func updateQuicklink(_ link: Quicklink) {
+        guard let index = commandCenterQuicklinks.firstIndex(where: { $0.id == link.id }) else { return }
+        let bounded = Quicklink(id: link.id, name: link.name, url: link.url)
+        guard commandCenterQuicklinks[index] != bounded else { return }
+        commandCenterQuicklinks[index] = bounded
+        persist()
+    }
+
+    func removeQuicklink(id: UUID) {
+        let before = commandCenterQuicklinks.count
+        commandCenterQuicklinks.removeAll { $0.id == id }
+        guard commandCenterQuicklinks.count != before else { return }
+        persist()
+    }
+
     // MARK: - Trash
 
     /// "Show Trash in dock": the Trash tile at the far end of the dock.
@@ -1084,7 +1113,7 @@ final class DockModel: Codable, ObservableObject {
         case showIndicators, dimHiddenApps, showRecents, recentApps
         /// Before per-style backgrounds. Read only, for migration.
         case backgroundStyle, backgroundFrost, backgroundTint
-        case settingsHotkey, commandCenterHotkey
+        case settingsHotkey, commandCenterHotkey, commandCenterQuicklinks
         /// Before Milestone D: a flat list of apps. Read only, for migration.
         case pinnedApps
     }
@@ -1180,6 +1209,11 @@ final class DockModel: Codable, ObservableObject {
         } else {
             commandCenterHotkey = .commandCenterDefault
         }
+        var seenQuicklinks = Set<UUID>()
+        commandCenterQuicklinks = Array(c.value(.commandCenterQuicklinks, or: [DecodedQuicklink]())
+            .compactMap(\.value)
+            .filter { seenQuicklinks.insert($0.id).inserted }
+            .prefix(Quicklink.listLimit))
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1242,6 +1276,7 @@ final class DockModel: Codable, ObservableObject {
         } else {
             try c.encodeNil(forKey: .commandCenterHotkey)
         }
+        if !commandCenterQuicklinks.isEmpty { try c.encode(commandCenterQuicklinks, forKey: .commandCenterQuicklinks) }
     }
 
     // MARK: - Persistence
@@ -1490,6 +1525,7 @@ final class DockModel: Codable, ObservableObject {
         activityIcons = old.activityIcons
         settingsHotkey = old.settingsHotkey
         commandCenterHotkey = old.commandCenterHotkey
+        commandCenterQuicklinks = old.commandCenterQuicklinks
         openGroupsOnHover = old.openGroupsOnHover
         usageClaudeConsent = old.usageClaudeConsent
         usageCopilotConsent = old.usageCopilotConsent

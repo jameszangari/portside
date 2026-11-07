@@ -31,6 +31,16 @@ final class CommandCenterStateTests: XCTestCase {
         return state
     }
 
+    /// Types `text` and delivers the off-main ranking right away, as the
+    /// controller does a moment later.
+    private func search(_ state: inout CommandCenterState, _ text: String) {
+        let outcome = state.send(.query(text))
+        for case .search(let request) in outcome.effects {
+            let ids = CommandCenterRanker.rank(state.items, query: request.query)!
+            XCTAssertTrue(state.send(.results(request, ids)).handled)
+        }
+    }
+
     private func key(_ state: inout CommandCenterState, _ key: CommandCenterKey) -> CommandCenterOutcome {
         state.send(.key(key))
     }
@@ -54,7 +64,7 @@ final class CommandCenterStateTests: XCTestCase {
 
     func testOpenWhileVisibleRefocusesInsteadOfResetting() {
         var state = opened()
-        _ = state.send(.query("open"))
+        search(&state, "open")
         let outcome = state.send(.open(items))
         XCTAssertEqual(outcome.effects, [.focusPanel])
         XCTAssertEqual(state.query, "open")
@@ -106,14 +116,14 @@ final class CommandCenterStateTests: XCTestCase {
     func testQueryFiltersByWordPrefixAndKeywordsAndResetsSelection() {
         var state = opened()
         _ = key(&state, .down)
-        _ = state.send(.query("dock"))
+        search(&state, "dock")
         XCTAssertEqual(state.results.map(\.id), [hiding.id])
         XCTAssertEqual(state.selection, hiding.id)
-        _ = state.send(.query("PREF"))
+        search(&state, "PREF")
         XCTAssertEqual(state.results.map(\.id), [settings.id], "keywords match, case insensitive")
-        _ = state.send(.query("set op"))
+        search(&state, "set op")
         XCTAssertEqual(state.results.map(\.id), [settings.id], "every word must match, any order")
-        _ = state.send(.query("zzz"))
+        search(&state, "zzz")
         XCTAssertTrue(state.results.isEmpty)
         XCTAssertNil(state.selection)
         XCTAssertEqual(key(&state, .return).effects, [], "Return with no selection does nothing")
@@ -123,24 +133,67 @@ final class CommandCenterStateTests: XCTestCase {
         let twin = CommandCenterItem(id: id("aaa.portside"), title: "About Portside", subtitle: "A")
         var first = opened(items + [twin])
         var second = opened((items + [twin]).reversed())
-        _ = first.send(.query("portside"))
-        _ = second.send(.query("portside"))
+        search(&first, "portside")
+        search(&second, "portside")
         XCTAssertEqual(first.results.map(\.id), second.results.map(\.id))
         XCTAssertEqual(first.results.map(\.id), [twin.id, about.id], "equal titles break by ID")
         // A title that starts with the query outranks a keyword match that sorts earlier.
         let addApps = CommandCenterItem(id: id("portside.addApps"), title: "Add Apps", keywords: ["dock"])
         let position = CommandCenterItem(id: id("portside.dockPosition"), title: "Dock Position")
         var ranked = opened([addApps, position])
-        _ = ranked.send(.query("dock"))
+        search(&ranked, "dock")
         XCTAssertEqual(ranked.results.map(\.id), [position.id, addApps.id])
-        XCTAssertEqual(CommandCenterState.filter(items, query: "  "), items, "blank query keeps everything")
+        XCTAssertEqual(CommandCenterRanker.rank(items, query: "  "), CommandCenterRanker.defaultOrder(items).map(\.id),
+                       "blank query is the default list")
     }
 
     func testLatestQueryWins() {
         var state = opened()
-        for text in ["t", "to", "tog", "togg", "o", "op", "ope", "open"] { _ = state.send(.query(text)) }
+        var requests: [CommandCenterSearchRequest] = []
+        for text in ["t", "to", "tog", "togg", "o", "op", "ope", "open"] {
+            for case .search(let request) in state.send(.query(text)).effects { requests.append(request) }
+        }
         XCTAssertEqual(state.query, "open")
+        XCTAssertTrue(state.isSearching)
+        XCTAssertEqual(requests.map(\.generation), Array(1...8), "one generation per edit")
+        // Results for older queries arrive late, in any order: all dropped.
+        let before = state.results
+        for request in requests.dropLast().reversed() {
+            XCTAssertFalse(state.send(.results(request, [hiding.id])).handled)
+        }
+        XCTAssertEqual(state.results, before)
+        let last = requests.last!
+        XCTAssertTrue(state.send(.results(last, CommandCenterRanker.rank(state.items, query: last.query)!)).handled)
         XCTAssertEqual(state.results.map(\.id), [settings.id])
+        XCTAssertFalse(state.isSearching)
+        XCTAssertFalse(state.send(.results(last, [hiding.id])).handled, "delivered once")
+    }
+
+    func testKeyBeforeResultsArriveActsOnTheLatestQuery() {
+        var state = opened()
+        _ = state.send(.query("toggle"))
+        XCTAssertEqual(state.selection, about.id, "previous list still showing")
+        XCTAssertEqual(key(&state, .return).effects, [.run(hiding.id)], "ranked on the spot, not the stale row")
+        XCTAssertFalse(state.isSearching)
+    }
+
+    func testCatalogRefreshKeepsSelectionAndQuery() {
+        var state = opened()
+        search(&state, "o")
+        _ = key(&state, .down)
+        let selected = state.selection
+        let late = CommandCenterItem(id: id("late.option"), title: "Options Later")
+        let outcome = state.send(.catalog(items + [late]))
+        var delivered = false
+        for case .search(let request) in outcome.effects {
+            XCTAssertTrue(request.preservesSelection)
+            _ = state.send(.results(request, CommandCenterRanker.rank(state.items, query: request.query)!))
+            delivered = true
+        }
+        XCTAssertTrue(delivered)
+        XCTAssertEqual(state.query, "o")
+        XCTAssertEqual(state.selection, selected, "a new row does not move the selection")
+        XCTAssertTrue(state.results.contains { $0.id == late.id })
     }
 
     /// T-05 fixture: 1,000 commands, ten fast edits; only the last query's
@@ -151,13 +204,19 @@ final class CommandCenterStateTests: XCTestCase {
         }
         var state = opened(many)
         var replay = opened(many.shuffled())
+        var stale: [CommandCenterSearchRequest] = []
         for text in ["a", "al", "alp", "alph", "alpha", "alpha ", "alpha 9", "alpha 99", "alpha 9", "alpha 99"] {
-            _ = state.send(.query(text))
+            for case .search(let request) in state.send(.query(text)).effects { stale.append(request) }
             _ = replay.send(.query(text))
         }
-        XCTAssertEqual(state.results.map(\.id.rawValue), ["fixture.cmd990"])
-        _ = state.send(.query("alpha"))
-        _ = replay.send(.query("alpha"))
+        let latest = stale.removeLast()
+        for request in stale {
+            XCTAssertFalse(state.send(.results(request, CommandCenterRanker.rank(state.items, query: request.query)!)).handled)
+        }
+        _ = state.send(.results(latest, CommandCenterRanker.rank(state.items, query: latest.query)!))
+        XCTAssertEqual(state.results.map(\.id.rawValue), ["command:fixture.cmd990"])
+        search(&state, "alpha")
+        search(&replay, "alpha")
         XCTAssertEqual(state.results.count, 100)
         XCTAssertEqual(state.results.map(\.id), replay.results.map(\.id))
     }
@@ -197,13 +256,13 @@ final class CommandCenterStateTests: XCTestCase {
 
     func testReturnRunsSelectionAndSuccessDismissesWithoutRestore() {
         var state = opened()
-        _ = state.send(.query("open"))
+        search(&state, "open")
         XCTAssertEqual(key(&state, .return).effects, [.run(settings.id)])
         XCTAssertEqual(state.mode, .running)
         XCTAssertEqual(key(&state, .down).effects, [], "keys wait for the result")
         XCTAssertEqual(key(&state, .return).effects, [], "never runs twice")
         let done = state.send(.finished(settings.id, .success(nil)))
-        XCTAssertEqual(done.effects, [.dismiss(restoreFocus: false)])
+        XCTAssertEqual(done.effects, [.recordUsage(settings.id), .dismiss(restoreFocus: false)], "success counts toward history")
         XCTAssertFalse(state.isVisible)
     }
 
@@ -236,7 +295,7 @@ final class CommandCenterStateTests: XCTestCase {
 
     func testEscapeCancelsRunAndCanceledResultStaysOpen() {
         var state = opened()
-        _ = state.send(.query("open settings"))
+        search(&state, "open settings")
         _ = key(&state, .return)
         XCTAssertEqual(key(&state, .escape).effects, [.cancelRun])
         XCTAssertEqual(state.mode, .running, "running until the handler reports")
@@ -264,7 +323,7 @@ final class CommandCenterStateTests: XCTestCase {
 
     func testEscapeLadderTakesOneStepPerPress() {
         var state = opened()
-        _ = state.send(.query("open"))
+        search(&state, "open")
         _ = key(&state, .commandReturn) // details screen
         XCTAssertEqual(state.stack, [.details(settings.id)])
         _ = key(&state, .commandK)      // Action Panel over the screen
@@ -284,7 +343,7 @@ final class CommandCenterStateTests: XCTestCase {
 
     func testCommandEscapeClosesFromAnywhere() {
         var state = opened()
-        _ = state.send(.query("open"))
+        search(&state, "open")
         _ = key(&state, .commandReturn)
         _ = key(&state, .commandK)
         XCTAssertEqual(key(&state, .commandEscape).effects, [.dismiss(restoreFocus: true)])
@@ -308,14 +367,14 @@ final class CommandCenterStateTests: XCTestCase {
 
     func testCommandKWithNoSelectionIsIgnored() {
         var state = opened()
-        _ = state.send(.query("zzz"))
+        search(&state, "zzz")
         XCTAssertEqual(key(&state, .commandK).effects, [])
         XCTAssertNil(state.actionPanel)
     }
 
     func testActionPanelNavigationFilterAndRun() {
         var state = opened()
-        _ = state.send(.query("open"))
+        search(&state, "open")
         _ = key(&state, .commandK)
         _ = key(&state, .down)
         XCTAssertEqual(state.actionPanel?.highlight, .showDetails)
@@ -353,7 +412,7 @@ final class CommandCenterStateTests: XCTestCase {
     func testCopyActionEffects() {
         var state = opened()
         _ = key(&state, .commandK)
-        XCTAssertEqual(state.send(.performAction(.copyID)).effects, [.copy(about.id.rawValue), .dismiss(restoreFocus: true)])
+        XCTAssertEqual(state.send(.performAction(.copyID)).effects, [.copy("portside.showAbout"), .dismiss(restoreFocus: true)], "the command ID, not the result ID")
     }
 
     func testDetailsScreenRunsItsItemAndPopsWithBackspaceOrBack() {

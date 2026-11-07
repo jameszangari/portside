@@ -56,7 +56,7 @@ struct CommandCenterView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
                 CommandCenterTextField(
-                    placeholder: "Search Portside commands",
+                    placeholder: "Search apps, commands and Settings",
                     text: state.query,
                     fontSize: 19,
                     onChange: { center.send(.query($0)) },
@@ -80,7 +80,7 @@ struct CommandCenterView: View {
             CommandCenterDetails(item: state.item(screen.itemID))
                 .frame(minHeight: Self.minContentHeight, alignment: .top)
         } else if state.results.isEmpty {
-            Text("No matching commands")
+            Text("No results")
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, minHeight: Self.minContentHeight)
         } else {
@@ -137,7 +137,7 @@ struct CommandCenterView: View {
             }
             Spacer(minLength: 12)
             if let item = state.targetItem {
-                CommandCenterKeyHint(title: item.unavailableReason == nil ? "Run" : "Unavailable", keys: "↩")
+                CommandCenterKeyHint(title: item.unavailableReason == nil ? item.primaryTitle : "Unavailable", keys: "↩")
                     .opacity(item.unavailableReason == nil ? 1 : 0.5)
                 Divider().frame(height: 14)
                 Button { center.send(.toggleActions) } label: {
@@ -165,10 +165,7 @@ private struct CommandCenterRow: View {
     var body: some View {
         Button(action: activate) {
             HStack(spacing: 10) {
-                Image(systemName: item.symbolName ?? "command")
-                    .font(.system(size: 14))
-                    .frame(width: 22)
-                    .foregroundStyle(.secondary)
+                CommandCenterIcon(item: item)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(item.title)
                         .font(.system(size: 13))
@@ -199,8 +196,48 @@ private struct CommandCenterRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(item.title)
         .accessibilityValue(item.unavailableReason.map { "Unavailable. \($0)" } ?? item.subtitle)
-        .accessibilityHint(item.unavailableReason == nil ? "Runs the command" : "")
+        .accessibilityHint(item.unavailableReason == nil ? item.primaryTitle : "")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+/// The app's own icon for app rows, else the SF Symbol.
+private struct CommandCenterIcon: View {
+    let item: CommandCenterItem
+
+    var body: some View {
+        if let path = item.iconPath {
+            Image(nsImage: CommandCenterIconCache.icon(for: path))
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 24, height: 24)
+                .frame(width: 24)
+                .accessibilityHidden(true)
+        } else {
+            Image(systemName: item.symbolName ?? "command")
+                .font(.system(size: 14))
+                .frame(width: 24)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
+/// `NSWorkspace.icon(forFile:)` hands back a lazily drawn image, so only the
+/// rows on screen pay for drawing, once per app per session of the process.
+@MainActor
+enum CommandCenterIconCache {
+    private static let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 300
+        return cache
+    }()
+
+    static func icon(for path: String) -> NSImage {
+        if let cached = cache.object(forKey: path as NSString) { return cached }
+        let image = NSWorkspace.shared.icon(forFile: path)
+        cache.setObject(image, forKey: path as NSString)
+        return image
     }
 }
 
@@ -295,8 +332,9 @@ private struct CommandCenterDetails: View {
         VStack(alignment: .leading, spacing: 8) {
             if let item {
                 row("Status", item.unavailableReason.map { "Unavailable. \($0)" } ?? "Available")
-                row("Module", item.subtitle)
-                row("Command ID", item.id.rawValue)
+                row(item.kind == .command ? "Module" : "Kind", item.subtitle)
+                row("Result ID", item.id.rawValue)
+                row("Runs", item.invocation.command.rawValue)
                 row("Keywords", item.keywords.isEmpty ? "None" : item.keywords.joined(separator: ", "))
                 row("Permissions", item.permissions.isEmpty ? "None" : item.permissions.joined(separator: ", "))
             }

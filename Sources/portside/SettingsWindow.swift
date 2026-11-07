@@ -55,6 +55,15 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     var isOpen: Bool { window?.isVisible == true || window?.isMiniaturized == true }
 
+    /// The selected pane, kept across closing and reopening the window.
+    private let navigation = SettingsNavigation()
+
+    /// Opens Settings on `tab` (Command Center's Settings rows).
+    func show(tab: SettingsTab) {
+        navigation.tab = tab
+        show()
+    }
+
     func show() {
         let window = self.window ?? makeWindow()
         self.window = window
@@ -129,7 +138,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let hosting = NSHostingController(rootView: SettingsView(
             dockModel: dockModel, layout: layout, nativeDock: nativeDock,
             launchAtLogin: launchAtLogin, trash: trash, badges: badges, widgets: widgets,
-            integrations: integrations
+            integrations: integrations, navigation: navigation
         ))
         // Fixed size, like System Settings: panes scroll instead of growing
         // the window. The toolbar carries the pane title.
@@ -283,7 +292,9 @@ extension Text {
 
 // MARK: - Root
 
-private enum SettingsTab: String, CaseIterable, Identifiable {
+/// A Settings pane. The raw value is the stable ID Command Center and
+/// `portside.openSettingsPane` use.
+enum SettingsTab: String, CaseIterable, Identifiable {
     case dock, appearance, widgets, groups, notch, integrations, general
 
     var id: String { rawValue }
@@ -313,6 +324,23 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
     }
 }
 
+/// The selected Settings pane, owned by the window controller so a command
+/// can pick the pane before or while the window is open.
+final class SettingsNavigation: ObservableObject {
+    @Published var tab: SettingsTab = SettingsNavigation.initialTab
+
+    /// Debug builds: `PORTSIDE_SETTINGS_TAB=widgets` opens that pane, for
+    /// screenshots of a sandboxed run.
+    private static var initialTab: SettingsTab {
+        #if DEBUG
+        if let name = ProcessInfo.processInfo.environment["PORTSIDE_SETTINGS_TAB"], let tab = SettingsTab(rawValue: name) {
+            return tab
+        }
+        #endif
+        return .dock
+    }
+}
+
 /// System Settings-style layout: a fixed sidebar of panes on the left, the
 /// selected pane's form on the right. React analogy: a layout route with a
 /// nav column and an outlet.
@@ -326,22 +354,13 @@ struct SettingsView: View {
     let widgets: WidgetStore
     let integrations: IntegrationSettings
 
-    @State private var tab: SettingsTab = Self.initialTab
+    @ObservedObject var navigation: SettingsNavigation
 
-    /// Debug builds: `PORTSIDE_SETTINGS_TAB=widgets` opens that pane, for
-    /// screenshots of a sandboxed run.
-    private static var initialTab: SettingsTab {
-        #if DEBUG
-        if let name = ProcessInfo.processInfo.environment["PORTSIDE_SETTINGS_TAB"], let tab = SettingsTab(rawValue: name) {
-            return tab
-        }
-        #endif
-        return .dock
-    }
+    private var tab: SettingsTab { navigation.tab }
 
     var body: some View {
         NavigationSplitView {
-            SettingsSidebar(selection: $tab)
+            SettingsSidebar(selection: $navigation.tab)
                 .navigationSplitViewColumnWidth(min: SettingsLayout.sidebarWidth, ideal: SettingsLayout.sidebarWidth, max: SettingsLayout.sidebarWidth)
         } detail: {
             Group {
@@ -957,9 +976,11 @@ private struct GeneralSettings: View {
             } header: {
                 Text("Keyboard")
             } footer: {
-                Text("Open Settings works from any app. Default ⌘⇧D. The menu bar Settings… item always uses ⌘,. Command Center searches Portside's commands. Default ⌥Space; while it is on it is also in the menu bar menu.")
+                Text("Open Settings works from any app. Default ⌘⇧D. The menu bar Settings… item always uses ⌘,. Command Center searches apps, Portside's commands, Settings panes and quicklinks. Default ⌥Space; while it is on it is also in the menu bar menu.")
                     .footerStyle()
             }
+
+            CommandCenterSettingsSection(dockModel: dockModel, history: CommandCenterHistory.shared)
 
             Section("Automatic updates") {
                 Toggle("Check for updates automatically", isOn: Binding(
