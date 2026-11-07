@@ -24,9 +24,13 @@ struct CommandCenterView: View {
         // Action Panel does not change how the window's glass reads.
         .overlay(alignment: .bottomTrailing) {
             if state.actionPanel != nil {
+                // Capped 8 pt under the header so it never covers the search
+                // field; a long action list scrolls instead of growing the window.
                 CommandCenterActionPanel(center: center)
+                    .padding(.top, 60)
                     .padding(.trailing, 10)
                     .padding(.bottom, 40)
+                    .frame(maxHeight: .infinity, alignment: .bottomTrailing)
                     .transition(reduceMotion ? .identity : .opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing)))
             }
         }
@@ -80,11 +84,11 @@ struct CommandCenterView: View {
     @ViewBuilder private var content: some View {
         if let screen = state.stack.last {
             CommandCenterDetails(item: state.item(screen.itemID))
-                .frame(minHeight: contentMinHeight, alignment: .top)
+                .frame(minHeight: Self.minContentHeight, alignment: .top)
         } else if state.results.isEmpty {
             Text("No results")
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, minHeight: contentMinHeight)
+                .frame(maxWidth: .infinity, minHeight: Self.minContentHeight)
         } else {
             results
         }
@@ -93,18 +97,9 @@ struct CommandCenterView: View {
     /// Tall enough for a short Action Panel to fit above the footer.
     private static let minContentHeight: CGFloat = 176
 
-    /// Grows while the Action Panel is open so it never covers the search
-    /// field. Sized for the item's full action list, so filtering the
-    /// panel does not resize the window.
-    private var contentMinHeight: CGFloat {
-        guard let panel = state.actionPanel, let item = state.item(panel.itemID) else { return Self.minContentHeight }
-        // The panel sits 5 pt above the footer divider; keep 8 pt under the header.
-        return max(Self.minContentHeight, CommandCenterActionPanel.height(rows: state.actions(for: item).count) + 13)
-    }
-
     private var results: some View {
         let rows = min(max(state.results.count, 1), CommandCenterLayout.visibleRows)
-        let height = max(CGFloat(rows) * CommandCenterLayout.rowHeight + 12, contentMinHeight)
+        let height = max(CGFloat(rows) * CommandCenterLayout.rowHeight + 12, Self.minContentHeight)
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
@@ -283,64 +278,30 @@ private struct CommandCenterKeyHint: View {
 private struct CommandCenterActionPanel: View {
     @ObservedObject var center: CommandCenter
 
-    static let rowHeight: CGFloat = 30
-    static let fieldHeight: CGFloat = 34
-
-    /// Rows, list padding, divider and filter field.
-    static func height(rows: Int) -> CGFloat {
-        CGFloat(max(rows, 1)) * rowHeight + 12 + 1 + fieldHeight
-    }
-
     var body: some View {
-        let state = center.state
         VStack(spacing: 0) {
-            VStack(spacing: 0) {
-                ForEach(state.visibleActions) { action in
-                    Button { center.send(.performAction(action.kind)) } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: action.symbolName)
-                                .frame(width: 18)
-                                .foregroundStyle(.secondary)
-                            Text(action.title)
-                                .foregroundStyle(action.disabledReason == nil ? .primary : .secondary)
-                            Spacer(minLength: 8)
-                            if let shortcut = action.shortcut {
-                                Text(shortcut).foregroundStyle(.secondary)
-                            }
+            // The list at its own height when it fits, otherwise scrolling
+            // with the highlighted action kept in view.
+            ViewThatFits(in: .vertical) {
+                list
+                ScrollViewReader { proxy in
+                    ScrollView { list }
+                        .onChange(of: center.state.actionPanel?.highlight) { _, highlight in
+                            guard let highlight else { return }
+                            proxy.scrollTo(highlight)
                         }
-                        .font(.system(size: 13))
-                        .padding(.horizontal, 8)
-                        .frame(height: Self.rowHeight)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(action.kind == state.actionPanel?.highlight ? Color.primary.opacity(0.1) : .clear)
-                        )
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .focusable(false)
-                    .accessibilityLabel(action.title)
-                    .accessibilityValue(action.disabledReason.map { "Unavailable. \($0)" } ?? "")
-                    .accessibilityAddTraits(action.kind == state.actionPanel?.highlight ? [.isButton, .isSelected] : .isButton)
-                }
-                if state.visibleActions.isEmpty {
-                    Text("No matching actions")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 30)
                 }
             }
-            .padding(6)
             Divider()
             CommandCenterTextField(
                 placeholder: "Search actions",
-                text: state.actionPanel?.query ?? "",
+                text: center.state.actionPanel?.query ?? "",
                 fontSize: 13,
                 onChange: { center.send(.actionQuery($0)) },
                 onCreate: { center.actionField = $0 }
             )
             .padding(.horizontal, 12)
-            .frame(height: Self.fieldHeight)
+            .frame(height: 34)
         }
         .frame(width: 280)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -348,6 +309,48 @@ private struct CommandCenterActionPanel: View {
         .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Actions")
+    }
+
+    private var list: some View {
+        let state = center.state
+        return VStack(spacing: 0) {
+            ForEach(state.visibleActions) { action in
+                Button { center.send(.performAction(action.kind)) } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: action.symbolName)
+                            .frame(width: 18)
+                            .foregroundStyle(.secondary)
+                        Text(action.title)
+                            .foregroundStyle(action.disabledReason == nil ? .primary : .secondary)
+                        Spacer(minLength: 8)
+                        if let shortcut = action.shortcut {
+                            Text(shortcut).foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.system(size: 13))
+                    .padding(.horizontal, 8)
+                    .frame(height: 30)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(action.kind == state.actionPanel?.highlight ? Color.primary.opacity(0.1) : .clear)
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .accessibilityLabel(action.title)
+                .accessibilityValue(action.disabledReason.map { "Unavailable. \($0)" } ?? "")
+                .accessibilityAddTraits(action.kind == state.actionPanel?.highlight ? [.isButton, .isSelected] : .isButton)
+                .id(action.kind)
+            }
+            if state.visibleActions.isEmpty {
+                Text("No matching actions")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 30)
+            }
+        }
+        .padding(6)
     }
 }
 
