@@ -36,6 +36,9 @@ final class CommandCenter: ObservableObject {
     /// close or when the query no longer wants servers.
     private var serverTask: Task<Void, Never>?
     private var serverListingRequested = false
+    /// Whether the last snapshot held calculator or emoji rows, so a query
+    /// that stops producing them refreshes the catalog once.
+    private var hadQuickAnswers = false
     private var pendingAnnouncement: DispatchWorkItem?
     /// Top center of the panel in screen coordinates, fixed while it is open
     /// so a result count change grows the panel downward.
@@ -107,10 +110,24 @@ final class CommandCenter: ObservableObject {
         return outcome.handled
     }
 
+    func authorizeFile(_ path: String) -> Result<URL, CommandFailure> {
+        guard let files = sources.files else { return .failure(CommandFailure(reason: "There is nothing to preview.")) }
+        return files.authorize(path)
+    }
+
+    /// The file behind a preview screen, re-checked against the chosen
+    /// folders now (the index and the row are not trusted).
+    func previewURL(for id: CommandCenterResultID) -> Result<URL, CommandFailure> {
+        guard let item = state.item(id), item.kind == .file, let files = sources.files else {
+            return .failure(CommandFailure(reason: "There is nothing to preview."))
+        }
+        return files.authorize(item.copyValue)
+    }
+
     /// Fresh read of every provider: titles and availability as of this
     /// moment. In memory only; the app scan runs separately.
     func snapshot() -> [CommandCenterItem] {
-        CommandCenterCatalog.items(registry: commands, moduleTitle: moduleTitle, sources: sources)
+        CommandCenterCatalog.items(registry: commands, moduleTitle: moduleTitle, sources: sources, query: state.query)
     }
 
     // MARK: Effects
@@ -168,6 +185,22 @@ final class CommandCenter: ObservableObject {
             self.listServersIfAsked()
             self.syncServerViewing()
         }
+        sources.clipboard?.onChange = { [weak self] in
+            guard let self, self.state.isVisible else { return }
+            self.send(.catalog(self.snapshot()))
+        }
+        sources.clipboard?.prune()
+        // Chosen folders rescan in the background only when they changed.
+        sources.files?.onChange = { [weak self] in
+            guard let self, self.state.isVisible else { return }
+            self.send(.catalog(self.snapshot()))
+        }
+        sources.files?.refresh()
+        // Shortcuts list in the background too; nothing runs.
+        sources.shortcuts?.refresh { [weak self] in
+            guard let self, self.state.isVisible else { return }
+            self.send(.catalog(self.snapshot()))
+        }
         // The app list catches up in the background; the panel never waits.
         sources.applications?.refresh { [weak self] in
             guard let self, self.state.isVisible else { return }
@@ -176,6 +209,7 @@ final class CommandCenter: ObservableObject {
     }
 
     private func dismiss(restoreFocus: Bool) {
+        hadQuickAnswers = false
         cancelStopConfirmation()
         removeMonitors()
         searcher.cancel()
@@ -183,6 +217,8 @@ final class CommandCenter: ObservableObject {
         serverTask?.cancel()
         serverTask = nil
         if runStaysOpen { runTask?.cancel() }
+        sources.files?.onChange = nil
+        sources.clipboard?.onChange = nil
         sources.servers?.onChange = nil
         sources.servers?.endSession()
         // A port question still being read is canceled; its answer is dropped.
@@ -291,6 +327,12 @@ final class CommandCenter: ObservableObject {
     /// a listing the new query does not want stops, and one it wants starts.
     private func queryChanged() {
         guard state.isVisible else { return }
+        let hasQuickAnswers = (sources.quickAnswers.map {
+            !$0.items(query: state.query, copy: commands.descriptor(for: CommandCenterModule.copyTextCommand)).isEmpty
+        } ?? false) || !(sources.files?.results(for: state.query).isEmpty ?? true)
+            || !(sources.clipboard?.results(for: state.query).isEmpty ?? true)
+        if hasQuickAnswers || hadQuickAnswers { send(.catalog(snapshot())) }
+        hadQuickAnswers = hasQuickAnswers
         if let lookup = sources.portLookup {
             let before = lookup.current
             let refresh = commands.descriptor(for: LocalServersModule.refreshCommand)
@@ -436,7 +478,8 @@ final class CommandCenter: ObservableObject {
         panel.title = "Command Center"
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = true
+        // The window shadow is square around the rounded glass; the view draws its own.
+        panel.hasShadow = false
         panel.level = CommandCenterPanel.windowLevel
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle, .transient]
         panel.isReleasedWhenClosed = false
@@ -467,7 +510,7 @@ final class CommandCenter: ObservableObject {
         guard let panel, let anchorTop, size.width > 0, size.height > 0 else { return }
         let frame = NSRect(
             x: (anchorTop.x - size.width / 2).rounded(),
-            y: (anchorTop.y - size.height).rounded(),
+            y: (anchorTop.y + CommandCenterLayout.shadowMargin - size.height).rounded(),
             width: size.width,
             height: size.height
         )
@@ -493,6 +536,9 @@ enum CommandCenterLayout {
     static let width: CGFloat = 640
     static let cornerRadius: CGFloat = 18
     static let rowHeight: CGFloat = 40
+    static let cardHeight: CGFloat = 96
+    /// Transparent border around the glass that holds its shadow.
+    static let shadowMargin: CGFloat = 36
     static let visibleRows = 7
 }
 

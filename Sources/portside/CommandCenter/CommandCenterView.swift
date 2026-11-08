@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookUI
 import SwiftUI
 
 /// Search field, results (or a pushed screen), footer, and the Action Panel
@@ -35,8 +36,33 @@ struct CommandCenterView: View {
             }
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: state.actionPanel != nil)
+        .background { shadow }
+        .environment(\.fileAuthorizer) { path in
+            if case .success(let url) = center.authorizeFile(path) { return url }
+            return nil
+        }
+        // Room for the shadow inside the transparent window.
+        .padding(CommandCenterLayout.shadowMargin)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Command Center")
+    }
+
+    /// A soft shadow outside the glass only: drawn from a shape whose own
+    /// area is cut away, so it never darkens the translucent panel.
+    private var shadow: some View {
+        let shape = RoundedRectangle(cornerRadius: CommandCenterLayout.cornerRadius, style: .continuous)
+        return shape
+            .fill(.black)
+            .shadow(color: .black.opacity(0.45), radius: 22, y: 10)
+            .compositingGroup()
+            .mask {
+                Rectangle()
+                    .overlay { shape.blendMode(.destinationOut) }
+                    .compositingGroup()
+                    .padding(-CommandCenterLayout.shadowMargin)
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     // MARK: Header
@@ -83,8 +109,14 @@ struct CommandCenterView: View {
 
     @ViewBuilder private var content: some View {
         if let screen = state.stack.last {
-            CommandCenterDetails(item: state.item(screen.itemID))
-                .frame(minHeight: Self.minContentHeight, alignment: .top)
+            switch screen {
+            case .details(let id):
+                CommandCenterDetails(item: state.item(id))
+                    .frame(minHeight: Self.minContentHeight, alignment: .top)
+            case .preview(let id):
+                CommandCenterPreview(result: center.previewURL(for: id))
+                    .frame(height: Self.previewHeight)
+            }
         } else if state.results.isEmpty {
             Text("No results")
                 .foregroundStyle(.secondary)
@@ -96,18 +128,28 @@ struct CommandCenterView: View {
 
     /// Tall enough for a short Action Panel to fit above the footer.
     private static let minContentHeight: CGFloat = 176
+    private static let previewHeight: CGFloat = 340
 
     private var results: some View {
         let rows = min(max(state.results.count, 1), CommandCenterLayout.visibleRows)
-        let height = max(CGFloat(rows) * CommandCenterLayout.rowHeight + 12, Self.minContentHeight)
+        // A card row is taller; count the first rows that fit.
+        let shown = state.results.prefix(rows).reduce(CGFloat(0)) { $0 + ($1.card == nil ? CommandCenterLayout.rowHeight : CommandCenterLayout.cardHeight) }
+        let height = max(shown + 12, Self.minContentHeight)
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(state.results) { item in
-                        CommandCenterRow(item: item, isSelected: item.id == state.selection) {
-                            center.send(.activate(item.id))
+                        if let card = item.card {
+                            CommandCenterCardRow(item: item, card: card, isSelected: item.id == state.selection) {
+                                center.send(.activate(item.id))
+                            }
+                            .id(item.id)
+                        } else {
+                            CommandCenterRow(item: item, isSelected: item.id == state.selection) {
+                                center.send(.activate(item.id))
+                            }
+                            .id(item.id)
                         }
-                        .id(item.id)
                     }
                 }
                 .padding(6)
@@ -171,6 +213,46 @@ struct CommandCenterView: View {
 
 // MARK: - Rows
 
+/// The calculator's result: expression, arrow, answer, in one card.
+private struct CommandCenterCardRow: View {
+    let item: CommandCenterItem
+    let card: CommandCenterCard
+    let isSelected: Bool
+    let activate: () -> Void
+
+    var body: some View {
+        Button(action: activate) {
+            HStack(spacing: 0) {
+                Text(card.input)
+                    .frame(maxWidth: .infinity)
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 44)
+                Text(card.output)
+                    .frame(maxWidth: .infinity)
+            }
+            .font(.system(size: 30, weight: .semibold))
+            .lineLimit(1)
+            .minimumScaleFactor(0.4)
+            .padding(.horizontal, 12)
+            .frame(height: CommandCenterLayout.cardHeight - 8)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.primary.opacity(isSelected ? 0.12 : 0.07))
+            )
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(card.input) equals \(card.output)")
+        .accessibilityHint(item.primaryTitle)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
 private struct CommandCenterRow: View {
     let item: CommandCenterItem
     let isSelected: Bool
@@ -221,7 +303,14 @@ private struct CommandCenterIcon: View {
     let item: CommandCenterItem
 
     var body: some View {
-        if let path = item.iconPath {
+        if let glyph = item.glyph {
+            Text(glyph)
+                .font(.system(size: 20))
+                .frame(width: 24)
+                .accessibilityHidden(true)
+        } else if item.kind == .file, item.previewable, let path = item.iconPath {
+            FileThumbnailIcon(path: path)
+        } else if let path = item.iconPath {
             Image(nsImage: CommandCenterIconCache.icon(for: path))
                 .resizable()
                 .interpolation(.high)
@@ -351,6 +440,55 @@ private struct CommandCenterActionPanel: View {
             }
         }
         .padding(6)
+    }
+}
+
+// MARK: - Quick Look screen
+
+/// The file's Quick Look preview inside the panel. The URL arrives already
+/// checked against the chosen folders; otherwise the reason is shown and
+/// nothing is loaded.
+private struct CommandCenterPreview: View {
+    let result: Result<URL, CommandFailure>
+
+    var body: some View {
+        switch result {
+        case .success(let url):
+            Group {
+                switch MediaKind.of(url) {
+                case .audio: AudioPreview(url: url)
+                case .video: VideoPreview(url: url)
+                case .other: QuickLookPreview(url: url)
+                }
+            }
+            .accessibilityLabel("Preview of \(url.lastPathComponent)")
+        case .failure(let failure):
+            Text(failure.reason)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+private struct QuickLookPreview: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> QLPreviewView {
+        let view = QLPreviewView(frame: .zero, style: .normal) ?? QLPreviewView()
+        view.autostarts = true
+        view.previewItem = url as NSURL
+        return view
+    }
+
+    func updateNSView(_ view: QLPreviewView, context: Context) {
+        if (view.previewItem as? NSURL) as URL? != url { view.previewItem = url as NSURL }
+    }
+
+    /// Releases the Quick Look service connection when the screen goes away.
+    static func dismantleNSView(_ view: QLPreviewView, coordinator: ()) {
+        view.close()
     }
 }
 

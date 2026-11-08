@@ -281,6 +281,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Apple's on-device model; an isolated launch can pick the fake (see `FakeLocalModelProvider.fromEnvironment`).
     /// Server rows for Command Center; empty until a server search or Refresh.
     private let localServers = LocalServerStore()
+    private let shortcutsService = ShortcutsService()
     private let intelligence = ModelRouter(provider: FakeLocalModelProvider.fromEnvironment() ?? AppleOnDeviceModelProvider())
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -354,7 +355,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 },
                 history: .shared,
                 servers: localServers,
-                portLookup: PortLookup(router: intelligence)
+                portLookup: PortLookup(router: intelligence),
+                quickAnswers: QuickAnswers(),
+                snippets: { SnippetStore.shared.snippets },
+                shortcuts: shortcutsService,
+                files: FileIndexService.shared,
+                clipboard: ClipboardService.shared,
+                openWithApps: { [openWith = OpenWithApps()] path in openWith.apps(for: URL(fileURLWithPath: path)) }
             )
             let center = CommandCenter(commands: commands, moduleTitle: { [modules] namespace in
                 modules.modules.first { $0.id.rawValue == namespace }?.title
@@ -363,13 +370,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let commandCenterModule = CommandCenterModule(
                 center: center,
                 chords: dockModel.$commandCenterHotkey.eraseToAnyPublisher(),
-                actions: .live(quicklinks: { [dockModel] in dockModel.commandCenterQuicklinks })
+                actions: .live(quicklinks: { [dockModel] in dockModel.commandCenterQuicklinks }, snippets: { SnippetStore.shared.snippets })
             )
             do {
                 try modules.register(core)
                 try modules.register(commandCenterModule)
                 try modules.register(IntelligenceModule(router: intelligence))
                 try modules.register(LocalServersModule(store: localServers, actions: .live))
+                try modules.register(ShortcutsModule(service: shortcutsService))
+                try modules.register(ClipboardModule(service: ClipboardService.shared))
+                try modules.register(FilesModule(index: FileIndexService.shared, actions: .live))
                 modules.enableSaved(dockModel.modules, restricted: dockModel.restrictedMode)
             } catch {
                 NSLog("portside: command registration failed: \(error)")

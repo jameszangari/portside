@@ -8,7 +8,7 @@ How Portside is put together. See also [PLAN.md](PLAN.md) for the original miles
 
 - `EdgeTracker` owns a thin, near-invisible window along the chosen screen edge. An `NSTrackingArea` on it reports `mouseEntered` and `mouseExited`, so reveal starts the moment the window server delivers the event. It is also a drag destination for files, since tracking areas are unreliable during another app's drag.
 - `DockPanel` is a non-activating `NSPanel` that slides in from the edge. It has its own tracking area so hovering it cancels the hide timer.
-- `DockEngine` coordinates both. The only timers are the one-shot hide delay, widget refresh, and group hover/close/spring-load delays, none of which poll.
+- `DockEngine` coordinates both. The only timers are the one-shot hide delay, widget refresh, and group hover/close/spring-load delays, none of which poll. One deliberate exception sits outside the reveal and hide path: while the optional `clipboard` module runs and is not paused, `ClipboardService` compares `NSPasteboard.changeCount` every 0.75 s (macOS has no public pasteboard change notification); the timer is cancelled when the module stops or history is paused.
 - `OverlayPanel` is a second non-activating panel used for hover labels, group grids, and the drag-out "Remove" label. It sits outside the strip so its content can extend past the strip's bounds.
 
 ## Notes
@@ -94,6 +94,15 @@ Sources/portside/
   CommandCenter/CommandCenterView.swift  SwiftUI panel: search field, results with app icons and unavailable reasons, details screen, footer hints, Action Panel
   CommandCenter/LocalServers.swift  The optional `localServers` module (P2-DEV-02, off by default, sensitive, needs Command Center): server model grouped by process and port with stable keys, wildcard-to-loopback address rule, per-session snapshot store, and the refresh, copy, open and confirmed stop commands that resolve a key against the latest listing
   CommandCenter/LocalServerItems.swift  Local Servers rows: the status row (loading, empty, partial, timed out, failed, turned off), server rows with PID and binds, the server card facts, and the server query words
+  CommandCenter/Calculator.swift  Restricted arithmetic (P2-CMD-06): recursive descent over numbers, `+ - * / × ÷ ^`, signs and parentheses, bounded length, digits and depth, locale decimal marks, locale formatting for title and copy
+  CommandCenter/EmojiIndex.swift  Emoji search over `Unicode.Scalar.Properties` names (`emoji <words>` or `:<words>`), built once
+  CommandCenter/QuickAnswers.swift  Calculator and emoji rows made from the query, ranked as the answer and copied through `commandCenter.copyText`
+  CommandCenter/Snippets.swift  Snippet model and `SnippetStore` (P2-CMD-05): user text in `command-center-snippets.json` (0600, outside dock.json), bounded, lenient read, never logged
+  CommandCenter/Shortcuts.swift  Apple Shortcuts (P2-CMD-07): list parser, exact `/usr/bin/shortcuts` invocations (argument arrays, run by listed UUID), `ShortcutsService` (listing on open, one bounded run at a time over `LsofRunner`), optional `shortcuts` module
+  CommandCenter/FileSearch.swift  File name search pieces (P2-CMD-03): `FileRootRules` (which folders may be chosen), `FileAccess` (the path check before open or reveal), bounded `FileScanner` (no symlinks, no hidden files), `FileSearch` ranking
+  CommandCenter/FileIndexService.swift  `FileIndexService` (in-memory index, stale tracking, purge on revoke), `FileRootStore` (roots in `command-center-file-roots.json`), `FSEventsWatcher` (public FSEvents, marks roots stale), optional `files` module and its commands
+  CommandCenter/OpenWithApps.swift  Apps that can open a file for the Open With actions (public NSWorkspace lookups, cached by extension)
+  CommandCenter/ClipboardHistory.swift  Opt-in text clipboard history (P2-CMD-04): `ClipboardPolicy` (what may be kept), AES-GCM `ClipboardFile` with a keychain key, `ClipboardService` (0.75 s changeCount watch while on and not paused), optional `clipboard` module and its commands
   CommandCenter/PortLookup.swift  Port lookup (P2-AI-03): `PortQuery` decides without a model (bare port, clarification, or one-number question), `PortLookup` sends only a one-number question through `ModelRouter` (settle delay, cancel on query change or close, stale answers dropped), and the lookup row with the server cards it answers
   CommandCenter/HotkeyConflicts.swift  Read-only conflict check (Portside and enabled macOS shortcuts via `CopySymbolicHotKeys`), Command Center hotkey registration and status
   Switcher/SwitcherState.swift  Switcher state machine (P2-SW-01/02): hidden, armed (key but transparent), visible; quick switch, cycling, release commit, Escape and focus-loss cancel, stable order as apps and windows come and go; window entries and the catalog (apps or windows mode), window choice in the app row, latched title search and matching; key mapping, held-modifier rule, ⌘Tab refusal

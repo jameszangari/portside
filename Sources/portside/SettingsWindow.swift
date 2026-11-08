@@ -1032,7 +1032,9 @@ private struct GeneralSettings: View {
                     .footerStyle()
             }
 
-            CommandCenterSettingsSection(dockModel: dockModel, history: CommandCenterHistory.shared)
+            CommandCenterSettingsSection(dockModel: dockModel, history: CommandCenterHistory.shared, snippets: SnippetStore.shared, files: FileIndexService.shared)
+
+            ClipboardSettingsSection(service: ClipboardService.shared)
 
             Section("Automatic updates") {
                 Toggle("Check for updates automatically", isOn: Binding(

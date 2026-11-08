@@ -10,6 +10,9 @@ struct CommandCenterActions {
     /// Opens an already validated URL. false when macOS refused.
     var openURL: @MainActor (URL) -> Bool
     var quicklinks: @MainActor () -> [Quicklink]
+    /// Puts plain text on the pasteboard. false when it could not.
+    var copyText: @MainActor (String) -> Bool = { _ in false }
+    var snippets: @MainActor () -> [Snippet] = { [] }
     /// The path is an existing directory (an .app bundle is one).
     var bundleExists: (String) -> Bool = { path in
         var isDirectory: ObjCBool = false
@@ -18,7 +21,7 @@ struct CommandCenterActions {
 
     /// Opens through `AppLauncher`, the dock tiles' path, so a running app
     /// unhides and comes forward and a stopped one launches.
-    static func live(quicklinks: @escaping @MainActor () -> [Quicklink]) -> CommandCenterActions {
+    static func live(quicklinks: @escaping @MainActor () -> [Quicklink], snippets: @escaping @MainActor () -> [Snippet] = { [] }) -> CommandCenterActions {
         CommandCenterActions(
             openApplication: { url in
                 guard let app = PinnedApp(appURL: url) else { return "Not an app." }
@@ -30,7 +33,15 @@ struct CommandCenterActions {
                 }
             },
             openURL: { NSWorkspace.shared.open($0) },
-            quicklinks: quicklinks
+            quicklinks: quicklinks,
+            copyText: { text in
+                NSPasteboard.general.clearContents()
+                let done = NSPasteboard.general.setString(text, forType: .string)
+                // A snippet or result Portside copied is not clipboard history.
+                ClipboardService.shared.noteOwnWrite(changeCount: NSPasteboard.general.changeCount)
+                return done
+            },
+            snippets: snippets
         )
     }
 
@@ -48,10 +59,12 @@ final class CommandCenterModule: PortsideModule {
     static let moduleID = ModuleID("commandCenter")!
     static let openAppCommand = CommandID("commandCenter.openApp")!
     static let openQuicklinkCommand = CommandID("commandCenter.openQuicklink")!
+    static let copyTextCommand = CommandID("commandCenter.copyText")!
+    static let copySnippetCommand = CommandID("commandCenter.copySnippet")!
 
     let id = CommandCenterModule.moduleID
     let title = "Command Center"
-    let summary = "A search panel for apps, Portside's commands, Settings panes and your quicklinks, opened with a global shortcut (default ⌥Space, set in General > Keyboard)."
+    let summary = "A search panel for apps, Portside's commands, Settings panes, your quicklinks and snippets, a calculator and emoji, opened with a global shortcut (default ⌥Space, set in General > Keyboard)."
     let fallback = "Every command stays in the menu bar menu, the dock and Settings."
     /// A Carbon hotkey is not key interception and reads no data.
     let isSensitive = false
@@ -86,6 +99,36 @@ final class CommandCenterModule: PortsideModule {
                     }
                     if let problem = await actions.openApplication(url) { return .failure(CommandFailure(reason: problem)) }
                     return .success(nil)
+                }
+            ),
+            CommandDescriptor(
+                id: Self.copyTextCommand,
+                title: "Copy Text",
+                keywords: ["clipboard", "calculator", "emoji"],
+                symbolName: "doc.on.doc",
+                input: .string(maxLength: 256),
+                handler: { [actions] input in
+                    // Plain text only: a calculator result or one emoji. Never run or opened.
+                    guard case .string(let text) = input, !text.isEmpty else {
+                        return .failure(CommandFailure(reason: "Nothing to copy."))
+                    }
+                    return actions.copyText(text) ? .success(nil) : .failure(CommandFailure(reason: "macOS would not take the text."))
+                }
+            ),
+            CommandDescriptor(
+                id: Self.copySnippetCommand,
+                title: "Copy Snippet",
+                keywords: ["clipboard", "text"],
+                symbolName: "text.alignleft",
+                input: .string(maxLength: 36),
+                handler: { [actions] input in
+                    // The ID, never text: only a saved snippet can be copied, as plain text.
+                    guard case .string(let raw) = input, let id = UUID(uuidString: raw),
+                          let snippet = actions.snippets().first(where: { $0.id == id }) else {
+                        return .failure(CommandFailure(reason: "That snippet was removed."))
+                    }
+                    guard !snippet.isEmpty else { return .failure(CommandFailure(reason: "This snippet is empty.")) }
+                    return actions.copyText(snippet.text) ? .success(nil) : .failure(CommandFailure(reason: "macOS would not take the text."))
                 }
             ),
             CommandDescriptor(
