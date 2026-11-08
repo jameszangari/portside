@@ -152,6 +152,9 @@ final class CommandCenter: ObservableObject {
         sources.servers?.confirmStop = { [weak self] server in
             await self?.confirmStop(server) ?? false
         }
+        sources.servers?.confirmForceStop = { [weak self] server in
+            await self?.confirmStop(server, force: true) ?? false
+        }
         sources.servers?.onChange = { [weak self] in
             guard let self, self.state.isVisible else { return }
             self.send(.catalog(self.snapshot()))
@@ -217,9 +220,17 @@ final class CommandCenter: ObservableObject {
             return
         }
         runStaysOpen = invocation.staysOpen
+        var input = invocation.input
+        if invocation.command == LocalServersModule.forceStopCommand {
+            guard case .string(let key) = input, let token = sources.servers?.beginForceStop(key) else {
+                send(.finished(id, .failed("Force stop requires a current graceful timeout receipt.")))
+                return
+            }
+            input = .string(token)
+        }
         runTask = Task { @MainActor [weak self, commands] in
             let previousReceipt = self?.sources.servers?.lastStopReceipt?.id
-            let result = await commands.execute(invocation.command, input: invocation.input)
+            let result = await commands.execute(invocation.command, input: input)
             let receipt = self?.sources.servers?.lastStopReceipt
             self?.send(.finished(id, Self.stopResult(result, command: invocation.command, previousReceipt: previousReceipt, receipt: receipt)))
         }
@@ -228,7 +239,7 @@ final class CommandCenter: ObservableObject {
     /// Registry cancellation remains generic; a stop that already signaled
     /// must still show its new receipt, without implying that cancel undid it.
     static func stopResult(_ result: CommandResult, command: CommandID, previousReceipt: UUID?, receipt: LocalServerStopReceipt?) -> CommandResult {
-        guard command == LocalServersModule.stopCommand, result == .canceled,
+        guard [LocalServersModule.stopCommand, LocalServersModule.forceStopCommand].contains(command), result == .canceled,
               let receipt, receipt.id != previousReceipt else { return result }
         switch receipt.outcome {
         case .stopped, .alreadyExited: return .success(receipt.message)
@@ -236,14 +247,14 @@ final class CommandCenter: ObservableObject {
         }
     }
 
-    private func confirmStop(_ server: LocalServer) async -> Bool {
+    private func confirmStop(_ server: LocalServer, force: Bool = false) async -> Bool {
         guard !Task.isCancelled, state.isVisible, let panel, stopAlert == nil else { return false }
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Stop this server process?"
-        alert.informativeText = Self.stopConfirmationText(server)
+        alert.messageText = force ? "Force stop this process (SIGKILL)?" : "Stop this server process?"
+        alert.informativeText = Self.stopConfirmationText(server, force: force)
         alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Stop Server")
+        alert.addButton(withTitle: force ? "Force Stop (SIGKILL)" : "Stop Server")
         alert.buttons[0].keyEquivalent = "\r"
         alert.buttons[1].keyEquivalent = ""
         stopAlert = alert
@@ -260,10 +271,13 @@ final class CommandCenter: ObservableObject {
         }
     }
 
-    static func stopConfirmationText(_ server: LocalServer) -> String {
+    static func stopConfirmationText(_ server: LocalServer, force: Bool = false) -> String {
         let process = server.process
         let ports = Set(process.sockets.map(\.port)).sorted().map(String.init).joined(separator: ", ")
-        return "Process: \(LocalServerText.name(process))\nPID: \(process.pid)\nSelected port: \(server.port)\nOwner UID: \(process.uid.value.map(String.init) ?? "Unknown")\nExecutable: \(process.executablePath.value ?? "Unknown")\nListed ports: \(ports)\n\nSend SIGTERM to this process. All services in this process may stop, including other ports. No force stop follows."
+        let warning = force
+            ? "Graceful termination failed: this process was still running after SIGTERM. Send SIGKILL once to this exact PID. Unsaved data may be lost; cleanup will not run. All services in this process may stop, including other ports. No automatic retry follows."
+            : "Send SIGTERM to this process. All services in this process may stop, including other ports. No force stop follows."
+        return "Process: \(LocalServerText.name(process))\nPID: \(process.pid)\nSelected port: \(server.port)\nOwner UID: \(process.uid.value.map(String.init) ?? "Unknown")\nExecutable: \(process.executablePath.value ?? "Unknown")\nListed ports: \(ports)\n\n\(warning)"
     }
 
     private func cancelStopConfirmation() {

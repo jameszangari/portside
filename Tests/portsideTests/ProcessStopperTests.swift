@@ -4,11 +4,12 @@ import XCTest
 @testable import portside
 
 /// Only fake PIDs reach this signaler. Real signaling has a separate fixture below.
-private final class StopSystem: ProcessInspector, ProcessSignaler, @unchecked Sendable {
+private final class StopSystem: ProcessInspector, ProcessSignaler, ForceProcessSignaler, @unchecked Sendable {
     var current: ProcessFact<ProcessIdentity> = .known(ProcessIdentity(pid: 4242, startSeconds: 1_000, startMicroseconds: 7, uid: 501))
     var path: ProcessFact<String> = .known("/tmp/fixture/bin/server")
     var parent: ProcessFact<pid_t> = .known(200)
     var signals: [pid_t] = []
+    var forceSignals: [pid_t] = []
     var signalError: Int32?
     var afterSignal: (() -> Void)?
     var identityRead: (() -> Void)?
@@ -18,6 +19,11 @@ private final class StopSystem: ProcessInspector, ProcessSignaler, @unchecked Se
     func parentPID(of pid: pid_t) -> ProcessFact<pid_t> { parent }
     func terminate(_ pid: pid_t) -> Int32? {
         signals.append(pid)
+        afterSignal?()
+        return signalError
+    }
+    func forceStop(_ pid: pid_t) -> Int32? {
+        forceSignals.append(pid)
         afterSignal?()
         return signalError
     }
@@ -72,7 +78,7 @@ final class ProcessStopperTests: XCTestCase {
         system = StopSystem()
         source = StopSource()
         listeners = ListenerService(source: source)
-        stopper = ProcessStopper(inspector: system, signaler: system,
+        stopper = ProcessStopper(inspector: system, signaler: system, forceSignaler: system,
                                  policy: ProcessStopPolicy(uid: 501, ownPID: 100, parentPID: 99), timeout: .milliseconds(20))
     }
 
@@ -448,6 +454,279 @@ final class ProcessStopperTests: XCTestCase {
             XCTAssertTrue(text.contains(expected), expected)
         }
     }
+
+    private func forceStore(lifetime: Duration = .seconds(60)) async -> LocalServerStore {
+        let store = LocalServerStore(service: listeners, stopper: stopper, confirmationLifetime: lifetime)
+        store.activate()
+        _ = await store.refresh()
+        store.confirmStop = { _ in true }
+        store.confirmForceStop = { _ in true }
+        _ = await store.stop(stopServer().key)
+        XCTAssertEqual(store.lastStopOutcome, .stillRunning)
+        return store
+    }
+
+    func testForceRequiresGracefulTimeoutAndUnforgeableUIIntent() async {
+        let store = LocalServerStore(service: listeners, stopper: stopper)
+        store.activate()
+        _ = await store.refresh()
+        XCTAssertNil(store.beginForceStop(stopServer().key))
+        _ = await store.forceStop(stopServer().key)
+        XCTAssertTrue(system.forceSignals.isEmpty)
+        store.confirmStop = { _ in true }
+        _ = await store.stop(stopServer().key)
+        XCTAssertTrue(store.canForceStop(stopServer()))
+        _ = await store.forceStop(stopServer().key)
+        XCTAssertTrue(system.forceSignals.isEmpty)
+        let token = store.beginForceStop(stopServer().key)!
+        var prompts = 0
+        store.confirmForceStop = { _ in prompts += 1; return true }
+        system.afterSignal = { self.system.current = .unknown(.exited) }
+        _ = await store.forceStop(token)
+        _ = await store.forceStop(token)
+        XCTAssertEqual(prompts, 1)
+        XCTAssertEqual(system.signals, [4242])
+        XCTAssertEqual(system.forceSignals, [4242])
+        XCTAssertEqual(store.lastStopOutcome, .stopped)
+        XCTAssertTrue(store.lastStopReceipt!.message.contains("SIGKILL"))
+        XCTAssertFalse(store.canForceStop(stopServer()))
+    }
+
+    func testForceRegistryRequiresUIIntentAndPublishesEligibilityAfterRefresh() async throws {
+        let store = LocalServerStore(service: listeners, stopper: stopper)
+        store.activate()
+        _ = await store.refresh()
+        let registry = CommandRegistry()
+        for command in LocalServersModule(store: store).commands() { try registry.register(command) }
+        var offered = false
+        store.onChange = { offered = offered || store.canForceStop(stopServer()) }
+        store.confirmStop = { _ in true }
+        _ = await store.stop(stopServer().key)
+        XCTAssertTrue(offered)
+        var prompts = 0
+        store.confirmForceStop = { _ in prompts += 1; return true }
+        let refused = await registry.execute(LocalServersModule.forceStopCommand, input: .string(stopServer().key))
+        guard case .failed = refused else { return XCTFail("server key bypassed UI intent") }
+        XCTAssertEqual(prompts, 0)
+        XCTAssertTrue(system.forceSignals.isEmpty)
+        let token = try XCTUnwrap(store.beginForceStop(stopServer().key))
+        system.afterSignal = { self.system.current = .unknown(.exited) }
+        let approved = await registry.execute(LocalServersModule.forceStopCommand, input: .string(token))
+        guard case .success = approved else { return XCTFail("\(approved)") }
+        XCTAssertEqual(prompts, 1)
+        XCTAssertEqual(system.forceSignals, [4242])
+        store.onChange = nil
+    }
+
+    func testForceCancelExpiredMissingAndClosedConfirmationSendNothing() async {
+        for scenario in ["cancel", "expire", "missing", "close", "disable", "taskCancel"] {
+            let store = await forceStore(lifetime: .milliseconds(60))
+            let token = store.beginForceStop(stopServer().key)!
+            store.confirmForceStop = { _ in
+                switch scenario {
+                case "expire": try? await Task.sleep(for: .milliseconds(100))
+                case "close": store.endSession()
+                case "disable": store.deactivate()
+                case "taskCancel": withUnsafeCurrentTask { $0?.cancel() }
+                default: break
+                }
+                return scenario != "cancel"
+            }
+            if scenario == "missing" { store.confirmForceStop = nil }
+            let task = Task { await store.forceStop(token) }
+            _ = await task.value
+            XCTAssertTrue(system.forceSignals.isEmpty, scenario)
+            XCTAssertFalse(store.canForceStop(stopServer()), scenario)
+            _ = await store.forceStop(token)
+            XCTAssertTrue(system.forceSignals.isEmpty, "replay: \(scenario)")
+        }
+    }
+
+    func testForceApprovalExpiresDuringFreshPortLookup() async {
+        let store = await forceStore(lifetime: .milliseconds(60))
+        let token = store.beginForceStop(stopServer().key)!
+        await source.set(delay: .milliseconds(100))
+        _ = await store.forceStop(token)
+        XCTAssertTrue(system.forceSignals.isEmpty)
+    }
+
+    func testForceDoubleInvocationCannotConfirmOrSignalTwice() async {
+        let store = await forceStore()
+        let token = store.beginForceStop(stopServer().key)!
+        var prompts = 0
+        store.confirmForceStop = { _ in
+            prompts += 1
+            XCTAssertNil(store.beginForceStop(stopServer().key))
+            _ = await store.forceStop(token)
+            return true
+        }
+        system.afterSignal = { self.system.current = .unknown(.exited) }
+        _ = await store.forceStop(token)
+        XCTAssertEqual(prompts, 1)
+        XCTAssertEqual(system.forceSignals, [4242])
+    }
+
+    func testForceExpiredUIIntentAndPreflightExitSkipConfirmation() async throws {
+        for expired in [false, true] {
+            let store = await forceStore(lifetime: .milliseconds(60))
+            let token = store.beginForceStop(stopServer().key)!
+            var prompts = 0
+            store.confirmForceStop = { _ in prompts += 1; return true }
+            if expired { try await Task.sleep(for: .milliseconds(100)) }
+            else { system.current = .unknown(.exited) }
+            _ = await store.forceStop(token)
+            XCTAssertEqual(prompts, 0)
+            XCTAssertTrue(system.forceSignals.isEmpty)
+            XCTAssertFalse(store.canForceStop(stopServer()))
+            system.current = stopServer().process.identity
+        }
+    }
+
+    func testForceRechecksAllSecurityFactsBeforeSignal() async {
+        for scenario in ["seconds", "microseconds", "uid", "root", "missingIdentity", "missingPath", "missingParent", "path", "protected", "helper", "exit", "port", "partial", "timeout"] {
+            system = StopSystem()
+            source = StopSource()
+            listeners = ListenerService(source: source)
+            stopper = ProcessStopper(inspector: system, signaler: system, forceSignaler: system,
+                                     policy: ProcessStopPolicy(uid: 501, ownPID: 100, parentPID: 99), timeout: .zero)
+            let store = await forceStore()
+            let token = store.beginForceStop(stopServer().key)!
+            store.confirmForceStop = { _ in
+                switch scenario {
+                case "seconds": self.system.current = .known(ProcessIdentity(pid: 4242, startSeconds: 1001, startMicroseconds: 7, uid: 501))
+                case "microseconds": self.system.current = .known(ProcessIdentity(pid: 4242, startSeconds: 1000, startMicroseconds: 8, uid: 501))
+                case "uid", "root": self.system.current = .known(ProcessIdentity(pid: 4242, startSeconds: 1000, startMicroseconds: 7, uid: scenario == "root" ? 0 : 502))
+                case "missingIdentity": self.system.current = .unknown(.notReported)
+                case "missingPath": self.system.path = .unknown(.notReported)
+                case "missingParent": self.system.parent = .unknown(.notReported)
+                case "path": self.system.path = .known("/tmp/replaced")
+                case "protected": self.system.path = .known("/usr/bin/server")
+                case "helper": self.system.parent = .known(100)
+                case "exit": self.system.current = .unknown(.exited)
+                case "port": await self.source.set(processes: [stopServer(pid: 4243).process])
+                case "partial": await self.source.set(outcome: .partial(truncated: true, malformedRecords: 0))
+                case "timeout": await self.source.set(outcome: .timedOut)
+                default: XCTFail(scenario)
+                }
+                return true
+            }
+            _ = await store.forceStop(token)
+            XCTAssertTrue(system.forceSignals.isEmpty, scenario)
+            XCTAssertFalse(store.canForceStop(stopServer()), scenario)
+            if scenario == "exit" { XCTAssertEqual(store.lastStopOutcome, .alreadyExited) }
+        }
+    }
+
+    func testForceFinalReadAndFinalApprovalGuard() async {
+        for revoke in [false, true] {
+            system.current = stopServer().process.identity
+            var reads = 0
+            var authorized = true
+            system.identityRead = {
+                reads += 1
+                if reads == 3 {
+                    if revoke { authorized = false }
+                    else { self.system.current = .known(ProcessIdentity(pid: 4242, startSeconds: 2000, startMicroseconds: 7, uid: 501)) }
+                }
+            }
+            let result = await stopper.forceStop(stopServer(), listeners: listeners, authorized: { authorized })
+            XCTAssertEqual(result, revoke ? .canceled : .targetChanged)
+            XCTAssertTrue(system.forceSignals.isEmpty)
+        }
+    }
+
+    func testForceProtectedPIDsMissingSelectionFactsAndNoLongerOwnedPort() async {
+        for pid: pid_t in [-1, 0, 1, 99, 100] {
+            let result = await stopper.forceStop(stopServer(pid: pid), listeners: listeners, authorized: { true })
+            XCTAssertEqual(result, .protected)
+        }
+        let unknown = await stopper.forceStop(stopServer(known: false), listeners: listeners, authorized: { true })
+        guard case .failed = unknown else { return XCTFail("unknown identity allowed") }
+        await source.set(processes: [])
+        let lost = await stopper.forceStop(stopServer(), listeners: listeners, authorized: { true })
+        XCTAssertEqual(lost, .targetChanged)
+        XCTAssertTrue(system.forceSignals.isEmpty)
+    }
+
+    func testForceCancellationAfterSignalRefreshesWithoutClaimingUndo() async {
+        let store = await forceStore()
+        let token = store.beginForceStop(stopServer().key)!
+        system.afterSignal = { withUnsafeCurrentTask { $0?.cancel() } }
+        await source.set(onRead: { [source] in await source?.set(processes: []) })
+        let task = Task { await store.forceStop(token) }
+        _ = await task.value
+        XCTAssertEqual(store.lastStopOutcome, .failed("SIGKILL was sent; exit observation was canceled."))
+        XCTAssertTrue(store.servers.isEmpty)
+        XCTAssertEqual(system.forceSignals, [4242])
+        XCTAssertFalse(store.canForceStop(stopServer()))
+    }
+
+    func testForceCloseDuringLookupInvalidatesApprovalAndReceipt() async {
+        let store = await forceStore()
+        let token = store.beginForceStop(stopServer().key)!
+        await source.set(onRead: { await MainActor.run { store.endSession() } })
+        _ = await store.forceStop(token)
+        XCTAssertTrue(system.forceSignals.isEmpty)
+        XCTAssertNil(store.lastStopReceipt)
+        XCTAssertNil(store.snapshot)
+    }
+
+    func testForceSignalErrorsExitRacesAndObservationNeverRetry() async {
+        for code in [EPERM, EACCES, ESRCH, EINVAL] {
+            system.signalError = code
+            let outcome = await stopper.forceStop(stopServer(), listeners: listeners, authorized: { true })
+            if code == ESRCH { XCTAssertEqual(outcome, .alreadyExited) }
+            else if code == EPERM || code == EACCES { XCTAssertEqual(outcome, .denied) }
+            else { XCTAssertEqual(outcome, .failed("SIGKILL returned error \(code).")) }
+        }
+        XCTAssertEqual(system.forceSignals, Array(repeating: 4242, count: 4))
+        system.signalError = nil
+        let result = await stopper.forceStop(stopServer(), listeners: listeners, authorized: { true })
+        XCTAssertEqual(result, .failed("SIGKILL was sent, but exit was not observed before the deadline. No retry was sent."))
+        XCTAssertEqual(system.forceSignals.count, 5)
+        system.afterSignal = { self.system.current = .unknown(.denied) }
+        let unknown = await stopper.forceStop(stopServer(), listeners: listeners, authorized: { true })
+        XCTAssertEqual(unknown, .failed("SIGKILL was sent, but process exit could not be verified."))
+    }
+
+    func testForceReconcilesAllPortsCardsLookupAndPreservesUnrelatedProcess() async {
+        let original = stopServer().process
+        let extra = ListenerSocket(family: .v4, hostKind: .loopback, host: "127.0.0.1", port: 8080, fd: 5)
+        let multi = ListenerProcess(pid: original.pid, name: original.name, uid: original.uid, userName: original.userName,
+                                    identity: original.identity, executablePath: original.executablePath, sockets: original.sockets + [extra])
+        let other = stopServer(pid: 4243).process
+        await source.set(processes: [multi, other])
+        let store = await forceStore()
+        let registry = CommandRegistry()
+        for command in LocalServersModule(store: store).commands() { try! registry.register(command) }
+        func items() -> [CommandCenterItem] {
+            CommandCenterCatalog.serverItems(store, registry: registry, moduleTitle: { _ in nil })
+        }
+        XCTAssertEqual(items().filter { $0.moreActions.contains { $0.invocation.command == LocalServersModule.forceStopCommand } }.count, 1)
+        let lookup = PortLookup(router: nil)
+        lookup.update("8080", serversUnavailable: nil)
+        let token = store.beginForceStop(stopServer().key)!
+        system.afterSignal = { self.system.current = .unknown(.exited) }
+        await source.set(onRead: { [source] in await source?.set(processes: [other]) })
+        _ = await store.forceStop(token)
+        XCTAssertEqual(store.servers.map(\.process.pid), [4243])
+        XCTAssertEqual(items().filter { $0.kind == .server }.count, 1)
+        XCTAssertFalse(items().contains { $0.moreActions.contains { $0.invocation.command == LocalServersModule.forceStopCommand } })
+        let row = CommandCenterCatalog.lookupItem(lookup, store: store, refresh: registry.descriptor(for: LocalServersModule.refreshCommand))
+        XCTAssertEqual(row?.title, "Nothing visible to you on port 8080")
+        XCTAssertEqual(store.lastStopOutcome, .stopped)
+        let queries = await source.queries
+        XCTAssertEqual(queries, [.all, ListenerQuery(port: 5173)!, .all, ListenerQuery(port: 5173)!, .all])
+    }
+
+    func testForceConfirmationAndCanceledReceiptAreExplicit() {
+        let text = CommandCenter.stopConfirmationText(stopServer(), force: true)
+        for expected in ["fixture server", "PID: 4242", "5173", "/tmp/fixture/bin/server", "Graceful termination failed", "SIGTERM", "SIGKILL", "Unsaved data", "cleanup", "No automatic retry"] {
+            XCTAssertTrue(text.contains(expected), expected)
+        }
+        let receipt = LocalServerStopReceipt(pid: 4242, port: 5173, outcome: .failed("SIGKILL was sent; exit observation was canceled."), force: true)
+        XCTAssertEqual(CommandCenter.stopResult(.canceled, command: LocalServersModule.forceStopCommand, previousReceipt: nil, receipt: receipt), .failed(receipt.message))
+    }
 }
 
 /// Compiles a tiny test-owned executable, keeping it outside protected OS
@@ -492,19 +771,60 @@ private final class DisposableStopServer {
 }
 
 /// Hard guard: actual signaling only reaches the child this harness owns.
-private final class OwnedChildSignaler: ProcessSignaler, @unchecked Sendable {
+private final class OwnedChildSignaler: ProcessSignaler, ForceProcessSignaler, @unchecked Sendable {
     let pid: pid_t
     var calls = 0
+    var forceCalls = 0
     init(pid: pid_t) { self.pid = pid }
     func terminate(_ pid: pid_t) -> Int32? {
         guard pid == self.pid, pid > 1 else { XCTFail("non-fixture target"); return EPERM }
         calls += 1
         return SIGTERMProcessSignaler().terminate(pid)
     }
+    func forceStop(_ pid: pid_t) -> Int32? {
+        guard pid == self.pid, pid > 1 else { XCTFail("non-fixture force target"); return EPERM }
+        forceCalls += 1
+        return SIGKILLProcessSignaler().forceStop(pid)
+    }
 }
 
 @MainActor
 final class ProcessStopIntegrationTests: XCTestCase {
+    func testRealOwnedChildForceStopsOnlyAfterTimeoutAndNewApproval() async throws {
+        let child = try DisposableStopServer(ignoresTerm: true)
+        defer { child.close() }
+        let sibling = try DisposableStopServer(ignoresTerm: true)
+        defer { sibling.close() }
+        let signaler = OwnedChildSignaler(pid: child.process.processIdentifier)
+        var policy = ProcessStopPolicy()
+        policy.ownPID = pid_t.max
+        let stopper = ProcessStopper(signaler: signaler, forceSignaler: signaler, policy: policy, timeout: .milliseconds(200))
+        let store = LocalServerStore(stopper: stopper)
+        store.activate()
+        _ = await store.refresh()
+        let server = try XCTUnwrap(store.servers.first { $0.process.pid == child.process.processIdentifier })
+        store.confirmStop = { _ in true }
+        _ = await store.stop(server.key)
+        XCTAssertEqual(store.lastStopOutcome, .stillRunning)
+        XCTAssertEqual(signaler.forceCalls, 0)
+        XCTAssertTrue(child.process.isRunning)
+        store.confirmForceStop = { confirmed in
+            XCTAssertEqual(confirmed.process.identity, server.process.identity)
+            XCTAssertEqual(confirmed.process.pid, child.process.processIdentifier)
+            return true
+        }
+        let token = try XCTUnwrap(store.beginForceStop(server.key))
+        _ = await store.forceStop(token)
+        XCTAssertEqual(store.lastStopOutcome, .stopped)
+        XCTAssertEqual(signaler.calls, 1)
+        XCTAssertEqual(signaler.forceCalls, 1)
+        XCTAssertFalse(store.servers.contains { $0.process.pid == child.process.processIdentifier })
+        XCTAssertTrue(sibling.process.isRunning)
+        XCTAssertTrue(store.servers.contains { $0.process.pid == sibling.process.processIdentifier })
+        _ = await store.forceStop(token)
+        XCTAssertEqual(signaler.forceCalls, 1)
+    }
+
     func testRealOwnedChildExitsAndPortDisappears() async throws {
         try await runChild(ignoresTerm: false)
     }

@@ -98,7 +98,8 @@ struct LocalServerStopReceipt {
     let pid: pid_t
     let port: UInt16
     let outcome: ProcessStopOutcome
-    var message: String { "PID \(pid) · port \(port): \(outcome.message)" }
+    var force = false
+    var message: String { "\(force ? "Force stop (SIGKILL) · " : "")PID \(pid) · port \(port): \(outcome.message)" }
 }
 
 /// The latest listener snapshot for one Command Center session. Nothing
@@ -121,9 +122,12 @@ final class LocalServerStore {
     /// Installed only while Command Center is open. No model or background
     /// command can supply approval or an arbitrary PID.
     var confirmStop: (@MainActor (LocalServer) async -> Bool)?
+    var confirmForceStop: (@MainActor (LocalServer) async -> Bool)?
     private(set) var lastStopReceipt: LocalServerStopReceipt?
     var lastStopOutcome: ProcessStopOutcome? { lastStopReceipt?.outcome }
     private var stopping = false
+    private var forceCandidate: LocalServer?
+    private var forceIntent: (token: String, key: String, expires: ContinuousClock.Instant)?
     private var stopRefreshTask: Task<Result<ListenerSnapshot, CommandFailure>, Never>?
     private let stopper: ProcessStopper
     private let confirmationLifetime: Duration
@@ -156,6 +160,9 @@ final class LocalServerStore {
         stopRefreshTask?.cancel()
         stopRefreshTask = nil
         confirmStop = nil
+        confirmForceStop = nil
+        forceCandidate = nil
+        forceIntent = nil
         lastStopReceipt = nil
         snapshot = nil
         loading = 0
@@ -165,12 +172,54 @@ final class LocalServerStore {
     /// One confirmation per invocation, bounded to 60 seconds. A late
     /// approval requires a new action; it is never reused for another PID.
     func stop(_ key: String) async -> Result<String?, CommandFailure> {
+        await stop(key, force: false)
+    }
+
+    func canForceStop(_ server: LocalServer) -> Bool {
+        guard isActive, !stopping, lastStopOutcome == .stillRunning,
+              let candidate = forceCandidate, candidate.key == server.key else { return false }
+        return candidate.process.identity == server.process.identity
+            && candidate.process.uid == server.process.uid
+            && candidate.process.executablePath == server.process.executablePath
+    }
+
+    func beginForceStop(_ key: String) -> String? {
+        guard let server = server(key), canForceStop(server) else { return nil }
+        let token = UUID().uuidString
+        forceIntent = (token, key, .now.advanced(by: confirmationLifetime))
+        return token
+    }
+
+    func forceStop(_ token: String) async -> Result<String?, CommandFailure> {
+        guard let intent = forceIntent, intent.token == token else {
+            return .failure(CommandFailure(reason: "Select Force Stop in Command Center. A graceful timeout and separate confirmation are required."))
+        }
+        forceIntent = nil
+        defer {
+            forceCandidate = nil
+            if isActive { onChange?() }
+        }
+        guard ContinuousClock.now < intent.expires else {
+            return .failure(CommandFailure(reason: "Force stop request expired. Try graceful stop again."))
+        }
+        return await stop(intent.key, force: true)
+    }
+
+    private func stop(_ key: String, force: Bool) async -> Result<String?, CommandFailure> {
         guard isActive else { return .failure(CommandFailure(reason: "Local Servers is turned off.")) }
         guard !stopping else { return .failure(CommandFailure(reason: "A server stop is already in progress.")) }
         guard let server = server(key) else { return .failure(CommandFailure(reason: "That server is no longer listed. Refresh to check again.")) }
-        guard let confirmStop else { return .failure(CommandFailure(reason: "Select Stop Server in Command Center to confirm.")) }
+        guard !force || canForceStop(server) else {
+            return .failure(CommandFailure(reason: "Force stop requires a still-running receipt for this exact server. Try graceful stop first."))
+        }
+        guard let confirmStop = force ? confirmForceStop : confirmStop else { return .failure(CommandFailure(reason: "Select \(force ? "Force Stop" : "Stop Server") in Command Center to confirm.")) }
+        forceCandidate = nil
+        forceIntent = nil
         stopping = true
-        defer { stopping = false }
+        defer {
+            stopping = false
+            if isActive { onChange?() }
+        }
         let session = self.session
         let outcome: ProcessStopOutcome
         if Task.isCancelled {
@@ -183,16 +232,20 @@ final class LocalServerStore {
             if !confirmed || Task.isCancelled || session != self.session || !isActive {
                 outcome = .canceled
             } else if ContinuousClock.now >= expires {
-                outcome = .failed("Confirmation expired. Select Stop Server again.")
+                outcome = .failed(force ? "Confirmation expired. Try graceful stop again before another Force Stop." : "Confirmation expired. Select Stop Server again.")
             } else {
-                outcome = await stopper.stop(server, listeners: service) { [self] in
+                let authorized = { [self] in
                     isActive && session == self.session && ContinuousClock.now < expires
                 }
+                outcome = force
+                    ? await stopper.forceStop(server, listeners: service, authorized: authorized)
+                    : await stopper.stop(server, listeners: service, authorized: authorized)
             }
         }
-        let receipt = LocalServerStopReceipt(pid: server.process.pid, port: server.port, outcome: outcome)
+        let receipt = LocalServerStopReceipt(pid: server.process.pid, port: server.port, outcome: outcome, force: force)
         if session == self.session, isActive {
             lastStopReceipt = receipt
+            if !force, outcome == .stillRunning { forceCandidate = server }
             // Refresh even if the caller canceled after signaling. A new
             // session or module shutdown still discards this refresh.
             snapshot = nil
@@ -272,10 +325,11 @@ final class LocalServersModule: PortsideModule {
     static let openHTTPCommand = CommandID("localServers.openHTTP")!
     static let openHTTPSCommand = CommandID("localServers.openHTTPS")!
     static let stopCommand = CommandID("localServers.stop")!
+    static let forceStopCommand = CommandID("localServers.forceStop")!
 
     let id = LocalServersModule.moduleID
     let title = "Local Servers"
-    let summary = "Finds TCP servers your account runs (port, process, PID, address) in Command Center when you search a port, or type port or server. Lists with lsof when you search, refresh or stop. Stop Server asks for confirmation, then validates and sends SIGTERM to one owned process."
+    let summary = "Finds TCP servers your account runs (port, process, PID, address) in Command Center when you search a port, or type port or server. Lists with lsof when you search, refresh or stop. Stop Server confirms and validates one owned process before SIGTERM; only a timeout offers separately confirmed Force Stop (SIGKILL), warning about data loss."
     let fallback = "Command Center and the dock work the same without it."
     let dependencies: [ModuleDependency] = [.module(CommandCenterModule.moduleID)]
 
@@ -337,6 +391,16 @@ final class LocalServersModule: PortsideModule {
                 handler: { [store] input in
                     guard case .string(let key) = input else { return .failure(CommandFailure(reason: "No server given.")) }
                     return await store.stop(key)
+                }
+            ),
+            CommandDescriptor(
+                id: Self.forceStopCommand,
+                title: "Force Stop (SIGKILL)…",
+                symbolName: "exclamationmark.octagon",
+                input: keyInput,
+                handler: { [store] input in
+                    guard case .string(let token) = input else { return .failure(CommandFailure(reason: "No force stop request given.")) }
+                    return await store.forceStop(token)
                 }
             ),
             open(Self.openHTTPCommand, .http),
