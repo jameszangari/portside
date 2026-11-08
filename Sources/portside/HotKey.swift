@@ -21,6 +21,10 @@ final class HotKey {
     private static var eventHandler: EventHandlerRef?
     private static var nextID: UInt32 = 1
     private static let logger = Logger(subsystem: "com.james.portside", category: "HotKey")
+    /// While an action runs: when its key was pressed (Carbon event time,
+    /// seconds since startup, the `systemUptime` clock). The action runs on
+    /// a later main-queue turn, so this can be well before "now".
+    private(set) static var pressTime: TimeInterval?
 
     /// `keyCode` is a virtual key code (`kVK_ANSI_D`), `modifiers` Carbon
     /// flags (`cmdKey | optionKey`). Nil if macOS refused the registration.
@@ -79,7 +83,12 @@ final class HotKey {
             let read = GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
                                          nil, MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID)
             guard read == noErr, let hotKey = HotKey.handlers[hotKeyID.id]?.value else { return OSStatus(eventNotHandledErr) }
-            DispatchQueue.main.async { hotKey.action() }
+            let time = GetEventTime(event)
+            DispatchQueue.main.async {
+                HotKey.pressTime = time
+                hotKey.action()
+                HotKey.pressTime = nil
+            }
             return noErr
         }, 1, &spec, nil, &eventHandler)
         if status != noErr {
