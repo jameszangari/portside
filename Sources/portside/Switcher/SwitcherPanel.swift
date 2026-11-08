@@ -4,14 +4,16 @@ import SwiftUI
 /// The live switcher panel: the Command Center panel class (key-capable,
 /// never main, non-activating), centered on the display with the pointer.
 /// Monitors are installed only while it is open and read only Portside's
-/// own events (a local monitor), so nothing here needs a permission.
+/// own events (a local monitor), so nothing here needs a permission. Another
+/// app activating is seen by `AppSwitcher` through the window registry, so
+/// the switcher's own earlier activation landing late is not taken for one.
 @MainActor
 final class SwitcherPanelPresenter: SwitcherPresenter {
     private var panel: CommandCenterPanel?
     private var hosting: CommandCenterHostingView?
     private weak var switcher: AppSwitcher?
     private var monitor: Any?
-    private var observers: [NSObjectProtocol] = []
+    private var becameKey: NSObjectProtocol?
     private var pendingAnnouncement: DispatchWorkItem?
     /// Visible frame of the display the panel opened on, fixed while open.
     private var screenFrame: NSRect?
@@ -32,9 +34,9 @@ final class SwitcherPanelPresenter: SwitcherPresenter {
         // Transparent until the reveal: a quick tap never flashes it, but
         // the panel is already key and hears the modifier release.
         panel.alphaValue = 0
+        installMonitors()
         panel.orderFrontRegardless()
         panel.makeKey()
-        installMonitors()
     }
 
     func reveal() {
@@ -74,7 +76,7 @@ final class SwitcherPanelPresenter: SwitcherPresenter {
             let consumed = MainActor.assumeIsolated { () -> Bool in
                 guard let self, let switcher = self.switcher, let panel = self.panel, panel.isKeyWindow else { return false }
                 if event.type == .flagsChanged {
-                    switcher.modifiersChanged(event.modifierFlags)
+                    switcher.modifiersChanged(event.modifierFlags, keyCode: event.keyCode, timestamp: event.timestamp)
                     return false
                 }
                 // Every other key is swallowed while open: nothing behind
@@ -89,20 +91,20 @@ final class SwitcherPanelPresenter: SwitcherPresenter {
             }
             return consumed ? nil : event
         }
-        observers.append(NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
-        ) { [weak self] note in
-            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-            guard app?.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
-            MainActor.assumeIsolated { self?.switcher?.focusLost() }
-        })
+        // From here on the release is a local event; one let go before this
+        // went to the other app, so read the keyboard once at this moment.
+        becameKey = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: panel, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.switcher?.panelBecameKey() }
+        }
     }
 
     private func removeMonitors() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
-        observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
-        observers.removeAll()
+        if let becameKey { NotificationCenter.default.removeObserver(becameKey) }
+        becameKey = nil
     }
 
     // MARK: Panel
@@ -133,7 +135,17 @@ final class SwitcherPanelPresenter: SwitcherPresenter {
         panel.becomesKeyOnlyIfNeeded = false
         panel.setAccessibilityLabel("App Switcher")
         panel.onResignKey = { [weak self] in
-            MainActor.assumeIsolated { self?.switcher?.focusLost() }
+            MainActor.assumeIsolated {
+                guard self?.switcher?.panelLostKey() == true else { return }
+                // Our own earlier switch arrived: take key back on the next
+                // turn, outside resignKey.
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let panel = self?.panel, panel.isVisible, self?.switcher?.state.isOpen == true else { return }
+                        panel.makeKey()
+                    }
+                }
+            }
         }
         let hosting = CommandCenterHostingView(rootView: AnyView(EmptyView()))
         hosting.sizingOptions = [.intrinsicContentSize]
@@ -234,9 +246,8 @@ struct SwitcherView: View {
         let icon = SwitcherLayout.iconSize(count: items.count, maxWidth: maxWidth)
         HStack(spacing: SwitcherLayout.spacing) {
             ForEach(items) { item in
-                SwitcherTile(item: item, image: switcher.icon(for: item), iconSize: icon, isSelected: item.id == state.selection) {
-                    switcher.choose(item.id)
-                }
+                SwitcherTile(item: item, image: switcher.icon(for: item), iconSize: icon, isSelected: item.id == state.selection,
+                             onChoose: { switcher.choose(item.id) }, onHover: { switcher.hovered(item.id) })
             }
         }
         Text(selected?.name ?? " ")
@@ -269,19 +280,21 @@ struct SwitcherView: View {
                 .foregroundStyle(.secondary)
                 .frame(width: min(maxWidth, SwitcherLayout.listWidth), height: SwitcherLayout.rowHeight)
         } else {
-            rows(shown) { $0.id == state.selection } choose: { switcher.choose($0.id) }
+            rows(shown) { $0.id == state.selection } choose: { switcher.choose($0.id) } hover: { switcher.hovered($0.id) }
         }
     }
 
+    /// `hover` is nil for the app row's window list, whose entries are not
+    /// in `shown` (Down and Up choose there).
     private func rows(_ entries: [SwitcherItem], isSelected: @escaping (SwitcherItem) -> Bool,
-                      choose: @escaping (SwitcherItem) -> Void) -> some View {
+                      choose: @escaping (SwitcherItem) -> Void,
+                      hover: ((SwitcherItem) -> Void)? = nil) -> some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
                 VStack(spacing: 0) {
                     ForEach(entries) { entry in
-                        SwitcherRow(item: entry, image: switcher.icon(for: entry), isSelected: isSelected(entry)) {
-                            choose(entry)
-                        }
+                        SwitcherRow(item: entry, image: switcher.icon(for: entry), isSelected: isSelected(entry),
+                                    onChoose: { choose(entry) }, onHover: hover.map { hover in { hover(entry) } })
                         .id(entry.id)
                     }
                 }
@@ -328,6 +341,7 @@ private struct SwitcherTile: View {
     let iconSize: CGFloat
     let isSelected: Bool
     let onChoose: () -> Void
+    let onHover: () -> Void
 
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 12, style: .continuous) }
 
@@ -348,6 +362,9 @@ private struct SwitcherTile: View {
             .overlay(shape.strokeBorder(isSelected ? Color.orange : Color.clear, lineWidth: 2))
             .contentShape(Rectangle())
             .onTapGesture(perform: onChoose)
+            .onContinuousHover { phase in
+                if case .active = phase { onHover() }
+            }
             .help(item.name)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(item.spokenName)
@@ -363,6 +380,7 @@ private struct SwitcherRow: View {
     let image: NSImage
     let isSelected: Bool
     let onChoose: () -> Void
+    let onHover: (() -> Void)?
 
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 9, style: .continuous) }
 
@@ -408,6 +426,9 @@ private struct SwitcherRow: View {
         .overlay(shape.strokeBorder(isSelected ? Color.orange : Color.clear, lineWidth: 2))
         .contentShape(Rectangle())
         .onTapGesture(perform: onChoose)
+        .onContinuousHover { phase in
+            if case .active = phase { onHover?() }
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(item.spokenName)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : [.isButton])

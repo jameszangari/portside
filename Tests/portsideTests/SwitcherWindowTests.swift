@@ -407,7 +407,7 @@ final class AppSwitcherWindowTests: XCTestCase {
         actions: SwitcherActions(
             modifierFlags: { [unowned self] in flags },
             frontmostPID: { [unowned self] in front },
-            activate: { [unowned self] item in
+            activate: { [unowned self] item, _ in
                 activated.append(item.name)
                 return true
             },
@@ -454,6 +454,18 @@ final class AppSwitcherWindowTests: XCTestCase {
         XCTAssertEqual(focused.first?.app, alpha, "with the launch it was read from")
         XCTAssertEqual(activated, [])
         XCTAssertEqual(presenter.calls, ["present", "dismiss"], "the quick tap never showed a panel")
+    }
+
+    func testFastWindowTapsAlternateBeforeTheRegistryReportsFocus() async throws {
+        try await enable()
+        flags = []
+        // The fake source never moves focus, as when the AX notification has
+        // not arrived yet: each tap still goes back to the window before it.
+        switcher.hotkeyPressed()
+        switcher.hotkeyPressed()
+        switcher.hotkeyPressed()
+        XCTAssertEqual(focused.map(\.handle), ["a2", "a1", "a2"].map(AnyHashable.init))
+        XCTAssertEqual(switcher.requested, [], "a window of the app already in front waits for no activation")
     }
 
     func testAppsModeStaysTheDefaultBehavior() async throws {

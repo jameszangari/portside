@@ -153,9 +153,20 @@ final class SwitcherStateTests: XCTestCase {
         XCTAssertEqual(state.send(.choose(.app(b.key))), [], "the earlier launch's key no longer matches")
     }
 
+    func testHoverSelectsOnlyWhileVisible() {
+        var state = opened()
+        XCTAssertEqual(state.send(.hover(.app(c.key))), [], "armed: the panel is not shown yet")
+        XCTAssertEqual(state.selectedItem, b)
+        _ = state.send(.revealDue)
+        XCTAssertEqual(state.send(.hover(.app(c.key))), [.announce("Charlie")])
+        XCTAssertEqual(state.send(.hover(.app(c.key))), [], "already selected")
+        XCTAssertEqual(state.send(.hover(.app(item(99, "Gone").key))), [])
+        XCTAssertEqual(state.send(.modifiersReleased), [.dismiss, .activate(c)])
+    }
+
     func testEventsWhileHiddenDoNothing() {
         var state = SwitcherState()
-        for event: SwitcherEvent in [.modifiersReleased, .revealDue, .focusLost, .disable, .key(.commit), .appsChanged(apps), .choose(.app(a.key))] {
+        for event: SwitcherEvent in [.modifiersReleased, .revealDue, .focusLost, .disable, .key(.commit), .appsChanged(apps), .choose(.app(a.key)), .hover(.app(a.key))] {
             XCTAssertEqual(state.send(event), [], "\(event)")
         }
         XCTAssertEqual(state, SwitcherState())
@@ -293,7 +304,14 @@ final class AppSwitcherTests: XCTestCase {
     private var activated: [String] = []
     private var refuseActivation = false
     private var held: [HotkeyChord] = []
-    private var press: (() -> Void)?
+    private var actionsByChord: [HotkeyChord: () -> Void] = [:]
+    private var press: (() -> Void)? { actionsByChord[SwitcherShortcut.defaultChord] }
+    private var pointer = NSPoint(x: 100, y: 100)
+    private var modifierChangedAt: TimeInterval = 0
+    private var clock: TimeInterval = 10
+    private var pressAt: TimeInterval?
+    private var activationFailed: (() -> Void)?
+    private let optionEscape = HotkeyChord(keyCode: UInt32(kVK_Escape), modifiers: UInt32(optionKey))
     private var reports: [String?] = []
     private let presenter = RecordingPresenter()
     private let chords = CurrentValueSubject<HotkeyChord?, Never>(SwitcherShortcut.defaultChord)
@@ -309,18 +327,26 @@ final class AppSwitcherTests: XCTestCase {
         actions: SwitcherActions(
             modifierFlags: { [unowned self] in flags },
             frontmostPID: { [unowned self] in front },
-            activate: { [unowned self] item in
+            activate: { [unowned self] item, failed in
                 guard !refuseActivation else { return false }
                 activated.append(item.name)
+                activationFailed = failed
                 return true
             },
+            mouseLocation: { [unowned self] in pointer },
+            lastModifierChange: { [unowned self] in modifierChangedAt },
+            now: { [unowned self] in clock },
+            pressTime: { [unowned self] in pressAt ?? clock },
             revealDelay: .seconds(3600)
         ),
         presenter: presenter,
         registrar: { [unowned self] chord, action in
             held.append(chord)
-            press = action
-            return Token { [unowned self] in held.removeAll { $0 == chord } }
+            actionsByChord[chord] = action
+            return Token { [unowned self] in
+                held.removeAll { $0 == chord }
+                actionsByChord[chord] = nil
+            }
         },
         report: { [unowned self] in reports.append($0) }
     )
@@ -403,7 +429,7 @@ final class AppSwitcherTests: XCTestCase {
         let commands = CommandRegistry(permissions: PermissionGate())
         let modules = ModuleRegistry(commands: commands, permissions: PermissionGate())
         var reported: [String?] = []
-        let switcher = AppSwitcher(registry: registry, actions: SwitcherActions(modifierFlags: { [] }, frontmostPID: { nil }, activate: { _ in true }),
+        let switcher = AppSwitcher(registry: registry, actions: SwitcherActions(modifierFlags: { [] }, frontmostPID: { nil }, activate: { _, _ in true }),
                                    presenter: presenter, registrar: { _, _ in nil }, report: { reported.append($0) })
         try modules.register(SwitcherModule(switcher: switcher, chords: chords.eraseToAnyPublisher()))
         modules.enable(SwitcherModule.moduleID)
@@ -524,5 +550,175 @@ final class AppSwitcherTests: XCTestCase {
         let charlieKey = try XCTUnwrap(switcher.state.items.first { $0.name == "Charlie" }?.key)
         switcher.choose(.app(charlieKey))
         XCTAssertEqual(activated, ["Charlie"])
+    }
+
+    // MARK: Native parity (P2-SW-01-PARITY-A)
+
+    func testEscapeWithTheModifierHeldCancelsThroughItsOwnChord() throws {
+        // ⌥Esc never reaches a window when macOS owns it (Spoken Content).
+        try enable()
+        XCTAssertFalse(held.contains(optionEscape), "only while open")
+        flags = .option
+        switcher.hotkeyPressed()
+        XCTAssertTrue(held.contains(optionEscape))
+        switcher.revealDue()
+        actionsByChord[optionEscape]?()
+        XCTAssertFalse(switcher.state.isOpen)
+        XCTAssertFalse(held.contains(optionEscape), "released with the panel")
+        switcher.modifiersChanged([], keyCode: UInt16(kVK_Option))
+        XCTAssertEqual(activated, [], "the later release commits nothing")
+        XCTAssertEqual(held, [SwitcherShortcut.defaultChord])
+    }
+
+    func testRepeatedQuickTapsAlternateBeforeMacOSReportsTheSwitch() throws {
+        // Launch Services answers after the next tap can arrive: the
+        // registry and the frontmost app still say Alpha.
+        try enable()
+        flags = []
+        switcher.hotkeyPressed()
+        switcher.hotkeyPressed()
+        switcher.hotkeyPressed()
+        XCTAssertEqual(activated, ["Bravo", "Alpha", "Bravo"], "the previous two apps, every time")
+        XCTAssertEqual(switcher.requested.map(\.pid), [20, 10, 20])
+        // The reports arrive late and in order; nothing is taken for another app.
+        activate(bravo)
+        activate(alpha)
+        activate(bravo)
+        XCTAssertEqual(switcher.requested, [])
+        switcher.hotkeyPressed()
+        XCTAssertEqual(activated.last, "Alpha")
+    }
+
+    func testOwnActivationLandingWhileOpenKeepsTheSwitcher() throws {
+        try enable()
+        flags = []
+        switcher.hotkeyPressed()
+        XCTAssertEqual(activated, ["Bravo"])
+        flags = .option
+        switcher.hotkeyPressed()
+        XCTAssertTrue(switcher.state.isOpen)
+        XCTAssertEqual(switcher.state.selectedItem?.name, "Alpha", "Bravo counts as frontmost already")
+        activate(bravo)
+        XCTAssertTrue(switcher.state.isOpen, "our own switch arriving is not the person leaving")
+        XCTAssertTrue(switcher.panelLostKey(), "Bravo taking key: keep the panel and take key back")
+        switcher.modifiersChanged([], keyCode: UInt16(kVK_Option))
+        XCTAssertEqual(activated, ["Bravo", "Alpha"])
+    }
+
+    func testAnotherAppActivatingOrTakingKeyCancels() throws {
+        try enable()
+        flags = .option
+        switcher.hotkeyPressed()
+        activate(charlie)
+        XCTAssertFalse(switcher.state.isOpen, "a click on another app cancels")
+        XCTAssertEqual(activated, [])
+        switcher.hotkeyPressed()
+        XCTAssertFalse(switcher.panelLostKey(), "key lost with nothing of ours arriving")
+        XCTAssertFalse(switcher.state.isOpen)
+        XCTAssertEqual(activated, [])
+    }
+
+    func testReleaseMissedWhileThePanelTookKeyIsNotTakenForNext() throws {
+        // ⌥ went up (and down again) before the panel could hear it; the
+        // next press must be a new tap, not "move to the third app".
+        try enable()
+        flags = .option
+        pressAt = 10.000
+        switcher.hotkeyPressed()
+        XCTAssertTrue(switcher.state.isOpen)
+        modifierChangedAt = 10.040
+        pressAt = 10.120
+        clock = 10.130
+        switcher.hotkeyPressed()
+        XCTAssertEqual(activated, ["Bravo"], "the first tap committed")
+        XCTAssertTrue(switcher.state.isOpen, "this press opened a new switcher")
+        XCTAssertEqual(switcher.state.selectedItem?.name, "Alpha", "the previous app again, not Charlie")
+    }
+
+    func testHeldModifierStillCyclesAndShiftDoesNotCommit() throws {
+        try enable()
+        flags = .option
+        modifierChangedAt = 9.9
+        pressAt = 10
+        switcher.hotkeyPressed()
+        pressAt = 10.3
+        switcher.hotkeyPressed()
+        XCTAssertEqual(switcher.state.selectedItem?.name, "Charlie", "held throughout: moves on")
+        // Shift for reverse reached the panel; that change is not a release.
+        modifierChangedAt = 10.4
+        switcher.modifiersChanged([.option, .shift], keyCode: UInt16(kVK_Shift), timestamp: 10.4)
+        pressAt = 10.5
+        switcher.hotkeyPressed()
+        XCTAssertTrue(switcher.state.isOpen)
+        XCTAssertEqual(activated, [])
+        XCTAssertEqual(switcher.state.selectedItem?.name, "Alpha", "wrapped, still the same switcher")
+    }
+
+    func testRepressOfTheModifierCommitsTheMissedRelease() throws {
+        try enable()
+        flags = .option
+        switcher.hotkeyPressed()
+        switcher.modifiersChanged(.option, keyCode: UInt16(kVK_Option), timestamp: 10.05)
+        XCTAssertFalse(switcher.state.isOpen)
+        XCTAssertEqual(activated, ["Bravo"])
+    }
+
+    func testPanelBecomingKeyCatchesAnEarlierRelease() throws {
+        try enable()
+        flags = .option
+        switcher.hotkeyPressed()
+        flags = []
+        switcher.panelBecameKey()
+        XCTAssertEqual(activated, ["Bravo"], "no wait for the 100 ms reveal")
+        XCTAssertEqual(presenter.calls, ["present", "dismiss"])
+    }
+
+    func testHoverSelectsOnlyAfterThePointerMoves() throws {
+        try enable()
+        flags = .option
+        switcher.hotkeyPressed()
+        switcher.revealDue()
+        let charlieKey = try XCTUnwrap(switcher.state.items.first { $0.name == "Charlie" }?.key)
+        switcher.hovered(.app(charlieKey))
+        XCTAssertEqual(switcher.state.selectedItem?.name, "Bravo", "a tile under a resting pointer is not chosen")
+        pointer = NSPoint(x: 140, y: 100)
+        switcher.hovered(.app(charlieKey))
+        XCTAssertEqual(switcher.state.selectedItem?.name, "Charlie")
+        XCTAssertEqual(presenter.announcements.last, "Charlie")
+        switcher.keyPressed(.previous)
+        let alphaKey = try XCTUnwrap(switcher.state.items.first { $0.name == "Alpha" }?.key)
+        switcher.hovered(.app(alphaKey))
+        XCTAssertEqual(switcher.state.selectedItem?.name, "Bravo", "keys moved the selection and the pointer has not moved since")
+        switcher.keyPressed(.next)
+        switcher.modifiersChanged([], keyCode: UInt16(kVK_Option))
+        XCTAssertEqual(activated, ["Charlie"], "letting go switches to the hovered app")
+    }
+
+    func testRefusedLaunchServicesRequestIsForgotten() throws {
+        try enable()
+        flags = []
+        switcher.hotkeyPressed()
+        XCTAssertEqual(switcher.requested.map(\.pid), [20])
+        activationFailed?()
+        XCTAssertEqual(switcher.requested, [])
+        switcher.hotkeyPressed()
+        XCTAssertEqual(activated, ["Bravo", "Bravo"], "Alpha is still frontmost, so Bravo is still the previous app")
+    }
+}
+
+/// Telling a press after a missed release from the other key of the pair.
+final class SwitcherRepressTests: XCTestCase {
+    private let option = NSEvent.ModifierFlags.option
+    private func flags(_ extra: UInt) -> NSEvent.ModifierFlags { NSEvent.ModifierFlags(rawValue: option.rawValue | extra) }
+
+    func testRepressRules() {
+        let left = UInt16(kVK_Option), right = UInt16(kVK_RightOption)
+        XCTAssertTrue(SwitcherModifiers.isRepress(keyCode: left, flags: option, required: option), "no device bits: a press")
+        XCTAssertTrue(SwitcherModifiers.isRepress(keyCode: left, flags: flags(0x20), required: option), "left alone went down")
+        XCTAssertFalse(SwitcherModifiers.isRepress(keyCode: right, flags: flags(0x60), required: option), "right pressed while left held")
+        XCTAssertFalse(SwitcherModifiers.isRepress(keyCode: right, flags: flags(0x20), required: option), "right let go, left still held")
+        XCTAssertFalse(SwitcherModifiers.isRepress(keyCode: left, flags: [], required: option), "a release")
+        XCTAssertFalse(SwitcherModifiers.isRepress(keyCode: UInt16(kVK_Shift), flags: [.option, .shift], required: option))
+        XCTAssertFalse(SwitcherModifiers.isRepress(keyCode: UInt16(kVK_Command), flags: [.option, .command], required: option), "not required")
     }
 }

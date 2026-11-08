@@ -222,6 +222,9 @@ enum SwitcherEvent: Equatable {
     /// A click or VoiceOver press on one entry (and, in the app row, one of
     /// its windows): select it and commit.
     case choose(SwitcherItem.ID, window: WindowID? = nil)
+    /// The pointer moved onto an entry while the panel is visible: select
+    /// it, as ⌘Tab does. Letting go then switches to it.
+    case hover(SwitcherItem.ID)
     /// The registry changed while open (an app launched, quit or hid, a
     /// window opened, closed or changed).
     case appsChanged([SwitcherItem])
@@ -334,6 +337,10 @@ struct SwitcherState: Equatable {
             guard phase == .armed else { return [] }
             phase = .visible
             return [.reveal] + announcement()
+
+        case .hover(let id):
+            guard phase == .visible, let index = shown.firstIndex(where: { $0.id == id }) else { return [] }
+            return select(index)
 
         case .choose(let id, let window):
             guard isOpen, let item = shown.first(where: { $0.id == id }) else { return [] }
@@ -497,6 +504,29 @@ enum SwitcherModifiers {
         if chord.modifiers & UInt32(optionKey) != 0 { flags.insert(.option) }
         if chord.modifiers & UInt32(controlKey) != 0 { flags.insert(.control) }
         return flags
+    }
+
+    /// Device-dependent bits for the left and right key of each modifier
+    /// (`NX_DEVICEL*KEYMASK` / `NX_DEVICER*KEYMASK` in IOLLEvent.h).
+    private static let sides: [(flag: NSEvent.ModifierFlags, left: Int, right: Int, leftBit: UInt, rightBit: UInt)] = [
+        (.command, kVK_Command, kVK_RightCommand, 0x08, 0x10),
+        (.option, kVK_Option, kVK_RightOption, 0x20, 0x40),
+        (.control, kVK_Control, kVK_RightControl, 0x01, 0x2000),
+    ]
+
+    /// A required modifier key went down while the switcher believed it held
+    /// since the open, so its release was missed. The device bits tell a
+    /// press from a release and rule out the pair's other key (left ⌥ held,
+    /// right ⌥ pressed or let go); an event without them counts as a press.
+    static func isRepress(keyCode: UInt16, flags: NSEvent.ModifierFlags, required: NSEvent.ModifierFlags) -> Bool {
+        guard let side = sides.first(where: { $0.left == Int(keyCode) || $0.right == Int(keyCode) }),
+              required.contains(side.flag), flags.contains(side.flag) else { return false }
+        let isLeft = side.left == Int(keyCode)
+        let this = isLeft ? side.leftBit : side.rightBit
+        let other = isLeft ? side.rightBit : side.leftBit
+        let raw = flags.rawValue
+        guard raw & (this | other) != 0 else { return true }
+        return raw & this != 0 && raw & other == 0
     }
 
     /// Every required modifier is down. With none required nothing can be

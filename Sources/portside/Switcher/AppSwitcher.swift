@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Combine
 import os.log
 
@@ -10,12 +11,27 @@ struct SwitcherActions {
     var modifierFlags: @MainActor () -> NSEvent.ModifierFlags
     var frontmostPID: @MainActor () -> pid_t?
     /// Brings a running app forward (unhiding it). false when it is gone.
-    var activate: @MainActor (SwitcherItem) -> Bool
+    /// `failed` runs on main if the request is later refused.
+    var activate: @MainActor (SwitcherItem, _ failed: @escaping @MainActor () -> Void) -> Bool
     /// Brings one window forward; the result arrives on main. Defaults to
     /// refusing, so a test that does not set it never touches Accessibility.
     var focus: @MainActor (WindowFocusTarget, @escaping @MainActor (WindowFocusResult) -> Void) -> Void = { _, done in done(.refused) }
     /// Display names for window rows, empty with one display.
     var displayNames: @MainActor () -> [CGDirectDisplayID: String] = { [:] }
+    /// The pointer, in screen coordinates. Hover selects only after it moves.
+    var mouseLocation: @MainActor () -> NSPoint = { NSEvent.mouseLocation }
+    /// When a modifier key last changed anywhere in the session, on the
+    /// `systemUptime` clock (`CGEventSource.secondsSinceLastEventType`:
+    /// public, no permission, reads no key content).
+    var lastModifierChange: @MainActor () -> TimeInterval = {
+        ProcessInfo.processInfo.systemUptime
+            - CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .flagsChanged)
+    }
+    var now: @MainActor () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    /// When the shortcut that is being handled was pressed. The handler runs
+    /// on a later main-queue turn (after any work ahead of it), so this is
+    /// the event's own time, not the time it is read.
+    var pressTime: @MainActor () -> TimeInterval = { HotKey.pressTime ?? ProcessInfo.processInfo.systemUptime }
     /// How long the shortcut must be held before the panel shows. A quicker
     /// release switches without the panel ever appearing.
     var revealDelay: DispatchTimeInterval = .milliseconds(100)
@@ -26,11 +42,13 @@ struct SwitcherActions {
     static let live = SwitcherActions(
         modifierFlags: { NSEvent.modifierFlags },
         frontmostPID: { NSWorkspace.shared.frontmostApplication?.processIdentifier },
-        activate: { item in
+        activate: { item, failed in
             guard let app = NSRunningApplication(processIdentifier: item.key.pid), !app.isTerminated,
                   app.bundleIdentifier == item.bundleIdentifier else { return false }
             if let url = app.bundleURL, let pinned = PinnedApp(appURL: url) {
-                AppLauncher.open(pinned, running: app)
+                AppLauncher.open(pinned, running: app) { _, error in
+                    if error != nil { MainActor.assumeIsolated { failed() } }
+                }
             } else {
                 app.unhide()
                 app.activate()
@@ -87,6 +105,34 @@ final class AppSwitcher: ObservableObject {
     private let presenter: SwitcherPresenter
     private let report: (String?) -> Void
     private var hotkey: CommandCenterHotkey!
+    private let registrar: CommandCenterHotkey.Registrar
+    /// The shortcut's modifiers plus Escape, held only while open. macOS can
+    /// take a modifier-Escape chord before it reaches any window (⌥Esc is
+    /// Spoken Content's default), so Escape pressed with the modifier still
+    /// down would never arrive as a key event and the release would commit.
+    private var escape: AnyObject?
+    private var escapeChord: HotkeyChord?
+    /// Apps this switcher asked macOS to activate that macOS has not yet
+    /// reported active, oldest first. Launch Services answers after the next
+    /// press can arrive, so a fast second tap reads these as the most recent
+    /// (as the Dock updates ⌘Tab's order at commit, not when the app arrives).
+    private(set) var requested: [AppKey] = []
+    /// Windows this switcher asked to focus that the registry does not yet
+    /// list as most recently focused, oldest first (window-first order).
+    private var requestedWindows: [WindowID] = []
+    private var lastActive: AppKey?
+    /// Event times (`systemUptime` clock) of the press that opened the panel
+    /// and of the last modifier event the panel received. Event times, not
+    /// handling times, so a main thread that was busy cannot hide a release.
+    private var openedAt: TimeInterval = 0
+    private var lastLocalModifier: TimeInterval = 0
+    private var pressedAt: TimeInterval = 0
+    /// Handling times of the open and of the last activation of ours that
+    /// macOS reported, to tell our own app arriving from the person leaving.
+    private var presentedAt: TimeInterval = 0
+    private var landedAt: TimeInterval = -1
+    /// Where the pointer was at the open or the last hover it caused.
+    private var lastPointer: NSPoint?
     private let logger = Logger(subsystem: "com.james.portside", category: "Switcher")
     private(set) var isEnabled = false
     private var releaseClient: (() -> Void)?
@@ -111,7 +157,8 @@ final class AppSwitcher: ObservableObject {
         let carbon: CommandCenterHotkey.Registrar = { chord, action in
             HotKey(chord: chord, name: "App Switcher \(chord.displayString)", action: action)
         }
-        hotkey = CommandCenterHotkey(registrar: registrar ?? carbon, report: report) { [weak self] in
+        self.registrar = registrar ?? carbon
+        hotkey = CommandCenterHotkey(registrar: self.registrar, report: report) { [weak self] in
             MainActor.assumeIsolated { self?.hotkeyPressed() }
         }
     }
@@ -128,14 +175,20 @@ final class AppSwitcher: ObservableObject {
         SwitcherStatus.shared.isEnabled = enabled
         if enabled {
             releaseClient = registry.addClient()
+            lastActive = registry.snapshot.apps.first(where: \.isActive)?.key
             registryWatch = registry.$snapshot.dropFirst().sink { [weak self] snapshot in
                 MainActor.assumeIsolated {
-                    guard let self, self.state.isOpen else { return }
+                    guard let self else { return }
+                    self.track(snapshot)
+                    guard self.state.isOpen else { return }
                     self.send(.appsChanged(SwitcherCatalog.items(snapshot, mode: self.preferences.mode, displays: self.displays)))
                 }
             }
         } else {
             send(.disable)
+            requested = []
+            requestedWindows = []
+            lastActive = nil
             setHotkey(nil)
             registryWatch = nil
             releaseClient?()
@@ -151,6 +204,9 @@ final class AppSwitcher: ObservableObject {
             report(refusal)
         }
         required = allowed.map(SwitcherModifiers.required) ?? []
+        escapeChord = allowed.map {
+            HotkeyChord(keyCode: UInt32(kVK_Escape), modifiers: $0.modifiers & UInt32(cmdKey | optionKey | controlKey))
+        }
         if case .failed(let chord) = hotkey.status {
             logger.error("switcher hotkey \(chord.displayString, privacy: .public) not registered")
         }
@@ -168,10 +224,17 @@ final class AppSwitcher: ObservableObject {
     /// takes it), so a second press while open arrives here too.
     func hotkeyPressed() {
         guard isEnabled else { return }
+        pressedAt = actions.pressTime()
+        // A press while open moves on only if the modifier stayed down. One
+        // that changed after the open without reaching the panel (still
+        // taking key) was a release: that tap commits, and this is a new one.
+        if state.isOpen, actions.lastModifierChange() > max(openedAt, lastLocalModifier) + Self.sameEvent {
+            send(.modifiersReleased)
+        }
         let held = SwitcherModifiers.isHeld(actions.modifierFlags(), required: required)
         if !state.isOpen { displays = actions.displayNames() }
-        let items = SwitcherCatalog.items(registry.snapshot, mode: preferences.mode, displays: displays)
-        send(.trigger(items: items, frontmost: actions.frontmostPID(), held: held))
+        let items = SwitcherCatalog.items(recentSnapshot(), mode: preferences.mode, displays: displays)
+        send(.trigger(items: items, frontmost: requested.last?.pid ?? actions.frontmostPID(), held: held))
         // A release between the press and the panel taking key went to the
         // other app. Read the keyboard once now; the reveal reads it again.
         if state.isOpen { recheckModifiers() }
@@ -188,8 +251,22 @@ final class AppSwitcher: ObservableObject {
         return true
     }
 
-    func modifiersChanged(_ flags: NSEvent.ModifierFlags) {
-        guard state.isOpen, !SwitcherModifiers.isHeld(flags, required: required) else { return }
+    /// Two readings of one event's time can differ by rounding; real key
+    /// changes are never this close together.
+    private static let sameEvent: TimeInterval = 0.002
+
+    /// `keyCode` and `timestamp` come with a local event.
+    func modifiersChanged(_ flags: NSEvent.ModifierFlags, keyCode: UInt16? = nil, timestamp: TimeInterval? = nil) {
+        guard state.isOpen else { return }
+        if keyCode != nil { lastLocalModifier = timestamp ?? actions.now() }
+        // A required modifier going down while it was held since the open
+        // means its release went to the other app while the panel was taking
+        // key: that release committed, and this press starts the next tap.
+        if let keyCode, SwitcherModifiers.isRepress(keyCode: keyCode, flags: flags, required: required) {
+            send(.modifiersReleased)
+            return
+        }
+        guard !SwitcherModifiers.isHeld(flags, required: required) else { return }
         send(.modifiersReleased)
     }
 
@@ -197,8 +274,39 @@ final class AppSwitcher: ObservableObject {
         send(.choose(id, window: window))
     }
 
+    /// The pointer is over an entry. Ignored unless the pointer itself moved
+    /// (since the open, then since the last hover), so an entry that appears
+    /// under a resting pointer, or a list the keys scroll under it, is not
+    /// selected (⌘Tab behaves the same).
+    func hovered(_ id: SwitcherItem.ID) {
+        guard state.isOpen, let lastPointer else { return }
+        let point = actions.mouseLocation()
+        guard point != lastPointer else { return }
+        self.lastPointer = point
+        send(.hover(id))
+    }
+
     func focusLost() {
         send(.focusLost)
+    }
+
+    /// The panel lost key. While an app this switcher activated is arriving
+    /// (its activation not reported yet, or reported since the open), that
+    /// app taking key is not the person leaving: true means keep the panel
+    /// open and take key back. Anything else cancels. Another app coming
+    /// forward still cancels through the registry.
+    func panelLostKey() -> Bool {
+        guard state.isOpen else { return false }
+        if !requested.isEmpty || landedAt >= presentedAt { return true }
+        send(.focusLost)
+        return false
+    }
+
+    /// The panel took key: every later release arrives as a local event, and
+    /// one before this moment is caught by reading the keyboard now rather
+    /// than at the reveal, so a quick second tap is never taken for "next".
+    func panelBecameKey() {
+        recheckModifiers()
     }
 
     /// The reveal delay passed. Internal so tests can fire it.
@@ -222,7 +330,17 @@ final class AppSwitcher: ObservableObject {
     private func perform(_ effect: SwitcherEffect) {
         switch effect {
         case .present:
+            lastPointer = actions.mouseLocation()
+            openedAt = pressedAt
+            presentedAt = actions.now()
+            lastLocalModifier = 0
+            if let escapeChord {
+                escape = registrar(escapeChord) { [weak self] in
+                    MainActor.assumeIsolated { _ = self?.keyPressed(.cancel) }
+                }
+            }
             presenter.present(self)
+            revealWork?.cancel()
             let work = DispatchWorkItem { [weak self] in
                 MainActor.assumeIsolated { self?.revealDue() }
             }
@@ -233,15 +351,22 @@ final class AppSwitcher: ObservableObject {
         case .dismiss:
             revealWork?.cancel()
             revealWork = nil
+            escape = nil
+            lastPointer = nil
             presenter.dismiss()
             pruneIcons()
         case .activate(let item):
             // Checked right before acting: a quit app or a reused pid is
             // refused and focus stays where it was.
-            guard registry.app(item.key) != nil, actions.activate(item) else {
+            let key = item.key
+            guard registry.app(key) != nil, actions.activate(item, { [weak self] in
+                if let index = self?.requested.firstIndex(of: key) { self?.requested.remove(at: index) }
+            }) else {
                 logger.info("switcher target \(item.name, privacy: .public) is gone; nothing activated")
                 return
             }
+            // One entry per request: each expects its own activation report.
+            requested.append(key)
         case .focus(let item, let window):
             // Checked right before acting: a closed window, a quit app or a
             // reused pid has no target, and nothing else is focused instead.
@@ -249,13 +374,76 @@ final class AppSwitcher: ObservableObject {
                 logger.info("switcher window of \(item.name, privacy: .public) is gone; nothing focused")
                 return
             }
-            actions.focus(target) { [logger] result in
-                if result != .focused {
-                    logger.info("switcher window of \(item.name, privacy: .public) not focused: \(String(describing: result), privacy: .public)")
-                }
+            // Another app's window also activates that app, so it is a
+            // request like `.activate`; one of the app already in front is
+            // not (no activation will be reported).
+            let key = item.key
+            let activates = key != (requested.last ?? lastActive)
+            if activates { requested.append(key) }
+            requestedWindows.append(window.id)
+            actions.focus(target) { [weak self, logger] result in
+                guard result != .focused else { return }
+                logger.info("switcher window of \(item.name, privacy: .public) not focused: \(String(describing: result), privacy: .public)")
+                guard let self else { return }
+                if activates, let index = self.requested.lastIndex(of: key) { self.requested.remove(at: index) }
+                self.requestedWindows.removeAll { $0 == window.id }
             }
         case .announce(let message):
             presenter.announce(message)
+        }
+    }
+
+    // MARK: Recent order
+
+    /// The registry snapshot with this switcher's unconfirmed requests first,
+    /// the latest first: apps for the app row, windows for window-first mode.
+    private func recentSnapshot() -> WindowRegistrySnapshot {
+        var snapshot = registry.snapshot
+        for key in requested {
+            guard let index = snapshot.apps.firstIndex(where: { $0.key == key }) else { continue }
+            snapshot.apps.insert(snapshot.apps.remove(at: index), at: 0)
+        }
+        for id in requestedWindows {
+            guard let index = snapshot.windows.firstIndex(where: { $0.id == id }) else { continue }
+            snapshot.windows.insert(snapshot.windows.remove(at: index), at: 0)
+        }
+        // The latest request per app is its focused window, so a tap back to
+        // the window that was focused before is not taken for a no-op.
+        var focused: [AppKey: WindowID] = [:]
+        for id in requestedWindows { focused[id.app] = id }
+        snapshot.windows = snapshot.windows.map { window in
+            guard let id = focused[window.id.app], window.isFocused != (window.id == id) else { return window }
+            return WindowSnapshot(id: window.id, title: window.title, isFocused: window.id == id, isMain: window.isMain,
+                                  isMinimized: window.isMinimized, isFullScreen: window.isFullScreen,
+                                  frame: window.frame, displayID: window.displayID)
+        }
+        return snapshot
+    }
+
+    /// macOS reported an activation. One of ours confirms it and every
+    /// earlier request; any other app means the person moved on without the
+    /// switcher, so nothing pending is trusted any more. Quit apps drop out.
+    private func track(_ snapshot: WindowRegistrySnapshot) {
+        let live = Set(snapshot.apps.map(\.key))
+        requested.removeAll { !live.contains($0) }
+        // A window request is done once the registry lists it first (or it closed).
+        let open = Set(snapshot.windows.map(\.id))
+        requestedWindows.removeAll { !open.contains($0) }
+        if let first = snapshot.windows.first?.id, let index = requestedWindows.firstIndex(of: first) {
+            requestedWindows.removeFirst(index + 1)
+        }
+        let active = snapshot.apps.first(where: \.isActive)?.key
+        guard active != lastActive else { return }
+        lastActive = active
+        guard let active else { return }
+        if let index = requested.firstIndex(of: active) {
+            requested.removeFirst(index + 1)
+            landedAt = actions.now()
+        } else {
+            requested = []
+            requestedWindows = []
+            // Another app came forward (a click, the Dock, ⌘Tab): cancel.
+            if state.isOpen { send(.focusLost) }
         }
     }
 
