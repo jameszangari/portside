@@ -206,6 +206,8 @@ extension CommandCenterCatalog {
                 actions.append(CommandCenterItemAction(title: "Open \(scheme.rawValue)://\(address.text)", symbolName: "safari",
                                                        invocation: CommandInvocation(command: command, input: input)))
             }
+            actions.append(CommandCenterItemAction(title: "Stop Server…", symbolName: "stop.circle",
+                                                   invocation: CommandInvocation(command: LocalServersModule.stopCommand, input: input, staysOpen: true)))
             actions.append(CommandCenterItemAction(title: "Refresh Servers", symbolName: "arrow.clockwise",
                                                    invocation: CommandInvocation(command: refresh.id, staysOpen: true)))
             item.moreActions = actions

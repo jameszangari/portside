@@ -338,10 +338,10 @@ final class LocalServersModuleTests: XCTestCase {
         XCTAssertEqual(server.invocation, CommandInvocation(command: LocalServersModule.copyAddressCommand, input: .string("3000-4242-1000.7")),
                        "Return copies; it never opens an unverified service")
         XCTAssertEqual(server.primaryTitle, "Copy 127.0.0.1:3000")
-        XCTAssertEqual(server.moreActions.map(\.title), ["Copy Port 3000", "Open http://127.0.0.1:3000", "Open https://127.0.0.1:3000", "Refresh Servers"])
+        XCTAssertEqual(server.moreActions.map(\.title), ["Copy Port 3000", "Open http://127.0.0.1:3000", "Open https://127.0.0.1:3000", "Stop Server…", "Refresh Servers"])
         XCTAssertEqual(rows.first { $0.id == statusID }?.primaryTitle, "Refresh Servers")
 
-        for action in [server.invocation] + server.moreActions.map(\.invocation) where action.command != LocalServersModule.refreshCommand {
+        for action in [server.invocation] + server.moreActions.map(\.invocation) where action.command != LocalServersModule.refreshCommand && action.command != LocalServersModule.stopCommand {
             let outcome = await commands.execute(action.command, input: action.input)
             guard case .success = outcome else { return XCTFail("\(action.command) failed: \(outcome)") }
         }
@@ -373,7 +373,7 @@ final class LocalServersModuleTests: XCTestCase {
         try install()
         _ = await commands.execute(LocalServersModule.refreshCommand)
         let server = try XCTUnwrap(items().first { $0.kind == .server })
-        XCTAssertEqual(server.moreActions.map(\.title), ["Copy Port 8080", "Refresh Servers"])
+        XCTAssertEqual(server.moreActions.map(\.title), ["Copy Port 8080", "Stop Server…", "Refresh Servers"])
         let outcome = await commands.execute(LocalServersModule.openHTTPCommand, input: .string(LocalServer.servers(in: store.snapshot!)[0].key))
         XCTAssertEqual(outcome, .failed("Port 8080 is not on a loopback address, so Portside does not open it."))
         XCTAssertTrue(opened.isEmpty)

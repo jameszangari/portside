@@ -93,6 +93,14 @@ struct LocalServerAddress: Equatable, Sendable {
     }
 }
 
+struct LocalServerStopReceipt {
+    let id = UUID()
+    let pid: pid_t
+    let port: UInt16
+    let outcome: ProcessStopOutcome
+    var message: String { "PID \(pid) · port \(port): \(outcome.message)" }
+}
+
 /// The latest listener snapshot for one Command Center session. Nothing
 /// lists until someone asks (a server search or Refresh); the snapshot is
 /// dropped when the panel closes or the module stops, so a new session
@@ -110,11 +118,22 @@ final class LocalServerStore {
     /// Runs after every change while Command Center is open.
     var onChange: (@MainActor () -> Void)?
 
+    /// Installed only while Command Center is open. No model or background
+    /// command can supply approval or an arbitrary PID.
+    var confirmStop: (@MainActor (LocalServer) async -> Bool)?
+    private(set) var lastStopReceipt: LocalServerStopReceipt?
+    var lastStopOutcome: ProcessStopOutcome? { lastStopReceipt?.outcome }
+    private var stopping = false
+    private var stopRefreshTask: Task<Result<ListenerSnapshot, CommandFailure>, Never>?
+    private let stopper: ProcessStopper
+    private let confirmationLifetime: Duration
     private let service: ListenerService
     private var session = 0
 
-    nonisolated init(service: ListenerService = ListenerService()) {
+    nonisolated init(service: ListenerService = ListenerService(), stopper: ProcessStopper = ProcessStopper(), confirmationLifetime: Duration = .seconds(60)) {
         self.service = service
+        self.stopper = stopper
+        self.confirmationLifetime = confirmationLifetime
     }
 
     var servers: [LocalServer] { snapshot.map(LocalServer.servers(in:)) ?? [] }
@@ -134,22 +153,77 @@ final class LocalServerStore {
     /// Drops the snapshot. A refresh still in flight delivers nothing.
     func endSession() {
         session += 1
+        stopRefreshTask?.cancel()
+        stopRefreshTask = nil
+        confirmStop = nil
+        lastStopReceipt = nil
         snapshot = nil
         loading = 0
         lastRefreshCanceled = false
     }
 
+    /// One confirmation per invocation, bounded to 60 seconds. A late
+    /// approval requires a new action; it is never reused for another PID.
+    func stop(_ key: String) async -> Result<String?, CommandFailure> {
+        guard isActive else { return .failure(CommandFailure(reason: "Local Servers is turned off.")) }
+        guard !stopping else { return .failure(CommandFailure(reason: "A server stop is already in progress.")) }
+        guard let server = server(key) else { return .failure(CommandFailure(reason: "That server is no longer listed. Refresh to check again.")) }
+        guard let confirmStop else { return .failure(CommandFailure(reason: "Select Stop Server in Command Center to confirm.")) }
+        stopping = true
+        defer { stopping = false }
+        let session = self.session
+        let outcome: ProcessStopOutcome
+        if Task.isCancelled {
+            outcome = .canceled
+        } else if let refusal = stopper.revalidate(server) {
+            outcome = refusal
+        } else {
+            let expires = ContinuousClock.now.advanced(by: confirmationLifetime)
+            let confirmed = await confirmStop(server)
+            if !confirmed || Task.isCancelled || session != self.session || !isActive {
+                outcome = .canceled
+            } else if ContinuousClock.now >= expires {
+                outcome = .failed("Confirmation expired. Select Stop Server again.")
+            } else {
+                outcome = await stopper.stop(server, listeners: service) { [self] in
+                    isActive && session == self.session && ContinuousClock.now < expires
+                }
+            }
+        }
+        let receipt = LocalServerStopReceipt(pid: server.process.pid, port: server.port, outcome: outcome)
+        if session == self.session, isActive {
+            lastStopReceipt = receipt
+            // Refresh even if the caller canceled after signaling. A new
+            // session or module shutdown still discards this refresh.
+            snapshot = nil
+            let refresh = Task { [self] in
+                guard session == self.session, isActive, !Task.isCancelled else {
+                    return Result<ListenerSnapshot, CommandFailure>.failure(CommandFailure(reason: "Server session closed."))
+                }
+                return await self.refresh(fresh: true)
+            }
+            stopRefreshTask = refresh
+            _ = await refresh.value
+            stopRefreshTask = nil
+        }
+        let message = receipt.message
+        switch outcome {
+        case .stopped, .alreadyExited: return .success(message)
+        default: return .failure(CommandFailure(reason: message))
+        }
+    }
+
     /// Lists every listener this user can see. Keeps the newest snapshot
     /// when two refreshes overlap. Canceling the caller cancels its share
     /// of the listing (the lsof child stops when no one else waits).
-    func refresh() async -> Result<ListenerSnapshot, CommandFailure> {
+    func refresh(fresh: Bool = false) async -> Result<ListenerSnapshot, CommandFailure> {
         guard isActive else { return .failure(CommandFailure(reason: "Local Servers is turned off.")) }
         let session = self.session
         loading += 1
         lastRefreshCanceled = false
         onChange?()
         let result: Result<ListenerSnapshot, Error>
-        do { result = .success(try await service.snapshot(.all)) } catch { result = .failure(error) }
+        do { result = .success(try await service.snapshot(.all, fresh: fresh)) } catch { result = .failure(error) }
         guard session == self.session else { return .failure(CommandFailure(reason: "Command Center closed before the list finished.")) }
         loading -= 1
         defer { onChange?() }
@@ -185,8 +259,8 @@ struct LocalServerActions {
 
 /// The optional `localServers` module (P2-DEV-02): server results in
 /// Command Center. Off by default and sensitive (it runs lsof and reads
-/// process facts), so the restricted preset holds it off. Read-only: it
-/// copies and opens addresses and never signals a process. Every command
+/// process facts), so the restricted preset holds it off. Stop requires
+/// confirmation and fresh process and port validation. Every command
 /// takes a server key and resolves it against the latest snapshot, so a
 /// listener that is gone is refused, not acted on.
 @MainActor
@@ -197,10 +271,11 @@ final class LocalServersModule: PortsideModule {
     static let copyPortCommand = CommandID("localServers.copyPort")!
     static let openHTTPCommand = CommandID("localServers.openHTTP")!
     static let openHTTPSCommand = CommandID("localServers.openHTTPS")!
+    static let stopCommand = CommandID("localServers.stop")!
 
     let id = LocalServersModule.moduleID
     let title = "Local Servers"
-    let summary = "Finds TCP servers your account runs (port, process, PID, address) in Command Center when you search a port, or type port or server. Lists with lsof only when you search or refresh, and never stops a process."
+    let summary = "Finds TCP servers your account runs (port, process, PID, address) in Command Center when you search a port, or type port or server. Lists with lsof when you search, refresh or stop. Stop Server asks for confirmation, then validates and sends SIGTERM to one owned process."
     let fallback = "Command Center and the dock work the same without it."
     let dependencies: [ModuleDependency] = [.module(CommandCenterModule.moduleID)]
 
@@ -252,6 +327,16 @@ final class LocalServersModule: PortsideModule {
                         actions.copy(String(server.port))
                         return "Copied \(server.port)."
                     }
+                }
+            ),
+            CommandDescriptor(
+                id: Self.stopCommand,
+                title: "Stop Server…",
+                symbolName: "stop.circle",
+                input: keyInput,
+                handler: { [store] input in
+                    guard case .string(let key) = input else { return .failure(CommandFailure(reason: "No server given.")) }
+                    return await store.stop(key)
                 }
             ),
             open(Self.openHTTPCommand, .http),
