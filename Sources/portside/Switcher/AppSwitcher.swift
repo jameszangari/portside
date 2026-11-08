@@ -60,11 +60,14 @@ struct SwitcherActions {
     )
 }
 
-/// The switcher's saved choices (`switcherMode`, `switcherTitleSearch`).
+/// The switcher's saved choices (`switcherMode`, `switcherTitleSearch`,
+/// `switcherPreviews`).
 struct SwitcherPreferences: Equatable {
     var mode = SwitcherMode.apps
     /// `/` latches title search while the switcher is open.
     var titleSearch = true
+    /// Window rows show a picture of the window (needs Screen Recording).
+    var previews = false
 }
 
 /// Draws the switcher. The live one is `SwitcherPanelPresenter`; tests use a
@@ -104,6 +107,10 @@ final class AppSwitcher: ObservableObject {
     private let actions: SwitcherActions
     private let presenter: SwitcherPresenter
     private let report: (String?) -> Void
+    /// The shared picture service, nil when none is wired (tests). Only
+    /// captures while `preferences.previews` is on and the module runs.
+    let previews: WindowPreviewService?
+    private static let previewSurface = "switcher"
     private var hotkey: CommandCenterHotkey!
     private let registrar: CommandCenterHotkey.Registrar
     /// The shortcut's modifiers plus Escape, held only while open. macOS can
@@ -148,9 +155,11 @@ final class AppSwitcher: ObservableObject {
         actions: SwitcherActions = .live,
         presenter: SwitcherPresenter? = nil,
         registrar: CommandCenterHotkey.Registrar? = nil,
+        previews: WindowPreviewService? = nil,
         report: @escaping (String?) -> Void = { SwitcherStatus.shared.hotkeyFailure = $0 }
     ) {
         self.registry = registry
+        self.previews = previews
         self.actions = actions
         self.presenter = presenter ?? SwitcherPanelPresenter()
         self.report = report
@@ -173,6 +182,7 @@ final class AppSwitcher: ObservableObject {
         guard enabled != isEnabled else { return }
         isEnabled = enabled
         SwitcherStatus.shared.isEnabled = enabled
+        previews?.setOptedIn(enabled && preferences.previews)
         if enabled {
             releaseClient = registry.addClient()
             lastActive = registry.snapshot.apps.first(where: \.isActive)?.key
@@ -196,6 +206,9 @@ final class AppSwitcher: ObservableObject {
         }
     }
 
+    /// Whether window rows show pictures (or the icon while one loads).
+    var showsPreviews: Bool { previews != nil && preferences.previews }
+
     /// A refused chord (⌘Tab) is never registered.
     func setHotkey(_ chord: HotkeyChord?) {
         let allowed = chord.flatMap { SwitcherShortcut.isAllowed($0) ? $0 : nil }
@@ -215,6 +228,7 @@ final class AppSwitcher: ObservableObject {
     /// Takes effect the next time the switcher opens.
     func setPreferences(_ preferences: SwitcherPreferences) {
         self.preferences = preferences
+        previews?.setOptedIn(isEnabled && preferences.previews)
     }
 
     /// Whether window titles can be listed at all (Accessibility allowed).
@@ -347,6 +361,9 @@ final class AppSwitcher: ObservableObject {
             revealWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + actions.revealDelay, execute: work)
         case .reveal:
+            // Pictures are taken only once the panel can be seen, so a quick
+            // tap that never shows it captures nothing.
+            previews?.attach(surface: Self.previewSurface)
             presenter.reveal()
         case .dismiss:
             revealWork?.cancel()
@@ -354,6 +371,7 @@ final class AppSwitcher: ObservableObject {
             escape = nil
             lastPointer = nil
             presenter.dismiss()
+            previews?.detach(surface: Self.previewSurface)
             pruneIcons()
         case .activate(let item):
             // Checked right before acting: a quit app or a reused pid is

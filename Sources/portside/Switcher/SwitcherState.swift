@@ -13,15 +13,18 @@ struct SwitcherWindow: Equatable, Identifiable {
     let isFullScreen: Bool
     /// The display's name, set only while more than one display is connected.
     let display: String?
+    /// AX coordinates, as the registry read it. Used to find the window for a preview.
+    let frame: CGRect?
 
     init(id: WindowID, title: String, isFocused: Bool = false, isMinimized: Bool = false,
-         isFullScreen: Bool = false, display: String? = nil) {
+         isFullScreen: Bool = false, display: String? = nil, frame: CGRect? = nil) {
         self.id = id
         self.title = title
         self.isFocused = isFocused
         self.isMinimized = isMinimized
         self.isFullScreen = isFullScreen
         self.display = display
+        self.frame = frame
     }
 
     init(_ window: WindowSnapshot, displays: [CGDirectDisplayID: String]) {
@@ -31,8 +34,13 @@ struct SwitcherWindow: Equatable, Identifiable {
             isFocused: window.isFocused,
             isMinimized: window.isMinimized,
             isFullScreen: window.isFullScreen,
-            display: window.displayID.flatMap { displays[$0] }
+            display: window.displayID.flatMap { displays[$0] },
+            frame: window.frame
         )
+    }
+
+    var previewTarget: PreviewTarget {
+        PreviewTarget(window: id, title: title, frame: frame, isMinimized: isMinimized)
     }
 
     /// The indicators in words, as shown under the title and read by VoiceOver.

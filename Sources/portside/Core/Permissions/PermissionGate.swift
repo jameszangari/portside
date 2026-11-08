@@ -6,11 +6,14 @@ import Foundation
 /// by the owner that registers the adapter.
 enum PermissionScope: Hashable, CustomStringConvertible {
     case accessibility
+    /// Window previews. An OS grant like Accessibility, read without prompting.
+    case screenRecording
     case app(String)
 
     var description: String {
         switch self {
         case .accessibility: return "Accessibility"
+        case .screenRecording: return "Screen Recording"
         case .app(let name): return name
         }
     }

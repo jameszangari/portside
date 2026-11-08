@@ -175,6 +175,8 @@ extension PermissionScope {
         switch self {
         case .accessibility:
             return "Lets Portside read and move other apps' windows: Keep windows clear of the dock, and the window list and recent documents in tile menus."
+        case .screenRecording:
+            return "Lets the App Switcher show a picture of each window, when you turn on Window previews. Portside takes one still picture of each visible row, only while the switcher is open. It never records video, and nothing is saved or sent."
         case .app(let name):
             return "A Portside switch for \(name)."
         }
@@ -185,6 +187,8 @@ extension PermissionScope {
         switch self {
         case .accessibility:
             return "Without it, windows can extend under the dock and tile menus offer Show Windows and Recents instead. The dock, launching apps and Settings keep working."
+        case .screenRecording:
+            return "Without it, the switcher keeps showing app icons and window titles. Nothing else in Portside needs it."
         case .app:
             return "Features that need it stay off."
         }

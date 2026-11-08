@@ -237,6 +237,9 @@ struct SwitcherView: View {
         let wantsWindows = state.isSearching || switcher.preferences.mode == .windows || state.windowSelection != nil
         guard wantsWindows else { return nil }
         if !switcher.windowsAvailable { return "Window titles need Accessibility. Showing apps." }
+        if switcher.showsPreviews, switcher.previews?.permissionState != .granted {
+            return "Previews need Screen Recording. Showing icons."
+        }
         return "Windows on other Spaces may not be listed."
     }
 
@@ -341,9 +344,12 @@ struct SwitcherView: View {
                       hover: ((SwitcherItem) -> Void)? = nil) -> some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
-                VStack(spacing: 0) {
+                // Lazy, so a row's picture is asked for only once it is shown.
+                LazyVStack(spacing: 0) {
                     ForEach(entries) { entry in
                         SwitcherRow(item: entry, image: switcher.icon(for: entry), isSelected: isSelected(entry),
+                                    previews: switcher.showsPreviews ? switcher.previews : nil,
+                                    isVisible: state.phase == .visible,
                                     onChoose: { choose(entry) }, onHover: hover.map { hover in { hover(entry) } })
                         .id(entry.id)
                     }
@@ -482,6 +488,10 @@ private struct SwitcherRow: View {
     let item: SwitcherItem
     let image: NSImage
     let isSelected: Bool
+    /// Set when window pictures are on; the row's thumbnail reads it.
+    var previews: WindowPreviewService?
+    /// The panel is on screen (not just armed): pictures are taken only then.
+    var isVisible = true
     let onChoose: () -> Void
     let onHover: (() -> Void)?
 
@@ -504,11 +514,16 @@ private struct SwitcherRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(nsImage: image)
-                .resizable()
-                .interpolation(.high)
-                .frame(width: 28, height: 28)
-                .opacity(item.isHidden ? 0.55 : 1)
+            if let previews, let window = item.window {
+                SwitcherThumbnail(service: previews, target: window.previewTarget, icon: image,
+                                  isHidden: item.isHidden, isVisible: isVisible)
+            } else {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 28, height: 28)
+                    .opacity(item.isHidden ? 0.55 : 1)
+            }
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.title)
                     .font(.system(size: 13, weight: .medium))
@@ -535,5 +550,58 @@ private struct SwitcherRow: View {
         .accessibilityLabel(item.spokenName)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : [.isButton])
         .accessibilityAction(.default, onChoose)
+    }
+}
+
+
+/// A window's picture in its row, or the app icon in the same box while the
+/// picture loads or when there is none (minimized, other Space, no
+/// permission, a window that cannot be told apart). The box never changes
+/// size, so the row does not shift. Decorative: the row reads the title and
+/// state aloud.
+private struct SwitcherThumbnail: View {
+    static let size = CGSize(width: 64, height: 36)
+
+    @ObservedObject var service: WindowPreviewService
+    let target: PreviewTarget
+    let icon: NSImage
+    let isHidden: Bool
+    let isVisible: Bool
+
+    var body: some View {
+        let state = service.state(for: target)
+        ZStack {
+            if case .ready(let image) = state {
+                Image(decorative: image, scale: 2)
+                    .resizable()
+                    .interpolation(.medium)
+                    .aspectRatio(contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    .overlay(alignment: .bottomTrailing) {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .frame(width: 16, height: 16)
+                            .offset(x: 4, y: 4)
+                    }
+            } else {
+                Image(nsImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 28, height: 28)
+                    .opacity(isHidden ? 0.55 : 1)
+            }
+        }
+        .frame(width: Self.size.width, height: Self.size.height)
+        .accessibilityHidden(true)
+        // Asks again if the panel was only armed when the row appeared, and
+        // when the window's frame changes. Cancelled when the row goes away.
+        .task(id: Ask(visible: isVisible, target: target)) {
+            if isVisible { service.request(target) }
+        }
+    }
+
+    private struct Ask: Equatable {
+        let visible: Bool
+        let target: PreviewTarget
     }
 }
