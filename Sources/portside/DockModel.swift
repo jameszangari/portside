@@ -378,10 +378,20 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
-    /// Both switcher choices, current values first, for `SwitcherModule`.
+    /// Whether the switcher's window rows show a picture of the window. Off
+    /// by default: it needs Screen Recording, so it is an explicit choice.
+    @Published private(set) var switcherPreviews = false
+
+    func setSwitcherPreviews(_ enabled: Bool) {
+        guard enabled != switcherPreviews else { return }
+        switcherPreviews = enabled
+        persist()
+    }
+
+    /// The switcher choices, current values first, for `SwitcherModule`.
     var switcherPreferences: AnyPublisher<SwitcherPreferences, Never> {
-        $switcherMode.combineLatest($switcherTitleSearch)
-            .map { SwitcherPreferences(mode: $0, titleSearch: $1) }
+        $switcherMode.combineLatest($switcherTitleSearch, $switcherPreviews)
+            .map { SwitcherPreferences(mode: $0, titleSearch: $1, previews: $2) }
             .removeDuplicates()
             .eraseToAnyPublisher()
     }
@@ -1157,7 +1167,7 @@ final class DockModel: Codable, ObservableObject {
         /// Before per-style backgrounds. Read only, for migration.
         case backgroundStyle, backgroundFrost, backgroundTint
         case settingsHotkey, commandCenterHotkey, commandCenterQuicklinks, switcherHotkey
-        case switcherMode, switcherTitleSearch
+        case switcherMode, switcherTitleSearch, switcherPreviews
         /// Before Milestone D: a flat list of apps. Read only, for migration.
         case pinnedApps
     }
@@ -1268,6 +1278,7 @@ final class DockModel: Codable, ObservableObject {
         }
         switcherMode = c.value(.switcherMode, or: SwitcherMode.apps)
         switcherTitleSearch = c.value(.switcherTitleSearch, or: true)
+        switcherPreviews = c.value(.switcherPreviews, or: false)
         var seenQuicklinks = Set<UUID>()
         commandCenterQuicklinks = Array(c.value(.commandCenterQuicklinks, or: [DecodedQuicklink]())
             .compactMap(\.value)
@@ -1342,6 +1353,7 @@ final class DockModel: Codable, ObservableObject {
         }
         try c.encode(switcherMode, forKey: .switcherMode)
         try c.encode(switcherTitleSearch, forKey: .switcherTitleSearch)
+        try c.encode(switcherPreviews, forKey: .switcherPreviews)
         if !commandCenterQuicklinks.isEmpty { try c.encode(commandCenterQuicklinks, forKey: .commandCenterQuicklinks) }
     }
 
@@ -1594,6 +1606,7 @@ final class DockModel: Codable, ObservableObject {
         switcherHotkey = old.switcherHotkey
         switcherMode = old.switcherMode
         switcherTitleSearch = old.switcherTitleSearch
+        switcherPreviews = old.switcherPreviews
         commandCenterQuicklinks = old.commandCenterQuicklinks
         openGroupsOnHover = old.openGroupsOnHover
         usageClaudeConsent = old.usageClaudeConsent

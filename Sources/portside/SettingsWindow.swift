@@ -1018,6 +1018,13 @@ private struct GeneralSettings: View {
                     Text("Search window titles with /")
                     Text("While the switcher is open, / starts a search that stays open after you let go. Type to filter, Return switches, Esc cancels.").helperStyle()
                 }
+                Toggle(isOn: Binding(
+                    get: { dockModel.switcherPreviews },
+                    set: { dockModel.setSwitcherPreviews($0) }
+                )) {
+                    Text("Show window previews")
+                    Text("Window rows show a picture of the window instead of the app icon. Needs Screen Recording, which you allow in Integrations. Portside takes one still picture of each visible row while the switcher is open, never video, and keeps nothing after it closes. Minimized windows, windows on other Spaces and anything macOS withholds keep the icon.").helperStyle()
+                }
             } header: {
                 Text("Keyboard")
             } footer: {

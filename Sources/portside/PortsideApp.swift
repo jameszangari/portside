@@ -337,6 +337,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func registerCommands() {
         MainActor.assumeIsolated {
             permissions.register(AccessibilityPermissionAdapter())
+            permissions.register(ScreenRecordingPermissionAdapter())
             let core = PortsideCoreModule(
                 isStarting: { [weak self] in self?.dockEngine == nil },
                 openSettings: { [weak self] in self?.openSettings() },
@@ -381,7 +382,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func registerSwitcher(registry: WindowRegistry) {
         MainActor.assumeIsolated {
             let module = SwitcherModule(
-                switcher: AppSwitcher(registry: registry),
+                switcher: AppSwitcher(registry: registry, previews: WindowPreviewService(capturer: ScreenCaptureKitCapturer())),
                 chords: dockModel.$switcherHotkey.eraseToAnyPublisher(),
                 preferences: dockModel.switcherPreferences
             )

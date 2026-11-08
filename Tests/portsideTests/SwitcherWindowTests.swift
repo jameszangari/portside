@@ -419,8 +419,13 @@ final class AppSwitcherWindowTests: XCTestCase {
         ),
         presenter: presenter,
         registrar: { _, _ in NSObject() },
+        previews: previews,
         report: { _ in }
     )
+
+    private let capturer = FakePreviewCapturer()
+    private lazy var previews = WindowPreviewService(
+        capturer: capturer, permission: { .granted }, isLocked: { false }, now: { 0 }, watchesSystem: false)
 
     private lazy var modules = ModuleRegistry(commands: CommandRegistry(permissions: PermissionGate()), permissions: PermissionGate())
 
@@ -454,6 +459,38 @@ final class AppSwitcherWindowTests: XCTestCase {
         XCTAssertEqual(focused.first?.app, alpha, "with the launch it was read from")
         XCTAssertEqual(activated, [])
         XCTAssertEqual(presenter.calls, ["present", "dismiss"], "the quick tap never showed a panel")
+    }
+
+    func testPreviewsAreOptInAndOnlyCaptureOnceTheRevealShowsThePanel() async throws {
+        try await enable()
+        XCTAssertFalse(previews.isOptedIn, "off until the setting is on")
+        preferences.send(SwitcherPreferences(mode: .windows, previews: true))
+        XCTAssertTrue(previews.isOptedIn)
+        flags = .option
+        switcher.hotkeyPressed()
+        XCTAssertTrue(previews.attachedSurfaces.isEmpty, "armed and transparent: no surface yet")
+        switcher.revealDue()
+        XCTAssertEqual(previews.attachedSurfaces, ["switcher"])
+        switcher.keyPressed(.cancel)
+        XCTAssertTrue(previews.attachedSurfaces.isEmpty, "closing detaches, which drops every picture")
+    }
+
+    func testAQuickTapThatNeverShowsThePanelNeverAttaches() async throws {
+        try await enable()
+        preferences.send(SwitcherPreferences(mode: .windows, previews: true))
+        flags = []
+        switcher.hotkeyPressed()
+        XCTAssertFalse(presenter.calls.contains("reveal"))
+        XCTAssertTrue(previews.attachedSurfaces.isEmpty)
+        XCTAssertEqual(capturer.listCalls, 0)
+    }
+
+    func testStoppingTheModuleTurnsPreviewsOff() async throws {
+        try await enable()
+        preferences.send(SwitcherPreferences(mode: .windows, previews: true))
+        XCTAssertTrue(previews.isOptedIn)
+        modules.disable(SwitcherModule.moduleID)
+        XCTAssertFalse(previews.isOptedIn)
     }
 
     func testFastWindowTapsAlternateBeforeTheRegistryReportsFocus() async throws {

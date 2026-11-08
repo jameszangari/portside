@@ -11,7 +11,7 @@ final class SwitcherModule: PortsideModule {
 
     let id = SwitcherModule.moduleID
     let title = "App Switcher"
-    let summary = "Switch between running apps or their windows from the keyboard, most recently used first, with its own shortcut (default ⌥Tab, set in General > Keyboard). Tap it for the previous app; hold it and press Tab or Shift-Tab to choose, Down for a window, / to search window titles, then let go. Native ⌘Tab is unchanged."
+    let summary = "Switch between running apps or their windows from the keyboard, most recently used first, with its own shortcut (default ⌥Tab, set in General > Keyboard). Tap it for the previous app; hold it and press Tab or Shift-Tab to choose, Down for a window, / to search window titles, then let go. Window previews are a separate opt-in that needs Screen Recording. Native ⌘Tab is unchanged."
     let fallback = "⌘Tab, the dock and Command Center still switch apps."
     /// A Carbon hotkey is not key interception, and it shows only app names,
     /// icons and window titles (titles only with Accessibility; without it,
