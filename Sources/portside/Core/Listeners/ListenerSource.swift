@@ -149,6 +149,19 @@ enum ListenerSnapshotBuilder {
             identity = .unknown(.changed)
         }
         let path: ProcessFact<String> = identity == .unknown(.changed) ? .unknown(.changed) : inspector.executablePath(of: record.pid)
+        var cwd: ProcessFact<String> = .unknown(.changed)
+        if let before = identity.value {
+            cwd = inspector.workingDirectory(of: record.pid)
+            // The pid must still be the same process after the read.
+            if cwd.value != nil, inspector.identity(of: record.pid).value != before { cwd = .unknown(.changed) }
+        } else if case .unknown(let reason) = identity, reason != .changed {
+            cwd = .unknown(reason)
+        }
+        let project: ProjectAssociation
+        switch cwd {
+        case .known(let path): project = ProjectLocator.locate(workingDirectory: path)
+        case .unknown(let reason): project = .unavailable(reason)
+        }
         return ListenerProcess(
             pid: record.pid,
             name: record.name.map(ProcessFact.known) ?? .unknown(.notReported),
@@ -156,7 +169,9 @@ enum ListenerSnapshotBuilder {
             userName: record.userName.map(ProcessFact.known) ?? .unknown(.notReported),
             identity: identity,
             executablePath: path,
-            sockets: record.sockets
+            sockets: record.sockets,
+            workingDirectory: cwd,
+            project: project
         )
     }
 }

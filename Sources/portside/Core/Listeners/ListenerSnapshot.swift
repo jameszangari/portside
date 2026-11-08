@@ -116,6 +116,11 @@ struct ListenerProcess: Equatable, Sendable {
     let executablePath: ProcessFact<String>
     /// Ordered by port, then family, host kind, host and fd.
     let sockets: [ListenerSocket]
+    /// The kernel's current directory for the process (verified libproc
+    /// fact), read only while identity was confirmed before and after.
+    var workingDirectory: ProcessFact<String> = .unknown(.notReported)
+    /// Inferred from `workingDirectory`; never a verified fact.
+    var project: ProjectAssociation = .unavailable(.notReported)
 
     /// False when start identity is unknown. A later stop must refuse such a
     /// process; true is necessary for a stop, never sufficient.

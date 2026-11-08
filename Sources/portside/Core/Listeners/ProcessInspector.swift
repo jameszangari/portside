@@ -2,15 +2,18 @@ import Darwin
 import Foundation
 
 /// Reads per-process facts without spawning anything. Never reads a
-/// process's arguments, environment or working directory.
+/// process's arguments or environment. The working directory is the one
+/// path read beyond the executable (P2-DEV-05A).
 protocol ProcessInspector: Sendable {
     func identity(of pid: pid_t) -> ProcessFact<ProcessIdentity>
     func executablePath(of pid: pid_t) -> ProcessFact<String>
     func parentPID(of pid: pid_t) -> ProcessFact<pid_t>
+    func workingDirectory(of pid: pid_t) -> ProcessFact<String>
 }
 
 extension ProcessInspector {
     func parentPID(of pid: pid_t) -> ProcessFact<pid_t> { .unknown(.notReported) }
+    func workingDirectory(of pid: pid_t) -> ProcessFact<String> { .unknown(.notReported) }
 }
 
 /// Public libproc: `proc_pidinfo(PROC_PIDTBSDINFO)` for start time and uid,
@@ -40,6 +43,20 @@ struct LibprocProcessInspector: ProcessInspector {
         guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return .unknown(Self.reason(errno)) }
         guard info.pbi_status != SZOMB else { return .unknown(.exited) }
         return .known(pid_t(info.pbi_ppid))
+    }
+
+    /// `proc_pidinfo(PROC_PIDVNODEPATHINFO)`: the kernel's current directory
+    /// for the process, already resolved. Denied for other users' processes.
+    func workingDirectory(of pid: pid_t) -> ProcessFact<String> {
+        guard pid > 0 else { return .unknown(.failed(EINVAL)) }
+        var info = proc_vnodepathinfo()
+        let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
+        errno = 0
+        guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size else { return .unknown(Self.reason(errno)) }
+        let path = withUnsafePointer(to: &info.pvi_cdir.vip_path) {
+            $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) }
+        }
+        return path.isEmpty ? .unknown(.notReported) : .known(path)
     }
 
     func executablePath(of pid: pid_t) -> ProcessFact<String> {

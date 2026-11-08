@@ -143,7 +143,7 @@ final class LocalServerModelTests: XCTestCase {
         let server = try XCTUnwrap(LocalServer.servers(in: snapshot).first)
         let facts = LocalServerText.facts(server, snapshot: snapshot)
         let labels = facts.map(\.label).filter { !$0.isEmpty }
-        XCTAssertEqual(labels, ["Port", "Process", "PID", "Address", "Listening on", "Started", "Identity", "Owner", "Executable", "Listed"])
+        XCTAssertEqual(labels, ["Port", "Process", "PID", "Address", "Listening on", "Started", "Identity", "Owner", "Executable", "Directory", "Project", "Listed"])
         XCTAssertTrue(facts[0].value.contains("not checked"), "never claims HTTP")
         XCTAssertEqual(facts.filter { $0.value.hasPrefix("All interfaces") }.count, 2)
         XCTAssertFalse(facts.contains { ["Arguments", "Environment", "Working Directory"].contains($0.label) })

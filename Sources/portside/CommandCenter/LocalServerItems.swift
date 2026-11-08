@@ -95,8 +95,8 @@ enum LocalServerText {
         process.name.value.flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown process"
     }
 
-    /// The server card. Never arguments, environment or working directory
-    /// (Portside does not read them); the home folder in a path shows as `~`.
+    /// The server card. Never arguments or environment (Portside does not
+    /// read them). Working directory is verified; the project is inferred; the home folder in a path shows as `~`.
     static func facts(_ server: LocalServer, snapshot: ListenerSnapshot) -> [CommandCenterFact] {
         let process = server.process
         var facts = [
@@ -130,7 +130,31 @@ enum LocalServerText {
         case .known(let path): facts.append(CommandCenterFact(label: "Executable", value: abbreviatingHome(path)))
         case .unknown(let reason): facts.append(CommandCenterFact(label: "Executable", value: unknown(reason)))
         }
+        facts += project(process)
         facts.append(CommandCenterFact(label: "Listed", value: "\(snapshot.takenAt.formatted(date: .omitted, time: .standard)). Refresh for current state."))
+        return facts
+    }
+
+    /// Working directory (verified by libproc) and project (inferred from a
+    /// Git marker). Anything unreadable, absent or ambiguous says Unknown.
+    static func project(_ process: ListenerProcess) -> [CommandCenterFact] {
+        var facts: [CommandCenterFact] = []
+        switch process.workingDirectory {
+        case .known(let path):
+            facts.append(CommandCenterFact(label: "Directory", value: "\(abbreviatingHome(path)) (verified working directory)"))
+        case .unknown(let reason):
+            facts.append(CommandCenterFact(label: "Directory", value: unknown(reason)))
+        }
+        switch process.project {
+        case .inferred(let root):
+            facts.append(CommandCenterFact(label: "Project", value: "\(process.project.name ?? "Unknown") (inferred from the Git repository at \(abbreviatingHome(root)))"))
+        case .notFound:
+            facts.append(CommandCenterFact(label: "Project", value: "Unknown (no Git repository found above the working directory)"))
+        case .ambiguous:
+            facts.append(CommandCenterFact(label: "Project", value: "Unknown (the only Git marker is the home folder or /)"))
+        case .unavailable:
+            facts.append(CommandCenterFact(label: "Project", value: "Unknown"))
+        }
         return facts
     }
 
