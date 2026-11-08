@@ -118,6 +118,8 @@ final class FileRootStore {
         var seen = Set<UUID>()
         var paths = Set<String>()
         return file.roots.compactMap(\.value)
+            // Canonical (a root saved by an older build may use /var for /private/var).
+            .map { FileRoot(id: $0.id, path: FileAccess.realPath($0.path) ?? $0.path) }
             .filter { $0.path.hasPrefix("/") && !FileRootRules.isTooBroad($0.path, home: NSHomeDirectory()) && seen.insert($0.id).inserted && paths.insert($0.path).inserted }
             .prefix(FileRootRules.limit)
             .map { $0 }
@@ -188,6 +190,7 @@ final class FileIndexService: ObservableObject {
     private let watcher: any FileChangeWatching
     private let limits: FileScanLimits
     private let scan: @Sendable (FileRoot, FileScanLimits) async -> FileScanResult
+    private let probe: @Sendable (FileRoot) async -> FileScanOutcome
     private var perRoot: [UUID: [FileEntry]] = [:]
     private var stale = Set<UUID>()
     private var generation: [UUID: Int] = [:]
@@ -200,17 +203,27 @@ final class FileIndexService: ObservableObject {
         store: FileRootStore,
         watcher: (any FileChangeWatching)? = nil,
         limits: FileScanLimits = FileScanLimits(),
-        scan: @escaping @Sendable (FileRoot, FileScanLimits) async -> FileScanResult = { root, limits in
-            await Task.detached(priority: .utility) {
-                FileScanner.scan(root: root, limits: limits, isCancelled: { Task.isCancelled })
-            }.value
+        scan: @escaping @Sendable (FileRoot, FileScanLimits) async -> FileScanResult = FileIndexService.cancellableScan,
+        probe: @escaping @Sendable (FileRoot) async -> FileScanOutcome = { root in
+            await Task.detached(priority: .utility) { FileScanner.probe(root) }.value
         }
     ) {
         self.store = store
         self.watcher = watcher ?? FSEventsWatcher()
         self.limits = limits
         self.scan = scan
+        self.probe = probe
         roots = store.roots
+    }
+
+    /// A detached scan does not inherit its caller's cancellation, so this
+    /// forwards it: removing a root or stopping the module stops the walk at
+    /// its next check instead of letting it run to its limits.
+    static func cancellableScan(_ root: FileRoot, _ limits: FileScanLimits) async -> FileScanResult {
+        let inner = Task.detached(priority: .utility) {
+            FileScanner.scan(root: root, limits: limits, isCancelled: { Task.isCancelled })
+        }
+        return await withTaskCancellationHandler { await inner.value } onCancel: { inner.cancel() }
     }
 
     var unavailableReason: String? {
@@ -234,6 +247,7 @@ final class FileIndexService: ObservableObject {
         watcher.stop()
         cancelAll()
         purge()
+        FileThumbnails.purge()
         for root in roots { states[root.id] = .notScanned }
         onChange?()
     }
@@ -267,6 +281,7 @@ final class FileIndexService: ObservableObject {
         perRoot[id] = nil
         states[id] = nil
         stale.remove(id)
+        FileThumbnails.purge()
         rebuild()
         if isActive { startWatching() }
         onChange?()
@@ -286,9 +301,30 @@ final class FileIndexService: ObservableObject {
                 running.append(inFlight)
             } else if force || stale.contains(root.id) || perRoot[root.id] == nil {
                 running.append(scanRoot(root))
+            } else if perRoot[root.id]?.isEmpty == false {
+                // Not rescanned: still check, on open, that it can be read.
+                running.append(probeRoot(root))
             }
         }
         return Task { for task in running { await task.value } }
+    }
+
+    /// A fresh index whose folder went away or whose access macOS withdrew
+    /// (Files and Folders in Privacy & Security) is dropped, not kept searchable.
+    private func probeRoot(_ root: FileRoot) -> Task<Void, Never> {
+        let mine = generation[root.id] ?? 0
+        let probe = probe
+        return Task { [weak self] in
+            let outcome = await probe(root)
+            guard let self, outcome != .complete, outcome != .canceled, self.isActive,
+                  self.generation[root.id] == mine, self.tasks[root.id] == nil,
+                  self.roots.contains(where: { $0.id == root.id }) else { return }
+            self.perRoot[root.id] = []
+            self.states[root.id] = outcome == .unreadable ? .unreadable : .missing
+            FileThumbnails.purge()
+            self.rebuild()
+            self.onChange?()
+        }
     }
 
     private func scanRoot(_ root: FileRoot) -> Task<Void, Never> {

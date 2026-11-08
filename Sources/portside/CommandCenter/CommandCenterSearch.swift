@@ -197,10 +197,11 @@ enum CommandCenterRanker {
     }
 
     /// Empty query: used results by frecency, then every result that is not
-    /// an app (commands, Settings, quicklinks) by title. Apps appear once
+    /// an app (commands, Settings, quicklinks) by title. Shortcuts and
+    /// snippets wait for a typed query. Apps appear once
     /// typed or used, so the first screen is not a list of every app.
     static func defaultOrder(_ items: [CommandCenterItem]) -> [CommandCenterItem] {
-        items.filter { $0.usage > 0 || $0.kind != .application }.sorted { lhs, rhs in
+        items.filter { !$0.kind.requiresQuery && ($0.usage > 0 || $0.kind != .application) }.sorted { lhs, rhs in
             let leftUsed = lhs.usage > 0, rightUsed = rhs.usage > 0
             if leftUsed != rightUsed { return leftUsed }
             return precedes(lhs, rhs)

@@ -256,7 +256,7 @@ struct ClipboardSettingsSection: View {
         } header: {
             Text("Clipboard History")
         } footer: {
-            Text("Keeps the text you copy, encrypted on this Mac with a key in your keychain, and finds it again when you type clip in Command Center. It skips what apps mark as secret, copies made while a password field has the keyboard, and password managers (\(ClipboardPolicy.builtInExcludedApps.count) built in), plus the apps you add here. It cannot recognize every secret, so pause it or exclude an app when that matters. Text only, never synced or sent anywhere, and it is dropped from memory when the module is off (the encrypted file stays until it expires or you clear it).")
+            Text("Keeps the text you copy, encrypted on this Mac with a key in your keychain (your login keychain in an unsigned build), and finds it again when you type clip in Command Center. It skips what apps mark as secret, copies made while a password field has the keyboard, and password managers (\(ClipboardPolicy.builtInExcludedApps.count) built in), plus the apps you add here. It cannot recognize every secret, so pause it or exclude an app when that matters. Text only, never synced or sent anywhere, and it is dropped from memory when the module is off (the encrypted file stays until it expires or you clear it).")
                 .footerStyle()
         }
         .confirmationDialog("Clear all clipboard history?", isPresented: $confirmClear) {

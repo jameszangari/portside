@@ -189,4 +189,30 @@ final class SnippetsTests: XCTestCase {
         let tooLong = await registry.execute(CommandCenterModule.copySnippetCommand, input: .string(String(repeating: "a", count: 40)))
         if case .invalidInput = tooLong {} else { XCTFail("schema caps the input") }
     }
+
+    // MARK: Review fixes
+
+    func testShortcutsAndSnippetsNeedATypedQuery() throws {
+        let copy = CommandDescriptor(id: CommandCenterModule.copySnippetCommand, title: "Copy Snippet", input: .string(maxLength: 36)) { _ in .success(nil) }
+        let run = CommandDescriptor(id: ShortcutsModule.runCommand, title: "Run Shortcut", input: .string(maxLength: 36)) { _ in .success(nil) }
+        var items = CommandCenterCatalog.snippetItems([Snippet(name: "Signature", text: "Best,\nJames")], copy: copy)
+        items += CommandCenterCatalog.shortcutItems([ShortcutInfo(id: UUID(), name: "Dangerous Thing")], run: run)
+        items.append(CommandCenterItem(id: CommandID("a.b")!, title: "A Command"))
+        // Even a heavily used one stays out of the empty list.
+        items = items.map { var item = $0; item.usage = 50; return item }
+        XCTAssertEqual(CommandCenterRanker.defaultOrder(items).map(\.title), ["A Command"])
+        XCTAssertEqual(CommandCenterRanker.rank(items, query: "")?.count, 1)
+        XCTAssertEqual(CommandCenterRanker.rank(items, query: "signa")?.count, 1, "typing finds the snippet")
+        XCTAssertEqual(CommandCenterRanker.rank(items, query: "dang")?.count, 1, "typing finds the shortcut")
+        var state = CommandCenterState()
+        let opened = state.send(.open(items))
+        XCTAssertTrue(opened.handled)
+        XCTAssertEqual(state.results.map(\.title), ["A Command"], "opening shows neither, so Return runs neither")
+        _ = state.send(.query("dang"))
+        _ = state.send(.results(CommandCenterSearchRequest(generation: state.searchGeneration, query: "dang"), CommandCenterRanker.rank(items, query: "dang") ?? []))
+        XCTAssertEqual(state.results.map(\.title), ["Dangerous Thing"])
+        _ = state.send(.key(.escape))
+        XCTAssertEqual(state.results.map(\.title), ["A Command"], "clearing the query hides them again")
+    }
 }
+

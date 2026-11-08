@@ -34,6 +34,10 @@ enum FileThumbnails {
 
     static func cached(_ path: String) -> NSImage? { cache.object(forKey: path as NSString) }
 
+    /// Drops every thumbnail: a folder was removed or Files stopped, so
+    /// nothing drawn from it may be shown again.
+    static func purge() { cache.removeAllObjects() }
+
     /// The thumbnail, or nil when Quick Look has none. Cached per path.
     static func load(_ url: URL, scale: CGFloat) async -> NSImage? {
         if let image = cached(url.path) { return image }
@@ -64,9 +68,16 @@ struct FileThumbnailIcon: View {
             .frame(width: 24)
             .accessibilityHidden(true)
             .task(id: path) {
+                // Authorize first, cached or not: a revoked folder shows its icon only.
+                guard let url = authorize(path) else {
+                    image = nil
+                    return
+                }
                 image = FileThumbnails.cached(path)
-                guard image == nil, let url = authorize(path) else { return }
-                image = await FileThumbnails.load(url, scale: scale)
+                guard image == nil else { return }
+                let made = await FileThumbnails.load(url, scale: scale)
+                // Re-check after the wait: it may have been revoked meanwhile.
+                image = authorize(path) == nil ? nil : made
             }
     }
 }

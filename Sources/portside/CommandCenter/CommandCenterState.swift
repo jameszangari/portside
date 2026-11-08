@@ -41,6 +41,11 @@ struct CommandCenterItem: Equatable, Identifiable, Sendable {
         /// Rows made from the query itself: never counted in history, and
         /// their primary action is already a copy.
         var isQuickAnswer: Bool { self == .calculation || self == .emoji }
+
+        /// Rows that act on something of yours (run a shortcut) or show text
+        /// you saved (a snippet): never listed for an empty query, so opening
+        /// the panel and pressing Return cannot run or reveal them.
+        var requiresQuery: Bool { self == .shortcut || self == .snippet }
     }
 
     let id: CommandCenterResultID

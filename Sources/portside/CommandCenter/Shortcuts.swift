@@ -77,6 +77,8 @@ final class ShortcutsService {
     /// Why the last listing failed, nil when it worked or has not run.
     private(set) var listFailure: String?
     private(set) var running: UUID?
+    /// The `shortcuts` child of the run in flight, so stopping the module can stop it.
+    private var runTask: Task<LsofRun, Never>?
     private var loading = false
     private var lastRefresh: Date?
     private var generation = 0
@@ -105,6 +107,9 @@ final class ShortcutsService {
 
     func deactivate() {
         isActive = false
+        // Turning the module off (or restricted mode holding it off) stops the
+        // wait now; the child gets SIGTERM, then SIGKILL, from the runner.
+        runTask?.cancel()
         generation += 1
         shortcuts = []
         listFailure = nil
@@ -151,7 +156,12 @@ final class ShortcutsService {
         guard running == nil else { return .failure(CommandFailure(reason: Message.busy)) }
         running = id
         defer { running = nil }
-        let result = await runner(ShortcutsInvocation.run(id), ShortcutsInvocation.runLimits)
+        let runner = runner
+        let task = Task { await runner(ShortcutsInvocation.run(id), ShortcutsInvocation.runLimits) }
+        runTask = task
+        // A cancel of the caller (Esc) reaches the child too: the task above is not its child.
+        let result = await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+        runTask = nil
         switch result.termination {
         case .exited(0):
             return .success("Ran \(shortcut.name).")

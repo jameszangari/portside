@@ -71,9 +71,13 @@ enum ClipboardPolicy {
     /// Never captured from these, whatever the person chose. Matched as a
     /// bundle ID or a prefix of one that ends at a dot.
     static let builtInExcludedApps: [String] = [
-        "com.apple.keychainaccess", "com.apple.Passwords", "com.1password", "com.agilebits.onepassword",
-        "com.bitwarden.desktop", "com.lastpass", "org.keepassxc.keepassxc", "com.dashlane", "com.nordpass",
-        "me.proton.pass", "com.apple.systempreferences",
+        // Verified installed on a Mac: Keychain Access, Passwords, Bitwarden, System Settings.
+        "com.apple.keychainaccess", "com.apple.Passwords", "com.bitwarden.desktop", "com.apple.systempreferences",
+        // Not verified here (not installed): published bundle IDs. 1Password 8, then 7, 4 and the
+        // original (their IDs end in a digit or suffix, so the dot-prefix rule alone missed them).
+        "com.1password", "com.agilebits.onepassword", "com.agilebits.onepassword7", "com.agilebits.onepassword4",
+        "com.agilebits.onepassword-osx", "com.lastpass", "org.keepassxc.keepassxc", "com.dashlane",
+        "com.nordsec.nordpass", "com.nordpass", "me.proton.pass",
     ]
 
     enum Skip: Equatable {
@@ -87,6 +91,12 @@ enum ClipboardPolicy {
 
     static func isBundleID(_ text: String) -> Bool {
         !text.isEmpty && text.count <= 200 && text.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "-" || $0 == "_") }
+    }
+
+    /// Installed apps whose ID matches `rule` (or whose ID it is a dot prefix of).
+    /// For verifying the built-in list against a Mac, not used while capturing.
+    static func installedMatches(for rule: String) -> Bool {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: rule) != nil
     }
 
     static func isExcluded(_ bundleID: String?, user: [String]) -> Bool {
@@ -104,11 +114,23 @@ enum ClipboardPolicy {
     static func decide(
         types: [String], text: String?, apps: [String?], user: [String], paused: Bool, secureInput: Bool
     ) -> Decision {
-        if paused { return .skip(.paused) }
-        if secureInput { return .skip(.secureInput) }
-        if types.contains(where: sensitiveTypes.contains) { return .skip(.sensitiveType) }
-        if apps.contains(where: { isExcluded($0, user: user) }) { return .skip(.excludedApp) }
-        if types.contains("public.file-url") { return .skip(.filePayload) }
+        if let skip = preflight(types: types, apps: apps, user: user, paused: paused, secureInput: secureInput) { return .skip(skip) }
+        return judge(text: text)
+    }
+
+    /// Everything that can refuse a copy without looking at its text. Runs
+    /// first, so a refused copy's text is never read into Portside.
+    /// `secureInput` is true when it is on now or was at the previous look.
+    static func preflight(types: [String], apps: [String?], user: [String], paused: Bool, secureInput: Bool) -> Skip? {
+        if paused { return .paused }
+        if secureInput { return .secureInput }
+        if types.contains(where: sensitiveTypes.contains) { return .sensitiveType }
+        if apps.contains(where: { isExcluded($0, user: user) }) { return .excludedApp }
+        if types.contains("public.file-url") { return .filePayload }
+        return nil
+    }
+
+    static func judge(text: String?) -> Decision {
         guard let text else { return .skip(.noText) }
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .skip(.blank) }
         if text.count > maxCharacters { return .skip(.tooLarge) }
@@ -128,6 +150,7 @@ enum ClipboardPolicy {
 protocol PasteboardAccess: AnyObject {
     var changeCount: Int { get }
     var types: [String] { get }
+    /// The text. Read only after `ClipboardPolicy.preflight` allowed the copy.
     var string: String? { get }
     /// Replaces the contents with text. Returns the new change count.
     func write(_ text: String) -> Int?
@@ -146,8 +169,13 @@ final class SystemPasteboard: PasteboardAccess {
     }
 }
 
-/// Where the history's encryption key lives. A random key in the login
-/// keychain, readable only on this Mac while unlocked and never in a backup.
+/// Where the history's encryption key lives: a random 256 bit key in the
+/// keychain. In a signed build with keychain entitlements it goes in the
+/// data protection keychain, readable only on this Mac while unlocked; an
+/// unsigned or ad hoc build (macOS answers -34018) falls back to the login
+/// keychain, which ignores that accessibility setting, so the key is then
+/// protected by the login keychain only and can be in a Time Machine copy of
+/// it. The history file itself is excluded from backups either way.
 protocol ClipboardKeyStore: Sendable {
     func key() throws -> SymmetricKey
 }
@@ -160,24 +188,86 @@ struct KeychainKeyStore: ClipboardKeyStore {
     var service = "com.james.portside.clipboard-history"
     var account = "key"
 
-    func key() throws -> SymmetricKey {
+    private func base(dataProtection: Bool) -> [String: Any] {
         var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
+        if dataProtection { query[kSecUseDataProtectionKeychain as String] = true }
+        return query
+    }
+
+    private enum Lookup {
+        case found(SymmetricKey), missing, unsupported, failed
+    }
+
+    private func lookup(dataProtection: Bool) -> Lookup {
         var found: CFTypeRef?
-        let read = SecItemCopyMatching(query.merging([kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]) { $1 } as CFDictionary, &found)
-        if read == errSecSuccess, let data = found as? Data, data.count == 32 { return SymmetricKey(data: data) }
-        guard read == errSecItemNotFound || read == errSecSuccess else { throw Failure() }
-        // A wrong-sized or unreadable old item is replaced.
-        SecItemDelete(query as CFDictionary)
+        let query = base(dataProtection: dataProtection).merging([kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]) { $1 }
+        switch SecItemCopyMatching(query as CFDictionary, &found) {
+        case errSecSuccess:
+            if let data = found as? Data, data.count == 32 { return .found(SymmetricKey(data: data)) }
+            // A wrong-sized old item is replaced.
+            SecItemDelete(base(dataProtection: dataProtection) as CFDictionary)
+            return .missing
+        case errSecItemNotFound: return .missing
+        case errSecMissingEntitlement: return .unsupported
+        default: return .failed
+        }
+    }
+
+    func key() throws -> SymmetricKey {
+        // An existing key wins, wherever it was stored.
+        var protectedAvailable = true
+        for dataProtection in [true, false] {
+            switch lookup(dataProtection: dataProtection) {
+            case .found(let key): return key
+            case .unsupported: if dataProtection { protectedAvailable = false }
+            case .failed: throw Failure()
+            case .missing: break
+            }
+        }
         var bytes = [UInt8](repeating: 0, count: 32)
         guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { throw Failure() }
-        query[kSecValueData as String] = Data(bytes)
-        query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        let data = Data(bytes)
+        if protectedAvailable {
+            var query = base(dataProtection: true)
+            query[kSecValueData as String] = data
+            query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            let added = SecItemAdd(query as CFDictionary, nil)
+            if added == errSecSuccess { return SymmetricKey(data: data) }
+            guard added == errSecMissingEntitlement else { throw Failure() }
+        }
+        var query = base(dataProtection: false)
+        query[kSecValueData as String] = data
         guard SecItemAdd(query as CFDictionary, nil) == errSecSuccess else { throw Failure() }
-        return SymmetricKey(data: bytes)
+        return SymmetricKey(data: data)
     }
 
     func delete() {
-        SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account] as CFDictionary)
+        SecItemDelete(base(dataProtection: true) as CFDictionary)
+        SecItemDelete(base(dataProtection: false) as CFDictionary)
+    }
+}
+
+/// Reads the key once and keeps it for as long as history runs, so capturing
+/// a copy never waits on the keychain (which can show a dialog). `reset`
+/// drops it when the module stops.
+final class CachedKeyStore: ClipboardKeyStore, @unchecked Sendable {
+    private let store: ClipboardKeyStore
+    private let lock = NSLock()
+    private var cached: SymmetricKey?
+
+    init(_ store: ClipboardKeyStore) {
+        self.store = store
+    }
+
+    func key() throws -> SymmetricKey {
+        if let key = lock.withLock({ cached }) { return key }
+        let key = try store.key()
+        lock.withLock { cached = key }
+        return key
+    }
+
+    func reset() {
+        lock.withLock { cached = nil }
     }
 }
 
@@ -245,7 +335,7 @@ struct ClipboardFile {
 /// (when secure input ends, or the frontmost app changes).
 @MainActor
 final class ClipboardService: ObservableObject {
-    static let shared = ClipboardService(file: ClipboardFile(url: ClipboardFile.defaultURL, keys: KeychainKeyStore()),
+    static let shared = ClipboardService(file: ClipboardFile(url: ClipboardFile.defaultURL, keys: CachedKeyStore(KeychainKeyStore())),
                                          prefsURL: ClipboardService.defaultPrefsURL)
 
     static let interval: TimeInterval = 0.75
@@ -267,6 +357,7 @@ final class ClipboardService: ObservableObject {
     private var lastCount = 0
     private var ownCount: Int?
     private var previousFront: String?
+    private var previousSecure = false
     private var timer: DispatchSourceTimer?
     private let logger = Logger(subsystem: "com.james.portside", category: "CommandCenter")
 
@@ -304,7 +395,10 @@ final class ClipboardService: ObservableObject {
     func activate() throws {
         _ = try file.keys.key()
         isActive = true
-        entries = ClipboardPolicy.pruned(file.read(), now: now(), expiryHours: prefs.expiryHours)
+        let stored = file.read()
+        entries = ClipboardPolicy.pruned(stored, now: now(), expiryHours: prefs.expiryHours)
+        // Expired text is removed from disk now, not at the next capture.
+        if entries != stored { persist() }
         baseline()
         startTimerIfNeeded()
         onChange?()
@@ -317,12 +411,14 @@ final class ClipboardService: ObservableObject {
         stopTimer()
         entries = []
         ownCount = nil
+        (file.keys as? CachedKeyStore)?.reset()
         onChange?()
     }
 
     private func baseline() {
         lastCount = pasteboard.changeCount
         previousFront = frontmost()
+        previousSecure = secureInput()
     }
 
     // MARK: Watching
@@ -349,20 +445,25 @@ final class ClipboardService: ObservableObject {
         guard isActive, !prefs.paused else { return }
         let count = pasteboard.changeCount
         let front = frontmost()
+        let secure = secureInput()
         defer {
             lastCount = count
             previousFront = front
+            previousSecure = secure
         }
         guard count != lastCount else { return }
         if count == ownCount {
             ownCount = nil
             return
         }
-        let decision = ClipboardPolicy.decide(
-            types: pasteboard.types, text: pasteboard.string, apps: [front, previousFront],
-            user: prefs.excludedApps, paused: prefs.paused, secureInput: secureInput()
-        )
-        guard case .capture(let text) = decision else { return }
+        // Secure input that was on at the previous look counts too: the copy may
+        // have been made just before it ended.
+        guard ClipboardPolicy.preflight(
+            types: pasteboard.types, apps: [front, previousFront], user: prefs.excludedApps,
+            paused: prefs.paused, secureInput: secure || previousSecure
+        ) == nil else { return }
+        // Only now is the text read.
+        guard case .capture(let text) = ClipboardPolicy.judge(text: pasteboard.string) else { return }
         record(text)
     }
 
@@ -528,7 +629,7 @@ final class ClipboardModule: PortsideModule {
 
     let id = ClipboardModule.moduleID
     let title = "Clipboard History"
-    let summary = "Keeps the text you copy, for a day by default, so Command Center can find it again: type clip, or clip and some words. Encrypted on this Mac with a key in your keychain, never synced or sent anywhere. It skips what apps mark as secret, password managers and the apps you exclude, and anything copied while a password field has the keyboard, but it cannot recognize every secret. Pause, expiry and Clear History are in Settings > General > Command Center. Text only, no images or files."
+    let summary = "Keeps the text you copy, for a day by default, so Command Center can find it again: type clip, or clip and some words. Encrypted on this Mac with a key in your keychain (the data protection keychain in a signed build, otherwise your login keychain), never synced or sent anywhere. It skips what apps mark as secret, password managers and the apps you exclude, and anything copied while a password field has the keyboard, but it cannot recognize every secret. Pause, expiry and Clear History are in Settings > General > Command Center. Text only, no images or files."
     let fallback = "Copying and pasting work the same without it."
     let dependencies: [ModuleDependency] = [.module(CommandCenterModule.moduleID)]
 

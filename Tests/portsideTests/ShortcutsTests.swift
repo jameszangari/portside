@@ -269,4 +269,61 @@ final class ShortcutsTests: XCTestCase {
         _ = state.send(.query("one"))
         XCTAssertEqual(recorder.invocations.count, before, "typing runs nothing; only Return does")
     }
+
+    // MARK: Review fixes
+
+    func testTurningTheModuleOffCancelsARunInFlight() async throws {
+        let sawCancel = CancelFlag()
+        let recorder = Recorder()
+        recorder.answer = { [self] _ in listing("One (\(a.uuidString))\n") }
+        let service = ShortcutsService(runner: { invocation, _ in
+            if invocation.arguments.first == "list" { return recorder.answer(invocation) }
+            // A child that never ends until it is told to stop.
+            while !Task.isCancelled { try? await Task.sleep(for: .milliseconds(10)) }
+            sawCancel.set()
+            return LsofRun(termination: .canceled)
+        }, exists: { true })
+        service.activate()
+        service.refresh {}
+        await settle()
+        let run = Task { await service.run(a) }
+        await settle()
+        XCTAssertEqual(service.running, a)
+        service.deactivate()
+        let result = await run.value
+        XCTAssertTrue(sawCancel.value, "the runner (and so the child) was told to stop")
+        XCTAssertEqual(result, .failure(CommandFailure(reason: "One was canceled. Shortcuts may still finish it.")))
+        XCTAssertNil(service.running)
+    }
+
+    func testCancellingTheCallerStillStopsTheChild() async throws {
+        let sawCancel = CancelFlag()
+        let service = ShortcutsService(runner: { invocation, _ in
+            if invocation.arguments.first == "list" {
+                var listed = LsofRun(termination: .exited(0))
+                listed.stdout = Data("One (\(UUID().uuidString))\n".utf8)
+                return listed
+            }
+            while !Task.isCancelled { try? await Task.sleep(for: .milliseconds(10)) }
+            sawCancel.set()
+            return LsofRun(termination: .canceled)
+        }, exists: { true })
+        service.activate()
+        service.refresh {}
+        await settle()
+        let id = try XCTUnwrap(service.rows.first?.id)
+        let run = Task { await service.run(id) }
+        await settle()
+        run.cancel()
+        _ = await run.value
+        XCTAssertTrue(sawCancel.value)
+    }
+
+    private final class CancelFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var flag = false
+        var value: Bool { lock.withLock { flag } }
+        func set() { lock.withLock { flag = true } }
+    }
 }
+

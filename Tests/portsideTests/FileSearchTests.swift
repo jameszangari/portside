@@ -11,7 +11,7 @@ final class FileSearchTests: XCTestCase {
     private var outside: URL!
 
     override func setUp() async throws {
-        let temp = FileManager.default.temporaryDirectory.appendingPathComponent("files-\(UUID().uuidString)").resolvingSymlinksInPath()
+        let temp = try FileActionsTests.canonicalTemp("files")
         base = temp
         root = temp.appendingPathComponent("root")
         outside = temp.appendingPathComponent("outside")
@@ -406,6 +406,157 @@ final class FileSearchTests: XCTestCase {
         let outcome = state.send(.finished(items[0].id, .success(nil)))
         XCTAssertFalse(outcome.effects.contains(.recordUsage(items[0].id)), "file names are not written to history")
     }
+
+    // MARK: Review fixes
+
+    func testRootRulesJudgeTheCanonicalPlace() throws {
+        for path in ["/etc", "/etc/ssh", "/private/etc", "/private/etc/ssh", "/var", "/var/db", "/private/var/db", "/Library",
+                     "/Library/Application Support", "/usr/local", "/System/Library"] {
+            switch FileRootRules.validate(path, existing: []) {
+            case .failure(.tooBroad), .failure(.notAFolder): break
+            default: XCTFail("\(path) must not be accepted")
+            }
+        }
+        XCTAssertEqual(FileRootRules.validate("/etc/ssh", existing: []), .failure(.tooBroad), "a Foundation resolve returned /etc/ssh unchanged")
+        // A symlink to a system folder is judged by where it leads.
+        let link = base.appendingPathComponent("to-etc")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: URL(fileURLWithPath: "/etc/ssh"))
+        XCTAssertEqual(FileRootRules.validate(link.path, existing: []), .failure(.tooBroad))
+        // The per-user temp area and a normal folder are fine, stored canonical.
+        XCTAssertEqual(FileRootRules.validate(root.path, existing: []), .success(root.path))
+        XCTAssertTrue(root.path.hasPrefix("/private/var/folders/"))
+    }
+
+    func testStoredRootsAreCanonicalAndABroadOneIsDropped() throws {
+        let url = base.appendingPathComponent("roots.json")
+        let viaVar = "/var" + root.path.dropFirst("/private/var".count)
+        try """
+        {"version":1,"roots":[{"id":"\(UUID())","path":"\(viaVar)"},{"id":"\(UUID())","path":"/etc"},{"id":"\(UUID())","path":"/private/var/db"}]}
+        """.write(to: url, atomically: true, encoding: .utf8)
+        XCTAssertEqual(FileRootStore(url: url).roots.map(\.path), [root.path])
+    }
+
+    func testScanStopsWhenCanceledMidDirectory() throws {
+        for i in 0..<600 { try make("f\(i).txt") }
+        var calls = 0
+        let result = FileScanner.scan(root: fileRoot, isCancelled: {
+            calls += 1
+            return calls > 1
+        })
+        XCTAssertEqual(result.outcome, .canceled)
+        XCTAssertTrue(result.entries.isEmpty)
+        XCTAssertLessThan(calls, 10, "checked inside the folder, not only between folders")
+    }
+
+    func testCancelledCallerReachesTheDetachedScan() async throws {
+        for i in 0..<300 { try make("d\(i)/f.txt") }
+        let root = fileRoot
+        let task = Task { await FileIndexService.cancellableScan(root, FileScanLimits()) }
+        task.cancel()
+        let result = await task.value
+        XCTAssertEqual(result.outcome, .canceled, "cancellation crossed into the detached task")
+        let finished = await FileIndexService.cancellableScan(root, FileScanLimits())
+        XCTAssertNotEqual(finished.outcome, .canceled)
+    }
+
+    func testRemovingARootCancelsItsRealScan() async throws {
+        for i in 0..<200 { try make("d\(i)/f.txt") }
+        let index = FileIndexService(store: FileRootStore(url: nil), watcher: NullWatcher2())
+        index.activate()
+        guard case .success(let added) = index.addRoot(root.path) else { return XCTFail() }
+        let task = index.refresh(force: true)
+        index.removeRoot(id: added.id)
+        await task.value
+        XCTAssertTrue(index.entries.isEmpty)
+        XCTAssertNil(index.states[added.id])
+        XCTAssertTrue(index.rootPaths.isEmpty)
+    }
+
+    @MainActor private final class NullWatcher2: FileChangeWatching {
+        func watch(_ paths: [String], onChange: @escaping @MainActor ([String]) -> Void) {}
+        func stop() {}
+    }
+
+    func testThumbnailsArePurgedWhenARootIsRemovedOrTheModuleStops() async throws {
+        let image = NSImage(size: NSSize(width: 64, height: 64), flipped: false) { rect in
+            NSColor.systemTeal.setFill()
+            rect.fill()
+            return true
+        }
+        let png = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(image.tiffRepresentation))?.representation(using: .png, properties: [:]))
+        let file = root.appendingPathComponent("pic.png")
+        try png.write(to: file)
+        let index = FileIndexService(store: FileRootStore(url: nil), watcher: NullWatcher2(), scan: { root, _ in
+            FileScanResult(entries: [], outcome: .complete)
+        })
+        index.activate()
+        guard case .success(let added) = index.addRoot(root.path) else { return XCTFail() }
+        _ = await FileThumbnails.load(file, scale: 2)
+        XCTAssertNotNil(FileThumbnails.cached(file.path))
+        index.removeRoot(id: added.id)
+        XCTAssertNil(FileThumbnails.cached(file.path), "revoking a folder drops what was drawn from it")
+        XCTAssertThrowsError(try index.authorize(file.path).get(), "and the view's authorization check now fails")
+        _ = index.addRoot(root.path)
+        _ = await FileThumbnails.load(file, scale: 2)
+        XCTAssertNotNil(FileThumbnails.cached(file.path))
+        index.deactivate()
+        XCTAssertNil(FileThumbnails.cached(file.path), "stopping the module drops them too")
+    }
+
+    func testOpenDropsAnIndexWhoseFolderLostAccessOrWentAway() async throws {
+        let outcome = ProbeBox()
+        let script = ScanScript()
+        let store = FileRootStore(url: nil)
+        let index = FileIndexService(store: store, watcher: NullWatcher2(), scan: { root, _ in
+            script.hit()
+            return script.results(root)
+        }, probe: { _ in outcome.value })
+        index.activate()
+        guard case .success(let added) = index.addRoot(root.path) else { return XCTFail() }
+        await index.refresh().value
+        XCTAssertEqual(index.entries.count, 1)
+        outcome.value = .complete
+        await index.refresh().value
+        XCTAssertEqual(index.entries.count, 1, "readable: kept")
+        outcome.value = .unreadable
+        await index.refresh().value
+        XCTAssertTrue(index.entries.isEmpty, "access withdrawn: purged, not searchable")
+        XCTAssertEqual(index.states[added.id], .unreadable)
+        XCTAssertTrue(index.results(for: "one").isEmpty)
+        outcome.value = .missing
+        await index.refresh(force: true).value
+        let scans = script.scans
+        await index.refresh().value
+        XCTAssertEqual(script.scans, scans, "a probe never rescans")
+    }
+
+    private final class ProbeBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored = FileScanOutcome.complete
+        var value: FileScanOutcome {
+            get { lock.withLock { stored } }
+            set { lock.withLock { stored = newValue } }
+        }
+    }
+
+    func testProbeReportsReadability() throws {
+        XCTAssertEqual(FileScanner.probe(fileRoot), .complete)
+        XCTAssertEqual(FileScanner.probe(FileRoot(path: base.appendingPathComponent("nope").path)), .missing)
+        let locked = try make("locked", in: base, folder: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path)
+        XCTAssertEqual(FileScanner.probe(FileRoot(path: locked.path)), .unreadable)
+    }
+
+    func testAuthorizeAcceptsCanonicalPathsUnderPrivate() throws {
+        let file = try make("ok.txt")
+        XCTAssertTrue(file.path.hasPrefix("/private/"))
+        XCTAssertEqual(FileAccess.authorize(file.path, roots: [root.path]), .success(file))
+        XCTAssertFalse(FileAccess.isNormalized("/a/../b"))
+        XCTAssertFalse(FileAccess.isNormalized("/a//b"))
+        XCTAssertFalse(FileAccess.isNormalized("/a/./b"))
+        XCTAssertFalse(FileAccess.isNormalized("/a/b/"))
+        XCTAssertTrue(FileAccess.isNormalized("/a/b"))
+    }
 }
 
 private extension Result {
@@ -417,8 +568,7 @@ private extension Result {
 @MainActor
 final class FSEventsWatcherTests: XCTestCase {
     func testWriteUnderWatchedRootIsReportedAndStopSilencesIt() async throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fsev-\(UUID().uuidString)").resolvingSymlinksInPath()
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let dir = try FileActionsTests.canonicalTemp("fsev")
         defer { try? FileManager.default.removeItem(at: dir) }
         let watcher = FSEventsWatcher()
         let reported = expectation(description: "change reported")

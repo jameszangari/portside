@@ -10,13 +10,20 @@ final class FileActionsTests: XCTestCase {
     private var root: URL!
 
     override func setUp() async throws {
-        base = FileManager.default.temporaryDirectory.appendingPathComponent("fileactions-\(UUID().uuidString)").resolvingSymlinksInPath()
+        base = try Self.canonicalTemp("fileactions")
         root = base.appendingPathComponent("root")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     }
 
     override func tearDown() {
         try? FileManager.default.removeItem(at: base)
+    }
+
+    /// A new temp folder by its canonical path (`/private/var/...`), the form roots use.
+    static func canonicalTemp(_ name: String) throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(name)-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return URL(fileURLWithPath: try XCTUnwrap(FileAccess.realPath(url.path)))
     }
 
     private func descriptor(_ id: CommandID) -> CommandDescriptor {

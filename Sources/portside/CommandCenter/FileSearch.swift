@@ -68,7 +68,10 @@ enum FileRootRules {
     /// The path to store, or why not. `existing` are the current roots' paths.
     static func validate(_ path: String, existing: [String], home: String = NSHomeDirectory()) -> Result<String, Problem> {
         guard path.hasPrefix("/"), !path.contains("\0") else { return .failure(.notAbsolute) }
-        let resolved = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+        // Canonical (`realpath`) before any rule: `/etc/ssh` is `/private/etc/ssh`,
+        // and a Foundation resolve would hand `/etc/ssh` back.
+        let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
+        let resolved = FileAccess.realPath(standardized) ?? standardized
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: resolved, isDirectory: &isDirectory), isDirectory.boolValue else {
             return .failure(.notAFolder)
@@ -82,13 +85,19 @@ enum FileRootRules {
     }
 
     static func isTooBroad(_ resolved: String, home: String) -> Bool {
+        // Whatever form is passed (`/etc`, `/private/etc`), judge the real place.
+        let resolved = FileAccess.realPath(resolved) ?? resolved
         let components = resolved.split(separator: "/")
         if components.count <= 1 { return true }
-        let homeResolved = URL(fileURLWithPath: home).resolvingSymlinksInPath().path
+        let homeResolved = FileAccess.realPath(home) ?? home
         if resolved == home || resolved == homeResolved { return true }
         // A mounted volume's top folder is a whole disk.
         if components.count == 2, components[0] == "Volumes" { return true }
-        return ["/System", "/private", "/dev", "/cores", "/usr", "/bin", "/sbin"].contains { resolved == $0 || resolved.hasPrefix($0 + "/") }
+        func under(_ folder: String) -> Bool { resolved == folder || resolved.hasPrefix(folder + "/") }
+        // `/etc` and `/var` are `/private/etc` and `/private/var`. Only the per-user
+        // temporary and cache area under /private/var/folders is a place to search.
+        if under("/private/var"), !resolved.hasPrefix("/private/var/folders/") { return true }
+        return ["/System", "/Library", "/private/etc", "/dev", "/cores", "/usr", "/bin", "/sbin"].contains(where: under)
     }
 }
 
@@ -115,8 +124,7 @@ enum FileAccess {
     }
 
     static func authorize(_ path: String, roots: [String]) -> Result<URL, Denial> {
-        guard path.hasPrefix("/"), !path.contains("\0"), path.count <= 4096,
-              URL(fileURLWithPath: path).standardizedFileURL.path == path else { return .failure(.badPath) }
+        guard path.hasPrefix("/"), !path.contains("\0"), path.count <= 4096, isNormalized(path) else { return .failure(.badPath) }
         guard let root = roots.first(where: { path.hasPrefix($0 + "/") }) else { return .failure(.outsideRoots) }
         var info = stat()
         guard lstat(path, &info) == 0 else { return .failure(.missing) }
@@ -125,6 +133,13 @@ enum FileAccess {
             return .failure(.escapes)
         }
         return .success(URL(fileURLWithPath: path))
+    }
+
+    /// No empty, `.` or `..` component and no trailing slash. Checked by hand:
+    /// `standardizedFileURL` also rewrites `/private/tmp` to `/tmp`, which
+    /// would refuse every canonical path under `/private`.
+    static func isNormalized(_ path: String) -> Bool {
+        path.dropFirst().split(separator: "/", omittingEmptySubsequences: false).allSatisfy { $0 != "" && $0 != "." && $0 != ".." }
     }
 
     static func realPath(_ path: String) -> String? {
@@ -166,8 +181,10 @@ enum FileScanner {
     static func scan(root: FileRoot, limits: FileScanLimits = FileScanLimits(), isCancelled: () -> Bool = { false }) -> FileScanResult {
         let files = FileManager.default
         var isDirectory: ObjCBool = false
+        // The stored root is canonical; one that now resolves elsewhere (swapped
+        // for a symlink, moved) is not scanned.
         guard files.fileExists(atPath: root.path, isDirectory: &isDirectory), isDirectory.boolValue,
-              URL(fileURLWithPath: root.path).resolvingSymlinksInPath().path == root.path else {
+              FileAccess.realPath(root.path) == root.path else {
             return FileScanResult(entries: [], outcome: .missing)
         }
         let keys: [URLResourceKey] = [.isSymbolicLinkKey, .isDirectoryKey, .isPackageKey]
@@ -192,7 +209,8 @@ enum FileScanner {
                 continue
             }
             rootRead = true
-            for child in children.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            for (index, child) in children.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).enumerated() {
+                if index % 128 == 0, isCancelled() { return FileScanResult(entries: [], outcome: .canceled) }
                 let values = try? child.resourceValues(forKeys: Set(keys))
                 if values?.isSymbolicLink == true { continue }
                 let isFolder = values?.isDirectory == true
@@ -213,6 +231,18 @@ enum FileScanner {
             if outcome == .truncated, entries.count >= limits.maxEntries { break }
         }
         return FileScanResult(entries: entries, outcome: outcome)
+    }
+}
+
+extension FileScanner {
+    /// A cheap look: can the root still be read? Used on open to drop an
+    /// index whose folder went away or whose access was withdrawn.
+    static func probe(_ root: FileRoot) -> FileScanOutcome {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory), isDirectory.boolValue,
+              FileAccess.realPath(root.path) == root.path else { return .missing }
+        guard (try? FileManager.default.contentsOfDirectory(atPath: root.path)) != nil else { return .unreadable }
+        return .complete
     }
 }
 

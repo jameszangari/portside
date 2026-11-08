@@ -27,17 +27,23 @@ final class ClipboardHistoryTests: XCTestCase {
     @MainActor private final class FakeBoard: PasteboardAccess {
         var changeCount = 1
         var types: [String] = ["public.utf8-plain-text"]
-        var string: String?
+        var text: String?
+        /// How many times the text was read.
+        var reads = 0
+        var string: String? {
+            reads += 1
+            return text
+        }
         var failWrite = false
         func copy(_ text: String?, types: [String] = ["public.utf8-plain-text"]) {
             changeCount += 1
-            string = text
+            self.text = text
             self.types = types
         }
         func write(_ text: String) -> Int? {
             guard !failWrite else { return nil }
             changeCount += 1
-            string = text
+            self.text = text
             types = ["public.utf8-plain-text"]
             return changeCount
         }
@@ -302,7 +308,7 @@ final class ClipboardHistoryTests: XCTestCase {
         rig.service.tick()
         let id = try XCTUnwrap(rig.service.entries.first?.id)
         XCTAssertEqual(rig.service.copy(id), .success(nil))
-        XCTAssertEqual(rig.board.string, "original")
+        XCTAssertEqual(rig.board.text, "original")
         rig.service.tick()
         XCTAssertEqual(rig.service.entries.count, 1)
         rig.board.copy("calc result")
@@ -421,5 +427,114 @@ final class ClipboardHistoryTests: XCTestCase {
         XCTAssertEqual(lenient.prefs.paused, false)
         XCTAssertEqual(lenient.prefs.excludedApps, [])
         XCTAssertEqual(lenient.prefs.expiryHours, 24)
+    }
+
+    // MARK: Review fixes
+
+    private final class CountingKeys: ClipboardKeyStore, @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        var reads: Int { lock.withLock { count } }
+        func key() throws -> SymmetricKey {
+            lock.withLock { count += 1 }
+            return SymmetricKey(data: Data(repeating: 3, count: 32))
+        }
+    }
+
+    func testKeyIsReadOnceAndNotDuringCaptureAndDroppedOnStop() throws {
+        let counting = CountingKeys()
+        let cached = CachedKeyStore(counting)
+        let rig = try rig(keys: cached)
+        let afterStart = counting.reads
+        XCTAssertEqual(afterStart, 1, "one read to start, shared by loading the file")
+        for i in 0..<10 {
+            rig.board.copy("copy \(i)")
+            rig.service.tick()
+        }
+        XCTAssertEqual(rig.service.entries.count, 10)
+        XCTAssertEqual(counting.reads, afterStart, "capturing and saving never go back to the keychain")
+        rig.service.deactivate()
+        try rig.service.activate()
+        XCTAssertEqual(counting.reads, afterStart + 1, "the key was dropped when the module stopped")
+    }
+
+    func testTextIsNotReadWhenTheCopyIsRefusedBeforeLooking() throws {
+        let rig = try rig()
+        rig.board.copy("secret from a manager", types: ["public.utf8-plain-text", "org.nspasteboard.ConcealedType"])
+        rig.service.tick()
+        rig.front.id = "com.bitwarden.desktop"
+        rig.board.copy("excluded app")
+        rig.service.tick()
+        rig.front.id = "com.apple.TextEdit"
+        rig.service.tick()
+        rig.board.copy("finder", types: ["public.utf8-plain-text", "public.file-url"])
+        rig.service.tick()
+        rig.secure.on = true
+        rig.board.copy("typed password")
+        rig.service.tick()
+        XCTAssertEqual(rig.board.reads, 0, "a refused copy's text never reaches Portside")
+        rig.secure.on = false
+        rig.service.tick()
+        rig.service.tick()
+        rig.board.copy("fine")
+        rig.service.tick()
+        XCTAssertEqual(rig.board.reads, 1)
+        XCTAssertEqual(rig.service.entries.map(\.text), ["fine"])
+        let paused = try self.rig()
+        paused.service.setPaused(true)
+        paused.board.copy("x")
+        paused.service.tick()
+        XCTAssertEqual(paused.board.reads, 0)
+    }
+
+    func testCopyJustBeforeSecureInputEndsIsNotCaptured() throws {
+        let rig = try rig()
+        rig.secure.on = true
+        rig.service.tick()
+        // The copy happens in secure input; it ends before the next look.
+        rig.board.copy("hunter2")
+        rig.secure.on = false
+        rig.service.tick()
+        XCTAssertTrue(rig.service.entries.isEmpty, "secure input at the previous look counts")
+        // A copy made well after secure input ended is kept.
+        rig.board.copy("later")
+        rig.service.tick()
+        XCTAssertEqual(rig.service.entries.map(\.text), ["later"])
+        // A copy made right before secure input starts is judged by the next look too.
+        rig.board.copy("then locked")
+        rig.secure.on = true
+        rig.service.tick()
+        XCTAssertEqual(rig.service.entries.map(\.text), ["later"])
+    }
+
+    func testExpiryIsPersistedWhenTheModuleStarts() throws {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        try file.write([ClipboardEntry(text: "stale secret", date: now.addingTimeInterval(-3 * 86_400)), ClipboardEntry(text: "fresh", date: now)])
+        let service = ClipboardService(file: file, prefsURL: nil, pasteboard: FakeBoard(), frontmost: { nil }, secureInput: { false }, now: { now }, startsTimer: false)
+        try service.activate()
+        XCTAssertEqual(service.entries.map(\.text), ["fresh"])
+        XCTAssertEqual(file.read().map(\.text), ["fresh"], "the expired text is gone from the file, not only from memory")
+        XCTAssertNil(try Data(contentsOf: file.url).range(of: Data("stale".utf8)))
+    }
+
+    func testBuiltInExclusionsCoverKnownBundleIDs() {
+        for id in ["com.1password.1password", "com.agilebits.onepassword7", "com.agilebits.onepassword4", "com.agilebits.onepassword-osx",
+                   "com.agilebits.onepassword7.helper", "com.nordsec.nordpass", "com.bitwarden.desktop", "com.apple.Passwords",
+                   "com.apple.Passwords.MenuBarExtra", "com.apple.keychainaccess", "org.keepassxc.keepassxc"] {
+            XCTAssertTrue(ClipboardPolicy.isExcluded(id, user: []), id)
+        }
+        XCTAssertFalse(ClipboardPolicy.isExcluded("com.agilebits.onepasswordish", user: []))
+        XCTAssertTrue(ClipboardPolicy.builtInExcludedApps.allSatisfy(ClipboardPolicy.isBundleID))
+    }
+
+    func testBuiltInIDsThatAreInstalledHereResolve() throws {
+        // The IDs verified on a real Mac (see the list's comment). Skipped where the app is absent.
+        var checked = 0
+        for id in ["com.apple.keychainaccess", "com.apple.Passwords", "com.bitwarden.desktop", "com.apple.systempreferences"] {
+            guard ClipboardPolicy.installedMatches(for: id) else { continue }
+            XCTAssertTrue(ClipboardPolicy.builtInExcludedApps.contains(id), id)
+            checked += 1
+        }
+        if checked == 0 { throw XCTSkip("none of the verifiable apps is installed") }
     }
 }
