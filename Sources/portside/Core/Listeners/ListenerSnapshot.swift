@@ -178,4 +178,19 @@ struct ListenerSnapshot: Sendable {
     let duration: Duration
 
     var sockets: [ListenerSocket] { processes.flatMap(\.sockets) }
+
+    /// The same listing without processes whose verified identity is in
+    /// `gone`. Time, outcome and every other process are unchanged.
+    func removing(_ gone: Set<ProcessIdentity>) -> ListenerSnapshot {
+        ListenerSnapshot(
+            query: query,
+            processes: processes.filter { process in process.identity.value.map { !gone.contains($0) } ?? true },
+            outcome: outcome,
+            diagnostics: diagnostics,
+            visibleUID: visibleUID,
+            takenAt: takenAt,
+            takenAtInstant: takenAtInstant,
+            duration: duration
+        )
+    }
 }
