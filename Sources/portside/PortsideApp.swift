@@ -382,7 +382,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             let module = SwitcherModule(
                 switcher: AppSwitcher(registry: registry),
-                chords: dockModel.$switcherHotkey.eraseToAnyPublisher()
+                chords: dockModel.$switcherHotkey.eraseToAnyPublisher(),
+                preferences: dockModel.switcherPreferences
             )
             do {
                 try modules.register(module)

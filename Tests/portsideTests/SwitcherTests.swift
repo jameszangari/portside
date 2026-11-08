@@ -85,9 +85,9 @@ final class SwitcherStateTests: XCTestCase {
         var state = opened()
         XCTAssertEqual(state.send(.key(.commit)), [.dismiss, .activate(b)])
         state = opened()
-        XCTAssertEqual(state.send(.choose(c.key)), [.dismiss, .activate(c)])
+        XCTAssertEqual(state.send(.choose(.app(c.key))), [.dismiss, .activate(c)])
         state = opened()
-        XCTAssertEqual(state.send(.choose(item(99, "Gone").key)), [], "a key not in the list is ignored")
+        XCTAssertEqual(state.send(.choose(.app(item(99, "Gone").key))), [], "a key not in the list is ignored")
         XCTAssertTrue(state.isOpen)
     }
 
@@ -150,23 +150,23 @@ final class SwitcherStateTests: XCTestCase {
         _ = state.send(.appsChanged([a, relaunched, c]))
         XCTAssertEqual(state.items, [a, c, relaunched], "the old launch left; the new one is new")
         XCTAssertEqual(state.selectedItem, c)
-        XCTAssertEqual(state.send(.choose(b.key)), [], "the earlier launch's key no longer matches")
+        XCTAssertEqual(state.send(.choose(.app(b.key))), [], "the earlier launch's key no longer matches")
     }
 
     func testHoverSelectsOnlyWhileVisible() {
         var state = opened()
-        XCTAssertEqual(state.send(.hover(c.key)), [], "armed: the panel is not shown yet")
+        XCTAssertEqual(state.send(.hover(.app(c.key))), [], "armed: the panel is not shown yet")
         XCTAssertEqual(state.selectedItem, b)
         _ = state.send(.revealDue)
-        XCTAssertEqual(state.send(.hover(c.key)), [.announce("Charlie")])
-        XCTAssertEqual(state.send(.hover(c.key)), [], "already selected")
-        XCTAssertEqual(state.send(.hover(item(99, "Gone").key)), [])
+        XCTAssertEqual(state.send(.hover(.app(c.key))), [.announce("Charlie")])
+        XCTAssertEqual(state.send(.hover(.app(c.key))), [], "already selected")
+        XCTAssertEqual(state.send(.hover(.app(item(99, "Gone").key))), [])
         XCTAssertEqual(state.send(.modifiersReleased), [.dismiss, .activate(c)])
     }
 
     func testEventsWhileHiddenDoNothing() {
         var state = SwitcherState()
-        for event: SwitcherEvent in [.modifiersReleased, .revealDue, .focusLost, .disable, .key(.commit), .appsChanged(apps), .choose(a.key), .hover(a.key)] {
+        for event: SwitcherEvent in [.modifiersReleased, .revealDue, .focusLost, .disable, .key(.commit), .appsChanged(apps), .choose(.app(a.key)), .hover(.app(a.key))] {
             XCTAssertEqual(state.send(event), [], "\(event)")
         }
         XCTAssertEqual(state, SwitcherState())
@@ -548,7 +548,7 @@ final class AppSwitcherTests: XCTestCase {
         switcher.hotkeyPressed()
         switcher.revealDue()
         let charlieKey = try XCTUnwrap(switcher.state.items.first { $0.name == "Charlie" }?.key)
-        switcher.choose(charlieKey)
+        switcher.choose(.app(charlieKey))
         XCTAssertEqual(activated, ["Charlie"])
     }
 
@@ -679,12 +679,17 @@ final class AppSwitcherTests: XCTestCase {
         switcher.hotkeyPressed()
         switcher.revealDue()
         let charlieKey = try XCTUnwrap(switcher.state.items.first { $0.name == "Charlie" }?.key)
-        switcher.hovered(charlieKey)
+        switcher.hovered(.app(charlieKey))
         XCTAssertEqual(switcher.state.selectedItem?.name, "Bravo", "a tile under a resting pointer is not chosen")
         pointer = NSPoint(x: 140, y: 100)
-        switcher.hovered(charlieKey)
+        switcher.hovered(.app(charlieKey))
         XCTAssertEqual(switcher.state.selectedItem?.name, "Charlie")
         XCTAssertEqual(presenter.announcements.last, "Charlie")
+        switcher.keyPressed(.previous)
+        let alphaKey = try XCTUnwrap(switcher.state.items.first { $0.name == "Alpha" }?.key)
+        switcher.hovered(.app(alphaKey))
+        XCTAssertEqual(switcher.state.selectedItem?.name, "Bravo", "keys moved the selection and the pointer has not moved since")
+        switcher.keyPressed(.next)
         switcher.modifiersChanged([], keyCode: UInt16(kVK_Option))
         XCTAssertEqual(activated, ["Charlie"], "letting go switches to the hovered app")
     }

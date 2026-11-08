@@ -1004,10 +1004,24 @@ private struct GeneralSettings: View {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                     }
                 }
+                Picker("App Switcher shows", selection: Binding(
+                    get: { dockModel.switcherMode },
+                    set: { dockModel.setSwitcherMode($0) }
+                )) {
+                    Text("Apps").tag(SwitcherMode.apps)
+                    Text("Windows").tag(SwitcherMode.windows)
+                }
+                Toggle(isOn: Binding(
+                    get: { dockModel.switcherTitleSearch },
+                    set: { dockModel.setSwitcherTitleSearch($0) }
+                )) {
+                    Text("Search window titles with /")
+                    Text("While the switcher is open, / starts a search that stays open after you let go. Type to filter, Return switches, Esc cancels.").helperStyle()
+                }
             } header: {
                 Text("Keyboard")
             } footer: {
-                Text("Open Settings works from any app. Default ⌘⇧D. The menu bar Settings… item always uses ⌘,. Command Center searches apps, Portside's commands, Settings panes and quicklinks. Default ⌥Space; while it is on it is also in the menu bar menu. App Switcher lists running apps, most recently used first. Default ⌥Tab: tap it for the previous app, or hold ⌥ and press Tab (Shift-Tab or the arrow keys to go back), then let go. Esc cancels. ⌘Tab stays macOS's.")
+                Text("Open Settings works from any app. Default ⌘⇧D. The menu bar Settings… item always uses ⌘,. Command Center searches apps, Portside's commands, Settings panes and quicklinks. Default ⌥Space; while it is on it is also in the menu bar menu. App Switcher lists running apps, most recently used first, or each window when it shows Windows. Default ⌥Tab: tap it for the previous app (or window), or hold ⌥ and press Tab (Shift-Tab or the arrow keys to go back), then let go. With apps, ↓ chooses one of the selected app's windows. Esc cancels. Windows and their titles need Accessibility; without it the switcher shows apps. Windows on other Spaces may not be listed, and choosing a full screen window goes to its Space. ⌘Tab stays macOS's.")
                     .footerStyle()
             }
 
