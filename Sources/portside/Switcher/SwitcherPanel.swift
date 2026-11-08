@@ -2,7 +2,8 @@ import AppKit
 import SwiftUI
 
 /// The live switcher panel: the Command Center panel class (key-capable,
-/// never main, non-activating), centered on the display with the pointer.
+/// never main, non-activating), centered on the whole display with the
+/// pointer, as ⌘Tab centers on the screen rather than its visible frame.
 /// Monitors are installed only while it is open and read only Portside's
 /// own events (a local monitor), so nothing here needs a permission. Another
 /// app activating is seen by `AppSwitcher` through the window registry, so
@@ -15,8 +16,8 @@ final class SwitcherPanelPresenter: SwitcherPresenter {
     private var monitor: Any?
     private var becameKey: NSObjectProtocol?
     private var pendingAnnouncement: DispatchWorkItem?
-    /// Visible frame of the display the panel opened on, fixed while open.
-    private var screenFrame: NSRect?
+    /// Display the panel opened on, fixed while open.
+    private var screen: NSScreen?
     /// Top edge once placed: a filtering list grows and shrinks downward
     /// instead of jumping around the center.
     private var top: CGFloat?
@@ -25,10 +26,11 @@ final class SwitcherPanelPresenter: SwitcherPresenter {
         self.switcher = switcher
         let panel = self.panel ?? makePanel()
         self.panel = panel
-        let visible = (Self.screenWithMouse() ?? NSScreen.main)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        screenFrame = visible
+        let screen = Self.screenWithMouse() ?? NSScreen.main
+        self.screen = screen
         top = nil
-        hosting?.rootView = AnyView(root(switcher, maxWidth: visible.width * 0.9))
+        let width = screen?.frame.width ?? 1440
+        hosting?.rootView = AnyView(root(switcher, maxWidth: width - SwitcherLayout.screenMargin * 2))
         hosting?.layoutSubtreeIfNeeded()
         place(size: hosting?.fittingSize ?? panel.frame.size)
         // Transparent until the reveal: a quick tap never flashes it, but
@@ -48,7 +50,7 @@ final class SwitcherPanelPresenter: SwitcherPresenter {
         removeMonitors()
         pendingAnnouncement?.cancel()
         pendingAnnouncement = nil
-        screenFrame = nil
+        screen = nil
         top = nil
         panel?.orderOut(nil)
         panel?.alphaValue = 0
@@ -126,7 +128,8 @@ final class SwitcherPanelPresenter: SwitcherPresenter {
         panel.title = "App Switcher"
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = true
+        // ⌘Tab casts no shadow; the glass edge alone outlines it.
+        panel.hasShadow = false
         panel.level = CommandCenterPanel.windowLevel
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle, .transient]
         panel.isReleasedWhenClosed = false
@@ -155,18 +158,18 @@ final class SwitcherPanelPresenter: SwitcherPresenter {
     }
 
     private func place(size: CGSize) {
-        guard let panel, let screenFrame, size.width > 0, size.height > 0 else { return }
-        let top = self.top ?? (screenFrame.midY + size.height / 2).rounded()
+        guard let panel, let screen, size.width > 0, size.height > 0 else { return }
+        let top = self.top ?? screen.frame.midY + size.height / 2
         self.top = top
-        let frame = NSRect(
-            x: (screenFrame.midX - size.width / 2).rounded(),
-            y: max(top - size.height, screenFrame.minY),
+        // Whole pixels on any scale, so the glass edge stays crisp.
+        let frame = screen.backingAlignedRect(NSRect(
+            x: screen.frame.midX - size.width / 2,
+            y: max(top - size.height, screen.visibleFrame.minY),
             width: size.width,
             height: size.height
-        )
+        ), options: .alignAllEdgesNearest)
         guard frame != panel.frame else { return }
         panel.setFrame(frame, display: true)
-        panel.invalidateShadow()
     }
 
     private static func screenWithMouse() -> NSScreen? {
@@ -176,24 +179,44 @@ final class SwitcherPanelPresenter: SwitcherPresenter {
 }
 
 
+/// App row sizes measured from the macOS 27 ⌘Tab switcher on a 2x display:
+/// 120 pt selection squares 14 pt apart, 28 pt around them, 128 pt icons
+/// overhanging the square, the name 4 pt under it. With more apps the squares
+/// and gaps shrink together and the padding stays.
 enum SwitcherLayout {
-    static let maxIcon: CGFloat = 72
-    static let minIcon: CGFloat = 28
-    static let tileInset: CGFloat = 8
-    static let spacing: CGFloat = 6
-    static let padding: CGFloat = 16
-    static let cornerRadius: CGFloat = 22
+    static let maxSlot: CGFloat = 120
+    static let minSlot: CGFloat = 32
+    static let iconScale: CGFloat = 128 / 120
+    static let gapScale: CGFloat = 14 / 120
+    static let padding: CGFloat = 28
+    /// Selection corner, a plain circular arc as measured; the panel corner
+    /// is this plus the padding, so the two curves stay concentric.
+    static let slotRadiusScale: CGFloat = 32 / 120
+    static let labelGap: CGFloat = 4
+    static let labelHeight: CGFloat = 16
+    /// The name moves in from the panel ends rather than reaching the corner.
+    static let labelEdgeInset: CGFloat = 50
+    /// ⌘Tab leaves this much screen on each side at its widest.
+    static let screenMargin: CGFloat = 37
+    /// Window list and search keep Portside's tighter panel.
+    static let listPadding: CGFloat = 16
+    static let listCornerRadius: CGFloat = 22
     /// Window list: fixed row height so the list's height is known without
     /// measuring, and at most this many rows before it scrolls.
     static let rowHeight: CGFloat = 44
     static let maxRows = 9
     static let listWidth: CGFloat = 560
 
-    /// Largest icon at which `count` tiles fit in `maxWidth`, within limits.
-    static func iconSize(count: Int, maxWidth: CGFloat) -> CGFloat {
+    /// Largest selection square at which `count` slots fit in `maxWidth`.
+    static func slotSize(count: Int, maxWidth: CGFloat) -> CGFloat {
         let count = CGFloat(max(count, 1))
-        let room = maxWidth - padding * 2 - spacing * (count - 1)
-        return min(maxIcon, max(minIcon, (room / count - tileInset * 2).rounded(.down)))
+        let room = maxWidth - padding * 2
+        return min(maxSlot, max(minSlot, (room / (count + gapScale * (count - 1))).rounded(.down)))
+    }
+
+    /// Rounded down so the row never outgrows the width its slot was fitted to.
+    static func gap(slot: CGFloat) -> CGFloat {
+        (slot * gapScale).rounded(.down)
     }
 
     static func listHeight(rows: Int) -> CGFloat {
@@ -217,7 +240,28 @@ struct SwitcherView: View {
         return "Windows on other Spaces may not be listed."
     }
 
+    /// The plain app row: nothing but ⌘Tab's own icons and name.
+    private var isPlainRow: Bool { !state.isWindowList && state.query == nil && note == nil && state.windowSelection == nil }
+
+    private var slot: CGFloat { SwitcherLayout.slotSize(count: state.items.count, maxWidth: maxWidth) }
+
+    /// The app row's corners follow its tiles, as in ⌘Tab. Anything under
+    /// the row (window rows, the Accessibility note) gets the list's smaller
+    /// bottom corners so it is not clipped.
+    private var shape: UnevenRoundedRectangle {
+        let list = SwitcherLayout.listCornerRadius
+        if state.isWindowList {
+            return UnevenRoundedRectangle(cornerRadii: .init(topLeading: list, bottomLeading: list, bottomTrailing: list, topTrailing: list),
+                                          style: .continuous)
+        }
+        let row = SwitcherLayout.padding + slot * SwitcherLayout.slotRadiusScale
+        let bottom = isPlainRow ? row : list
+        return UnevenRoundedRectangle(cornerRadii: .init(topLeading: row, bottomLeading: bottom, bottomTrailing: bottom, topTrailing: row),
+                                      style: .circular)
+    }
+
     var body: some View {
+        let shape = self.shape
         VStack(spacing: 8) {
             if let query = state.query {
                 SwitcherSearchField(query: query)
@@ -232,10 +276,14 @@ struct SwitcherView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .padding(.horizontal, state.isWindowList ? 0 : SwitcherLayout.listPadding)
             }
         }
-        .padding(SwitcherLayout.padding)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: SwitcherLayout.cornerRadius, style: .continuous))
+        .padding(.top, state.isWindowList ? SwitcherLayout.listPadding : SwitcherLayout.padding)
+        .padding(.horizontal, state.isWindowList ? SwitcherLayout.listPadding : 0)
+        .padding(.bottom, isPlainRow ? SwitcherLayout.padding - SwitcherLayout.labelGap - SwitcherLayout.labelHeight : SwitcherLayout.listPadding)
+        .background { SwitcherBackdrop().clipShape(shape) }
+        .glassEffect(.clear, in: shape)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("App Switcher")
     }
@@ -243,33 +291,35 @@ struct SwitcherView: View {
     @ViewBuilder private var appRow: some View {
         let items = state.items
         let selected = state.selectedItem
-        let icon = SwitcherLayout.iconSize(count: items.count, maxWidth: maxWidth)
-        HStack(spacing: SwitcherLayout.spacing) {
-            ForEach(items) { item in
-                SwitcherTile(item: item, image: switcher.icon(for: item), iconSize: icon, isSelected: item.id == state.selection,
-                             onChoose: { switcher.choose(item.id) }, onHover: { switcher.hovered(item.id) })
-            }
-        }
-        Text(selected?.name ?? " ")
-            .font(.system(size: 13, weight: .medium))
-            .lineLimit(1)
-            .truncationMode(.middle)
-            .frame(maxWidth: max(maxWidth - SwitcherLayout.padding * 2, 120))
-            .accessibilityHidden(true)
-        if let selected {
-            if state.windowSelection != nil {
-                // Down chose a window: the app's windows, that one framed.
-                rows(selected.windows.map(selected.entry)) { entry in
-                    entry.window?.id == state.windowSelection
-                } choose: { entry in
-                    switcher.choose(selected.id, window: entry.window?.id)
+        let slot = self.slot
+        let gap = SwitcherLayout.gap(slot: slot)
+        let index = items.firstIndex { $0.id == state.selection }
+        VStack(spacing: SwitcherLayout.labelGap) {
+            HStack(spacing: gap) {
+                ForEach(items) { item in
+                    SwitcherTile(item: item, image: switcher.icon(for: item), slot: slot, isSelected: item.id == state.selection,
+                                 onChoose: { switcher.choose(item.id) }, onHover: { switcher.hovered(item.id) })
                 }
-            } else if selected.windows.count > 1 {
-                Text("\(selected.windows.count) windows. Press ↓ to choose one.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
             }
+            .padding(.horizontal, SwitcherLayout.padding)
+            // The name sits under the selected icon, as in ⌘Tab.
+            SelectedNameLayout(centerX: SwitcherLayout.padding + CGFloat(index ?? 0) * (slot + gap) + slot / 2) {
+                Text(selected?.name ?? " ")
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .frame(height: SwitcherLayout.labelHeight)
+            .accessibilityHidden(true)
+        }
+        if let selected, state.windowSelection != nil {
+            // Down chose a window: the app's windows, that one selected.
+            rows(selected.windows.map(selected.entry)) { entry in
+                entry.window?.id == state.windowSelection
+            } choose: { entry in
+                switcher.choose(selected.id, window: entry.window?.id)
+            }
+            .padding(.horizontal, SwitcherLayout.listPadding)
         }
     }
 
@@ -335,39 +385,92 @@ private struct SwitcherSearchField: View {
     }
 }
 
+/// Shading over the clear glass, fitted so the panel reads like ⌘Tab's over
+/// black and white backdrops: 13 and 189 of 255 in Dark mode, 50 and 234 in
+/// Light (the clear glass alone passes about 33 and 255 in Dark, 50 and 255 in Light).
+private struct SwitcherBackdrop: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        if colorScheme == .dark {
+            ZStack {
+                Color.black.opacity(0.26)
+                Color(white: 1 - 11 / 255).blendMode(.plusDarker)
+            }
+        } else {
+            Color(white: 50 / 255).opacity(0.12)
+        }
+    }
+}
+
+/// ⌘Tab's selection: a square that lightens what is under it by a fixed
+/// amount in Dark mode and darkens it in Light, so it reads the same over any
+/// backdrop. Increase Contrast adds an edge.
+private struct SwitcherSelection: View {
+    let cornerRadius: CGFloat
+    var style: RoundedCornerStyle = .circular
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: style)
+        Group {
+            if colorScheme == .dark {
+                shape.fill(Color(white: 67 / 255)).blendMode(.plusLighter)
+            } else {
+                shape.fill(Color(white: 1 - 49 / 255)).blendMode(.plusDarker)
+            }
+        }
+        .overlay(shape.strokeBorder(Color.primary.opacity(contrast == .increased ? 0.8 : 0), lineWidth: 2))
+    }
+}
+
+/// Puts the selected app's name centered under `centerX`, slid in from the
+/// panel ends when it would run past `labelEdgeInset`.
+private struct SelectedNameLayout: Layout {
+    let centerX: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        CGSize(width: proposal.width ?? 0, height: subviews.first?.sizeThatFits(.unspecified).height ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let name = subviews.first else { return }
+        let ideal = name.sizeThatFits(.unspecified).width
+        // A short panel lets a long name use the padding before truncating.
+        let inset = ideal + SwitcherLayout.labelEdgeInset * 2 <= bounds.width ? SwitcherLayout.labelEdgeInset : SwitcherLayout.listPadding
+        let width = min(ideal, max(bounds.width - inset * 2, 0))
+        let x = min(max(centerX - width / 2, inset), bounds.width - inset - width)
+        name.place(at: CGPoint(x: bounds.minX + x, y: bounds.minY), proposal: ProposedViewSize(width: width, height: nil))
+    }
+}
+
 private struct SwitcherTile: View {
     let item: SwitcherItem
     let image: NSImage
-    let iconSize: CGFloat
+    let slot: CGFloat
     let isSelected: Bool
     let onChoose: () -> Void
     let onHover: () -> Void
 
-    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 12, style: .continuous) }
-
-    private var icon: some View {
+    var body: some View {
+        // Hidden apps are not dimmed: ⌘Tab shows them like any other.
         Image(nsImage: image)
             .resizable()
             .interpolation(.high)
-            .frame(width: iconSize, height: iconSize)
-            // Hidden apps read dimmed, as in the dock's translucent option.
-            .opacity(item.isHidden ? 0.55 : 1)
-            .padding(SwitcherLayout.tileInset)
-    }
-
-    var body: some View {
-        icon
-            .background(shape.fill(isSelected ? Color.primary.opacity(0.16) : Color.clear))
-            // Fill plus an orange edge, so selection never rests on color alone.
-            .overlay(shape.strokeBorder(isSelected ? Color.orange : Color.clear, lineWidth: 2))
+            .frame(width: slot * SwitcherLayout.iconScale, height: slot * SwitcherLayout.iconScale)
+            .frame(width: slot, height: slot)
+            .background {
+                if isSelected { SwitcherSelection(cornerRadius: slot * SwitcherLayout.slotRadiusScale) }
+            }
             .contentShape(Rectangle())
             .onTapGesture(perform: onChoose)
             .onContinuousHover { phase in
                 if case .active = phase { onHover() }
             }
-            .help(item.name)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(item.spokenName)
+            .accessibilityHint(item.windows.count > 1 ? "Press Down Arrow to choose a window." : "")
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : [.isButton])
             .accessibilityAction(.default, onChoose)
     }
@@ -381,8 +484,6 @@ private struct SwitcherRow: View {
     let isSelected: Bool
     let onChoose: () -> Void
     let onHover: (() -> Void)?
-
-    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 9, style: .continuous) }
 
     private var detail: Text {
         var parts: [Text] = []
@@ -422,8 +523,9 @@ private struct SwitcherRow: View {
         }
         .padding(.horizontal, 8)
         .frame(height: SwitcherLayout.rowHeight)
-        .background(shape.fill(isSelected ? Color.primary.opacity(0.16) : Color.clear))
-        .overlay(shape.strokeBorder(isSelected ? Color.orange : Color.clear, lineWidth: 2))
+        .background {
+            if isSelected { SwitcherSelection(cornerRadius: 9, style: .continuous) }
+        }
         .contentShape(Rectangle())
         .onTapGesture(perform: onChoose)
         .onContinuousHover { phase in

@@ -722,3 +722,29 @@ final class SwitcherRepressTests: XCTestCase {
         XCTAssertFalse(SwitcherModifiers.isRepress(keyCode: UInt16(kVK_Command), flags: [.option, .command], required: option), "not required")
     }
 }
+
+/// The app row's size against ⌘Tab measured on a 1728 pt wide display:
+/// full-size squares up to the widest panel, then squares and gaps shrinking
+/// together with the padding kept.
+final class SwitcherLayoutTests: XCTestCase {
+    private let maxWidth: CGFloat = 1728 - SwitcherLayout.screenMargin * 2
+
+    private func panelWidth(_ count: Int) -> CGFloat {
+        let slot = SwitcherLayout.slotSize(count: count, maxWidth: maxWidth)
+        let gap = SwitcherLayout.gap(slot: slot)
+        return SwitcherLayout.padding * 2 + CGFloat(count) * slot + CGFloat(count - 1) * gap
+    }
+
+    func testFullSizeUntilTheRowIsFull() {
+        XCTAssertEqual(SwitcherLayout.slotSize(count: 1, maxWidth: maxWidth), 120)
+        XCTAssertEqual(SwitcherLayout.slotSize(count: 10, maxWidth: maxWidth), 120)
+        XCTAssertEqual(panelWidth(10), 1382, "measured 1382 pt")
+        XCTAssertEqual(panelWidth(11), 1516, "measured 1516 pt")
+    }
+
+    func testManyAppsShrinkWithinTheScreen() {
+        XCTAssertEqual(SwitcherLayout.slotSize(count: 16, maxWidth: maxWidth), 90, "measured 89 pt")
+        XCTAssertLessThanOrEqual(panelWidth(16), maxWidth)
+        XCTAssertEqual(SwitcherLayout.slotSize(count: 500, maxWidth: maxWidth), SwitcherLayout.minSlot)
+    }
+}
