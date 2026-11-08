@@ -6,6 +6,7 @@ import XCTest
 struct FakeProcessInspector: ProcessInspector {
     var identities: [pid_t: ProcessFact<ProcessIdentity>] = [:]
     var paths: [pid_t: ProcessFact<String>] = [:]
+    var cwds: [pid_t: ProcessFact<String>] = [:]
 
     static func owning(_ pids: [pid_t], uid: uid_t = 501, startSeconds: UInt64 = 1_000) -> FakeProcessInspector {
         var fake = FakeProcessInspector()
@@ -18,6 +19,7 @@ struct FakeProcessInspector: ProcessInspector {
 
     func identity(of pid: pid_t) -> ProcessFact<ProcessIdentity> { identities[pid] ?? .unknown(.denied) }
     func executablePath(of pid: pid_t) -> ProcessFact<String> { paths[pid] ?? .unknown(.denied) }
+    func workingDirectory(of pid: pid_t) -> ProcessFact<String> { cwds[pid] ?? .unknown(.denied) }
 }
 
 /// The hand-authored `Fixtures/lsof/*.f` streams (NUL-separated, P2-REA-02
