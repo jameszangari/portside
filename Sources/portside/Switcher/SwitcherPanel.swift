@@ -245,12 +245,23 @@ struct SwitcherView: View {
 
     private var slot: CGFloat { SwitcherLayout.slotSize(count: state.items.count, maxWidth: maxWidth) }
 
-    private var cornerRadius: CGFloat {
-        state.isWindowList ? SwitcherLayout.listCornerRadius : SwitcherLayout.padding + slot * SwitcherLayout.slotRadiusScale
+    /// The app row's corners follow its tiles, as in ⌘Tab. Anything under
+    /// the row (window rows, the Accessibility note) gets the list's smaller
+    /// bottom corners so it is not clipped.
+    private var shape: UnevenRoundedRectangle {
+        let list = SwitcherLayout.listCornerRadius
+        if state.isWindowList {
+            return UnevenRoundedRectangle(cornerRadii: .init(topLeading: list, bottomLeading: list, bottomTrailing: list, topTrailing: list),
+                                          style: .continuous)
+        }
+        let row = SwitcherLayout.padding + slot * SwitcherLayout.slotRadiusScale
+        let bottom = isPlainRow ? row : list
+        return UnevenRoundedRectangle(cornerRadii: .init(topLeading: row, bottomLeading: bottom, bottomTrailing: bottom, topTrailing: row),
+                                      style: .circular)
     }
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: state.isWindowList ? .continuous : .circular)
+        let shape = self.shape
         VStack(spacing: 8) {
             if let query = state.query {
                 SwitcherSearchField(query: query)
