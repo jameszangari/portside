@@ -208,6 +208,10 @@ extension CommandCenterCatalog {
             }
             actions.append(CommandCenterItemAction(title: "Stop Server…", symbolName: "stop.circle",
                                                    invocation: CommandInvocation(command: LocalServersModule.stopCommand, input: input, staysOpen: true)))
+            if store.canForceStop(server) {
+                actions.append(CommandCenterItemAction(title: "Force Stop (SIGKILL)…", symbolName: "exclamationmark.octagon",
+                                                       invocation: CommandInvocation(command: LocalServersModule.forceStopCommand, input: input, staysOpen: true)))
+            }
             actions.append(CommandCenterItemAction(title: "Refresh Servers", symbolName: "arrow.clockwise",
                                                    invocation: CommandInvocation(command: refresh.id, staysOpen: true)))
             item.moreActions = actions

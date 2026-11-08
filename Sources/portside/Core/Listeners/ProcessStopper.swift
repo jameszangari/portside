@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-/// One receipt for one selected process. Cancellation after SIGTERM is a
+/// One receipt for one selected process. Cancellation after a signal is a
 /// failure to observe, never a claim that the signal was undone.
 enum ProcessStopOutcome: Equatable, Sendable {
     case stopped, stillRunning, alreadyExited, targetChanged
@@ -25,6 +25,17 @@ enum ProcessStopOutcome: Equatable, Sendable {
 protocol ProcessSignaler: Sendable {
     /// Returns errno, or nil when SIGTERM was delivered. No arbitrary signal API.
     func terminate(_ pid: pid_t) -> Int32?
+}
+
+protocol ForceProcessSignaler: Sendable {
+    func forceStop(_ pid: pid_t) -> Int32?
+}
+
+struct SIGKILLProcessSignaler: ForceProcessSignaler {
+    func forceStop(_ pid: pid_t) -> Int32? {
+        guard pid > 1 else { return EINVAL }
+        return Darwin.kill(pid, SIGKILL) == 0 ? nil : errno
+    }
 }
 
 struct SIGTERMProcessSignaler: ProcessSignaler {
@@ -55,11 +66,12 @@ struct ProcessStopPolicy: Sendable {
 }
 
 /// Uses the discovery service for a new single-port listing, then performs
-/// synchronous checks and one SIGTERM without an intervening suspension.
+/// synchronous checks and one selected signal without an intervening suspension.
 /// macOS has no public pidfd: the final identity-read/kill race remains.
 struct ProcessStopper: Sendable {
     var inspector: any ProcessInspector = LibprocProcessInspector()
     var signaler: any ProcessSignaler = SIGTERMProcessSignaler()
+    var forceSignaler: any ForceProcessSignaler = SIGKILLProcessSignaler()
     var policy = ProcessStopPolicy()
     var timeout: Duration = .seconds(5)
 
@@ -105,6 +117,17 @@ struct ProcessStopper: Sendable {
 
     @MainActor
     func stop(_ server: LocalServer, listeners: ListenerService, authorized: () -> Bool) async -> ProcessStopOutcome {
+        await perform(server, listeners: listeners, force: false, authorized: authorized)
+    }
+
+    @MainActor
+    func forceStop(_ server: LocalServer, listeners: ListenerService, authorized: () -> Bool) async -> ProcessStopOutcome {
+        await perform(server, listeners: listeners, force: true, authorized: authorized)
+    }
+
+    @MainActor
+    private func perform(_ server: LocalServer, listeners: ListenerService, force: Bool, authorized: () -> Bool) async -> ProcessStopOutcome {
+        let signalName = force ? "SIGKILL" : "SIGTERM"
         guard !Task.isCancelled, authorized() else { return .canceled }
         if let refusal = revalidate(server) { return refusal }
         guard let query = ListenerQuery(port: Int(server.port)) else { return .targetChanged }
@@ -122,14 +145,15 @@ struct ProcessStopper: Sendable {
               owner.identity == server.process.identity, owner.uid == server.process.uid,
               owner.executablePath == server.process.executablePath,
               owner.sockets.contains(where: { $0.port == server.port }) else { return .targetChanged }
-        // No await, UI callback, or port listing between this check and SIGTERM.
+        // No await, UI callback, or port listing between this check and the signal.
         if let refusal = revalidate(server) { return refusal }
-        guard !Task.isCancelled else { return .canceled }
-        if let code = signaler.terminate(server.process.pid) {
+        guard !Task.isCancelled, authorized() else { return .canceled }
+        let error = force ? forceSignaler.forceStop(server.process.pid) : signaler.terminate(server.process.pid)
+        if let code = error {
             switch code {
             case ESRCH: return .alreadyExited
             case EPERM, EACCES: return .denied
-            default: return .failed("SIGTERM returned error \(code).")
+            default: return .failed("\(signalName) returned error \(code).")
             }
         }
         let deadline = ContinuousClock.now.advanced(by: timeout)
@@ -139,13 +163,15 @@ struct ProcessStopper: Sendable {
             case .known(let identity):
                 guard let original = server.process.identity.value else { return .failed("Original identity is unknown.") }
                 if identity.pid != original.pid || identity.startSeconds != original.startSeconds || identity.startMicroseconds != original.startMicroseconds { return .stopped }
-                if identity.uid != original.uid { return .failed("SIGTERM was sent, but process ownership changed before exit was verified.") }
-            case .unknown: return .failed("SIGTERM was sent, but process exit could not be verified.")
+                if identity.uid != original.uid { return .failed("\(signalName) was sent, but process ownership changed before exit was verified.") }
+            case .unknown: return .failed("\(signalName) was sent, but process exit could not be verified.")
             }
-            if Task.isCancelled { return .failed("SIGTERM was sent; exit observation was canceled.") }
-            if ContinuousClock.now >= deadline { return .stillRunning }
+            if Task.isCancelled { return .failed("\(signalName) was sent; exit observation was canceled.") }
+            if ContinuousClock.now >= deadline {
+                return force ? .failed("SIGKILL was sent, but exit was not observed before the deadline. No retry was sent.") : .stillRunning
+            }
             do { try await Task.sleep(until: min(deadline, .now.advanced(by: .milliseconds(50))), clock: .continuous) }
-            catch { return .failed("SIGTERM was sent; exit observation was canceled.") }
+            catch { return .failed("\(signalName) was sent; exit observation was canceled.") }
         }
     }
 
