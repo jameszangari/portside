@@ -2,8 +2,9 @@ import Foundation
 
 /// Stable identifier of one Command Center result, unique across providers:
 /// `command:<CommandID>`, `app:<bundle id, lowercased>` (`app:<path>` for an
-/// app without one), `settings:<pane>`, `quicklink:<uuid, lowercased>`,
-/// `server:<port>-<pid>-<start>` (see `LocalServer.key`), `lookup:port`.
+/// app without one), `settings:<pane>`, `quicklink:<uuid, lowercased>`, `snippet:<uuid, lowercased>`, `shortcut:<uuid, lowercased>`, `file:<path>`,
+/// `server:<port>-<pid>-<start>` (see `LocalServer.key`), `lookup:port`,
+/// `calc:result`, `emoji:<hex>`.
 /// Selection, the Action Panel, screens and history all key on it. Server
 /// and lookup IDs live for one session and are never written to history.
 struct CommandCenterResultID: Hashable, Comparable, Sendable, CustomStringConvertible {
@@ -13,7 +14,7 @@ struct CommandCenterResultID: Hashable, Comparable, Sendable, CustomStringConver
 
     /// Read back from the history file: only the four known prefixes.
     init?(rawValue: String) {
-        let prefixes = ["command:", "app:", "settings:", "quicklink:"]
+        let prefixes = ["command:", "app:", "settings:", "quicklink:", "snippet:", "shortcut:"]
         guard let prefix = prefixes.first(where: rawValue.hasPrefix), rawValue.count > prefix.count else { return nil }
         self.rawValue = rawValue
     }
@@ -29,9 +30,25 @@ struct CommandCenterResultID: Hashable, Comparable, Sendable, CustomStringConver
 
     static func quicklink(_ id: UUID) -> Self { Self(unchecked: "quicklink:\(id.uuidString.lowercased())") }
 
+    static func snippet(_ id: UUID) -> Self { Self(unchecked: "snippet:\(id.uuidString.lowercased())") }
+
+    static func shortcut(_ id: UUID) -> Self { Self(unchecked: "shortcut:\(id.uuidString.lowercased())") }
+
+    /// `file:<absolute path>`, session only (never written to history).
+    static func file(_ path: String) -> Self { Self(unchecked: "file:\(path)") }
+
+    /// `clip:<uuid>`, session only (copied text never reaches history).
+    static func clipboard(_ id: UUID) -> Self { Self(unchecked: "clip:\(id.uuidString.lowercased())") }
+
     static func server(_ key: String) -> Self { Self(unchecked: "server:\(key)") }
 
     static let portLookup = Self(unchecked: "lookup:port")
+
+    /// The calculator's row for the current query. Session only.
+    static let calculation = Self(unchecked: "calc:result")
+
+    /// `emoji:<code point in hex>`, session only.
+    static func emoji(_ scalars: String) -> Self { Self(unchecked: "emoji:\(scalars)") }
 
     static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
 
@@ -84,7 +101,8 @@ enum CommandCenterRanker {
     struct Match: Equatable {
         let tier: Tier
         /// Fuzzy: how spread out the letters are, lower is tighter. Answer:
-        /// server cards (0) before the lookup row (1).
+        /// server cards and quick answers (their own order, 0 first) before
+        /// the lookup row (1).
         var spread = 0
     }
 
@@ -113,7 +131,7 @@ enum CommandCenterRanker {
     static func match(_ item: CommandCenterItem, terms: [String]) -> Match? {
         guard !terms.isEmpty else { return Match(tier: .exact) }
         if let answer = item.answers, answer == terms.joined(separator: " ") {
-            return Match(tier: .answer, spread: item.kind == .lookup ? 1 : 0)
+            return Match(tier: .answer, spread: item.kind == .lookup ? 1 : item.answerOrder)
         }
         let title = normalize(item.title)
         let titleWords = words(title)

@@ -35,6 +35,17 @@ struct CommandCenterSources {
     var servers: LocalServerStore?
     /// Natural-language and numeric port lookup; nil adds no lookup row.
     var portLookup: PortLookup?
+    /// Calculator and emoji rows made from the query; nil adds none.
+    var quickAnswers: QuickAnswers?
+    var snippets: @MainActor () -> [Snippet] = { [] }
+    /// Apple Shortcuts rows and their listing; nil adds none.
+    var shortcuts: ShortcutsService?
+    /// File name search over the chosen folders; nil adds none.
+    var files: FileIndexService?
+    /// Apps that can open a file path, for Open With. Empty adds no such actions.
+    /// Clipboard history rows for `clip` queries; nil adds none.
+    var clipboard: ClipboardService?
+    var openWithApps: @MainActor (String) -> [URL] = { _ in [] }
 }
 
 /// Builds the snapshot Command Center opens with: registry commands without
@@ -43,11 +54,19 @@ struct CommandCenterSources {
 /// registry command, so availability and permissions come from the registry.
 @MainActor
 enum CommandCenterCatalog {
-    static func items(registry: CommandRegistry, moduleTitle: (String) -> String?, sources: CommandCenterSources) -> [CommandCenterItem] {
+    static func items(registry: CommandRegistry, moduleTitle: (String) -> String?, sources: CommandCenterSources, query: String = "") -> [CommandCenterItem] {
         // The refresh command is the Local Servers status row instead.
         var items = commandItems(registry.descriptors.filter { $0.id != LocalServersModule.refreshCommand }, moduleTitle: moduleTitle)
         items += settingsItems(openPane: registry.descriptor(for: PortsideCoreModule.openSettingsPaneCommand))
         items += quicklinkItems(sources.quicklinks(), open: registry.descriptor(for: CommandCenterModule.openQuicklinkCommand))
+        items += clipboardItems(sources.clipboard?.results(for: query) ?? [], query: query, now: sources.now(),
+                                copy: registry.descriptor(for: ClipboardModule.copyCommand),
+                                delete: registry.descriptor(for: ClipboardModule.deleteCommand))
+        items += fileItems(sources.files?.results(for: query) ?? [], open: registry.descriptor(for: FilesModule.openCommand),
+                           reveal: registry.descriptor(for: FilesModule.revealCommand),
+                           openWith: registry.descriptor(for: FilesModule.openWithCommand), apps: sources.openWithApps)
+        items += shortcutItems(sources.shortcuts?.rows ?? [], run: registry.descriptor(for: ShortcutsModule.runCommand))
+        items += snippetItems(sources.snippets(), copy: registry.descriptor(for: CommandCenterModule.copySnippetCommand))
         items += applicationItems(
             installed: sources.applications?.apps ?? [],
             running: sources.runningApps(),
@@ -57,6 +76,7 @@ enum CommandCenterCatalog {
         if let lookup = lookupItem(sources.portLookup, store: sources.servers, refresh: registry.descriptor(for: LocalServersModule.refreshCommand)) {
             items.append(lookup)
         }
+        items += sources.quickAnswers?.items(query: query, copy: registry.descriptor(for: CommandCenterModule.copyTextCommand)) ?? []
         guard let history = sources.history, !history.isEmpty else { return items }
         let now = sources.now()
         return items.map { item in
@@ -124,6 +144,145 @@ enum CommandCenterCatalog {
                 copyValue: link.url,
                 copyTitle: "Copy URL"
             )
+        }
+    }
+
+    /// Copied text for a `clip` query, newest first. Return copies it back
+    /// (nothing is pasted); Cmd+K deletes it. Never kept in history.
+    static func clipboardItems(_ entries: [ClipboardEntry], query: String, now: Date,
+                               copy: CommandDescriptor?, delete: CommandDescriptor?) -> [CommandCenterItem] {
+        let reason = unavailableReason(copy)
+        let key = CommandCenterRanker.answerKey(query)
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return entries.enumerated().map { order, entry in
+            var item = CommandCenterItem(
+                id: .clipboard(entry.id),
+                kind: .clipboard,
+                title: entry.title.isEmpty ? "(blank)" : entry.title,
+                subtitle: "Clipboard",
+                symbolName: "doc.on.clipboard",
+                keywords: [],
+                unavailableReason: reason,
+                invocation: CommandInvocation(command: ClipboardModule.copyCommand, input: .string(entry.id.uuidString)),
+                primaryTitle: "Copy to Clipboard",
+                copyValue: "",
+                copyTitle: "Copy to Clipboard"
+            )
+            item.detail = "\(formatter.localizedString(for: entry.date, relativeTo: now)) · \(entry.text.count) characters"
+            item.answers = key
+            item.answerOrder = order
+            item.facts = [
+                CommandCenterFact(label: "Kind", value: "Copied text"),
+                CommandCenterFact(label: "Copied", value: entry.date.formatted(date: .abbreviated, time: .standard)),
+                CommandCenterFact(label: "Length", value: "\(entry.text.count) characters"),
+                CommandCenterFact(label: "Text", value: String(entry.text.prefix(1000)) + (entry.text.count > 1000 ? "…" : "")),
+            ]
+            if unavailableReason(delete) == nil {
+                item.moreActions = [CommandCenterItemAction(
+                    title: "Delete from History", symbolName: "trash",
+                    invocation: CommandInvocation(command: ClipboardModule.deleteCommand, input: .string(entry.id.uuidString), staysOpen: true)
+                )]
+            }
+            return item
+        }
+    }
+
+    /// Matches for the query in the chosen folders. Return opens the file;
+    /// Cmd+K shows it in Finder. Both re-check the path against the roots.
+    static func fileItems(_ files: [FileEntry], open: CommandDescriptor?, reveal: CommandDescriptor?,
+                          openWith: CommandDescriptor? = nil, apps: (String) -> [URL] = { _ in [] }) -> [CommandCenterItem] {
+        let reason = unavailableReason(open)
+        let revealReason = unavailableReason(reveal)
+        return files.map { file in
+            var item = CommandCenterItem(
+                id: .file(file.path),
+                kind: .file,
+                title: file.name,
+                subtitle: file.isDirectory ? "Folder" : "File",
+                symbolName: file.isDirectory ? "folder" : "doc",
+                iconPath: file.path,
+                keywords: [],
+                unavailableReason: reason,
+                invocation: CommandInvocation(command: FilesModule.openCommand, input: .string(file.path)),
+                primaryTitle: file.isDirectory ? "Open Folder" : "Open File",
+                copyValue: file.path,
+                copyTitle: "Copy Path"
+            )
+            item.detail = FileEntry.abbreviated((file.path as NSString).deletingLastPathComponent)
+            item.previewable = !file.isDirectory
+            item.moreActions = [CommandCenterItemAction(
+                title: "Show in Finder", symbolName: "folder",
+                invocation: CommandInvocation(command: FilesModule.revealCommand, input: .string(file.path)),
+                shortcut: CommandCenterItemAction.revealShortcut
+            )]
+            if revealReason != nil && reason == nil { item.moreActions = [] }
+            // One row per app that can open it, default first. Only an app path
+            // goes in the invocation; the file is checked again when it runs.
+            if openWithReason(openWith) == nil, reason == nil {
+                for app in apps(file.path) {
+                    item.moreActions.append(CommandCenterItemAction(
+                        title: "Open With \(OpenWithApps.name(app))", symbolName: "arrow.up.forward.app",
+                        invocation: CommandInvocation(
+                            command: FilesModule.openWithCommand,
+                            input: .string(app.path + String(FilesModule.openWithSeparator) + file.path)
+                        )
+                    ))
+                }
+            }
+            return item
+        }
+    }
+
+    private static func openWithReason(_ descriptor: CommandDescriptor?) -> String? { unavailableReason(descriptor) }
+
+    /// One row per listed shortcut. Return runs it through the registry by
+    /// identifier; it is never run from the query.
+    static func shortcutItems(_ shortcuts: [ShortcutInfo], run: CommandDescriptor?) -> [CommandCenterItem] {
+        let reason = unavailableReason(run)
+        return shortcuts.map { shortcut in
+            CommandCenterItem(
+                id: .shortcut(shortcut.id),
+                kind: .shortcut,
+                title: shortcut.name,
+                subtitle: "Shortcut",
+                symbolName: "bolt.fill",
+                keywords: ["shortcut", "shortcuts", "automation"],
+                unavailableReason: reason,
+                invocation: CommandInvocation(command: ShortcutsModule.runCommand, input: .string(shortcut.id.uuidString)),
+                primaryTitle: "Run Shortcut",
+                copyValue: shortcut.id.uuidString,
+                copyTitle: "Copy Shortcut ID"
+            )
+        }
+    }
+
+    /// One row per snippet. Return copies it through the registry by ID, so
+    /// the text never travels in the invocation.
+    static func snippetItems(_ snippets: [Snippet], copy: CommandDescriptor?) -> [CommandCenterItem] {
+        let reason = unavailableReason(copy)
+        return snippets.map { snippet in
+            var item = CommandCenterItem(
+                id: .snippet(snippet.id),
+                kind: .snippet,
+                title: snippet.title,
+                subtitle: "Snippet",
+                symbolName: "text.alignleft",
+                keywords: ["snippet", "text", "paste"],
+                unavailableReason: snippet.isEmpty ? "This snippet is empty." : reason,
+                invocation: CommandInvocation(command: CommandCenterModule.copySnippetCommand, input: .string(snippet.id.uuidString)),
+                primaryTitle: "Copy Snippet",
+                copyValue: "",
+                copyTitle: "Copy Snippet"
+            )
+            // The title already shows the first line when there is no name.
+            item.detail = snippet.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : snippet.preview()
+            item.facts = [
+                CommandCenterFact(label: "Kind", value: "Snippet"),
+                CommandCenterFact(label: "Length", value: "\(snippet.text.count) characters"),
+                CommandCenterFact(label: "Text", value: String(snippet.text.prefix(1000)) + (snippet.text.count > 1000 ? "…" : "")),
+            ]
+            return item
         }
     }
 

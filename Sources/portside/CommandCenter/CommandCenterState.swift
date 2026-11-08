@@ -12,6 +12,18 @@ struct CommandCenterItemAction: Equatable, Sendable {
     let title: String
     let symbolName: String
     let invocation: CommandInvocation
+    /// Key glyphs shown in the Action Panel. "⌘⇧F" also runs it from the
+    /// keyboard while its item is selected.
+    var shortcut: String?
+
+    /// The reveal shortcut of a file row.
+    static let revealShortcut = "⌘⇧F"
+}
+
+/// What a card row shows (the calculator).
+struct CommandCenterCard: Equatable, Sendable {
+    let input: String
+    let output: String
 }
 
 /// One result row: a registry command, an app, a Settings pane, a
@@ -19,9 +31,16 @@ struct CommandCenterItemAction: Equatable, Sendable {
 /// panel opens (see `CommandCenterCatalog`).
 struct CommandCenterItem: Equatable, Identifiable, Sendable {
     enum Kind: String, Equatable, Sendable {
-        case command, application, settings, quicklink, server
+        case command, application, settings, quicklink, server, snippet, shortcut, file, clipboard
         /// The port lookup's status row for the current query.
         case lookup
+        /// The calculator's result for the query (P2-CMD-06).
+        case calculation
+        case emoji
+
+        /// Rows made from the query itself: never counted in history, and
+        /// their primary action is already a copy.
+        var isQuickAnswer: Bool { self == .calculation || self == .emoji }
     }
 
     let id: CommandCenterResultID
@@ -52,6 +71,8 @@ struct CommandCenterItem: Equatable, Identifiable, Sendable {
     var facts: [CommandCenterFact] = []
     /// Action Panel rows after Show Details, each its own registry command.
     var moreActions: [CommandCenterItemAction] = []
+    /// A file Quick Look can show in the panel (⌘Y).
+    var previewable = false
     /// Also matches any server query (a port number, "port", "server").
     var matchesServerQueries = false
     /// Ranks first for exactly this query (`CommandCenterRanker.answerKey`):
@@ -60,6 +81,12 @@ struct CommandCenterItem: Equatable, Identifiable, Sendable {
     /// Return replaces the query with this instead of running a command
     /// (the numeric search a port lookup offers).
     var queryReplacement: String?
+    /// Calculator result drawn as a card: the expression, an arrow, the answer.
+    var card: CommandCenterCard?
+    /// Text shown where the icon goes (an emoji).
+    var glyph: String?
+    /// Order among rows that answer the same query, lower first.
+    var answerOrder = 0
 
     init(
         id: CommandCenterResultID, kind: Kind, title: String, subtitle: String = "", symbolName: String? = nil,
@@ -96,6 +123,8 @@ struct CommandCenterItem: Equatable, Identifiable, Sendable {
 
 enum CommandCenterActionKind: Hashable {
     case run, showDetails, copyID
+    /// Preview the file in the panel (Quick Look).
+    case quickLook
     /// `moreActions[index]` of the item.
     case more(Int)
 }
@@ -115,10 +144,12 @@ struct CommandCenterAction: Equatable, Identifiable {
 /// A pushed view. Esc or Backspace pops one level.
 enum CommandCenterScreen: Equatable {
     case details(CommandCenterResultID)
+    /// Quick Look of a file, inside the panel.
+    case preview(CommandCenterResultID)
 
     var itemID: CommandCenterResultID {
         switch self {
-        case .details(let id): return id
+        case .details(let id), .preview(let id): return id
         }
     }
 }
@@ -136,6 +167,10 @@ enum CommandCenterKey: Equatable {
     case `return`, commandReturn
     case escape, commandEscape
     case commandK
+    /// ⌘Y toggles the Quick Look preview of the selected file.
+    case commandY
+    /// ⌘⇧F runs the selected row's Show in Finder.
+    case commandShiftF
     case tab
     case backspace
 
@@ -160,6 +195,8 @@ enum CommandCenterKey: Equatable {
             case ("n", .control): self = .down
             case ("p", .control): self = .up
             case ("k", .command): self = .commandK
+            case ("y", .command): self = .commandY
+            case ("f", [.command, .shift]): self = .commandShiftF
             default: return nil
             }
         }
@@ -289,12 +326,17 @@ struct CommandCenterState: Equatable {
         if stack.last != .details(item.id) {
             list.append(CommandCenterAction(kind: .showDetails, title: "Show Details", symbolName: "info.circle", shortcut: "⌘↩"))
         }
-        for (index, action) in item.moreActions.enumerated() {
-            list.append(CommandCenterAction(kind: .more(index), title: action.title, symbolName: action.symbolName,
+        if item.previewable, stack.last != .preview(item.id) {
+            list.append(CommandCenterAction(kind: .quickLook, title: "Quick Look", symbolName: "eye", shortcut: "⌘Y",
                                             disabledReason: item.unavailableReason))
         }
-        // A server's copies go through the registry (primary and more actions).
-        if item.kind != .server, item.kind != .lookup {
+        for (index, action) in item.moreActions.enumerated() {
+            list.append(CommandCenterAction(kind: .more(index), title: action.title, symbolName: action.symbolName,
+                                            shortcut: action.shortcut, disabledReason: item.unavailableReason))
+        }
+        // A server's copies go through the registry (primary and more actions);
+        // a quick answer's and a snippet's primary action is the copy.
+        if item.kind != .server, item.kind != .lookup, item.kind != .snippet, item.kind != .clipboard, !item.kind.isQuickAnswer {
             list.append(CommandCenterAction(kind: .copyID, title: item.copyTitle, symbolName: "doc.on.doc"))
         }
         return list
@@ -404,7 +446,7 @@ struct CommandCenterState: Equatable {
             default: return .handled()
             }
         }
-        if [.up, .down, .return, .commandReturn, .commandK].contains(key) { flushPendingSearch() }
+        if [.up, .down, .return, .commandReturn, .commandK, .commandY, .commandShiftF].contains(key) { flushPendingSearch() }
         switch key {
         case .escape:
             // One step per press: Action Panel, pushed screen, query, window.
@@ -437,6 +479,20 @@ struct CommandCenterState: Equatable {
                 return .handled()
             }
             return .handled(push(.details(item.id)))
+        case .commandY:
+            guard let item = targetItem, item.previewable else { return .handled() }
+            actionPanel = nil
+            if stack.last == .preview(item.id) { return .handled(pop()) }
+            if let reason = item.unavailableReason {
+                notice = CommandCenterNotice(kind: .unavailable, message: reason)
+                return .handled([.announce("\(item.title) is unavailable. \(reason)")])
+            }
+            return .handled(push(.preview(item.id)))
+        case .commandShiftF:
+            guard let item = targetItem,
+                  let index = item.moreActions.firstIndex(where: { $0.shortcut == CommandCenterItemAction.revealShortcut }) else { return .handled() }
+            actionPanel = nil
+            return .handled(runAction(item.id, index))
         case .commandK:
             if actionPanel != nil {
                 actionPanel = nil
@@ -497,6 +553,7 @@ struct CommandCenterState: Equatable {
         switch kind {
         case .run: return primary(item.id)
         case .showDetails: return push(.details(item.id))
+        case .quickLook: return push(.preview(item.id))
         case .copyID: return [.copy(item.copyValue)] + dismiss(restoreFocus: true, cancelRun: false)
         case .more(let index): return runAction(item.id, index)
         }
@@ -506,13 +563,17 @@ struct CommandCenterState: Equatable {
         stack.append(screen)
         notice = nil
         let title = item(screen.itemID)?.title ?? ""
+        if case .preview = screen { return [.announce("Preview of \(title).")] }
         return [.announce("Details for \(title).")]
     }
 
     private mutating func pop() -> [CommandCenterEffect] {
         stack.removeLast()
         notice = nil
-        if let top = stack.last, let item = item(top.itemID) { return [.announce("Details for \(item.title).")] }
+        if let top = stack.last, let item = item(top.itemID) {
+            if case .preview = top { return [.announce("Preview of \(item.title).")] }
+            return [.announce("Details for \(item.title).")]
+        }
         return [.announce("Back to search. \(resultsAnnouncement)")]
     }
 
@@ -522,7 +583,7 @@ struct CommandCenterState: Equatable {
         runStaysOpen = false
         // Server and lookup rows belong to one session: never kept in history.
         let kind = item(id)?.kind
-        let usage: [CommandCenterEffect] = kind == nil || kind == .server || kind == .lookup ? [] : [.recordUsage(id)]
+        let usage: [CommandCenterEffect] = kind == nil || kind == .server || kind == .lookup || kind == .file || kind == .clipboard || kind?.isQuickAnswer == true ? [] : [.recordUsage(id)]
         switch result {
         case .success(let message) where staysOpen:
             // It updated the panel (a refresh): stay, and say what happened.
