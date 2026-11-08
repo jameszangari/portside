@@ -522,7 +522,7 @@ struct CommandCenterState: Equatable {
         runStaysOpen = false
         // Server and lookup rows belong to one session: never kept in history.
         let kind = item(id)?.kind
-        let usage: [CommandCenterEffect] = kind == .server || kind == .lookup ? [] : [.recordUsage(id)]
+        let usage: [CommandCenterEffect] = kind == nil || kind == .server || kind == .lookup ? [] : [.recordUsage(id)]
         switch result {
         case .success(let message) where staysOpen:
             // It updated the panel (a refresh): stay, and say what happened.

@@ -28,22 +28,23 @@ actor ListenerService {
         self.source = source
     }
 
-    func snapshot(_ query: ListenerQuery = .all) async throws -> ListenerSnapshot {
+    /// `fresh` waits for any current listing, then starts one after this request.
+    func snapshot(_ query: ListenerQuery = .all, fresh: Bool = false) async throws -> ListenerSnapshot {
         nextID += 1
         let id = nextID
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (waiter: Waiter) in
                 if Task.isCancelled { return waiter.resume(throwing: CancellationError()) }
-                enqueue(id, query, waiter)
+                enqueue(id, query, waiter, fresh: fresh)
             }
         } onCancel: {
             Task { await self.cancelWaiter(id) }
         }
     }
 
-    private func enqueue(_ id: UInt64, _ query: ListenerQuery, _ waiter: Waiter) {
+    private func enqueue(_ id: UInt64, _ query: ListenerQuery, _ waiter: Waiter, fresh: Bool) {
         if let current {
-            if current.query == query, !current.isCanceled {
+            if !fresh, current.query == query, !current.isCanceled {
                 current.waiters[id] = waiter
             } else {
                 queued.append((id, query, waiter))

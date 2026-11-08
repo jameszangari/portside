@@ -6,6 +6,11 @@ import Foundation
 protocol ProcessInspector: Sendable {
     func identity(of pid: pid_t) -> ProcessFact<ProcessIdentity>
     func executablePath(of pid: pid_t) -> ProcessFact<String>
+    func parentPID(of pid: pid_t) -> ProcessFact<pid_t>
+}
+
+extension ProcessInspector {
+    func parentPID(of pid: pid_t) -> ProcessFact<pid_t> { .unknown(.notReported) }
 }
 
 /// Public libproc: `proc_pidinfo(PROC_PIDTBSDINFO)` for start time and uid,
@@ -18,12 +23,23 @@ struct LibprocProcessInspector: ProcessInspector {
         let size = Int32(MemoryLayout<proc_bsdinfo>.size)
         errno = 0
         guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return .unknown(Self.reason(errno)) }
+        guard info.pbi_status != SZOMB else { return .unknown(.exited) }
         return .known(ProcessIdentity(
             pid: pid,
             startSeconds: info.pbi_start_tvsec,
             startMicroseconds: info.pbi_start_tvusec,
             uid: info.pbi_uid
         ))
+    }
+
+    func parentPID(of pid: pid_t) -> ProcessFact<pid_t> {
+        guard pid > 0 else { return .unknown(.failed(EINVAL)) }
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        errno = 0
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return .unknown(Self.reason(errno)) }
+        guard info.pbi_status != SZOMB else { return .unknown(.exited) }
+        return .known(pid_t(info.pbi_ppid))
     }
 
     func executablePath(of pid: pid_t) -> ProcessFact<String> {

@@ -31,6 +31,7 @@ final class CommandCenter: ObservableObject {
     private var runTask: Task<Void, Never>?
     /// The running command updates the panel; closing it cancels the run.
     private var runStaysOpen = false
+    private var stopAlert: NSAlert?
     /// The listing a server query started. One per session, canceled on
     /// close or when the query no longer wants servers.
     private var serverTask: Task<Void, Never>?
@@ -148,6 +149,9 @@ final class CommandCenter: ObservableObject {
         if let searchField { panel.makeFirstResponder(searchField) }
         installMonitors()
         serverListingRequested = false
+        sources.servers?.confirmStop = { [weak self] server in
+            await self?.confirmStop(server) ?? false
+        }
         sources.servers?.onChange = { [weak self] in
             guard let self, self.state.isVisible else { return }
             self.send(.catalog(self.snapshot()))
@@ -167,6 +171,7 @@ final class CommandCenter: ObservableObject {
     }
 
     private func dismiss(restoreFocus: Bool) {
+        cancelStopConfirmation()
         removeMonitors()
         searcher.cancel()
         // Server listings exist only for this panel session.
@@ -213,9 +218,57 @@ final class CommandCenter: ObservableObject {
         }
         runStaysOpen = invocation.staysOpen
         runTask = Task { @MainActor [weak self, commands] in
+            let previousReceipt = self?.sources.servers?.lastStopReceipt?.id
             let result = await commands.execute(invocation.command, input: invocation.input)
-            self?.send(.finished(id, result))
+            let receipt = self?.sources.servers?.lastStopReceipt
+            self?.send(.finished(id, Self.stopResult(result, command: invocation.command, previousReceipt: previousReceipt, receipt: receipt)))
         }
+    }
+
+    /// Registry cancellation remains generic; a stop that already signaled
+    /// must still show its new receipt, without implying that cancel undid it.
+    static func stopResult(_ result: CommandResult, command: CommandID, previousReceipt: UUID?, receipt: LocalServerStopReceipt?) -> CommandResult {
+        guard command == LocalServersModule.stopCommand, result == .canceled,
+              let receipt, receipt.id != previousReceipt else { return result }
+        switch receipt.outcome {
+        case .stopped, .alreadyExited: return .success(receipt.message)
+        default: return .failed(receipt.message)
+        }
+    }
+
+    private func confirmStop(_ server: LocalServer) async -> Bool {
+        guard !Task.isCancelled, state.isVisible, let panel, stopAlert == nil else { return false }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Stop this server process?"
+        alert.informativeText = Self.stopConfirmationText(server)
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Stop Server")
+        alert.buttons[0].keyEquivalent = "\r"
+        alert.buttons[1].keyEquivalent = ""
+        stopAlert = alert
+        defer { stopAlert = nil }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                alert.beginSheetModal(for: panel) { response in
+                    continuation.resume(returning: response == .alertSecondButtonReturn)
+                }
+                if Task.isCancelled { cancelStopConfirmation() }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.cancelStopConfirmation() }
+        }
+    }
+
+    static func stopConfirmationText(_ server: LocalServer) -> String {
+        let process = server.process
+        let ports = Set(process.sockets.map(\.port)).sorted().map(String.init).joined(separator: ", ")
+        return "Process: \(LocalServerText.name(process))\nPID: \(process.pid)\nSelected port: \(server.port)\nOwner UID: \(process.uid.value.map(String.init) ?? "Unknown")\nExecutable: \(process.executablePath.value ?? "Unknown")\nListed ports: \(ports)\n\nSend SIGTERM to this process. All services in this process may stop, including other ports. No force stop follows."
+    }
+
+    private func cancelStopConfirmation() {
+        guard let alert = stopAlert, let parent = alert.window.sheetParent else { return }
+        parent.endSheet(alert.window, returnCode: .abort)
     }
 
     /// The port lookup follows the query (canceling a question in flight),
@@ -290,7 +343,7 @@ final class CommandCenter: ObservableObject {
     /// one turn so SwiftUI has inserted a newly shown field.
     private func syncFocus() {
         DispatchQueue.main.async { [weak self] in
-            guard let self, let panel = self.panel, panel.isVisible, panel.isKeyWindow else { return }
+            guard let self, self.stopAlert == nil, let panel = self.panel, panel.isVisible, panel.isKeyWindow else { return }
             switch self.state.mode {
             case .searching, .running:
                 Self.focus(self.searchField, in: panel)
@@ -370,7 +423,10 @@ final class CommandCenter: ObservableObject {
         panel.becomesKeyOnlyIfNeeded = false
         panel.setAccessibilityLabel("Command Center")
         panel.onResignKey = { [weak self] in
-            MainActor.assumeIsolated { _ = self?.send(.focusLost) }
+            MainActor.assumeIsolated {
+                guard let self, self.stopAlert == nil else { return }
+                self.send(.focusLost)
+            }
         }
 
         let root = CommandCenterView(center: self)
