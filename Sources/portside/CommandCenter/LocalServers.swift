@@ -102,11 +102,25 @@ struct LocalServerStopReceipt {
     var message: String { "\(force ? "Force stop (SIGKILL) · " : "")PID \(pid) · port \(port): \(outcome.message)" }
 }
 
+/// Bounds for the refresh that runs only while server results are on
+/// screen (P2-DEV-05B). It starts after a listing exists, never on
+/// presentation, and stops by itself after `idleLimit` listings that found
+/// nothing new or failed, until a person or an exit event wakes it.
+struct VisibleRefreshPolicy: Sendable {
+    var base: Duration = .seconds(3)
+    var maximum: Duration = .seconds(30)
+    var idleLimit = 8
+
+    func backoff(after delay: Duration) -> Duration { min(delay * 2, maximum) }
+}
+
 /// The latest listener snapshot for one Command Center session. Nothing
 /// lists until someone asks (a server search or Refresh); the snapshot is
 /// dropped when the panel closes or the module stops, so a new session
 /// never shows an old list. Concurrent refreshes share `ListenerService`'s
-/// one listing.
+/// one listing. While server results are visible (`setViewing`), verified
+/// process exits remove stale listeners at once and one cancelable
+/// backed-off loop lists again to find new ones; nothing runs otherwise.
 @MainActor
 final class LocalServerStore {
     private(set) var snapshot: ListenerSnapshot?
@@ -134,10 +148,34 @@ final class LocalServerStore {
     private let service: ListenerService
     private var session = 0
 
-    nonisolated init(service: ListenerService = ListenerService(), stopper: ProcessStopper = ProcessStopper(), confirmationLifetime: Duration = .seconds(60)) {
+    /// Server results are on screen: exit watching and the refresh loop may run.
+    private(set) var viewing = false
+    /// Listings the visible loop started this session.
+    private(set) var autoRefreshes = 0
+    private let policy: VisibleRefreshPolicy
+    private let inspector: any ProcessInspector
+    private nonisolated let makeMonitor: @MainActor () -> any ProcessExitMonitoring
+    private var monitor: (any ProcessExitMonitoring)?
+    private var autoTask: Task<Void, Never>?
+    private var loopGeneration = 0
+    private var autoDelay: Duration
+    private var quietListings = 0
+
+    nonisolated init(
+        service: ListenerService = ListenerService(),
+        stopper: ProcessStopper = ProcessStopper(),
+        confirmationLifetime: Duration = .seconds(60),
+        policy: VisibleRefreshPolicy = VisibleRefreshPolicy(),
+        inspector: any ProcessInspector = LibprocProcessInspector(),
+        makeMonitor: @escaping @MainActor () -> any ProcessExitMonitoring = { ProcessExitMonitor() }
+    ) {
         self.service = service
         self.stopper = stopper
         self.confirmationLifetime = confirmationLifetime
+        self.policy = policy
+        self.inspector = inspector
+        self.makeMonitor = makeMonitor
+        autoDelay = policy.base
     }
 
     var servers: [LocalServer] { snapshot.map(LocalServer.servers(in:)) ?? [] }
@@ -157,6 +195,10 @@ final class LocalServerStore {
     /// Drops the snapshot. A refresh still in flight delivers nothing.
     func endSession() {
         session += 1
+        viewing = false
+        stopLoop()
+        monitor?.reconcile([])
+        autoRefreshes = 0
         stopRefreshTask?.cancel()
         stopRefreshTask = nil
         confirmStop = nil
@@ -270,24 +312,181 @@ final class LocalServerStore {
     /// when two refreshes overlap. Canceling the caller cancels its share
     /// of the listing (the lsof child stops when no one else waits).
     func refresh(fresh: Bool = false) async -> Result<ListenerSnapshot, CommandFailure> {
+        let result = await load(fresh: fresh, silent: false)
+        if case .success = result, viewing { wake() }
+        return result
+    }
+
+    /// `silent` is the visible loop's listing: no loading state, a good list
+    /// is never replaced by a timed-out or failed one, and observers hear
+    /// only about a real change.
+    private func load(fresh: Bool, silent: Bool) async -> Result<ListenerSnapshot, CommandFailure> {
         guard isActive else { return .failure(CommandFailure(reason: "Local Servers is turned off.")) }
         let session = self.session
-        loading += 1
-        lastRefreshCanceled = false
-        onChange?()
+        if !silent {
+            loading += 1
+            lastRefreshCanceled = false
+            onChange?()
+        }
         let result: Result<ListenerSnapshot, Error>
         do { result = .success(try await service.snapshot(.all, fresh: fresh)) } catch { result = .failure(error) }
         guard session == self.session else { return .failure(CommandFailure(reason: "Command Center closed before the list finished.")) }
-        loading -= 1
-        defer { onChange?() }
+        if !silent { loading -= 1 }
         switch result {
         case .success(let fresh):
-            if snapshot.map({ fresh.takenAtInstant >= $0.takenAtInstant }) ?? true { snapshot = fresh }
+            let usable: Bool
+            switch fresh.outcome {
+            case .complete, .partial: usable = true
+            case .timedOut, .failed: usable = !silent || snapshot == nil
+            }
+            let newer = snapshot.map { fresh.takenAtInstant >= $0.takenAtInstant } ?? true
+            let before = servers
+            if usable, newer {
+                snapshot = fresh
+                if viewing {
+                    syncWatchers()
+                    pruneExited()
+                }
+            }
+            if !silent || servers != before { onChange?() }
             return .success(fresh)
         case .failure:
             // `ListenerService` throws only `CancellationError`.
-            lastRefreshCanceled = loading == 0
+            if !silent {
+                lastRefreshCanceled = loading == 0
+                onChange?()
+            }
             return .failure(CommandFailure(reason: "Refresh was canceled."))
+        }
+    }
+
+    /// Command Center calls this when its query shows or stops showing
+    /// server results. Idempotent: it never adds a second loop or observer.
+    func setViewing(_ wanted: Bool) {
+        let on = wanted && isActive
+        guard on != viewing else { return }
+        viewing = on
+        if on {
+            syncWatchers()
+            pruneExited()
+            wake()
+        } else {
+            stopLoop()
+            monitor?.reconcile([])
+        }
+    }
+
+    // MARK: Exit events
+
+    private func ensureMonitor() -> any ProcessExitMonitoring {
+        if let monitor { return monitor }
+        let made = makeMonitor()
+        made.onExit = { [weak self] identity in self?.processExited(identity) }
+        monitor = made
+        return made
+    }
+
+    private func syncWatchers() {
+        guard viewing, isActive, let snapshot else {
+            monitor?.reconcile([])
+            return
+        }
+        ensureMonitor().reconcile(Set(snapshot.processes.compactMap { $0.identity.value }))
+    }
+
+    /// An exit event is a hint, never proof: the process is removed only
+    /// when libproc confirms it is gone or the pid now belongs to another
+    /// process. A read that cannot say (denied) keeps the card and asks the
+    /// loop to list again soon.
+    private func processExited(_ identity: ProcessIdentity) {
+        guard viewing, isActive, !stopping, snapshot != nil else { return }
+        switch exitState(of: identity) {
+        case .running:
+            syncWatchers()
+        case .unverified:
+            wake()
+        case .gone:
+            removeGone([identity])
+        }
+    }
+
+    private enum ExitState { case running, unverified, gone }
+
+    private func exitState(of identity: ProcessIdentity) -> ExitState {
+        switch inspector.identity(of: identity.pid) {
+        case .known(let current): return current == identity ? .running : .gone
+        case .unknown(.exited): return .gone
+        case .unknown: return .unverified
+        }
+    }
+
+    /// A process can exit between a listing and its watcher, and a watcher
+    /// on a dead pid may never fire, so every adopted snapshot is checked.
+    private func pruneExited() {
+        guard viewing, isActive, !stopping, let snapshot else { return }
+        let gone = Set(snapshot.processes.compactMap(\.identity.value).filter { exitState(of: $0) == .gone })
+        if !gone.isEmpty { removeGone(gone) }
+    }
+
+    private func removeGone(_ gone: Set<ProcessIdentity>) {
+        guard let current = snapshot else { return }
+        let next = current.removing(gone)
+        guard next.processes.count != current.processes.count else { return }
+        snapshot = next
+        syncWatchers()
+        wake()
+        onChange?()
+    }
+
+    // MARK: Visible refresh loop
+
+    /// Resets the backoff and makes sure exactly one loop runs, once a
+    /// listing exists.
+    private func wake() {
+        autoDelay = policy.base
+        quietListings = 0
+        guard viewing, isActive, snapshot != nil, autoTask == nil else { return }
+        loopGeneration += 1
+        let generation = loopGeneration
+        autoTask = Task { [weak self] in await self?.runLoop(generation) }
+    }
+
+    private func stopLoop() {
+        loopGeneration += 1
+        autoTask?.cancel()
+        autoTask = nil
+        autoDelay = policy.base
+        quietListings = 0
+    }
+
+    private func runLoop(_ generation: Int) async {
+        defer { if generation == loopGeneration { autoTask = nil } }
+        while generation == loopGeneration {
+            do { try await Task.sleep(for: autoDelay) } catch { return }
+            guard generation == loopGeneration, viewing, isActive else { return }
+            // A person's refresh or a stop owns the listing right now.
+            if stopping || stopRefreshTask != nil || loading > 0 { continue }
+            autoRefreshes += 1
+            let before = servers
+            let result = await load(fresh: false, silent: true)
+            guard generation == loopGeneration else { return }
+            if case .success(let listing) = result, listing.outcome.isUsable, servers != before {
+                autoDelay = policy.base
+                quietListings = 0
+            } else {
+                quietListings += 1
+                autoDelay = policy.backoff(after: autoDelay)
+                if quietListings >= policy.idleLimit { return }
+            }
+        }
+    }
+}
+
+private extension ListenerOutcome {
+    var isUsable: Bool {
+        switch self {
+        case .complete, .partial: return true
+        case .timedOut, .failed: return false
         }
     }
 }

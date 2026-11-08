@@ -160,11 +160,13 @@ final class CommandCenter: ObservableObject {
             self.send(.catalog(self.snapshot()))
             // A listing canceled by an earlier query lists again if this one wants it.
             self.listServersIfAsked()
+            self.syncServerViewing()
         }
         sources.portLookup?.onChange = { [weak self] in
             guard let self, self.state.isVisible else { return }
             self.send(.catalog(self.snapshot()))
             self.listServersIfAsked()
+            self.syncServerViewing()
         }
         // The app list catches up in the background; the panel never waits.
         sources.applications?.refresh { [weak self] in
@@ -301,6 +303,13 @@ final class CommandCenter: ObservableObject {
             serverListingRequested = false
         }
         listServersIfAsked()
+        syncServerViewing()
+    }
+
+    /// Exit watching and the bounded refresh run only while the query shows
+    /// server results in an open panel.
+    private func syncServerViewing() {
+        sources.servers?.setViewing(state.isVisible && Self.wantsServers(state.query, lookup: sources.portLookup))
     }
 
     /// A query that asks for servers (a port, "port", "server") lists them

@@ -5,7 +5,7 @@ import XCTest
 
 /// lsof field output for hand-built listeners, one set per line like the
 /// `Fixtures/lsof` files.
-private func lsof(_ processes: [(pid: Int, name: String, sockets: [(type: String, name: String, fd: Int)])]) -> Data {
+func lsof(_ processes: [(pid: Int, name: String, sockets: [(type: String, name: String, fd: Int)])]) -> Data {
     var text = ""
     for process in processes {
         text += "p\(process.pid)\0c\(process.name)\0u501\0Ltester\0\n"
@@ -16,10 +16,10 @@ private func lsof(_ processes: [(pid: Int, name: String, sockets: [(type: String
     return Data(text.utf8)
 }
 
-private let node3000 = lsof([(4242, "node", [("IPv4", "*:3000", 20), ("IPv6", "*:3000", 21)])])
+let node3000 = lsof([(4242, "node", [("IPv4", "*:3000", 20), ("IPv6", "*:3000", 21)])])
 
 /// A source whose output the test changes between listings. Counts listings.
-private final class SwitchableSource: ListenerSource, @unchecked Sendable {
+final class SwitchableSource: ListenerSource, @unchecked Sendable {
     private let lock = NSLock()
     private var _stdout: Data
     private var _termination = LsofRun.Termination.exited(0)
