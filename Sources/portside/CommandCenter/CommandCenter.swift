@@ -201,6 +201,11 @@ final class CommandCenter: ObservableObject {
             guard let self, self.state.isVisible else { return }
             self.send(.catalog(self.snapshot()))
         }
+        // Menu bar items sweep in the background too; nothing is pressed.
+        sources.menuBar?.refresh { [weak self] in
+            guard let self, self.state.isVisible else { return }
+            self.send(.catalog(self.snapshot()))
+        }
         // The app list catches up in the background; the panel never waits.
         sources.applications?.refresh { [weak self] in
             guard let self, self.state.isVisible else { return }

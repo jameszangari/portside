@@ -32,6 +32,9 @@ struct CommandCenterResultID: Hashable, Comparable, Sendable, CustomStringConver
 
     static func snippet(_ id: UUID) -> Self { Self(unchecked: "snippet:\(id.uuidString.lowercased())") }
 
+    /// `menubar:<item key>`, session only.
+    static func menuBarItem(_ key: String) -> Self { Self(unchecked: "menubar:\(key)") }
+
     static func shortcut(_ id: UUID) -> Self { Self(unchecked: "shortcut:\(id.uuidString.lowercased())") }
 
     /// `file:<absolute path>`, session only (never written to history).

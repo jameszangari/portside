@@ -282,6 +282,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Server rows for Command Center; empty until a server search or Refresh.
     private let localServers = LocalServerStore()
     private let shortcutsService = ShortcutsService()
+    private let menuBarService = MenuBarItemsService()
     private let intelligence = ModelRouter(provider: FakeLocalModelProvider.fromEnvironment() ?? AppleOnDeviceModelProvider())
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -359,6 +360,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 quickAnswers: QuickAnswers(),
                 snippets: { SnippetStore.shared.snippets },
                 shortcuts: shortcutsService,
+                menuBar: menuBarService,
                 files: FileIndexService.shared,
                 clipboard: ClipboardService.shared,
                 openWithApps: { [openWith = OpenWithApps()] path in openWith.apps(for: URL(fileURLWithPath: path)) }
@@ -378,6 +380,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try modules.register(IntelligenceModule(router: intelligence))
                 try modules.register(LocalServersModule(store: localServers, actions: .live))
                 try modules.register(ShortcutsModule(service: shortcutsService))
+                try modules.register(MenuBarModule(service: menuBarService))
                 try modules.register(ClipboardModule(service: ClipboardService.shared))
                 try modules.register(FilesModule(index: FileIndexService.shared, actions: .live))
                 modules.enableSaved(dockModel.modules, restricted: dockModel.restrictedMode)
