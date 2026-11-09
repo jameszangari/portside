@@ -1,5 +1,5 @@
+import AppKit
 import Combine
-import Foundation
 
 /// State and actions behind Settings > Integrations: the registered modules,
 /// the permissions they need, and the restricted work-Mac preset. Reads live
@@ -125,6 +125,11 @@ final class IntegrationSettings: ObservableObject {
         reload()
     }
 
+    /// Permissions a request could still change, in Settings order. The
+    /// setup row walks these one at a time, because macOS allows only you to
+    /// turn each one on and stacked system dialogs hide each other.
+    var missingPermissions: [PermissionRow] { permissions.filter(\.canRequest) }
+
     /// Explicit user action (a button). Starts the OS or adapter request,
     /// then re-reads; a grant that lands later shows on the next reload.
     func request(_ scope: PermissionScope) {
@@ -170,6 +175,29 @@ extension PermissionState {
 }
 
 extension PermissionScope {
+    /// Whether System Settings has a pane for this scope.
+    var hasPrivacyPane: Bool {
+        switch self {
+        case .accessibility, .screenRecording: return true
+        case .app: return false
+        }
+    }
+
+    /// Opens this scope's list in System Settings. Changes nothing.
+    @MainActor
+    func openPrivacyPane() {
+        switch self {
+        case .accessibility:
+            AccessibilityTrust.shared.openSettings()
+        case .screenRecording:
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                NSWorkspace.shared.open(url)
+            }
+        case .app:
+            break
+        }
+    }
+
     /// What Portside uses the permission for, for Settings.
     var purpose: String {
         switch self {

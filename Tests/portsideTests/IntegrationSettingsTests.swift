@@ -186,6 +186,25 @@ final class IntegrationSettingsTests: XCTestCase {
         XCTAssertTrue(reason.contains("unavailable on this Mac"))
     }
 
+    func testSetupWalksMissingPermissionsInOrderAndAsksOnlyForTheOnePicked() throws {
+        let first = Scope(.denied), second = Scope(.notRequested), done = Scope(.granted), blocked = Scope(.unavailable)
+        for (name, scope) in [("first", first), ("done", done), ("blocked", blocked), ("second", second)] {
+            gate.register(AppPermissionAdapter(name: name, state: { scope.state }, request: { scope.requests.append($0); return true }))
+        }
+        let settings = IntegrationSettings(registry: registry, permissions: gate, model: model)
+        XCTAssertEqual(settings.missingPermissions.map(\.scope), [.app("first"), .app("second")], "granted and unavailable are skipped")
+        XCTAssertTrue(first.requests.isEmpty && second.requests.isEmpty, "listing asks for nothing")
+        settings.request(try XCTUnwrap(settings.missingPermissions.first).scope)
+        XCTAssertEqual(first.requests.count, 1)
+        XCTAssertTrue(second.requests.isEmpty, "one at a time")
+        first.state = .granted
+        settings.reload()
+        XCTAssertEqual(settings.missingPermissions.map(\.scope), [.app("second")])
+        second.state = .granted
+        settings.reload()
+        XCTAssertTrue(settings.missingPermissions.isEmpty)
+    }
+
     func testScopeWithoutRequesterShowsNoRequest() {
         register("plain", Scope(.notRequested), requestable: false)
         let settings = IntegrationSettings(registry: registry, permissions: gate, model: model)
