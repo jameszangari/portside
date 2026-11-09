@@ -158,10 +158,18 @@ struct AppSwitcherSettings: View {
 
 // MARK: - Menu Bar
 
-/// The menu bar modules, then the reorder and layout controls for other
-/// apps' items. Their sections appear once their module is on.
+/// The menu bar modules, then one tab at a time: how the shelf opens and
+/// closes, the layout of other apps' items, or their order. Tabs keep the
+/// pane short; each tab's content appears once its module is on.
 struct MenuBarSettings: View {
+    enum Tab: String, CaseIterable, Identifiable {
+        case reveal = "Reveal", layout = "Layout", reorder = "Reorder"
+        var id: String { rawValue }
+    }
+
+    @ObservedObject var dockModel: DockModel
     @ObservedObject var integrations: IntegrationSettings
+    @State private var tab = Tab.reveal
 
     var body: some View {
         Form {
@@ -171,13 +179,122 @@ struct MenuBarSettings: View {
                 title: "Modules",
                 footer: "Layout and Reorder move other apps' items with real Command-drags and need Accessibility."
             )
-            if let layout = integrations.menuLayout {
-                MenuBarLayoutSection(service: layout)
+            Section {
+                Picker("Show", selection: $tab) {
+                    ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
             }
-            if let reorder = integrations.menuReorder {
-                MenuBarReorderSection(service: reorder)
+            switch tab {
+            case .reveal:
+                if let triggers = integrations.menuTriggers {
+                    MenuBarTriggersSection(dockModel: dockModel, service: triggers)
+                }
+            case .layout:
+                if let layout = integrations.menuLayout { MenuBarLayoutSection(service: layout) }
+            case .reorder:
+                if let reorder = integrations.menuReorder { MenuBarReorderSection(service: reorder) }
             }
         }
         .keepsIntegrationsCurrent(integrations)
+    }
+}
+
+/// Reveal and hide triggers and automatic rehide for the menu bar shelf.
+struct MenuBarTriggersSection: View {
+    @ObservedObject var dockModel: DockModel
+    @ObservedObject var service: MenuBarTriggerService
+
+    private var settings: MenuBarTriggerSettings { dockModel.menuBarTriggers }
+    private let pointerAvailable = MenuBarTrigger.hover.isAvailableNow
+
+    private func binding<T>(_ keyPath: WritableKeyPath<MenuBarTriggerSettings, T>) -> Binding<T> {
+        Binding(
+            get: { dockModel.menuBarTriggers[keyPath: keyPath] },
+            set: {
+                var next = dockModel.menuBarTriggers
+                next[keyPath: keyPath] = $0
+                dockModel.setMenuBarTriggers(next)
+            }
+        )
+    }
+
+    /// Read-only conflict checks, like the other shortcuts.
+    private var warning: String? {
+        guard let chord = settings.hotkey else { return nil }
+        let portside: [(name: String, chord: HotkeyChord?)] = [
+            ("Open Settings", dockModel.settingsHotkey),
+            ("dock hiding", .dockHiding),
+            ("Command Center", dockModel.commandCenterHotkey),
+            ("App Switcher", dockModel.switcherHotkey),
+        ]
+        return HotkeyConflicts.conflict(for: chord, system: HotkeyConflicts.systemHotkeys(), portside: portside)
+            ?? service.hotkeyFailure
+    }
+
+    var body: some View {
+        Section {
+            MenuBarTriggersPreviewCard(settings: settings, pointerAvailable: pointerAvailable)
+            Text("Click the shelf control to open or close it. Right-click it for options, including Turn Off.").helperStyle()
+            HotkeyRecorderButton(
+                title: "Shortcut",
+                chord: settings.hotkey,
+                defaultChord: nil,
+                onChange: { chord in
+                    var next = dockModel.menuBarTriggers
+                    next.hotkey = chord
+                    dockModel.setMenuBarTriggers(next)
+                }
+            )
+            if let warning { Text(warning).helperStyle().foregroundStyle(.orange) }
+            if service.isRunning, settings.hotkey != nil, service.secureInputOn {
+                Text("Secure input is on right now (often a password field). The shortcut may not fire until it ends.").helperStyle()
+            }
+            if !service.isRunning { Text("Menu Bar Shelf is off. Turn it on above.").helperStyle() }
+        } header: {
+            Text("Open")
+        }
+        Section {
+            Toggle(isOn: binding(\.hover)) {
+                Text("Hover over the empty menu bar")
+                Text(pointerNote("Opens after the pointer rests on empty bar.")).helperStyle()
+            }
+            .disabled(!pointerAvailable)
+            Toggle(isOn: binding(\.scroll)) {
+                Text("Scroll on the empty menu bar")
+                Text(pointerNote("Scroll up opens, scroll down closes.")).helperStyle()
+            }
+            .disabled(!pointerAvailable)
+            Toggle(isOn: binding(\.emptyClick)) {
+                Text("Click the empty menu bar")
+                Text(pointerNote("Click on empty bar toggles the shelf.")).helperStyle()
+            }
+            .disabled(!pointerAvailable)
+        } header: {
+            Text("Optional triggers")
+        } footer: {
+            Text("These need Accessibility, never act over an app's menu, a status item, the notch or an open menu, and stop while secure input is on.").footerStyle()
+        }
+        Section {
+            Picker("Hide again after", selection: binding(\.rehideSeconds)) {
+                ForEach(MenuBarTriggerSettings.rehideChoices, id: \.self) { seconds in
+                    Text(seconds == 0 ? "Never" : "\(seconds) seconds").tag(seconds)
+                }
+            }
+            Toggle(isOn: binding(\.rehideOnAppChange)) {
+                Text("Hide again when I switch apps")
+                Text("Hides when another app becomes frontmost. Portside itself never counts.").helperStyle()
+            }
+            if let status = service.status { Text(status).helperStyle() }
+        } header: {
+            Text("Hide again")
+        } footer: {
+            Text("Only a reveal you made with a trigger above hides again. A menu that is open, a mouse button held down or a layout change running waits it out. Sleep, wake and a display change show everything and cancel the timer.").footerStyle()
+        }
+    }
+
+    private func pointerNote(_ what: String) -> String {
+        pointerAvailable ? what : "Not validated yet, so it stays off. \(what)"
     }
 }

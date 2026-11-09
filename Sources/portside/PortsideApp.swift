@@ -286,6 +286,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarReorder: MenuBarReorderService?
     private var menuBarLayout: MenuBarLayoutService?
     private var menuBarShelf: MenuBarShelf?
+    private(set) var menuBarTriggers: MenuBarTriggerService?
     private let intelligence = ModelRouter(provider: FakeLocalModelProvider.fromEnvironment() ?? AppleOnDeviceModelProvider())
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -384,15 +385,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try modules.register(LocalServersModule(store: localServers, actions: .live))
                 try modules.register(ShortcutsModule(service: shortcutsService))
                 try modules.register(MenuBarModule(service: menuBarService))
-                try modules.register(MenuBarShelfModule(shelf: makeMenuBarShelf()))
+                let shelf = makeMenuBarShelf()
+                let triggers = MenuBarTriggerService(
+                    shelf: shelf,
+                    environment: LiveMenuBarTriggerEnvironment(busy: { [weak self] in
+                        (self?.menuBarLayout?.isBusy ?? false) || (self?.menuBarReorder?.isBusy ?? false)
+                    }),
+                    probe: LiveMenuBarEmptyAreaProbe()
+                )
+                menuBarTriggers = triggers
+                try modules.register(MenuBarShelfModule(shelf: shelf, triggers: triggers, settings: dockModel.$menuBarTriggers.eraseToAnyPublisher()))
                 let reorder = MenuBarReorderService()
                 menuBarReorder = reorder
                 try modules.register(MenuBarReorderModule(service: reorder))
-                if let shelf = menuBarShelf {
-                    let layout = MenuBarLayoutService(reorder: reorder, shelf: shelf)
-                    menuBarLayout = layout
-                    try modules.register(MenuBarLayoutModule(service: layout))
-                }
+                let layout = MenuBarLayoutService(reorder: reorder, shelf: shelf)
+                menuBarLayout = layout
+                try modules.register(MenuBarLayoutModule(service: layout))
                 try modules.register(ClipboardModule(service: ClipboardService.shared))
                 try modules.register(FilesModule(index: FileIndexService.shared, actions: .live))
                 modules.enableSaved(dockModel.modules, restricted: dockModel.restrictedMode)
@@ -404,7 +412,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor private func makeMenuBarShelf() -> MenuBarShelf {
         let shelf = MenuBarShelf(surface: StatusItemShelfSurface(
-            onToggle: { [weak self] in MainActor.assumeIsolated { self?.menuBarShelf?.toggle() } },
+            onToggle: { [weak self] in MainActor.assumeIsolated { self?.menuBarTriggers?.activate(.control) } },
             turnOff: { [weak self] in
                 // After the menu closes: disabling removes the control that ran it.
                 Task { @MainActor [weak self] in
@@ -476,7 +484,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             SettingsWindowController(
                 dockModel: dockModel, layout: dockEngine.layout, nativeDock: nativeDock, trash: dockEngine.trash,
                 badges: dockEngine.badges, widgets: dockEngine.widgets,
-                integrations: IntegrationSettings(registry: modules, permissions: permissions, model: dockModel, intelligence: intelligence, menuReorder: menuBarReorder, menuLayout: menuBarLayout)
+                integrations: IntegrationSettings(registry: modules, permissions: permissions, model: dockModel, intelligence: intelligence, menuReorder: menuBarReorder, menuLayout: menuBarLayout, menuTriggers: menuBarTriggers)
             )
         }
         controller.onActivationPolicyChanged = { [weak dockEngine] in dockEngine?.activationPolicyChanged() }

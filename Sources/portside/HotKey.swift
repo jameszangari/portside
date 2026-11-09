@@ -257,7 +257,8 @@ struct HotkeyChord: Codable, Equatable, Hashable {
 struct HotkeyRecorderButton: View {
     let title: String
     let chord: HotkeyChord?
-    let defaultChord: HotkeyChord
+    /// Nil when the shortcut ships unassigned, which hides Reset.
+    let defaultChord: HotkeyChord?
     /// Why a chord this shortcut cannot use is refused (the switcher refuses ⌘Tab).
     var refusal: (HotkeyChord) -> String? = { _ in nil }
     let onChange: (HotkeyChord?) -> Void
@@ -285,7 +286,7 @@ struct HotkeyRecorderButton: View {
                 Button("Cancel") { recording = false }
                     .buttonStyle(.borderless)
             } else {
-                if chord != defaultChord {
+                if let defaultChord, chord != defaultChord {
                     Button("Reset") { onChange(defaultChord) }
                         .buttonStyle(.borderless)
                 }

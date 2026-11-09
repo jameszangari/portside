@@ -26,6 +26,15 @@ final class MenuBarShelfTests: XCTestCase {
         return (MenuBarShelf(surface: surface, verifyDelay: delay), surface)
     }
 
+    private func makeModule(_ shelf: MenuBarShelf) -> MenuBarShelfModule {
+        let triggers = MenuBarTriggerService(
+            shelf: shelf,
+            environment: MenuBarTriggersTests.FakeEnvironment(),
+            probe: MenuBarTriggersTests.FakeProbe()
+        )
+        return MenuBarShelfModule(shelf: shelf, triggers: triggers)
+    }
+
     func testStartsRevealedAndInstalls() {
         let (shelf, surface) = make()
         shelf.start()
@@ -122,7 +131,7 @@ final class MenuBarShelfTests: XCTestCase {
         let (shelf, surface) = make()
         let gate = PermissionGate()
         let registry = ModuleRegistry(commands: CommandRegistry(permissions: gate), permissions: gate)
-        try registry.register(MenuBarShelfModule(shelf: shelf))
+        try registry.register(makeModule(shelf))
         registry.enable(MenuBarShelfModule.moduleID)
         XCTAssertTrue(surface.installed)
         shelf.hide()
@@ -133,7 +142,7 @@ final class MenuBarShelfTests: XCTestCase {
     }
 
     func testModuleIsSensitiveOptionalAndNeedsNoPermission() {
-        let module = MenuBarShelfModule(shelf: MenuBarShelf(surface: FakeSurface()))
+        let module = makeModule(MenuBarShelf(surface: FakeSurface()))
         XCTAssertFalse(module.isRequired)
         XCTAssertTrue(module.isSensitive)
         XCTAssertTrue(module.dependencies.isEmpty)

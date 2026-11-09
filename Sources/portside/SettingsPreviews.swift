@@ -424,6 +424,62 @@ struct MenuBarSectionsPreviewCard: View {
     }
 }
 
+/// The shelf with the chosen ways to open it listed under the bar, and when it
+/// closes again. Chips only; the pointer triggers show only when available.
+struct MenuBarTriggersPreview: View {
+    let settings: MenuBarTriggerSettings
+    let revealed: Bool
+    let pointerAvailable: Bool
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            MenuBarSectionsPreview(alwaysHiddenOn: false, revealed: revealed)
+            VStack(spacing: 4) {
+                HStack(spacing: 4) {
+                    chip("Click the control", on: true)
+                    chip(settings.hotkey?.displayString ?? "No shortcut", on: settings.hotkey != nil)
+                    chip("Hover", on: settings.hover && pointerAvailable)
+                    chip("Scroll", on: settings.scroll && pointerAvailable)
+                    chip("Empty bar click", on: settings.emptyClick && pointerAvailable)
+                }
+                Text(rehide).font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+            .padding(.bottom, 6)
+        }
+    }
+
+    private var rehide: String {
+        var parts: [String] = []
+        if settings.rehideSeconds > 0 { parts.append("after \(settings.rehideSeconds) s") }
+        if settings.rehideOnAppChange { parts.append("when you switch apps") }
+        return parts.isEmpty ? "Stays open until you hide it." : "Hides again " + parts.joined(separator: " or ") + "."
+    }
+
+    private func chip(_ title: String, on: Bool) -> some View {
+        Text(title)
+            .font(.system(size: 10, weight: .medium))
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .foregroundStyle(on ? Color.white : Color.secondary)
+            .background(Capsule().fill(on ? Color.accentColor : Color.secondary.opacity(0.15)))
+    }
+}
+
+struct MenuBarTriggersPreviewCard: View {
+    let settings: MenuBarTriggerSettings
+    let pointerAvailable: Bool
+    @State private var revealed = false
+
+    var body: some View {
+        SettingsPreviewCard(
+            title: "Reveal and hide",
+            summary: "Lit chips are the ways to open the shelf. It hides again on its own as chosen below.",
+            actions: AnyView(PreviewButton(title: revealed ? "Hide again" : "Reveal") { revealed.toggle() })
+        ) {
+            MenuBarTriggersPreview(settings: settings, revealed: revealed, pointerAvailable: pointerAvailable)
+        }
+    }
+}
+
 // MARK: - Command Center
 
 /// The launcher panel: search field, mixed result kinds, and the shortcut.

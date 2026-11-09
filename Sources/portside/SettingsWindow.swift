@@ -384,7 +384,7 @@ struct SettingsView: View {
                 case .groups: GroupSettings(dockModel: dockModel)
                 case .commandCenter: CommandCenterSettings(dockModel: dockModel, integrations: integrations)
                 case .switcher: AppSwitcherSettings(dockModel: dockModel, integrations: integrations)
-                case .menuBar: MenuBarSettings(integrations: integrations)
+                case .menuBar: MenuBarSettings(dockModel: dockModel, integrations: integrations)
                 case .notch: AgentNotchSettingsView(model: dockModel)
                 case .general: GeneralSettings(dockModel: dockModel, layout: layout, nativeDock: nativeDock, launchAtLogin: launchAtLogin, integrations: integrations)
                 }
