@@ -289,7 +289,11 @@ struct MenuBarTriggersSection: View {
     var body: some View {
         Section {
             MenuBarTriggersPreviewCard(settings: settings, pointerAvailable: pointerAvailable)
-            Text("Click the shelf control to open or close it. Right-click it for options, including Turn Off.").helperStyle()
+            Label {
+                Text("In the menu bar, an open eye means your items are showing and a crossed eye means they are hidden. A thin bar marks where the hidden items sit. Click the eye to flip it. Right-click it for options, including Turn Off.").helperStyle()
+            } icon: {
+                Image(systemName: "eye").foregroundStyle(.secondary)
+            }
             HotkeyRecorderButton(
                 title: "Shortcut",
                 chord: settings.hotkey,

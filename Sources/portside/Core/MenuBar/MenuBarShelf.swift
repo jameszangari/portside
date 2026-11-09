@@ -222,28 +222,46 @@ final class StatusItemShelfSurface: NSObject, MenuBarShelfSurface {
         control.autosaveName = Self.controlName
         control.behavior = []
         if let button = control.button {
-            button.image = NSImage(systemSymbolName: "chevron.left.2", accessibilityDescription: "Menu bar shelf")
             button.target = self
             button.action = #selector(controlClicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            button.toolTip = "Click to hide or show menu bar items. Right-click for options."
         }
         let separator = NSStatusBar.system.statusItem(withLength: Self.revealedLength)
         separator.autosaveName = Self.separatorName
         separator.behavior = []
-        separator.button?.image = NSImage(systemSymbolName: "line.diagonal", accessibilityDescription: nil)
         self.control = control
         self.separator = separator
+        apply(hidden: false)
+    }
+
+    /// The control shows the state, not the action: an open eye while the
+    /// items are showing, a crossed eye while they are hidden. A bar to the
+    /// control's left marks where the hidden items sit.
+    private func showState(hidden: Bool) {
+        guard let button = control?.button else { return }
+        let name = hidden ? "eye.slash" : "eye"
+        let state = hidden ? "Menu bar items are hidden." : "Menu bar items are showing."
+        button.image = NSImage(systemSymbolName: name, accessibilityDescription: state)
+        button.toolTip = "\(state) Click to \(hidden ? "show" : "hide") them. Right-click for options."
+        button.setAccessibilityLabel("Menu bar shelf. \(state)")
+    }
+
+    private static func dividerImage() -> NSImage {
+        let size = NSSize(width: 6, height: 16)
+        let image = NSImage(size: size, flipped: false) { rect in
+            NSColor.labelColor.withAlphaComponent(0.55).setFill()
+            NSBezierPath(roundedRect: NSRect(x: 2, y: 1, width: 1.5, height: rect.height - 2), xRadius: 0.75, yRadius: 0.75).fill()
+            return true
+        }
+        image.isTemplate = true
+        return image
     }
 
     func apply(hidden: Bool) {
         self.hidden = hidden
         separator?.length = hidden ? Self.hiddenLength : Self.revealedLength
-        separator?.button?.image = hidden ? nil : NSImage(systemSymbolName: "line.diagonal", accessibilityDescription: nil)
-        control?.button?.image = NSImage(
-            systemSymbolName: hidden ? "chevron.right.2" : "chevron.left.2",
-            accessibilityDescription: "Menu bar shelf"
-        )
+        separator?.button?.image = hidden ? nil : Self.dividerImage()
+        showState(hidden: hidden)
     }
 
     func controlIsOnScreen() -> Bool {
@@ -257,13 +275,13 @@ final class StatusItemShelfSurface: NSObject, MenuBarShelfSurface {
         let item = NSStatusBar.system.statusItem(withLength: Self.revealedLength)
         item.autosaveName = Self.alwaysHiddenName
         item.behavior = []
-        item.button?.image = NSImage(systemSymbolName: "line.diagonal", accessibilityDescription: nil)
+        item.button?.image = Self.dividerImage()
         alwaysHiddenSeparator = item
     }
 
     func applyAlwaysHidden(hidden: Bool) {
         alwaysHiddenSeparator?.length = hidden ? Self.hiddenLength : Self.revealedLength
-        alwaysHiddenSeparator?.button?.image = hidden ? nil : NSImage(systemSymbolName: "line.diagonal", accessibilityDescription: nil)
+        alwaysHiddenSeparator?.button?.image = hidden ? nil : Self.dividerImage()
     }
 
     func removeAlwaysHidden() {

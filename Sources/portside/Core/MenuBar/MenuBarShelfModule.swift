@@ -11,7 +11,7 @@ final class MenuBarShelfModule: PortsideModule {
 
     let id = MenuBarShelfModule.moduleID
     let title = "Menu Bar Shelf (prototype)"
-    let summary = "Adds a Portside control to the menu bar that hides the items to its left and shows them again. Prototype: items already clipped by the notch stay clipped, and it can fight another menu bar manager, so turn that one off first. It starts shown every launch, shows everything again on sleep, wake or a display change, and goes away completely when you turn it off or quit. Click the control, press an optional shortcut, and it can hide again by itself (Settings > Menu Bar > Show & Hide). Right-click the control for Turn Off."
+    let summary = "Adds a Portside control to the menu bar that hides the items to its left and shows them again. Prototype: items already clipped by the notch stay clipped, and it can fight another menu bar manager, so turn that one off first. It starts shown every launch, shows everything again on sleep, wake or a display change, and goes away completely when you turn it off or quit. The control shows an open eye while items are showing and a crossed eye while they are hidden. Click it, press an optional shortcut, and it can hide again by itself (Settings > Menu Bar > Show & Hide). Right-click the control for Turn Off."
     let fallback = "Your menu bar stays exactly as macOS lays it out."
 
     private let shelf: MenuBarShelf
