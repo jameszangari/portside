@@ -50,7 +50,7 @@ Decision (2026-11-08): the documented feature set of Thaw is the minimum functio
 
 | Ticket | Capability (user-visible) | Main feasibility risk |
 | --- | --- | --- |
-| P2-MENU-05 | Visible, Hidden and Always Hidden sections; drag layout editor | Per-item movement beyond MENU-04's validated set; items clipped under the notch |
+| P2-MENU-05 | (prototype built, hand gate open) Visible, Hidden and Always Hidden sections; layout editor with a Move to menu and drag between sections, applied on demand | Per-item movement beyond MENU-04's validated set; items clipped under the notch |
 | P2-MENU-06 | Reveal by click, hotkey, optional hover/scroll on empty bar; automatic rehide | Secure input; hover trigger near menus and notch |
 | P2-MENU-07 | Portside Bar: hidden items in a panel below the menu bar | Clicking items that are hidden or covered; live previews need Screen Recording |
 | P2-MENU-08 | Global hotkeys, open-by-key and per-item open | Secure input; shortcut conflicts |

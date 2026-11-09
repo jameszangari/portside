@@ -170,6 +170,7 @@ final class MenuBarReorderService: ObservableObject {
         static let noNeighbor = "There is no movable item on that side."
         static let notApplied = "The item did not move. Portside left it alone."
         static let mouse = "A mouse button is down. Release it and try again."
+        static let noMarker = "The shelf separators are not in place. Turn the Menu Bar Shelf on and show its items first."
         static let nothingSaved = "No original order is saved. Nothing to restore."
     }
 
@@ -325,6 +326,51 @@ final class MenuBarReorderService: ObservableObject {
         return nil
     }
 
+    /// One drag of `slot` onto a side of a fixed marker, a Portside separator
+    /// that is not in the Accessibility list (P2-MENU-05). Same checks as a
+    /// neighbor move: the item and the marker must still sit where they were
+    /// read, and the item must be on the intended side afterwards, or it is
+    /// locked for the session and nothing is retried. Returns a failure reason.
+    func place(_ slot: MenuBarSlot, side: MenuBarDropSide, marker: () -> ClosedRange<Double>?) async -> String? {
+        guard let span = marker() else { return Message.noMarker }
+        saveBaselineIfNeeded()
+        let mover = mover
+        guard let before = await Task.detached(priority: .userInitiated, operation: { mover.slots() }).value else { return Message.denied }
+        guard Self.same(before, slot) else {
+            await reload()
+            return Message.stale
+        }
+        guard let fresh = marker(), abs(fresh.lowerBound - span.lowerBound) < 1, abs(fresh.upperBound - span.upperBound) < 1 else { return Message.noMarker }
+        let target = Self.markerSlot(span, midY: slot.midY)
+        attempts += 1
+        let dragged = await Task.detached(priority: .userInitiated, operation: { mover.drag(slot, onto: target, side: side) }).value
+        guard dragged else { return Message.mouse }
+        try? await Task.sleep(for: settle)
+        await reload()
+        if let now = marker(), let moved = rows.first(where: { $0.id == slot.id })?.slot, Self.sits(moved, side, of: now) {
+            successes += 1
+            return nil
+        }
+        failed.insert(slot.id)
+        rebuildRows(slots: rows.map(\.slot))
+        log.error("menu bar placement did not land for \(slot.id, privacy: .public)")
+        return Message.notApplied
+    }
+
+    /// A stand-in for a separator, so the same drag code can aim at it.
+    nonisolated static func markerSlot(_ span: ClosedRange<Double>, midY: Double) -> MenuBarSlot {
+        MenuBarSlot(
+            item: MenuBarItem(pid: getpid(), ownerBundleID: "com.james.portside", ownerName: "Portside", ordinal: 0, identifier: "separator", title: "Separator", canPress: false),
+            minX: span.lowerBound, maxX: span.upperBound, midY: midY, reachable: true
+        )
+    }
+
+    /// The item is wholly on `side` of the marker, and reachable.
+    nonisolated static func sits(_ slot: MenuBarSlot, _ side: MenuBarDropSide, of marker: ClosedRange<Double>) -> Bool {
+        guard slot.reachable else { return false }
+        return side == .before ? slot.maxX <= marker.lowerBound + 1 : slot.minX >= marker.upperBound - 1
+    }
+
     private static func same(_ slots: [MenuBarSlot], _ slot: MenuBarSlot) -> Bool {
         slots.first { $0.id == slot.id }.map { $0.reachable && abs($0.minX - slot.minX) < 1 && abs($0.maxX - slot.maxX) < 1 } ?? false
     }
@@ -343,7 +389,7 @@ final class MenuBarReorderService: ObservableObject {
         return movable.indices.contains(next) ? movable[next] : nil
     }
 
-    private func reload(clearFailures: Bool = false) async {
+    func reload(clearFailures: Bool = false) async {
         let mover = mover
         let slots = await Task.detached(priority: .userInitiated) { mover.slots() }.value
         guard isActive else { return }
@@ -365,7 +411,7 @@ final class MenuBarReorderService: ObservableObject {
 
     /// Before the first move since the last restore: the order of the items
     /// that can move, left to right.
-    private func saveBaselineIfNeeded() {
+    func saveBaselineIfNeeded() {
         guard !hasBaseline else { return }
         baseline = rows.filter(\.support.isMovable).map(\.id)
         defaults.set(baseline, forKey: Self.baselineKey)

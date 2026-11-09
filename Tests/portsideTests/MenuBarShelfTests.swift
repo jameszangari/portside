@@ -12,6 +12,13 @@ final class MenuBarShelfTests: XCTestCase {
         func apply(hidden: Bool) { self.hidden = hidden; applied.append(hidden) }
         func controlIsOnScreen() -> Bool { onScreen }
         func remove() { installed = false }
+        var alwaysHiddenInstalled = false
+        var alwaysHiddenClipped = false
+        var frames: MenuBarBars?
+        func installAlwaysHidden() { alwaysHiddenInstalled = true }
+        func applyAlwaysHidden(hidden: Bool) { alwaysHiddenClipped = hidden }
+        func removeAlwaysHidden() { alwaysHiddenInstalled = false; alwaysHiddenClipped = false }
+        func barFrames() -> MenuBarBars? { frames }
     }
 
     private func make(delay: Duration = .milliseconds(10)) -> (MenuBarShelf, FakeSurface) {
