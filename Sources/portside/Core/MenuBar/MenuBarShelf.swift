@@ -191,6 +191,19 @@ final class StatusItemShelfSurface: NSObject, MenuBarShelfSurface {
     /// up clipped the separator itself (spike O6), so this stays modest.
     nonisolated static let revealedLength: CGFloat = 14
     nonisolated static let hiddenLength: CGFloat = 120
+    /// Largest width a hiding separator is given, so a bad reading cannot
+    /// ask for something absurd.
+    nonisolated static let maxHiddenLength: CGFloat = 6000
+
+    /// How wide a separator must be to push everything on its left off the
+    /// screen: its right edge stays put (the items on its right do not move),
+    /// so its left edge has to reach the screen's left edge. Never smaller
+    /// than the original 120 pt, which only hid the nearest few items. Nil
+    /// reading falls back to a width that clears any display.
+    nonisolated static func widthToClear(rightEdge: CGFloat?, screenMinX: CGFloat?) -> CGFloat {
+        guard let rightEdge, let screenMinX else { return 3000 }
+        return min(max(rightEdge - screenMinX + 40, hiddenLength), maxHiddenLength)
+    }
 
     /// Runs from the control's menu. The owner turns the module off.
     private let turnOff: () -> Void
@@ -259,7 +272,7 @@ final class StatusItemShelfSurface: NSObject, MenuBarShelfSurface {
 
     func apply(hidden: Bool) {
         self.hidden = hidden
-        separator?.length = hidden ? Self.hiddenLength : Self.revealedLength
+        separator?.length = hidden ? clearingLength(separator) : Self.revealedLength
         separator?.button?.image = hidden ? nil : Self.dividerImage()
         showState(hidden: hidden)
     }
@@ -280,7 +293,7 @@ final class StatusItemShelfSurface: NSObject, MenuBarShelfSurface {
     }
 
     func applyAlwaysHidden(hidden: Bool) {
-        alwaysHiddenSeparator?.length = hidden ? Self.hiddenLength : Self.revealedLength
+        alwaysHiddenSeparator?.length = hidden ? clearingLength(alwaysHiddenSeparator) : Self.revealedLength
         alwaysHiddenSeparator?.button?.image = hidden ? nil : Self.dividerImage()
     }
 
@@ -289,11 +302,21 @@ final class StatusItemShelfSurface: NSObject, MenuBarShelfSurface {
         alwaysHiddenSeparator = nil
     }
 
+    /// Measured while the item is still at its small length: widening it moves
+    /// only its left edge, so this reading is the one that stays true.
+    private func clearingLength(_ item: NSStatusItem?) -> CGFloat {
+        guard let window = item?.button?.window else { return Self.widthToClear(rightEdge: nil, screenMinX: nil) }
+        // Already widened (hide again, or Always Hidden under a hidden shelf): keep it.
+        if window.frame.width > Self.revealedLength * 2 { return item?.length ?? Self.hiddenLength }
+        let screen = window.screen ?? NSScreen.screens.first { $0.frame.intersects(window.frame) }
+        return Self.widthToClear(rightEdge: window.frame.maxX, screenMinX: screen?.frame.minX)
+    }
+
     func barFrames() -> MenuBarBars? {
-        guard let frame = separator?.button?.window?.frame, frame.width < Self.hiddenLength / 2 else { return nil }
+        guard let frame = separator?.button?.window?.frame, frame.width < Self.revealedLength * 2 else { return nil }
         var second: ClosedRange<Double>?
         if let item = alwaysHiddenSeparator {
-            guard let other = item.button?.window?.frame, other.width < Self.hiddenLength / 2, other.maxX <= frame.minX else { return nil }
+            guard let other = item.button?.window?.frame, other.width < Self.revealedLength * 2, other.maxX <= frame.minX else { return nil }
             second = Double(other.minX)...Double(other.maxX)
         }
         return MenuBarBars(separator: Double(frame.minX)...Double(frame.maxX), alwaysHiddenSeparator: second)
