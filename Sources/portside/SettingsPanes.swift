@@ -158,27 +158,25 @@ struct AppSwitcherSettings: View {
 
 // MARK: - Menu Bar
 
-/// The menu bar modules, then one tab at a time: how the shelf opens and
-/// closes, the layout of other apps' items, or their order. Tabs keep the
-/// pane short; each tab's content appears once its module is on.
+/// One job per tab: arrange the items, choose how the shelf opens and closes,
+/// or reach the module switches and per-item order. Layout comes first and
+/// the switches last, so arranging the bar is what the pane opens on.
 struct MenuBarSettings: View {
     enum Tab: String, CaseIterable, Identifiable {
-        case reveal = "Reveal", layout = "Layout", reorder = "Reorder"
+        case layout = "Layout", showHide = "Show & Hide", advanced = "Advanced"
         var id: String { rawValue }
     }
 
     @ObservedObject var dockModel: DockModel
     @ObservedObject var integrations: IntegrationSettings
-    @State private var tab = Tab.reveal
+    @State private var tab = Tab.layout
+
+    private var layoutRunning: Bool {
+        integrations.modules.first { $0.id == MenuBarLayoutModule.moduleID }?.state == .running
+    }
 
     var body: some View {
         Form {
-            ModuleRowsSection(
-                integrations: integrations,
-                ids: [MenuBarShelfModule.moduleID, MenuBarLayoutModule.moduleID, MenuBarReorderModule.moduleID],
-                title: "Modules",
-                footer: "Layout and Reorder move other apps' items with real Command-drags and need Accessibility."
-            )
             Section {
                 Picker("Show", selection: $tab) {
                     ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
@@ -187,17 +185,72 @@ struct MenuBarSettings: View {
                 .labelsHidden()
             }
             switch tab {
-            case .reveal:
+            case .layout:
+                if layoutRunning, let layout = integrations.menuLayout {
+                    MenuBarLayoutSection(service: layout)
+                } else {
+                    MenuBarLayoutSetup(integrations: integrations)
+                }
+            case .showHide:
                 if let triggers = integrations.menuTriggers {
                     MenuBarTriggersSection(dockModel: dockModel, service: triggers)
                 }
-            case .layout:
-                if let layout = integrations.menuLayout { MenuBarLayoutSection(service: layout) }
-            case .reorder:
+            case .advanced:
+                ModuleRowsSection(
+                    integrations: integrations,
+                    ids: [MenuBarShelfModule.moduleID, MenuBarLayoutModule.moduleID, MenuBarReorderModule.moduleID],
+                    title: "Modules",
+                    footer: "Layout and Reorder move other apps' items with real Command-drags and need Accessibility."
+                )
                 if let reorder = integrations.menuReorder { MenuBarReorderSection(service: reorder) }
             }
         }
         .keepsIntegrationsCurrent(integrations)
+    }
+}
+
+/// Shown until the layout can run: one button instead of three module switches.
+private struct MenuBarLayoutSetup: View {
+    @ObservedObject var integrations: IntegrationSettings
+
+    private static let ids = [MenuBarShelfModule.moduleID, MenuBarReorderModule.moduleID, MenuBarLayoutModule.moduleID]
+
+    private var accessibilityAllowed: Bool {
+        integrations.permissions.first { $0.scope == .accessibility }?.state == .granted
+    }
+
+    private var restricted: Bool {
+        integrations.modules.contains { Self.ids.contains($0.id) && $0.isRestricted }
+    }
+
+    private var allOn: Bool {
+        Self.ids.allSatisfy { id in integrations.modules.first { $0.id == id }?.isEnabled == true }
+    }
+
+    var body: some View {
+        Section {
+            VStack(spacing: 10) {
+                Image(systemName: "menubar.rectangle").font(.system(size: 30)).foregroundStyle(.secondary)
+                Text("Arrange your menu bar").font(.headline)
+                Text(restricted
+                     ? "Restricted mode keeps this off."
+                     : "Hide the items you rarely need and drag the rest into the order you want. Portside adds a small control to the menu bar and moves items with real Command-drags.")
+                    .helperStyle()
+                    .multilineTextAlignment(.center)
+                if !restricted {
+                    if !allOn {
+                        Button("Turn On") { for id in Self.ids { integrations.setEnabled(true, for: id) } }
+                            .buttonStyle(.borderedProminent)
+                    }
+                    if !accessibilityAllowed {
+                        Text("Moving items needs Accessibility.").helperStyle()
+                        Button("Open Accessibility Settings") { PermissionScope.accessibility.openPrivacyPane() }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+        }
     }
 }
 
@@ -251,7 +304,7 @@ struct MenuBarTriggersSection: View {
             if service.isRunning, settings.hotkey != nil, service.secureInputOn {
                 Text("Secure input is on right now (often a password field). The shortcut may not fire until it ends.").helperStyle()
             }
-            if !service.isRunning { Text("Menu Bar Shelf is off. Turn it on above.").helperStyle() }
+            if !service.isRunning { Text("Menu Bar Shelf is off. Turn it on in Advanced.").helperStyle() }
         } header: {
             Text("Open")
         }

@@ -132,11 +132,13 @@ enum MenuBarLayoutPlanner {
 protocol MenuBarLayoutBars: AnyObject {
     var isRunning: Bool { get }
     var alwaysHiddenEnabled: Bool { get }
+    var mode: MenuBarShelf.Mode { get }
     var onFailOpen: (@MainActor () -> Void)? { get set }
     func barFrames() -> MenuBarBars?
     func setAlwaysHidden(_ on: Bool)
     func openForLayout()
     func closeAfterLayout()
+    func hide()
 }
 
 extension MenuBarShelf: MenuBarLayoutBars {}
@@ -145,7 +147,7 @@ extension MenuBarShelf: MenuBarLayoutBars {}
 /// every placement is one verified Cmd-drag from `MenuBarReorderService`, aimed
 /// at a Portside separator, run one at a time. The shelf supplies the
 /// separators and keeps its own recovery; this adds only the saved choices and
-/// the order of drags. Nothing moves until Apply Layout or Reset to Native.
+/// the order of drags. A drop in the editor moves its one item right away.
 @MainActor
 final class MenuBarLayoutService: ObservableObject {
     struct Row: Identifiable, Equatable {
@@ -161,8 +163,19 @@ final class MenuBarLayoutService: ObservableObject {
 
         var id: String { slot.id }
         var canAssign: Bool { structural == nil }
-        /// The section the editor lists it under.
-        var section: MenuBarSection { saved ?? current ?? .visible }
+        /// Where the editor draws it: where it really is, so a strip is
+        /// never a promise. The saved choice only fills in when it straddles
+        /// a separator.
+        var section: MenuBarSection { current ?? saved ?? .visible }
+        /// Off screen now, but would be movable if it were on screen.
+        var isOffScreen: Bool { !slot.reachable && structural == nil }
+        var canDrag: Bool { canAssign && support.isMovable }
+        /// Why it cannot be dragged, nil if it can.
+        var blockedReason: String? {
+            if let structural { return structural }
+            if case .unsupported(let reason) = support { return reason }
+            return nil
+        }
     }
 
     enum Message {
@@ -190,6 +203,14 @@ final class MenuBarLayoutService: ObservableObject {
     /// Accessibility is denied or was revoked, so no items can be listed.
     @Published private(set) var accessDenied = false
     @Published private(set) var pendingCount = 0
+    /// Items you placed that are no longer where you put them.
+    @Published private(set) var driftCount = 0
+    /// Title of the item a drop is moving right now.
+    @Published private(set) var movingTitle: String?
+    /// The editor is on screen, so everything stays shown and rehide waits.
+    private(set) var isEditing = false
+    /// The shelf was closed when editing began, so it closes again after.
+    private var hideWhenDone = false
 
     private let reorder: MenuBarReorderService
     private let shelf: MenuBarLayoutBars
@@ -233,11 +254,41 @@ final class MenuBarLayoutService: ObservableObject {
         barsReady = false
         accessDenied = false
         pendingCount = 0
+        driftCount = 0
+        isEditing = false
+        hideWhenDone = false
+    }
+
+    /// The editor appeared. Shows every item and keeps them shown, because a
+    /// clipped item has no position to list or drag from.
+    func beginEditing() async {
+        guard isActive else { return }
+        if !isEditing {
+            isEditing = true
+            hideWhenDone = shelf.mode == .hidden
+        }
+        await refresh()
+    }
+
+    /// The editor went away. Puts the shelf back how editing found it, after
+    /// any drag still running.
+    func endEditing() {
+        guard isEditing else { return }
+        isEditing = false
+        if !isBusy { finishEditing() }
+    }
+
+    private func finishEditing() {
+        shelf.closeAfterLayout()
+        if hideWhenDone {
+            hideWhenDone = false
+            shelf.hide()
+        }
     }
 
     /// Lists every item the menu bar reports. Items the shelf is clipping
     /// have no usable position, so the shelf is shown first (a fail-open
-    /// direction), like Apply Layout does.
+    /// direction), like a move does.
     func refresh() async {
         guard isActive, !isBusy, !reorder.isBusy else { return }
         if shelf.isRunning {
@@ -252,11 +303,13 @@ final class MenuBarLayoutService: ObservableObject {
         guard isActive, shelf.isRunning else { return }
         shelf.setAlwaysHidden(on)
         syncShelfState()
-        status = on ? "Always Hidden is on for this session. Apply Layout to move items into it." : "Always Hidden is off. Its items are held in Hidden."
+        status = on ? "Always Hidden is on until Portside quits." : "Always Hidden is off. Its items moved to Hidden."
         rebuild()
+        // Switching it on clips its side; the open editor still needs to see it.
+        if on, isEditing { Task { await refresh() } }
     }
 
-    /// Saves the choice. Nothing moves until Apply Layout.
+    /// Saves the choice without moving anything. The editor uses `drop`.
     func assign(_ id: String, to section: MenuBarSection) {
         guard isActive, let row = rows.first(where: { $0.id == id }) else { return }
         if let reason = row.structural {
@@ -265,7 +318,7 @@ final class MenuBarLayoutService: ObservableObject {
         }
         store.set(section, for: id)
         rebuild()
-        status = pendingCount == 0 ? "Saved." : "Saved. Apply Layout to move \(pendingCount) item\(pendingCount == 1 ? "" : "s")."
+        status = "Saved."
     }
 
     func forget(_ id: String) {
@@ -273,14 +326,68 @@ final class MenuBarLayoutService: ObservableObject {
         rebuild()
     }
 
-    /// Moves every movable item into its section, one verified drag at a time.
-    /// Shows everything first (a fail-open direction) and leaves it shown.
+    /// A drop in the editor: one verified drag, right now. Lands just left of
+    /// `beforeID`, or at the separator edge of `section` when there is none.
+    /// The choice is saved only after the item is confirmed there, so a failed
+    /// drag leaves the strip showing the truth. Dropping into Always Hidden
+    /// turns that section on for this session.
     @discardableResult
-    func apply() async -> Result<ApplyReport, CommandFailure> {
+    func drop(_ id: String, into section: MenuBarSection, before beforeID: String? = nil) async -> Result<Void, CommandFailure> {
+        if let reason = guardIdle() { return fail(reason) }
+        guard beforeID != id, let row = rows.first(where: { $0.id == id }) else { return .success(()) }
+        if let reason = row.blockedReason { return fail(reason) }
+        if beforeID == nil, row.current == section { return .success(()) }
+        isBusy = true
+        movingTitle = row.slot.item.displayTitle
+        defer {
+            isBusy = false
+            movingTitle = nil
+            if !isEditing { finishEditing() }
+            rebuild()
+        }
+        if section == .alwaysHidden, !shelf.alwaysHiddenEnabled {
+            shelf.setAlwaysHidden(true)
+            syncShelfState()
+        }
+        shelf.openForLayout()
+        // The bar needs a moment to lay out after the separators collapse.
+        try? await Task.sleep(for: settle)
+        await reorder.reload()
+        if reorder.accessDenied { return fail(Message.denied) }
+        guard let slot = reorder.rows.first(where: { $0.id == id && $0.support.isMovable })?.slot else {
+            return fail(MenuBarReorderService.Message.stale)
+        }
+        let failure: String?
+        if let beforeID {
+            failure = await reorder.place(id, before: beforeID)
+        } else {
+            guard shelf.barFrames() != nil else { return fail(Message.noBars) }
+            let move = MenuBarLayoutPlanner.move(to: section, id: id)
+            failure = await reorder.place(slot, side: move.side, marker: marker(move.marker))
+        }
+        if let failure { return fail(failure) }
+        store.set(section, for: id)
+        status = "Moved \(slot.item.displayTitle) to \(section.title)."
+        return .success(())
+    }
+
+    private func marker(_ marker: MenuBarLayoutPlanner.Marker) -> () -> ClosedRange<Double>? {
+        let shelf = shelf
+        return {
+            guard let now = shelf.barFrames() else { return nil }
+            return marker == .separator ? now.separator : now.alwaysHiddenSeparator
+        }
+    }
+
+    /// Moves movable items into their sections, one verified drag at a time.
+    /// Shows everything first (a fail-open direction) and leaves it shown.
+    /// `onlySaved` leaves alone items you never placed.
+    @discardableResult
+    func apply(onlySaved: Bool = false) async -> Result<ApplyReport, CommandFailure> {
         if let reason = guardIdle() { return .failure(CommandFailure(reason: reason)) }
         isBusy = true
         defer { isBusy = false }
-        let report = await applyLocked()
+        let report = await applyLocked(onlySaved: onlySaved)
         if let reason = report.failure, report.moved == 0 { return fail(reason) }
         return .success(report)
     }
@@ -332,11 +439,11 @@ final class MenuBarLayoutService: ObservableObject {
         if isActive { rebuild() }
     }
 
-    private func applyLocked() async -> ApplyReport {
+    private func applyLocked(onlySaved: Bool = false) async -> ApplyReport {
         var report = ApplyReport()
         shelf.openForLayout()
         defer {
-            shelf.closeAfterLayout()
+            if !isEditing { finishEditing() }
             rebuild()
         }
         // The bar needs a moment to lay out after the separators collapse.
@@ -347,18 +454,16 @@ final class MenuBarLayoutService: ObservableObject {
             await reorder.reload()
             guard !reorder.accessDenied else { report.failure = Message.denied; break }
             guard let bars = shelf.barFrames() else { report.failure = Message.noBars; break }
-            let entries = reorder.rows.map { (slot: $0.slot, movable: $0.support.isMovable) }
-            let moves = MenuBarLayoutPlanner.pending(slots: entries, bars: bars, saved: store.assignments)
+            let saved = store.assignments
+            let entries = reorder.rows
+                .filter { !onlySaved || saved[$0.id] != nil }
+                .map { (slot: $0.slot, movable: $0.support.isMovable) }
+            let moves = MenuBarLayoutPlanner.pending(slots: entries, bars: bars, saved: saved)
             guard let next = moves.first, let slot = reorder.rows.first(where: { $0.id == next.id })?.slot else {
                 report.stranded = strandedReasons(bars: bars)
                 break
             }
-            let shelf = shelf
-            let marker: () -> ClosedRange<Double>? = {
-                guard let now = shelf.barFrames() else { return nil }
-                return next.marker == .separator ? now.separator : now.alwaysHiddenSeparator
-            }
-            if let reason = await reorder.place(slot, side: next.side, marker: marker) {
+            if let reason = await reorder.place(slot, side: next.side, marker: marker(next.marker)) {
                 report.failure = reason
                 break
             }
@@ -408,8 +513,10 @@ final class MenuBarLayoutService: ObservableObject {
         if let bars {
             let entries = reorder.rows.map { (slot: $0.slot, movable: $0.support.isMovable) }
             pendingCount = MenuBarLayoutPlanner.pending(slots: entries, bars: bars, saved: saved).count
+            driftCount = MenuBarLayoutPlanner.pending(slots: entries.filter { saved[$0.slot.id] != nil }, bars: bars, saved: saved).count
         } else {
             pendingCount = 0
+            driftCount = 0
         }
     }
 }
@@ -426,7 +533,7 @@ final class MenuBarLayoutModule: PortsideModule {
 
     let id = MenuBarLayoutModule.moduleID
     let title = "Menu Bar Layout (experimental)"
-    let summary = "Sorts menu bar items into Visible, Hidden and Always Hidden from Settings, using the Menu Bar Shelf's separators and Menu Bar Reorder's verified Command-drags. Your choice is remembered per item and applied when you press Apply Layout; the pointer moves for a moment. Items that cannot be moved reliably (system items, hidden or notch-clipped items) stay put, with the reason shown. Reset to Native undoes it. Needs Accessibility, the Menu Bar Shelf and Menu Bar Reorder."
+    let summary = "Sorts menu bar items into Visible, Hidden and Always Hidden from Settings, using the Menu Bar Shelf's separators and Menu Bar Reorder's verified Command-drags. Drag an item in Settings and it moves right away; the pointer moves for a moment. Items that cannot be moved reliably (system items, hidden or notch-clipped items) stay put, with the reason shown. Reset to Native undoes it. Needs Accessibility, the Menu Bar Shelf and Menu Bar Reorder."
     let fallback = "Your menu bar stays as it is. The shelf still hides everything left of its separator."
     let dependencies: [ModuleDependency] = [
         .permission(.accessibility), .module(MenuBarShelfModule.moduleID), .module(MenuBarReorderModule.moduleID),

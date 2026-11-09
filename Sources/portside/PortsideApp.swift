@@ -390,6 +390,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     shelf: shelf,
                     environment: LiveMenuBarTriggerEnvironment(busy: { [weak self] in
                         (self?.menuBarLayout?.isBusy ?? false) || (self?.menuBarReorder?.isBusy ?? false)
+                    }, editing: { [weak self] in
+                        self?.menuBarLayout?.isEditing ?? false
                     }),
                     probe: LiveMenuBarEmptyAreaProbe()
                 )

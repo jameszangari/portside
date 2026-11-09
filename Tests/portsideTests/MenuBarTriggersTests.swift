@@ -15,6 +15,8 @@ final class MenuBarTriggersTests: XCTestCase {
         func secureInputActive() -> Bool { secure }
         func accessibilityTrusted() -> Bool { trusted }
         func layoutIsBusy() -> Bool { busy }
+        var editing = false
+        func layoutIsEditing() -> Bool { editing }
     }
 
     final class FakeProbe: MenuBarEmptyAreaProbe {
@@ -253,6 +255,21 @@ final class MenuBarTriggersTests: XCTestCase {
         XCTAssertEqual(rig.shelf.mode, .revealed)
         rig.env.mouseDown = false
         await settle(150)
+        XCTAssertEqual(rig.shelf.mode, .hidden)
+    }
+
+    func testOpenLayoutEditorDefersRehideButNotTheControl() async {
+        var settings = MenuBarTriggerSettings()
+        settings.rehideSeconds = 5
+        let rig = make(settings: settings)
+        rig.service.activate(.control)
+        rig.service.activate(.control)
+        rig.env.editing = true
+        await settle(150)
+        XCTAssertEqual(rig.shelf.mode, .revealed)
+        XCTAssertNil(rig.service.refusal(for: .control), "the control still works while the editor is open")
+        rig.env.editing = false
+        await settle(200)
         XCTAssertEqual(rig.shelf.mode, .hidden)
     }
 

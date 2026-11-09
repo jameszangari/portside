@@ -107,6 +107,8 @@ protocol MenuBarTriggerEnvironment: AnyObject {
     func accessibilityTrusted() -> Bool
     /// Layout or Reorder is moving items with synthetic drags.
     func layoutIsBusy() -> Bool
+    /// The layout editor is open and needs every item on screen.
+    func layoutIsEditing() -> Bool
 }
 
 /// Whether a point is on the empty part of the menu bar: in the bar, not in
@@ -296,6 +298,7 @@ final class MenuBarTriggerService: ObservableObject {
 
     private func deferral() -> String? {
         if environment.layoutIsBusy() { return "a layout change is running." }
+        if environment.layoutIsEditing() { return "the layout editor is open." }
         if environment.mouseButtonDown() { return "a mouse button is down." }
         if environment.menuIsOpen() { return "a menu is open." }
         return nil

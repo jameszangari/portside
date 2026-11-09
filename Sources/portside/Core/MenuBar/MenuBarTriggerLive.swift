@@ -7,9 +7,11 @@ import Carbon.HIToolbox
 @MainActor
 final class LiveMenuBarTriggerEnvironment: MenuBarTriggerEnvironment {
     private let busy: @MainActor () -> Bool
+    private let editing: @MainActor () -> Bool
 
-    init(busy: @escaping @MainActor () -> Bool) {
+    init(busy: @escaping @MainActor () -> Bool, editing: @escaping @MainActor () -> Bool) {
         self.busy = busy
+        self.editing = editing
     }
 
     /// An open menu is a window at the pop-up menu level. Layer and owner are
@@ -24,6 +26,7 @@ final class LiveMenuBarTriggerEnvironment: MenuBarTriggerEnvironment {
     func secureInputActive() -> Bool { IsSecureEventInputEnabled() }
     func accessibilityTrusted() -> Bool { AXIsProcessTrusted() }
     func layoutIsBusy() -> Bool { busy() }
+    func layoutIsEditing() -> Bool { editing() }
 }
 
 /// Finds the empty part of the menu bar from public data: the bar band and

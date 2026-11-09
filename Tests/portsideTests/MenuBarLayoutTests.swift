@@ -78,6 +78,9 @@ final class MenuBarLayoutTests: XCTestCase {
         func setAlwaysHidden(_ on: Bool) { world.setAlwaysHidden(on) }
         func openForLayout() { opened += 1 }
         func closeAfterLayout() { closed += 1 }
+        var mode = MenuBarShelf.Mode.revealed
+        var hides = 0
+        func hide() { hides += 1; mode = .hidden }
     }
 
     private var defaults: UserDefaults!
@@ -151,6 +154,110 @@ final class MenuBarLayoutTests: XCTestCase {
         XCTAssertEqual(world.order, ["A", "B", "|1", "C"])
         XCTAssertEqual(shelf.opened, 2, "one for the refresh listing, one for Apply")
         XCTAssertEqual(shelf.closed, 1)
+    }
+
+    // MARK: Drop
+
+    func testDropMovesRightAwayAndSavesOnlyAfterItLands() async {
+        let world = World(["A", "|1", "B", "C"])
+        let (layout, _, _) = make(world)
+        await layout.beginEditing()
+        let result = await layout.drop(Self.id("C"), into: .hidden)
+        XCTAssertNoThrow(try result.get())
+        XCTAssertEqual(world.order, ["A", "C", "|1", "B"])
+        XCTAssertEqual(layout.rows.first { $0.id == Self.id("C") }?.section, .hidden)
+        XCTAssertEqual(layout.driftCount, 0)
+        XCTAssertEqual(layout.pendingCount, 1, "A was never placed, and the drop did not touch it")
+    }
+
+    func testDropBeforeAnItemReordersAndCanCrossSections() async {
+        let world = World(["A", "|1", "B", "C"])
+        let (layout, _, _) = make(world)
+        await layout.beginEditing()
+        _ = await layout.drop(Self.id("C"), into: .visible, before: Self.id("B"))
+        XCTAssertEqual(world.order, ["A", "|1", "C", "B"])
+        _ = await layout.drop(Self.id("B"), into: .hidden, before: Self.id("A"))
+        XCTAssertEqual(world.order, ["B", "A", "|1", "C"])
+    }
+
+    func testDropThatDoesNotLandIsNotSavedAndStaysWhereItIs() async {
+        let world = World(["A", "|1", "B"])
+        let (layout, _, _) = make(world)
+        await layout.beginEditing()
+        world.set(works: false)
+        let result = await layout.drop(Self.id("B"), into: .hidden)
+        guard case .failure = result else { return XCTFail("expected a failure") }
+        XCTAssertEqual(layout.rows.first { $0.id == Self.id("B") }?.saved, nil)
+        XCTAssertEqual(layout.rows.first { $0.id == Self.id("B") }?.section, .visible)
+        XCTAssertEqual(layout.status, MenuBarReorderService.Message.notApplied)
+        XCTAssertFalse(layout.isBusy)
+    }
+
+    func testDropOnItselfAndIntoItsOwnSectionDoNothing() async {
+        let world = World(["A", "|1", "B"])
+        let (layout, _, _) = make(world)
+        await layout.beginEditing()
+        _ = await layout.drop(Self.id("B"), into: .visible, before: Self.id("B"))
+        _ = await layout.drop(Self.id("B"), into: .visible)
+        XCTAssertEqual(world.dragCount, 0)
+    }
+
+    func testDropIntoAlwaysHiddenTurnsItOn() async {
+        let world = World(["A", "|1", "B"])
+        let (layout, _, _) = make(world)
+        await layout.beginEditing()
+        _ = await layout.drop(Self.id("B"), into: .alwaysHidden)
+        XCTAssertTrue(layout.alwaysHiddenOn)
+        XCTAssertEqual(world.order, ["B", "|2", "A", "|1"])
+    }
+
+    func testSystemItemCannotBeDropped() async {
+        let world = World(["S", "|1", "B"])
+        world.markSystem("S")
+        let (layout, _, _) = make(world)
+        await layout.beginEditing()
+        let row = layout.rows.first { $0.slot.item.ownerName == "S" }!
+        XCTAssertFalse(row.canDrag)
+        _ = await layout.drop(row.id, into: .visible)
+        XCTAssertEqual(world.dragCount, 0)
+        XCTAssertTrue(layout.status?.contains("macOS owns") ?? false)
+    }
+
+    func testPutBackLeavesItemsYouNeverPlacedAlone() async {
+        let world = World(["A", "|1", "B"])
+        let (layout, _, _) = make(world)
+        await layout.beginEditing()
+        _ = await layout.drop(Self.id("B"), into: .hidden)
+        XCTAssertEqual(world.order, ["A", "B", "|1"])
+        layout.assign(Self.id("B"), to: .visible)
+        XCTAssertEqual(layout.driftCount, 1)
+        _ = await layout.apply(onlySaved: true)
+        XCTAssertEqual(world.order, ["A", "|1", "B"], "A stays Hidden: it was never placed")
+    }
+
+    // MARK: Editing session
+
+    func testEditingKeepsItemsShownThenRestoresTheShelf() async {
+        let world = World(["A", "|1", "B"])
+        let (layout, _, shelf) = make(world)
+        shelf.mode = .hidden
+        await layout.beginEditing()
+        XCTAssertTrue(layout.isEditing)
+        _ = await layout.drop(Self.id("B"), into: .hidden)
+        XCTAssertEqual(shelf.closed, 0, "stays open while the editor is up")
+        XCTAssertEqual(shelf.hides, 0)
+        layout.endEditing()
+        XCTAssertFalse(layout.isEditing)
+        XCTAssertEqual(shelf.closed, 1)
+        XCTAssertEqual(shelf.hides, 1, "it was closed when editing began")
+    }
+
+    func testEndEditingDoesNotHideAShelfThatWasOpen() async {
+        let world = World(["A", "|1", "B"])
+        let (layout, _, shelf) = make(world)
+        await layout.beginEditing()
+        layout.endEditing()
+        XCTAssertEqual(shelf.hides, 0)
     }
 
     func testRefreshShowsTheShelfSoEveryItemIsListed() async {

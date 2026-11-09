@@ -183,7 +183,7 @@ Sources/portside/
   AgentNotchPreferences.swift Agent notch settings model, filters and value bounds
   AgentNotchView.swift      Compact header, expandable session dashboard and usage bars
   SettingsPanes.swift       Settings > Command Center, App Switcher and Menu Bar panes (split out of General and Integrations)
-  SettingsPreviews.swift    Reusable Settings preview card (Simulation badge, enlarge popover) and the Dock, App Switcher, Menu Bar sections, Menu Bar reveal and hide, and Command Center illustrations; pure drawings, no system state
+  SettingsPreviews.swift    Reusable Settings preview card (Simulation badge, enlarge popover) and the Dock, App Switcher, Menu Bar sections and reveal and hide, and Command Center illustrations; pure drawings, no system state
   AgentNotchSettingsView.swift Settings > Agent Notch pane, presets and live preview
   IntegrationsSettingsView.swift Module switch rows, permissions list and restricted mode, shown in the tool panes and General (there is no Integrations pane)
   AgentNotchProbe.swift     Debug only: `--check-notch` and `--render-notch-previews`

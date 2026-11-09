@@ -326,6 +326,15 @@ final class MenuBarReorderService: ObservableObject {
         return nil
     }
 
+    /// One verified drag of `id` to just left of another item, for a drop in
+    /// the layout editor. Positions must be fresh. Returns a failure reason.
+    func place(_ id: String, before targetID: String) async -> String? {
+        guard let slot = rows.first(where: { $0.id == id && $0.support.isMovable })?.slot,
+              let target = rows.first(where: { $0.id == targetID })?.slot else { return Message.stale }
+        saveBaselineIfNeeded()
+        return await perform(slot, onto: target, side: .before)
+    }
+
     /// One drag of `slot` onto a side of a fixed marker, a Portside separator
     /// that is not in the Accessibility list (P2-MENU-05). Same checks as a
     /// neighbor move: the item and the marker must still sit where they were

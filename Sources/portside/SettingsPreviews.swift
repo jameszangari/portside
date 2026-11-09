@@ -407,23 +407,6 @@ struct MenuBarSectionsPreview: View {
     }
 }
 
-struct MenuBarSectionsPreviewCard: View {
-    let alwaysHiddenOn: Bool
-    @State private var revealed = false
-
-    var body: some View {
-        SettingsPreviewCard(
-            title: "Menu bar sections",
-            summary: alwaysHiddenOn
-                ? "Menu bar items sort into Visible, Hidden and Always Hidden, left of the separators."
-                : "Menu bar items sort into Visible and Hidden, left of the separator.",
-            actions: AnyView(PreviewButton(title: revealed ? "Close shelf" : "Open shelf") { revealed.toggle() })
-        ) {
-            MenuBarSectionsPreview(alwaysHiddenOn: alwaysHiddenOn, revealed: revealed)
-        }
-    }
-}
-
 /// The shelf with the chosen ways to open it listed under the bar, and when it
 /// closes again. Chips only; the pointer triggers show only when available.
 struct MenuBarTriggersPreview: View {
