@@ -1,76 +1,23 @@
 import AppKit
 import SwiftUI
 
-/// Settings > Integrations: modules, the permissions they use, and the
-/// restricted work-Mac preset. Live state is re-read when the pane appears
+/// Module switches and permissions, shown where each feature lives instead of
+/// on one pane: a tool's pane lists its own modules, General lists the
+/// permissions and Restricted mode. Live state is re-read when a pane appears
 /// and when Portside becomes active again (back from System Settings);
 /// nothing polls and nothing is requested without a button press.
-struct IntegrationsSettingsView: View {
+struct IntegrationsLiveModifier: ViewModifier {
     @ObservedObject var integrations: IntegrationSettings
     @ObservedObject private var accessibility = AccessibilityTrust.shared
 
-    var body: some View {
-        Form {
-            Section {
-                Toggle(isOn: Binding(
-                    get: { integrations.restricted },
-                    set: { integrations.setRestricted($0) }
-                )) {
-                    Text("Restricted mode for work Macs")
-                    Text("Turns off, and keeps off, optional modules that run scripts, capture the screen, install hooks, use external runtimes, index files or intercept keys. The dock, launching apps and Settings keep working. Turning it off turns nothing back on.")
-                        .helperStyle()
-                }
-            } header: {
-                Text("Work Mac")
-            } footer: {
-                Text("Portside never changes macOS security, privacy or managed settings, and never grants or resets Full Disk Access. Existing features (AI Usage, Agent Notch hooks, Weather) keep their own switches in their panes.")
-                    .footerStyle()
+    func body(content: Content) -> some View {
+        content
+            .onAppear { reloadAll() }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                reloadAll()
             }
-
-            Section {
-                ForEach(integrations.modules) { row in
-                    ModuleSettingsRow(row: row) { integrations.setEnabled($0, for: row.id) }
-                }
-            } header: {
-                Text("Modules")
-            } footer: {
-                if !integrations.modules.contains(where: { !$0.isRequired }) {
-                    Text("No optional modules are in this build yet.")
-                        .footerStyle()
-                }
-            }
-
-            if let router = integrations.intelligence {
-                IntelligenceSettingsSection(router: router)
-            }
-
-            if let reorder = integrations.menuReorder {
-                MenuBarReorderSection(service: reorder)
-            }
-
-            if let layout = integrations.menuLayout {
-                MenuBarLayoutSection(service: layout)
-            }
-
-            Section("Permissions") {
-                PermissionSetupRow(
-                    next: integrations.missingPermissions.first,
-                    missing: integrations.missingPermissions.count,
-                    total: integrations.permissions.count,
-                    request: { integrations.request($0) }
-                )
-                ForEach(integrations.permissions) { row in
-                    PermissionSettingsRow(row: row, request: { integrations.request(row.scope) })
-                }
-                fullDiskAccessRow
-            }
-        }
-        .onAppear { reloadAll() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            reloadAll()
-        }
-        // The OS posts an Accessibility change; AccessibilityTrust relays it.
-        .onChange(of: accessibility.isTrusted) { integrations.reload() }
+            // The OS posts an Accessibility change; AccessibilityTrust relays it.
+            .onChange(of: accessibility.isTrusted) { integrations.reload() }
     }
 
     /// Module rows, permissions, and the local model's availability (read
@@ -81,14 +28,112 @@ struct IntegrationsSettingsView: View {
             Task { await router.refreshAvailability() }
         }
     }
+}
+
+extension View {
+    func keepsIntegrationsCurrent(_ integrations: IntegrationSettings) -> some View {
+        modifier(IntegrationsLiveModifier(integrations: integrations))
+    }
+}
+
+/// The switches for a set of modules, each with its state, the permissions it
+/// needs and what happens without them.
+struct ModuleRowsSection: View {
+    @ObservedObject var integrations: IntegrationSettings
+    let ids: [ModuleID]
+    var title: String?
+    var footer: String?
+
+    private var rows: [IntegrationSettings.ModuleRow] {
+        integrations.modules.filter { ids.contains($0.id) }
+    }
+
+    var body: some View {
+        if !rows.isEmpty {
+            Section {
+                ForEach(rows) { row in
+                    ModuleSettingsRow(row: row) { integrations.setEnabled($0, for: row.id) }
+                }
+            } header: {
+                if let title { Text(title) }
+            } footer: {
+                if let footer { Text(footer).footerStyle() }
+            }
+        }
+    }
+}
+
+/// Optional modules no pane claims, so a new module is never unreachable.
+struct OtherModulesSection: View {
+    @ObservedObject var integrations: IntegrationSettings
+
+    static let claimed: Set<ModuleID> = [
+        CommandCenterModule.moduleID, FilesModule.moduleID, ClipboardModule.moduleID,
+        ShortcutsModule.moduleID, MenuBarModule.moduleID, LocalServersModule.moduleID,
+        IntelligenceModule.moduleID, SwitcherModule.moduleID,
+        MenuBarShelfModule.moduleID, MenuBarLayoutModule.moduleID, MenuBarReorderModule.moduleID,
+    ]
+
+    var body: some View {
+        ModuleRowsSection(
+            integrations: integrations,
+            ids: integrations.modules.filter { !$0.isRequired && !Self.claimed.contains($0.id) }.map(\.id),
+            title: "Other modules"
+        )
+    }
+}
+
+/// General > Work Mac: the restricted-mode switch.
+struct WorkMacSection: View {
+    @ObservedObject var integrations: IntegrationSettings
+
+    var body: some View {
+        Section {
+            Toggle(isOn: Binding(
+                get: { integrations.restricted },
+                set: { integrations.setRestricted($0) }
+            )) {
+                Text("Restricted mode for work Macs")
+                Text("Turns off, and keeps off, optional modules that run scripts, capture the screen, install hooks, use external runtimes, index files or intercept keys. The dock, launching apps and Settings keep working. Turning it off turns nothing back on.")
+                    .helperStyle()
+            }
+        } header: {
+            Text("Work Mac")
+        } footer: {
+            Text("Portside never changes macOS security, privacy or managed settings, and never grants or resets Full Disk Access. Existing features (AI Usage, Agent Notch hooks, Weather) keep their own switches in their panes.")
+                .footerStyle()
+        }
+    }
+}
+
+/// General > Permissions: every permission Portside can use, live, with one
+/// button to set up the next missing one.
+struct PermissionsSection: View {
+    @ObservedObject var integrations: IntegrationSettings
+
+    var body: some View {
+        Section("Permissions") {
+            PermissionSetupRow(
+                next: integrations.missingPermissions.first,
+                missing: integrations.missingPermissions.count,
+                total: integrations.permissions.count,
+                request: { integrations.request($0) }
+            )
+            ForEach(integrations.permissions) { row in
+                PermissionSettingsRow(row: row, request: { integrations.request(row.scope) })
+            }
+            fullDiskAccessRow
+        }
+    }
 
     /// Not a gate scope: nothing in Portside requires it, so there is no
-    /// status to read and no request button.
+    /// status to read. The button only opens System Settings.
     private var fullDiskAccessRow: some View {
         VStack(alignment: .leading, spacing: 3) {
             LabeledContent("Full Disk Access", value: "Not required")
-            Text("Optional. It helps with protected files such as the Trash. Only you can turn it on, in System Settings (General > Permissions opens it). Portside never asks for it, grants it or resets it.")
+            Text("Optional. It helps with protected files such as the Trash. Only you can turn it on, in System Settings. Portside never asks for it, grants it or resets it, and it does not override Gatekeeper or your employer's security policy.")
                 .helperStyle()
+            Button("Open Full Disk Access") { TrashController.openFullDiskAccessSettings() }
         }
         .accessibilityElement(children: .combine)
     }
@@ -96,7 +141,7 @@ struct IntegrationsSettingsView: View {
 
 /// Local Intelligence: the provider and its live availability. The switch
 /// is the module row above; this section only reports and rechecks.
-private struct IntelligenceSettingsSection: View {
+struct IntelligenceSettingsSection: View {
     @ObservedObject var router: ModelRouter
 
     var body: some View {
@@ -134,7 +179,7 @@ private struct IntelligenceSettingsSection: View {
 /// Menu Bar Reorder: each listed item with Move Left / Move Right where it
 /// is supported and the reason where it is not, plus Restore. Nothing runs
 /// until a button is pressed; the list loads when the module is on.
-private struct MenuBarReorderSection: View {
+struct MenuBarReorderSection: View {
     @ObservedObject var service: MenuBarReorderService
 
     var body: some View {
@@ -185,12 +230,13 @@ private struct MenuBarReorderSection: View {
 /// Each row has a Move to menu (works with the keyboard and VoiceOver) and can
 /// also be dragged onto another section. Choosing only saves; Apply Layout
 /// does the Command-drags. Nothing runs until a button is pressed.
-private struct MenuBarLayoutSection: View {
+struct MenuBarLayoutSection: View {
     @ObservedObject var service: MenuBarLayoutService
 
     var body: some View {
         if service.isActive {
             Section {
+                MenuBarSectionsPreviewCard(alwaysHiddenOn: service.alwaysHiddenOn)
                 Toggle("Always Hidden section (this session only)", isOn: Binding(get: { service.alwaysHiddenOn }, set: { service.setAlwaysHidden($0) }))
                     .disabled(service.isBusy)
                     .accessibilityHint("Adds a second separator that hides its left side until you turn this off. Starts off every launch.")
@@ -288,7 +334,7 @@ private struct LayoutRow: View {
 
 /// One module: switch (or "Always on"), status, what it needs and what
 /// still works while it is off.
-private struct ModuleSettingsRow: View {
+struct ModuleSettingsRow: View {
     let row: IntegrationSettings.ModuleRow
     let setEnabled: (Bool) -> Void
 

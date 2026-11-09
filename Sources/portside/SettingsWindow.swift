@@ -295,7 +295,9 @@ extension Text {
 /// A Settings pane. The raw value is the stable ID Command Center and
 /// `portside.openSettingsPane` use.
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case dock, appearance, widgets, groups, notch, integrations, general
+    case dock, appearance, widgets, groups
+    case commandCenter, switcher, menuBar, notch
+    case general
 
     var id: String { rawValue }
 
@@ -305,8 +307,10 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .appearance: "Appearance"
         case .widgets: "Widgets"
         case .groups: "Groups"
+        case .commandCenter: "Command Center"
+        case .switcher: "App Switcher"
+        case .menuBar: "Menu Bar"
         case .notch: "Agent Notch"
-        case .integrations: "Integrations"
         case .general: "General"
         }
     }
@@ -317,11 +321,20 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .appearance: "paintbrush"
         case .widgets: "square.grid.2x2"
         case .groups: "folder"
+        case .commandCenter: "magnifyingglass"
+        case .switcher: "rectangle.on.rectangle"
+        case .menuBar: "menubar.rectangle"
         case .notch: "macbook.gen2"
-        case .integrations: "puzzlepiece.extension"
         case .general: "gearshape"
         }
     }
+
+    /// Sidebar sections, top to bottom.
+    static let sidebarGroups: [(title: String, tabs: [SettingsTab])] = [
+        ("Desktop", [.dock, .appearance, .widgets, .groups]),
+        ("Tools", [.commandCenter, .switcher, .menuBar, .notch]),
+        ("Portside", [.general]),
+    ]
 }
 
 /// The selected Settings pane, owned by the window controller so a command
@@ -369,9 +382,11 @@ struct SettingsView: View {
                 case .appearance: AppearanceSettings(dockModel: dockModel, layout: layout, badges: badges)
                 case .widgets: WidgetSettings(dockModel: dockModel, widgets: widgets)
                 case .groups: GroupSettings(dockModel: dockModel)
+                case .commandCenter: CommandCenterSettings(dockModel: dockModel, integrations: integrations)
+                case .switcher: AppSwitcherSettings(dockModel: dockModel, integrations: integrations)
+                case .menuBar: MenuBarSettings(integrations: integrations)
                 case .notch: AgentNotchSettingsView(model: dockModel)
-                case .integrations: IntegrationsSettingsView(integrations: integrations)
-                case .general: GeneralSettings(dockModel: dockModel, layout: layout, nativeDock: nativeDock, launchAtLogin: launchAtLogin)
+                case .general: GeneralSettings(dockModel: dockModel, layout: layout, nativeDock: nativeDock, launchAtLogin: launchAtLogin, integrations: integrations)
                 }
             }
             .formStyle(.grouped)
@@ -400,12 +415,16 @@ private struct SettingsSidebar: View {
 
     var body: some View {
         List(selection: Binding(get: { selection }, set: { if let tab = $0 { selection = tab } })) {
-            ForEach(SettingsTab.allCases) { tab in
-                Label(tab.title, systemImage: tab.symbol)
-                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minX } action: { x in
-                        if tab == SettingsTab.allCases.first { firstRowLeading = x }
+            ForEach(SettingsTab.sidebarGroups, id: \.title) { group in
+                Section(group.title) {
+                    ForEach(group.tabs) { tab in
+                        Label(tab.title, systemImage: tab.symbol)
+                            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minX } action: { x in
+                                if tab == SettingsTab.allCases.first { firstRowLeading = x }
+                            }
+                            .tag(tab)
                     }
-                    .tag(tab)
+                }
             }
         }
         .listStyle(.sidebar)
@@ -680,6 +699,13 @@ private struct DockSettings: View {
                 }
                 .pickerStyle(.segmented)
 
+                DockPlacementPreviewCard(
+                    edge: dockModel.edge,
+                    autoHide: dockModel.autoHide,
+                    reserveSpace: dockModel.reserveSpace,
+                    showTrash: dockModel.showTrash
+                )
+
                 Toggle("Show Trash in dock", isOn: Binding(
                     get: { dockModel.showTrash },
                     set: { dockModel.setShowTrash($0) }
@@ -916,40 +942,12 @@ private struct GeneralSettings: View {
     @ObservedObject var layout: DockLayout
     let nativeDock: NativeDockController
     @ObservedObject var launchAtLogin: LaunchAtLogin
+    @ObservedObject var integrations: IntegrationSettings
 
     @State private var importRequest: ImportRequest?
     @State private var canUndoImport = DockModel.hasBeforeImport
     @State private var importStatus: String?
     @State private var otherCopies: [InstalledCopy] = []
-    @ObservedObject private var commandCenterStatus = CommandCenterStatus.shared
-    @ObservedObject private var switcherStatus = SwitcherStatus.shared
-
-    /// Why the Command Center shortcut may not fire: a Portside or enabled
-    /// macOS shortcut on the same keys, or macOS refusing the registration.
-    /// Read only; nothing here changes another shortcut.
-    private var commandCenterWarning: String? {
-        guard let chord = dockModel.commandCenterHotkey else { return nil }
-        let portside: [(name: String, chord: HotkeyChord?)] = [
-            ("Open Settings", dockModel.settingsHotkey),
-            ("dock hiding", .dockHiding),
-            ("App Switcher", switcherStatus.isEnabled ? dockModel.switcherHotkey : nil),
-        ]
-        return HotkeyConflicts.conflict(for: chord, system: HotkeyConflicts.systemHotkeys(), portside: portside)
-            ?? (commandCenterStatus.isEnabled ? commandCenterStatus.hotkeyFailure : nil)
-    }
-
-    /// Same read-only checks for the app switcher's shortcut.
-    private var switcherWarning: String? {
-        guard let chord = dockModel.switcherHotkey else { return nil }
-        let portside: [(name: String, chord: HotkeyChord?)] = [
-            ("Open Settings", dockModel.settingsHotkey),
-            ("dock hiding", .dockHiding),
-            ("Command Center", commandCenterStatus.isEnabled ? dockModel.commandCenterHotkey : nil),
-        ]
-        return SwitcherShortcut.refusal(for: chord)
-            ?? HotkeyConflicts.conflict(for: chord, system: HotkeyConflicts.systemHotkeys(), portside: portside)
-            ?? (switcherStatus.isEnabled ? switcherStatus.hotkeyFailure : nil)
-    }
 
     /// Import clamps the native icon size to what fits, like the slider.
     private var maxIconSize: CGFloat {
@@ -973,68 +971,12 @@ private struct GeneralSettings: View {
                     defaultChord: .settingsDefault,
                     onChange: { dockModel.setSettingsHotkey($0) }
                 )
-                HotkeyRecorderButton(
-                    title: "Command Center",
-                    chord: dockModel.commandCenterHotkey,
-                    defaultChord: .commandCenterDefault,
-                    onChange: { dockModel.setCommandCenterHotkey($0) }
-                )
-                if !commandCenterStatus.isEnabled {
-                    Text("Command Center is off. Turn it on in Integrations.").helperStyle()
-                } else if let warning = commandCenterWarning {
-                    Label {
-                        Text(warning).helperStyle()
-                    } icon: {
-                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    }
-                }
-                HotkeyRecorderButton(
-                    title: "App Switcher",
-                    chord: dockModel.switcherHotkey,
-                    defaultChord: SwitcherShortcut.defaultChord,
-                    refusal: SwitcherShortcut.refusal,
-                    onChange: { dockModel.setSwitcherHotkey($0) }
-                )
-                if !switcherStatus.isEnabled {
-                    Text("App Switcher is off. Turn it on in Integrations.").helperStyle()
-                } else if let warning = switcherWarning {
-                    Label {
-                        Text(warning).helperStyle()
-                    } icon: {
-                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    }
-                }
-                Picker("App Switcher shows", selection: Binding(
-                    get: { dockModel.switcherMode },
-                    set: { dockModel.setSwitcherMode($0) }
-                )) {
-                    Text("Apps").tag(SwitcherMode.apps)
-                    Text("Windows").tag(SwitcherMode.windows)
-                }
-                Toggle(isOn: Binding(
-                    get: { dockModel.switcherTitleSearch },
-                    set: { dockModel.setSwitcherTitleSearch($0) }
-                )) {
-                    Text("Search window titles with /")
-                    Text("While the switcher is open, / starts a search that stays open after you let go. Type to filter, Return switches, Esc cancels.").helperStyle()
-                }
-                Toggle(isOn: Binding(
-                    get: { dockModel.switcherPreviews },
-                    set: { dockModel.setSwitcherPreviews($0) }
-                )) {
-                    Text("Show window previews")
-                    Text("Window rows show a picture of the window instead of the app icon. Needs Screen Recording, which you allow in Integrations. Portside takes one still picture of each visible row while the switcher is open, never video, and keeps nothing after it closes. Minimized windows, windows on other Spaces and anything macOS withholds keep the icon.").helperStyle()
-                }
             } header: {
                 Text("Keyboard")
             } footer: {
-                Text("Open Settings works from any app. Default ⌘⇧D. The menu bar Settings… item always uses ⌘,. Command Center searches apps, Portside's commands, Settings panes and quicklinks. Default ⌥Space; while it is on it is also in the menu bar menu. App Switcher lists running apps, most recently used first, or each window when it shows Windows. Default ⌥Tab: tap it for the previous app (or window), or hold ⌥ and press Tab (Shift-Tab or the arrow keys to go back), then let go. With apps, ↓ chooses one of the selected app's windows. Esc cancels. Windows and their titles need Accessibility; without it the switcher shows apps. Windows on other Spaces may not be listed, and choosing a full screen window goes to its Space. ⌘Tab stays macOS's.")
+                Text("Open Settings works from any app. Default ⌘⇧D. The menu bar Settings… item always uses ⌘,. Command Center and App Switcher shortcuts are in their own panes.")
                     .footerStyle()
             }
-
-            CommandCenterSettingsSection(dockModel: dockModel, history: CommandCenterHistory.shared, snippets: SnippetStore.shared, files: FileIndexService.shared)
-
-            ClipboardSettingsSection(service: ClipboardService.shared)
 
             Section("Automatic updates") {
                 Toggle("Check for updates automatically", isOn: Binding(
@@ -1044,10 +986,11 @@ private struct GeneralSettings: View {
                 Text("Checks at launch and every 24 hours. Portside notifies you when an update is available; choose Install and Relaunch to apply it.").helperStyle()
             }
 
-            Section("Permissions") {
-                Button("Open Full Disk Access") { TrashController.openFullDiskAccessSettings() }
-                Text("Enable Portside in System Settings, then restart it. macOS requires you to grant this permission yourself. It helps with protected files such as Trash; it does not override Gatekeeper or your employer's security policy.").helperStyle()
-            }
+            PermissionsSection(integrations: integrations)
+
+            WorkMacSection(integrations: integrations)
+
+            OtherModulesSection(integrations: integrations)
 
             UpdatesAuthSection(otherCopies: $otherCopies)
 
@@ -1096,6 +1039,7 @@ private struct GeneralSettings: View {
             canUndoImport = DockModel.hasBeforeImport
             otherCopies = UpdatesAuthSection.currentCopies()
         }
+        .keepsIntegrationsCurrent(integrations)
     }
 
     private func runImport(_ snapshot: NativeDockSnapshot, replace: Bool, applyLook: Bool) {

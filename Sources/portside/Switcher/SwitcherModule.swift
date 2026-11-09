@@ -2,7 +2,7 @@ import Combine
 import Foundation
 
 /// The optional `switcher` module. Off by default like every optional
-/// module: until it is turned on in Settings > Integrations no shortcut is
+/// module: until it is turned on in Settings > App Switcher no shortcut is
 /// registered and the window registry has no switcher client. Running, it
 /// keeps the shortcut in step with `switcherHotkey`.
 @MainActor

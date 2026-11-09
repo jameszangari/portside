@@ -166,7 +166,7 @@ Sources/portside/
   NativeDockMenu.swift      Window list, recents and app actions read from the native Dock's tile menu over Accessibility
   NativeDockImport.swift    Reads the native Dock (apps, position, size) and the import sheet
   LaunchAtLogin.swift       "Open Portside at login" via SMAppService.mainApp
-  SettingsWindow.swift      Settings window: sidebar and panes (Dock, Appearance, Widgets, Groups, General)
+  SettingsWindow.swift      Settings window: sidebar and panes (grouped Desktop: Dock, Appearance, Widgets, Groups; Tools: Command Center, App Switcher, Menu Bar, Agent Notch; Portside: General)
   DockAppearance.swift      Icon style and dock background options, background modifier, icon style observer
   SeeThroughGlass.swift     Guarded private glass variant, the see-through lens in Liquid Glass
   NativeDockGlass.swift     Guarded rebuild of the native Dock glass, measured against the real Dock
@@ -179,8 +179,10 @@ Sources/portside/
   AgentNotch.swift          Non-activating notch panel lifecycle, multi-display surfaces and layout
   AgentNotchPreferences.swift Agent notch settings model, filters and value bounds
   AgentNotchView.swift      Compact header, expandable session dashboard and usage bars
+  SettingsPanes.swift       Settings > Command Center, App Switcher and Menu Bar panes (split out of General and Integrations)
+  SettingsPreviews.swift    Reusable Settings preview card (Simulation badge, enlarge popover) and the Dock, App Switcher, Menu Bar sections and Command Center illustrations; pure drawings, no system state
   AgentNotchSettingsView.swift Settings > Agent Notch pane, presets and live preview
-  IntegrationsSettingsView.swift Settings > Integrations pane: modules, permissions with reasons and fallbacks, restricted mode
+  IntegrationsSettingsView.swift Module switch rows, permissions list and restricted mode, shown in the tool panes and General (there is no Integrations pane)
   AgentNotchProbe.swift     Debug only: `--check-notch` and `--render-notch-previews`
   WindowRegistryProbe.swift Debug only: `--check-windows`, runs the live registry for up to 3s and prints counts (no names or titles)
   UpdateMonitor.swift       Optional daily release discovery, system notifications and menu bar update offer

@@ -144,6 +144,13 @@ Status of the milestones in `docs/PLAN.md`, what still needs a hand check, and t
 - [x] **F:** Hide the macOS Dock (autohide-delay only, exact save and restore), Open at Login (`SMAppService`), `.app` bundle, notification badges, Developer ID signing and notarization, DMG release, in-place Check for Updates
 - [x] **P1-P3 parity:** context menus, Trash, folder stacks (grid, fan, list), spacers, spring-load, magnification, multi-display, fullscreen and Spaces, windows fit clear of the dock, activity icons
 
+## Settings visual previews (2026-11-08)
+
+- [x] `SettingsPreviews.swift`: reusable `SettingsPreviewCard` (Simulation badge, enlarge popover, VoiceOver summary) and drawings for Dock placement/auto-hide/keep-clear (Dock pane), App Switcher mode, Tab and window previews (General > Keyboard), Menu Bar Visible/Hidden/Always Hidden with an open-shelf button (Integrations > Menu Bar Layout), and Command Center launcher (General > Keyboard). Pure drawings of the current setting; nothing autoplays, buttons drive movement, Reduce Motion drops animation, Reduce Transparency flattens the backdrop. `swift build` passes.
+- [x] Sidebar regrouped into Desktop, Tools and Portside sections. New panes Command Center, App Switcher and Menu Bar (`SettingsPanes.swift`) took the shortcuts, switcher options, quicklinks/files/clipboard and menu bar reorder/layout out of General and Integrations. Pane IDs `commandCenter`, `switcher`, `menuBar` are new; existing IDs are unchanged. 675 tests pass.
+- [x] Integrations pane removed (`SettingsTab.integrations` is gone, so `portside.openSettingsPane` with `integrations` now fails like any unknown pane). Module switches sit in their tool pane: Command Center (Command Center, Files, Clipboard, Shortcuts, Menu Bar Items, Local Servers, Local Intelligence), App Switcher, Menu Bar (Shelf, Layout, Reorder). General holds Permissions, Work Mac (Restricted mode) and Other modules (any module no pane claims). Older checklist lines that say Settings > Integrations describe where it was.
+- [ ] Not done: previews for Appearance (the live dock is already the preview) and Agent Notch (already has `AgentNotchSettingsPreview`). The Menu Bar Layout preview shows only while that module is active. No hand check of light/dark, Reduce Motion or window size yet.
+
 ## Needs a hand check
 
 These were built and tested with synthetic input; a person should confirm them on a real machine:
