@@ -44,6 +44,10 @@ struct IntegrationsSettingsView: View {
                 IntelligenceSettingsSection(router: router)
             }
 
+            if let reorder = integrations.menuReorder {
+                MenuBarReorderSection(service: reorder)
+            }
+
             Section("Permissions") {
                 PermissionSetupRow(
                     next: integrations.missingPermissions.first,
@@ -119,6 +123,56 @@ private struct IntelligenceSettingsSection: View {
         switch router.state {
         case .disabled, .checking, .busy: return false
         default: return true
+        }
+    }
+}
+
+/// Menu Bar Reorder: each listed item with Move Left / Move Right where it
+/// is supported and the reason where it is not, plus Restore. Nothing runs
+/// until a button is pressed; the list loads when the module is on.
+private struct MenuBarReorderSection: View {
+    @ObservedObject var service: MenuBarReorderService
+
+    var body: some View {
+        if service.isActive {
+            Section {
+                if service.accessDenied {
+                    Text("Accessibility permission is denied or was revoked.").helperStyle()
+                } else if service.rows.isEmpty {
+                    Text("No menu bar items listed yet. Choose Refresh.").helperStyle()
+                }
+                ForEach(service.rows) { row in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Text(row.slot.item.displayTitle)
+                            Spacer()
+                            Button { Task { await service.move(row.id, .left) } } label: { Image(systemName: "arrow.left") }
+                                .disabled(service.isBusy || !service.canMove(row.id, .left) || !row.support.isMovable)
+                                .accessibilityLabel("Move \(row.slot.item.displayTitle) left")
+                            Button { Task { await service.move(row.id, .right) } } label: { Image(systemName: "arrow.right") }
+                                .disabled(service.isBusy || !service.canMove(row.id, .right) || !row.support.isMovable)
+                                .accessibilityLabel("Move \(row.slot.item.displayTitle) right")
+                        }
+                        if case .unsupported(let reason) = row.support { Text(reason).helperStyle() }
+                    }
+                    .accessibilityElement(children: .contain)
+                }
+                HStack {
+                    Button("Refresh") { Task { await service.refresh() } }.disabled(service.isBusy)
+                    Button("Restore Original Order") { Task { await service.restore() } }
+                        .disabled(service.isBusy || !service.hasBaseline)
+                        .accessibilityHint("Drags items back to the order they had before your first move.")
+                    if service.hasBaseline {
+                        Button("Forget Saved Order") { service.discardBaseline() }.disabled(service.isBusy)
+                    }
+                }
+                if let status = service.status { Text(status).helperStyle() }
+            } header: {
+                Text("Menu Bar Reorder")
+            } footer: {
+                Text("Moves are real Command-drags, one at a time, and each is checked afterwards. \(service.successes) of \(service.attempts) moves landed this session. Left is the left side of the menu bar.")
+                    .footerStyle()
+            }
         }
     }
 }

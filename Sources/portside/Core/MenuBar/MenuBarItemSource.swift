@@ -132,7 +132,7 @@ struct AXMenuBarItemSource: MenuBarItemSource {
 
     /// The item's center, only if the element at that point is this item.
     /// Frames alone are not enough: covered and hidden items still report one.
-    private static func hitTestedCenter(of element: AXUIElement) -> CGPoint? {
+    static func hitTestedCenter(of element: AXUIElement) -> CGPoint? {
         var position = CGPoint.zero, size = CGSize.zero
         var positionValue: CFTypeRef?, sizeValue: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue) == .success,
@@ -171,13 +171,13 @@ struct AXMenuBarItemSource: MenuBarItemSource {
         case found([MenuBarItem], unsupported: Int)
     }
 
-    private enum Elements {
+    enum Elements {
         case none, unresponsive
         case found([AXUIElement])
     }
 
     /// The owner's menu extra elements: none, unresponsive, or the list.
-    private static func elements(pid: pid_t) -> Elements {
+    static func elements(pid: pid_t) -> Elements {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, axTimeout)
         var bar: CFTypeRef?
@@ -212,7 +212,7 @@ struct AXMenuBarItemSource: MenuBarItemSource {
         }
     }
 
-    private static func read(_ element: AXUIElement, pid: pid_t, bundleID: String?, name: String, ordinal: Int) -> MenuBarItem? {
+    static func read(_ element: AXUIElement, pid: pid_t, bundleID: String?, name: String, ordinal: Int) -> MenuBarItem? {
         AXUIElementSetMessagingTimeout(element, axTimeout)
         guard string(element, kAXSubroleAttribute) == "AXMenuExtra" else { return nil }
         var names: CFArray?

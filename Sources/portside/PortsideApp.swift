@@ -283,6 +283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let localServers = LocalServerStore()
     private let shortcutsService = ShortcutsService()
     private let menuBarService = MenuBarItemsService()
+    private var menuBarReorder: MenuBarReorderService?
     private var menuBarShelf: MenuBarShelf?
     private let intelligence = ModelRouter(provider: FakeLocalModelProvider.fromEnvironment() ?? AppleOnDeviceModelProvider())
 
@@ -383,6 +384,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try modules.register(ShortcutsModule(service: shortcutsService))
                 try modules.register(MenuBarModule(service: menuBarService))
                 try modules.register(MenuBarShelfModule(shelf: makeMenuBarShelf()))
+                let reorder = MenuBarReorderService()
+                menuBarReorder = reorder
+                try modules.register(MenuBarReorderModule(service: reorder))
                 try modules.register(ClipboardModule(service: ClipboardService.shared))
                 try modules.register(FilesModule(index: FileIndexService.shared, actions: .live))
                 modules.enableSaved(dockModel.modules, restricted: dockModel.restrictedMode)
@@ -466,7 +470,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             SettingsWindowController(
                 dockModel: dockModel, layout: dockEngine.layout, nativeDock: nativeDock, trash: dockEngine.trash,
                 badges: dockEngine.badges, widgets: dockEngine.widgets,
-                integrations: IntegrationSettings(registry: modules, permissions: permissions, model: dockModel, intelligence: intelligence)
+                integrations: IntegrationSettings(registry: modules, permissions: permissions, model: dockModel, intelligence: intelligence, menuReorder: menuBarReorder)
             )
         }
         controller.onActivationPolicyChanged = { [weak dockEngine] in dockEngine?.activationPolicyChanged() }

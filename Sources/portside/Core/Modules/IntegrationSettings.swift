@@ -44,16 +44,19 @@ final class IntegrationSettings: ObservableObject {
 
     /// Local Intelligence status for its section; nil hides the section.
     let intelligence: ModelRouter?
+    /// Menu bar reorder state for its section; nil hides the section.
+    let menuReorder: MenuBarReorderService?
 
     private let registry: ModuleRegistry
     private let gate: PermissionGate
     private let model: DockModel
 
-    init(registry: ModuleRegistry, permissions: PermissionGate, model: DockModel, intelligence: ModelRouter? = nil) {
+    init(registry: ModuleRegistry, permissions: PermissionGate, model: DockModel, intelligence: ModelRouter? = nil, menuReorder: MenuBarReorderService? = nil) {
         self.registry = registry
         self.gate = permissions
         self.model = model
         self.intelligence = intelligence
+        self.menuReorder = menuReorder
         reload()
     }
 
