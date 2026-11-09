@@ -43,6 +43,20 @@ open build/Portside.app
 
 Ad hoc builds make macOS ask for permissions again whenever the binary changes. `swift build` and `swift run portside` need no signing at all. The release scripts below are for the maintainer.
 
+## Permissions while developing
+
+macOS allows no app or script to grant privacy permissions. Grant them once, and keep them, by testing one signed copy:
+
+```
+scripts/setup-signing.sh            # once
+scripts/build-app.sh --install      # ~/Applications/Portside.app, same signature every build
+scripts/dev-permissions.sh          # status, then each privacy pane in turn
+scripts/dev-permissions.sh --status # status only
+scripts/dev-permissions.sh --reset  # clears Portside's own grants after a y/N; never Full Disk Access
+```
+
+macOS keeps one grant per bundle ID and ties it to the signature, so switching between a Developer ID copy in `/Applications` and a locally signed one leaves the grant stale. The switch can look on while Portside is not trusted; `--reset` clears that. A bare `swift run` or `.build` executable is judged as the terminal that launched it, so grant the terminal for those runs. Inside the app, Settings > Integrations > Permissions has a Set Up Permissions row that asks for the next missing one.
+
 ## Build the app
 
 ```

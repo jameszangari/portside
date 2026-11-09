@@ -45,6 +45,12 @@ struct IntegrationsSettingsView: View {
             }
 
             Section("Permissions") {
+                PermissionSetupRow(
+                    next: integrations.missingPermissions.first,
+                    missing: integrations.missingPermissions.count,
+                    total: integrations.permissions.count,
+                    request: { integrations.request($0) }
+                )
                 ForEach(integrations.permissions) { row in
                     PermissionSettingsRow(row: row, request: { integrations.request(row.scope) })
                 }
@@ -184,6 +190,33 @@ private struct ModuleSettingsRow: View {
     }
 }
 
+/// Asks for the next missing permission, one at a time. macOS lets only you
+/// turn these on, so this cannot grant anything. Coming back from System
+/// Settings reloads the pane, which moves it to the next one; nothing polls.
+private struct PermissionSetupRow: View {
+    let next: IntegrationSettings.PermissionRow?
+    let missing: Int
+    let total: Int
+    let request: (PermissionScope) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            LabeledContent("Set Up Permissions", value: "\(total - missing) of \(total) allowed")
+            if let next {
+                Text("macOS lets only you turn these on. Portside asks for one at a time. If one still says Not allowed after you turn it on, quit and reopen Portside.")
+                    .helperStyle()
+                HStack {
+                    Button("Allow \(next.scope.description)…") { request(next.scope) }
+                        .accessibilityHint("Asks macOS for \(next.scope.description). \(missing) still to allow.")
+                    if next.scope.hasPrivacyPane {
+                        Button("Open Settings") { next.scope.openPrivacyPane() }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// One permission scope: live status, what it is for, what still works
 /// without it, and explicit actions.
 private struct PermissionSettingsRow: View {
@@ -213,8 +246,8 @@ private struct PermissionSettingsRow: View {
                         Button("Request Access…", action: request)
                             .accessibilityHint("Asks macOS for \(row.scope.description). Nothing changes until you allow it.")
                     }
-                    if row.scope == .accessibility {
-                        Button("Open Accessibility Settings") { AccessibilityTrust.shared.openSettings() }
+                    if row.scope.hasPrivacyPane {
+                        Button("Open \(row.scope.description) Settings") { row.scope.openPrivacyPane() }
                     }
                 }
             }

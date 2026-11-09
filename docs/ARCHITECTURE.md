@@ -213,6 +213,7 @@ scripts/
   build-app.sh              Builds and signs build/Portside.app (--install, --package, --notarize)
   make-dmg.sh               Builds the drag-to-Applications DMG (layout, background, volume icon)
   DMGBackground.swift       Renders the DMG background (arrow + drop zone) at 1x and 2x
+  dev-permissions.sh        Shows which signed Portside copy macOS judges, walks the privacy panes, optional confirmed reset of Portside's own grants
   setup-signing.sh          Creates or reuses the stable local code signing identity
   ensure-codesign-key-access.sh  Native Okay consent + Touch ID, then silent key unlock
   SigningConsent.swift      Stock NSAlert + LocalAuthentication for build consent
