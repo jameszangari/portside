@@ -158,18 +158,14 @@ struct AppSwitcherSettings: View {
 
 // MARK: - Menu Bar
 
-/// One job per tab: arrange the items, choose how the shelf opens and closes,
-/// or reach the module switches and per-item order. Layout comes first and
-/// the switches last, so arranging the bar is what the pane opens on.
+/// The Menu Bar pane is the layout editor and nothing else. The shortcut and
+/// hide-again choices sit behind one collapsed row, so the editor is what
+/// the pane opens on. Module switches are not shown: Turn On enables the
+/// three modules together, and Turn Off is in the shelf control's menu.
 struct MenuBarSettings: View {
-    enum Tab: String, CaseIterable, Identifiable {
-        case layout = "Layout", showHide = "Show & Hide", advanced = "Advanced"
-        var id: String { rawValue }
-    }
-
     @ObservedObject var dockModel: DockModel
     @ObservedObject var integrations: IntegrationSettings
-    @State private var tab = Tab.layout
+    @State private var showOptions = false
 
     private var layoutRunning: Bool {
         integrations.modules.first { $0.id == MenuBarLayoutModule.moduleID }?.state == .running
@@ -177,32 +173,26 @@ struct MenuBarSettings: View {
 
     var body: some View {
         Form {
-            Section {
-                Picker("Show", selection: $tab) {
-                    ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-            }
-            switch tab {
-            case .layout:
-                if layoutRunning, let layout = integrations.menuLayout {
-                    MenuBarLayoutSection(service: layout)
-                } else {
-                    MenuBarLayoutSetup(integrations: integrations)
-                }
-            case .showHide:
+            if layoutRunning, let layout = integrations.menuLayout {
                 if let triggers = integrations.menuTriggers {
-                    MenuBarTriggersSection(dockModel: dockModel, service: triggers)
+                    Section {
+                        Button {
+                            showOptions.toggle()
+                        } label: {
+                            HStack {
+                                Text("Shortcut and hide-again options")
+                                Spacer()
+                                Image(systemName: showOptions ? "chevron.up" : "chevron.down").foregroundStyle(.secondary)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if showOptions { MenuBarTriggersSection(dockModel: dockModel, service: triggers) }
                 }
-            case .advanced:
-                ModuleRowsSection(
-                    integrations: integrations,
-                    ids: [MenuBarShelfModule.moduleID, MenuBarLayoutModule.moduleID, MenuBarReorderModule.moduleID],
-                    title: "Modules",
-                    footer: "Layout and Reorder move other apps' items with real Command-drags and need Accessibility."
-                )
-                if let reorder = integrations.menuReorder { MenuBarReorderSection(service: reorder) }
+                MenuBarLayoutSection(service: layout)
+            } else {
+                MenuBarLayoutSetup(integrations: integrations)
             }
         }
         .keepsIntegrationsCurrent(integrations)
@@ -308,7 +298,7 @@ struct MenuBarTriggersSection: View {
             if service.isRunning, settings.hotkey != nil, service.secureInputOn {
                 Text("Secure input is on right now (often a password field). The shortcut may not fire until it ends.").helperStyle()
             }
-            if !service.isRunning { Text("Menu Bar Shelf is off. Turn it on in Advanced.").helperStyle() }
+            if !service.isRunning { Text("Menu Bar Shelf is off. Turn it on from the Layout setup.").helperStyle() }
         } header: {
             Text("Open")
         }
