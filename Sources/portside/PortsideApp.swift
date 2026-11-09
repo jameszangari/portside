@@ -283,6 +283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let localServers = LocalServerStore()
     private let shortcutsService = ShortcutsService()
     private let menuBarService = MenuBarItemsService()
+    private var menuBarShelf: MenuBarShelf?
     private let intelligence = ModelRouter(provider: FakeLocalModelProvider.fromEnvironment() ?? AppleOnDeviceModelProvider())
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -381,6 +382,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try modules.register(LocalServersModule(store: localServers, actions: .live))
                 try modules.register(ShortcutsModule(service: shortcutsService))
                 try modules.register(MenuBarModule(service: menuBarService))
+                try modules.register(MenuBarShelfModule(shelf: makeMenuBarShelf()))
                 try modules.register(ClipboardModule(service: ClipboardService.shared))
                 try modules.register(FilesModule(index: FileIndexService.shared, actions: .live))
                 modules.enableSaved(dockModel.modules, restricted: dockModel.restrictedMode)
@@ -388,6 +390,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSLog("portside: command registration failed: \(error)")
             }
         }
+    }
+
+    @MainActor private func makeMenuBarShelf() -> MenuBarShelf {
+        let shelf = MenuBarShelf(surface: StatusItemShelfSurface(
+            onToggle: { [weak self] in MainActor.assumeIsolated { self?.menuBarShelf?.toggle() } },
+            turnOff: { [weak self] in
+                // After the menu closes: disabling removes the control that ran it.
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.dockModel.setModuleEnabled(MenuBarShelfModule.moduleID, false)
+                    self.modules.disable(MenuBarShelfModule.moduleID)
+                }
+            }
+        ))
+        menuBarShelf = shelf
+        return shelf
     }
 
     /// After the engine exists, because the switcher is a client of its
