@@ -31,7 +31,7 @@ struct CommandCenterCard: Equatable, Sendable {
 /// panel opens (see `CommandCenterCatalog`).
 struct CommandCenterItem: Equatable, Identifiable, Sendable {
     enum Kind: String, Equatable, Sendable {
-        case command, application, settings, quicklink, server, snippet, shortcut, file, clipboard
+        case command, application, settings, quicklink, server, snippet, shortcut, file, clipboard, menuBarItem
         /// The port lookup's status row for the current query.
         case lookup
         /// The calculator's result for the query (P2-CMD-06).
@@ -45,7 +45,7 @@ struct CommandCenterItem: Equatable, Identifiable, Sendable {
         /// Rows that act on something of yours (run a shortcut) or show text
         /// you saved (a snippet): never listed for an empty query, so opening
         /// the panel and pressing Return cannot run or reveal them.
-        var requiresQuery: Bool { self == .shortcut || self == .snippet }
+        var requiresQuery: Bool { self == .shortcut || self == .snippet || self == .menuBarItem }
     }
 
     let id: CommandCenterResultID
@@ -341,7 +341,7 @@ struct CommandCenterState: Equatable {
         }
         // A server's copies go through the registry (primary and more actions);
         // a quick answer's and a snippet's primary action is the copy.
-        if item.kind != .server, item.kind != .lookup, item.kind != .snippet, item.kind != .clipboard, !item.kind.isQuickAnswer {
+        if item.kind != .server, item.kind != .lookup, item.kind != .snippet, item.kind != .clipboard, item.kind != .menuBarItem, !item.kind.isQuickAnswer {
             list.append(CommandCenterAction(kind: .copyID, title: item.copyTitle, symbolName: "doc.on.doc"))
         }
         return list
@@ -588,7 +588,7 @@ struct CommandCenterState: Equatable {
         runStaysOpen = false
         // Server and lookup rows belong to one session: never kept in history.
         let kind = item(id)?.kind
-        let usage: [CommandCenterEffect] = kind == nil || kind == .server || kind == .lookup || kind == .file || kind == .clipboard || kind?.isQuickAnswer == true ? [] : [.recordUsage(id)]
+        let usage: [CommandCenterEffect] = kind == nil || kind == .server || kind == .lookup || kind == .file || kind == .clipboard || kind == .menuBarItem || kind?.isQuickAnswer == true ? [] : [.recordUsage(id)]
         switch result {
         case .success(let message) where staysOpen:
             // It updated the panel (a refresh): stay, and say what happened.

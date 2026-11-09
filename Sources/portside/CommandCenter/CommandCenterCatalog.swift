@@ -40,6 +40,8 @@ struct CommandCenterSources {
     var snippets: @MainActor () -> [Snippet] = { [] }
     /// Apple Shortcuts rows and their listing; nil adds none.
     var shortcuts: ShortcutsService?
+    /// Menu bar item rows (search and open); nil adds none.
+    var menuBar: MenuBarItemsService?
     /// File name search over the chosen folders; nil adds none.
     var files: FileIndexService?
     /// Apps that can open a file path, for Open With. Empty adds no such actions.
@@ -66,6 +68,7 @@ enum CommandCenterCatalog {
                            reveal: registry.descriptor(for: FilesModule.revealCommand),
                            openWith: registry.descriptor(for: FilesModule.openWithCommand), apps: sources.openWithApps)
         items += shortcutItems(sources.shortcuts?.rows ?? [], run: registry.descriptor(for: ShortcutsModule.runCommand))
+        items += menuBarItems(sources.menuBar?.rows ?? [], press: registry.descriptor(for: MenuBarModule.pressCommand))
         items += snippetItems(sources.snippets(), copy: registry.descriptor(for: CommandCenterModule.copySnippetCommand))
         items += applicationItems(
             installed: sources.applications?.apps ?? [],
@@ -253,6 +256,28 @@ enum CommandCenterCatalog {
                 primaryTitle: "Run Shortcut",
                 copyValue: shortcut.id.uuidString,
                 copyTitle: "Copy Shortcut ID"
+            )
+        }
+    }
+
+    /// One row per pressable menu bar item. Return opens it through the
+    /// registry by key; it is never opened from the query.
+    static func menuBarItems(_ listed: [MenuBarItem], press: CommandDescriptor?) -> [CommandCenterItem] {
+        let reason = unavailableReason(press)
+        return listed.map { item in
+            CommandCenterItem(
+                id: .menuBarItem(item.id),
+                kind: .menuBarItem,
+                title: item.displayTitle,
+                subtitle: item.title.isEmpty ? "Menu bar item" : "\(item.ownerName) menu bar item",
+                symbolName: "menubar.rectangle",
+                keywords: ["menu bar", "status", "menu extra", item.ownerName],
+                unavailableReason: reason,
+                permissions: [PermissionScope.accessibility.description],
+                invocation: CommandInvocation(command: MenuBarModule.pressCommand, input: .string(item.id)),
+                primaryTitle: "Open Menu Bar Item",
+                copyValue: item.id,
+                copyTitle: "Copy Item ID"
             )
         }
     }
