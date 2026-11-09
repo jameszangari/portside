@@ -1,7 +1,7 @@
 import AppKit
 import Combine
 
-/// State and actions behind Settings > Integrations: the registered modules,
+/// State and actions behind the module switches, permissions and Restricted mode shown in Settings panes: the registered modules,
 /// the permissions they need, and the restricted work-Mac preset. Reads live
 /// state from `ModuleRegistry` and `PermissionGate` on `reload` only (pane
 /// shown, Portside active again, after an action); nothing polls. Requests

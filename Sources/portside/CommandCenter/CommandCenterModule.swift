@@ -49,7 +49,7 @@ struct CommandCenterActions {
 }
 
 /// The optional `commandCenter` module. Off by default like every optional
-/// module: until it is turned on in Settings > Integrations, no shortcut is
+/// module: until it is turned on in Settings > Command Center, no shortcut is
 /// registered and the menu bar item is hidden. Running, it keeps the global
 /// shortcut in step with `commandCenterHotkey`. Its two commands open an
 /// app and a quicklink, so those rows run through the registry like any

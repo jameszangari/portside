@@ -139,7 +139,7 @@ final class MenuBarItemsService {
 }
 
 /// The optional `menuBar` module. Off by default and held off by restricted
-/// mode. It needs Accessibility (Settings > Integrations), asked for only by
+/// mode. It needs Accessibility (Settings > Command Center > Search sources), asked for only by
 /// that button, never at launch. Without it Command Center works unchanged.
 @MainActor
 final class MenuBarModule: PortsideModule {

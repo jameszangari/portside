@@ -21,7 +21,7 @@ struct CommandCenterSettingsSection: View {
                 .disabled(dockModel.commandCenterQuicklinks.count >= Quicklink.listLimit)
             if !files.roots.isEmpty, !files.isActive {
                 Label {
-                    Text("Files is off, so nothing is indexed or searchable. Turn it on in Settings > Integrations (it needs Command Center on too).").helperStyle()
+                    Text("Files is off, so nothing is indexed or searchable. Turn it on in Search sources (it needs Command Center on too).").helperStyle()
                 } icon: {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                 }
@@ -207,7 +207,7 @@ private struct FileRootRow: View {
 }
 
 /// Settings > General > Clipboard History: pause, expiry, excluded apps and
-/// Clear History. The module itself is switched in Settings > Integrations.
+/// Clear History. The module itself is switched in Settings > Command Center.
 struct ClipboardSettingsSection: View {
     @ObservedObject var service: ClipboardService
     @State private var confirmClear = false
@@ -219,7 +219,7 @@ struct ClipboardSettingsSection: View {
         Section {
             if !service.isActive {
                 Label {
-                    Text("Clipboard History is off, so nothing is being kept. Turn it on in Settings > Integrations (it needs Command Center on too).").helperStyle()
+                    Text("Clipboard History is off, so nothing is being kept. Turn it on in Search sources (it needs Command Center on too).").helperStyle()
                 } icon: {
                     Image(systemName: "info.circle").foregroundStyle(.secondary)
                 }
