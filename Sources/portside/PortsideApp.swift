@@ -284,6 +284,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let shortcutsService = ShortcutsService()
     private let menuBarService = MenuBarItemsService()
     private var menuBarReorder: MenuBarReorderService?
+    private var menuBarLayout: MenuBarLayoutService?
     private var menuBarShelf: MenuBarShelf?
     private let intelligence = ModelRouter(provider: FakeLocalModelProvider.fromEnvironment() ?? AppleOnDeviceModelProvider())
 
@@ -387,6 +388,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let reorder = MenuBarReorderService()
                 menuBarReorder = reorder
                 try modules.register(MenuBarReorderModule(service: reorder))
+                if let shelf = menuBarShelf {
+                    let layout = MenuBarLayoutService(reorder: reorder, shelf: shelf)
+                    menuBarLayout = layout
+                    try modules.register(MenuBarLayoutModule(service: layout))
+                }
                 try modules.register(ClipboardModule(service: ClipboardService.shared))
                 try modules.register(FilesModule(index: FileIndexService.shared, actions: .live))
                 modules.enableSaved(dockModel.modules, restricted: dockModel.restrictedMode)
@@ -470,7 +476,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             SettingsWindowController(
                 dockModel: dockModel, layout: dockEngine.layout, nativeDock: nativeDock, trash: dockEngine.trash,
                 badges: dockEngine.badges, widgets: dockEngine.widgets,
-                integrations: IntegrationSettings(registry: modules, permissions: permissions, model: dockModel, intelligence: intelligence, menuReorder: menuBarReorder)
+                integrations: IntegrationSettings(registry: modules, permissions: permissions, model: dockModel, intelligence: intelligence, menuReorder: menuBarReorder, menuLayout: menuBarLayout)
             )
         }
         controller.onActivationPolicyChanged = { [weak dockEngine] in dockEngine?.activationPolicyChanged() }

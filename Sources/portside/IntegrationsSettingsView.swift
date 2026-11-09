@@ -48,6 +48,10 @@ struct IntegrationsSettingsView: View {
                 MenuBarReorderSection(service: reorder)
             }
 
+            if let layout = integrations.menuLayout {
+                MenuBarLayoutSection(service: layout)
+            }
+
             Section("Permissions") {
                 PermissionSetupRow(
                     next: integrations.missingPermissions.first,
@@ -174,6 +178,111 @@ private struct MenuBarReorderSection: View {
                     .footerStyle()
             }
         }
+    }
+}
+
+/// Menu Bar Layout: items listed under Visible, Hidden and Always Hidden.
+/// Each row has a Move to menu (works with the keyboard and VoiceOver) and can
+/// also be dragged onto another section. Choosing only saves; Apply Layout
+/// does the Command-drags. Nothing runs until a button is pressed.
+private struct MenuBarLayoutSection: View {
+    @ObservedObject var service: MenuBarLayoutService
+
+    var body: some View {
+        if service.isActive {
+            Section {
+                Toggle("Always Hidden section (this session only)", isOn: Binding(get: { service.alwaysHiddenOn }, set: { service.setAlwaysHidden($0) }))
+                    .disabled(service.isBusy)
+                    .accessibilityHint("Adds a second separator that hides its left side until you turn this off. Starts off every launch.")
+                if !service.barsReady {
+                    Text("The shelf separators are not visible. Show the menu bar items (click the shelf control), then Refresh.").helperStyle()
+                }
+                if service.rows.isEmpty {
+                    Text("No menu bar items listed yet. Choose Refresh.").helperStyle()
+                }
+            } header: {
+                Text("Menu Bar Layout")
+            }
+            ForEach(sections, id: \.self) { section in
+                Section {
+                    let rows = service.rows.filter { $0.section == section }
+                    VStack(alignment: .leading, spacing: 6) {
+                        if rows.isEmpty { Text("Drop items here.").helperStyle() }
+                        ForEach(rows) { row in LayoutRow(row: row, service: service) }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .dropDestination(for: String.self) { ids, _ in
+                        for id in ids { service.assign(id, to: section) }
+                        return !ids.isEmpty
+                    }
+                } header: {
+                    Text(section.title)
+                }
+            }
+            Section {
+                ForEach(service.missing, id: \.self) { id in
+                    HStack {
+                        Text(id).helperStyle().lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Button("Forget") { service.forget(id) }.disabled(service.isBusy)
+                    }
+                }
+                HStack {
+                    Button("Refresh") { Task { await service.refresh() } }.disabled(service.isBusy)
+                    Button(service.pendingCount > 0 ? "Apply Layout (\(service.pendingCount))" : "Apply Layout") { Task { await service.apply() } }
+                        .disabled(service.isBusy)
+                        .accessibilityHint("Drags items into their sections one at a time. The pointer moves while it runs.")
+                    Button("Reset to Native") { Task { await service.resetToNative() } }
+                        .disabled(service.isBusy)
+                        .accessibilityHint("Clears every choice, moves items back right of the separator and restores the saved original order.")
+                    Button("Copy Layout") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(service.exportedLayout, forType: .string)
+                    }
+                }
+                if let status = service.status { Text(status).helperStyle() }
+            } header: {
+                if !service.missing.isEmpty { Text("Saved, not in the menu bar now") }
+            } footer: {
+                Text("Choosing a section only saves it. Apply Layout shows every item, then moves each one with a real Command-drag and checks the result. Left of the separator is Hidden. Copy Layout puts the saved choices on the clipboard as JSON.")
+                    .footerStyle()
+            }
+        }
+    }
+
+    private var sections: [MenuBarSection] {
+        service.alwaysHiddenOn ? MenuBarSection.allCases : [.visible, .hidden]
+    }
+}
+
+private struct LayoutRow: View {
+    let row: MenuBarLayoutService.Row
+    @ObservedObject var service: MenuBarLayoutService
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(row.slot.item.displayTitle)
+                if row.saved != nil, row.saved != row.current { Text("not applied").helperStyle() }
+                Spacer()
+                Menu("Move to") {
+                    ForEach(MenuBarSection.allCases.filter { $0 != .alwaysHidden || service.alwaysHiddenOn }) { target in
+                        Button(target.title) { service.assign(row.id, to: target) }
+                    }
+                }
+                .fixedSize()
+                .disabled(service.isBusy || !row.canAssign)
+                .accessibilityLabel("Move \(row.slot.item.displayTitle) to another section")
+            }
+            if let reason = row.structural {
+                Text(reason).helperStyle()
+            } else if case .unsupported(let reason) = row.support {
+                Text(reason).helperStyle()
+            }
+        }
+        .draggable(row.canAssign ? row.id : "")
+        .accessibilityElement(children: .contain)
     }
 }
 

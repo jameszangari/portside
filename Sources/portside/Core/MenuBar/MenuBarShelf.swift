@@ -13,6 +13,14 @@ protocol MenuBarShelfSurface: AnyObject {
     /// pushed the control out of reach, so the shelf must reveal again.
     func controlIsOnScreen() -> Bool
     func remove()
+    /// The optional second separator (P2-MENU-05), left of the first. Widened,
+    /// it clips the Always Hidden items; collapsed, they come back.
+    func installAlwaysHidden()
+    func applyAlwaysHidden(hidden: Bool)
+    func removeAlwaysHidden()
+    /// Where the separators sit now, only while both are collapsed and in
+    /// order. Nil otherwise: a widened separator reports no usable position.
+    func barFrames() -> MenuBarBars?
 }
 
 /// P2-MENU-03: a recoverable reveal shelf. A separator status item of
@@ -37,6 +45,11 @@ final class MenuBarShelf {
     private(set) var isRunning = false
     /// Why the last automatic reveal happened; nil after a user action.
     private(set) var lastFailOpen: String?
+    /// Session only, like `mode`: never saved, so every launch starts with
+    /// nothing clipped (P2-MENU-05).
+    private(set) var alwaysHiddenEnabled = false
+    /// Runs after a fail-open that also switched Always Hidden off.
+    var onFailOpen: (@MainActor () -> Void)?
     private let surface: MenuBarShelfSurface
     private let verifyDelay: Duration
     private var verifying: Task<Void, Never>?
@@ -62,6 +75,11 @@ final class MenuBarShelf {
         verifying?.cancel()
         verifying = nil
         surface.apply(hidden: false)
+        if alwaysHiddenEnabled {
+            surface.applyAlwaysHidden(hidden: false)
+            surface.removeAlwaysHidden()
+            alwaysHiddenEnabled = false
+        }
         surface.remove()
         mode = .revealed
         isRunning = false
@@ -76,12 +94,48 @@ final class MenuBarShelf {
         mode = .hidden
         lastFailOpen = nil
         surface.apply(hidden: true)
+        scheduleVerify()
+    }
+
+    private func scheduleVerify() {
         verifying?.cancel()
         verifying = Task { [weak self, verifyDelay] in
             try? await Task.sleep(for: verifyDelay)
             guard !Task.isCancelled else { return }
             self?.verify()
         }
+    }
+
+    /// Clips the Always Hidden items behind a second separator, or brings them
+    /// back. Off after any fail-open and on every launch.
+    func setAlwaysHidden(_ on: Bool) {
+        guard isRunning, on != alwaysHiddenEnabled else { return }
+        if on {
+            surface.installAlwaysHidden()
+            surface.applyAlwaysHidden(hidden: true)
+            alwaysHiddenEnabled = true
+            scheduleVerify()
+        } else {
+            surface.applyAlwaysHidden(hidden: false)
+            surface.removeAlwaysHidden()
+            alwaysHiddenEnabled = false
+        }
+    }
+
+    func barFrames() -> MenuBarBars? { isRunning ? surface.barFrames() : nil }
+
+    /// Shows every item so the layout can reach them: the first separator
+    /// collapses and Always Hidden is opened. Pair with `closeAfterLayout`.
+    func openForLayout() {
+        guard isRunning else { return }
+        reveal()
+        if alwaysHiddenEnabled { surface.applyAlwaysHidden(hidden: false) }
+    }
+
+    func closeAfterLayout() {
+        guard isRunning, alwaysHiddenEnabled else { return }
+        surface.applyAlwaysHidden(hidden: true)
+        scheduleVerify()
     }
 
     func reveal() {
@@ -100,15 +154,29 @@ final class MenuBarShelf {
         guard isRunning else { return }
         verifying?.cancel()
         verifying = nil
-        guard mode == .hidden else { return }
+        let hadAlwaysHidden = alwaysHiddenEnabled
+        if hadAlwaysHidden {
+            surface.applyAlwaysHidden(hidden: false)
+            surface.removeAlwaysHidden()
+            alwaysHiddenEnabled = false
+        }
+        guard mode == .hidden else {
+            if hadAlwaysHidden {
+                lastFailOpen = reason
+                log.notice("menu bar always hidden off: \(reason, privacy: .public)")
+                onFailOpen?()
+            }
+            return
+        }
         mode = .revealed
         lastFailOpen = reason
         log.notice("menu bar shelf revealed: \(reason, privacy: .public)")
         surface.apply(hidden: false)
+        onFailOpen?()
     }
 
     private func verify() {
-        guard isRunning, mode == .hidden else { return }
+        guard isRunning, mode == .hidden || alwaysHiddenEnabled else { return }
         if !surface.controlIsOnScreen() { failOpen("the control was pushed off screen") }
     }
 }
@@ -118,6 +186,7 @@ final class MenuBarShelf {
 final class StatusItemShelfSurface: NSObject, MenuBarShelfSurface {
     static let controlName = "PortsideShelfControl"
     static let separatorName = "PortsideShelfSeparator"
+    static let alwaysHiddenName = "PortsideShelfAlwaysHiddenSeparator"
     /// Lengths in points. 120 hid items on a notched 1728 pt display; 220 and
     /// up clipped the separator itself (spike O6), so this stays modest.
     nonisolated static let revealedLength: CGFloat = 14
@@ -128,6 +197,7 @@ final class StatusItemShelfSurface: NSObject, MenuBarShelfSurface {
     private let onToggle: () -> Void
     private var control: NSStatusItem?
     private var separator: NSStatusItem?
+    private var alwaysHiddenSeparator: NSStatusItem?
     private var hidden = false
 
     init(onToggle: @escaping () -> Void, turnOff: @escaping () -> Void) {
@@ -139,7 +209,7 @@ final class StatusItemShelfSurface: NSObject, MenuBarShelfSurface {
     /// user has never placed it (a smaller number is further right). The key
     /// is undocumented and read from Portside's own defaults only.
     static func seedPositions(_ defaults: UserDefaults = .standard) {
-        for (name, position) in [(controlName, 100.0), (separatorName, 200.0)] {
+        for (name, position) in [(controlName, 100.0), (separatorName, 200.0), (alwaysHiddenName, 300.0)] {
             let key = "NSStatusItem Preferred Position \(name)"
             if defaults.object(forKey: key) == nil { defaults.set(position, forKey: key) }
         }
@@ -182,7 +252,37 @@ final class StatusItemShelfSurface: NSObject, MenuBarShelfSurface {
         return NSScreen.screens.contains { $0.frame.intersects(frame) && frame.minX >= $0.frame.minX && frame.maxX <= $0.frame.maxX }
     }
 
+    func installAlwaysHidden() {
+        guard alwaysHiddenSeparator == nil else { return }
+        let item = NSStatusBar.system.statusItem(withLength: Self.revealedLength)
+        item.autosaveName = Self.alwaysHiddenName
+        item.behavior = []
+        item.button?.image = NSImage(systemSymbolName: "line.diagonal", accessibilityDescription: nil)
+        alwaysHiddenSeparator = item
+    }
+
+    func applyAlwaysHidden(hidden: Bool) {
+        alwaysHiddenSeparator?.length = hidden ? Self.hiddenLength : Self.revealedLength
+        alwaysHiddenSeparator?.button?.image = hidden ? nil : NSImage(systemSymbolName: "line.diagonal", accessibilityDescription: nil)
+    }
+
+    func removeAlwaysHidden() {
+        if let alwaysHiddenSeparator { NSStatusBar.system.removeStatusItem(alwaysHiddenSeparator) }
+        alwaysHiddenSeparator = nil
+    }
+
+    func barFrames() -> MenuBarBars? {
+        guard let frame = separator?.button?.window?.frame, frame.width < Self.hiddenLength / 2 else { return nil }
+        var second: ClosedRange<Double>?
+        if let item = alwaysHiddenSeparator {
+            guard let other = item.button?.window?.frame, other.width < Self.hiddenLength / 2, other.maxX <= frame.minX else { return nil }
+            second = Double(other.minX)...Double(other.maxX)
+        }
+        return MenuBarBars(separator: Double(frame.minX)...Double(frame.maxX), alwaysHiddenSeparator: second)
+    }
+
     func remove() {
+        removeAlwaysHidden()
         if let control { NSStatusBar.system.removeStatusItem(control) }
         if let separator { NSStatusBar.system.removeStatusItem(separator) }
         control = nil
