@@ -149,8 +149,17 @@ final class MenuBarLayoutTests: XCTestCase {
         let result = await layout.apply()
         XCTAssertEqual(try? result.get().moved, 1)
         XCTAssertEqual(world.order, ["A", "B", "|1", "C"])
-        XCTAssertEqual(shelf.opened, 1)
+        XCTAssertEqual(shelf.opened, 2, "one for the refresh listing, one for Apply")
         XCTAssertEqual(shelf.closed, 1)
+    }
+
+    func testRefreshShowsTheShelfSoEveryItemIsListed() async {
+        let world = World(["A", "|1", "B", "C"])
+        let (layout, _, shelf) = make(world)
+        await layout.refresh()
+        XCTAssertEqual(shelf.opened, 1)
+        XCTAssertEqual(layout.rows.count, 3)
+        XCTAssertFalse(layout.accessDenied)
     }
 
     func testUnassignedItemLeftOfSeparatorLandsVisible() async {

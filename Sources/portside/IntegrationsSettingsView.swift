@@ -240,30 +240,35 @@ struct MenuBarLayoutSection: View {
                 Toggle("Always Hidden section (this session only)", isOn: Binding(get: { service.alwaysHiddenOn }, set: { service.setAlwaysHidden($0) }))
                     .disabled(service.isBusy)
                     .accessibilityHint("Adds a second separator that hides its left side until you turn this off. Starts off every launch.")
-                if !service.barsReady {
-                    Text("The shelf separators are not visible. Show the menu bar items (click the shelf control), then Refresh.").helperStyle()
+                if service.accessDenied {
+                    Text("Accessibility permission is denied or was revoked, so Portside cannot list menu bar items. Allow it in General > Permissions.").helperStyle()
+                } else if !service.barsReady {
+                    Text("The shelf separators are not visible yet. Choose Refresh. If this stays, turn the shelf off and on.").helperStyle()
                 }
-                if service.rows.isEmpty {
-                    Text("No menu bar items listed yet. Choose Refresh.").helperStyle()
+                if service.rows.isEmpty, !service.accessDenied {
+                    Text(service.isBusy ? "Looking for menu bar items…" : "No menu bar items found. Choose Refresh.").helperStyle()
                 }
             } header: {
                 Text("Menu Bar Layout")
             }
+            .task { if service.rows.isEmpty { await service.refresh() } }
             ForEach(sections, id: \.self) { section in
                 Section {
                     let rows = service.rows.filter { $0.section == section }
-                    VStack(alignment: .leading, spacing: 6) {
-                        if rows.isEmpty { Text("Drop items here.").helperStyle() }
-                        ForEach(rows) { row in LayoutRow(row: row, service: service) }
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 76, maximum: 96), spacing: 8, alignment: .top)], alignment: .leading, spacing: 10) {
+                        ForEach(rows) { row in LayoutTile(row: row, service: service) }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, minHeight: 78, alignment: .topLeading)
+                    .overlay {
+                        if rows.isEmpty { Text("Drag items here").helperStyle() }
+                    }
                     .contentShape(Rectangle())
                     .dropDestination(for: String.self) { ids, _ in
                         for id in ids { service.assign(id, to: section) }
                         return !ids.isEmpty
                     }
                 } header: {
-                    Text(section.title)
+                    Label(section.title, systemImage: section.symbolName)
                 }
             }
             Section {
@@ -302,33 +307,56 @@ struct MenuBarLayoutSection: View {
     }
 }
 
-private struct LayoutRow: View {
+/// One menu bar item as a tile: the owner's icon over its name. Drag it onto
+/// another section, or use the context menu (also reachable with VoiceOver).
+/// An item Portside cannot move is dimmed and says why in its help text.
+private struct LayoutTile: View {
     let row: MenuBarLayoutService.Row
     @ObservedObject var service: MenuBarLayoutService
 
+    private var reason: String? {
+        if let structural = row.structural { return structural }
+        if case .unsupported(let reason) = row.support { return reason }
+        return nil
+    }
+
+    private var icon: NSImage? { NSRunningApplication(processIdentifier: row.slot.item.pid)?.icon }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack {
-                Text(row.slot.item.displayTitle)
-                if row.saved != nil, row.saved != row.current { Text("not applied").helperStyle() }
-                Spacer()
-                Menu("Move to") {
-                    ForEach(MenuBarSection.allCases.filter { $0 != .alwaysHidden || service.alwaysHiddenOn }) { target in
-                        Button(target.title) { service.assign(row.id, to: target) }
-                    }
+        VStack(spacing: 3) {
+            Group {
+                if let icon {
+                    Image(nsImage: icon).resizable().scaledToFit()
+                } else {
+                    Image(systemName: "square.dashed").resizable().scaledToFit().foregroundStyle(.secondary)
                 }
-                .fixedSize()
-                .disabled(service.isBusy || !row.canAssign)
-                .accessibilityLabel("Move \(row.slot.item.displayTitle) to another section")
             }
-            if let reason = row.structural {
-                Text(reason).helperStyle()
-            } else if case .unsupported(let reason) = row.support {
-                Text(reason).helperStyle()
+            .frame(width: 34, height: 34)
+            Text(row.slot.item.displayTitle)
+                .font(.system(size: 10))
+                .lineLimit(2).multilineTextAlignment(.center)
+                .frame(maxWidth: 80)
+            if row.saved != nil, row.saved != row.current {
+                Text("not applied").font(.system(size: 9)).foregroundStyle(.orange)
+            }
+        }
+        .padding(6)
+        .frame(minWidth: 72)
+        .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.6)))
+        .opacity(row.canAssign && reason == nil ? 1 : 0.5)
+        .help(reason ?? "\(row.slot.item.displayTitle). Drag to another section.")
+        .contextMenu {
+            ForEach(MenuBarSection.allCases.filter { $0 != .alwaysHidden || service.alwaysHiddenOn }) { target in
+                Button("Move to \(target.title)") { service.assign(row.id, to: target) }
+                    .disabled(service.isBusy || !row.canAssign)
             }
         }
         .draggable(row.canAssign ? row.id : "")
-        .accessibilityElement(children: .contain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(row.slot.item.displayTitle + (reason.map { ". \($0)" } ?? ""))
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction(named: "Move to Visible") { service.assign(row.id, to: .visible) }
+        .accessibilityAction(named: "Move to Hidden") { service.assign(row.id, to: .hidden) }
     }
 }
 

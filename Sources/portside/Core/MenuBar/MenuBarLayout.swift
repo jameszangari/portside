@@ -16,6 +16,14 @@ enum MenuBarSection: String, CaseIterable, Identifiable, Sendable {
         case .alwaysHidden: "Always Hidden"
         }
     }
+
+    var symbolName: String {
+        switch self {
+        case .visible: "eye"
+        case .hidden: "eye.slash"
+        case .alwaysHidden: "eye.trianglebadge.exclamationmark"
+        }
+    }
 }
 
 /// The horizontal extents of Portside's own separators, in screen points,
@@ -179,6 +187,8 @@ final class MenuBarLayoutService: ObservableObject {
     @Published private(set) var isActive = false
     @Published private(set) var alwaysHiddenOn = false
     @Published private(set) var barsReady = false
+    /// Accessibility is denied or was revoked, so no items can be listed.
+    @Published private(set) var accessDenied = false
     @Published private(set) var pendingCount = 0
 
     private let reorder: MenuBarReorderService
@@ -221,11 +231,19 @@ final class MenuBarLayoutService: ObservableObject {
         status = nil
         alwaysHiddenOn = false
         barsReady = false
+        accessDenied = false
         pendingCount = 0
     }
 
+    /// Lists every item the menu bar reports. Items the shelf is clipping
+    /// have no usable position, so the shelf is shown first (a fail-open
+    /// direction), like Apply Layout does.
     func refresh() async {
-        guard isActive else { return }
+        guard isActive, !isBusy, !reorder.isBusy else { return }
+        if shelf.isRunning {
+            shelf.openForLayout()
+            try? await Task.sleep(for: settle)
+        }
         await reorder.refresh()
         rebuild()
     }
@@ -372,6 +390,7 @@ final class MenuBarLayoutService: ObservableObject {
 
     private func rebuild() {
         alwaysHiddenOn = shelf.alwaysHiddenEnabled
+        accessDenied = reorder.accessDenied
         let bars = shelf.barFrames()
         barsReady = bars != nil
         let saved = store.assignments
