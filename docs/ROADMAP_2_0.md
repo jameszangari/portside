@@ -36,13 +36,32 @@ These are dependency gates, not calendar promises. Optional research and adapter
 | 1C: everyday tools | Scoped file search, clipboard/snippets, calculator, emoji, Shortcuts | Command Center and explicit data scopes | Optional P2-CMD-03 through 07; delay any tool that threatens core quality |
 | 2: developer utilities | Find port owners, open local servers, safe stop, project grouping | Command Center and process service | P2-DEV-01 through 05; identity revalidation and refusal tests pass |
 | 2 + 0.5 integration | “What's using port 5173?” returns verified native results | P2-AI-02, P2-DEV-02, P2-CMD-02 | P2-AI-03; first end-to-end AI slice, read-only by default |
-| 3: menu bar | Searchable supported items; hiding/reordering only if proven recoverable (spike: hide/reveal and quit/SIGKILL recovery observed on one Mac, see the [report](research/P2-MENU-01-hide-recovery-spike.md)) | P2-REA-03 and menu bar feasibility spike | Conditional 2.1 scope; publish support matrix or ship discovery-only |
+| 3: menu bar | Searchable supported items; hiding/reordering only if proven recoverable (spike: hide/reveal and quit/SIGKILL recovery observed on one Mac, see the [report](research/P2-MENU-01-hide-recovery-spike.md)) | P2-REA-03 and menu bar feasibility spike | Conditional 2.1 scope; publish support matrix or ship discovery-only. After MENU-04, P2-MENU-05 to 14 extend the module toward the documented Thaw feature set (see below) |
 | 4: workspaces/windows | Develop, Studio, Everyday layouts; explicit restore and undo | Shared windows/commands/settings | Suggested 2.2; partial failures visible, no automatic layout surprises |
 | 5: studio companion | Audio switching, project/export shelves, optional Live bridge | Scoped files, workspaces, audio events | Suggested 2.3; bridge disconnect cannot disrupt Live; recording stays quiet |
 | 6: advanced supervision | Reliable agent attention inbox, checkpoints, approved bounded plans | Existing agent discovery, local AI, verified commands | Suggested 2.4+; unsupported provider actions remain jump-to-session |
 | 7: optional extensions | Capability-scoped command providers in isolated helpers | Stable native contracts and permission gate | Separate opt-in milestone after threat model and crash containment |
 
 **2.0 alpha:** Phase 0, Apple availability/typed intents, native launcher, title/icon switcher. **2.0 beta:** previews, safe developer manager, read-only AI port lookup; selected productivity tools. **2.0 stable:** those completed slices pass the signed-app matrix, recovery, accessibility, and work-Mac gates. Cmd+Tab replacement is conditional; the alternate-shortcut switcher is a valid release fallback. Optional LM Studio/Ollama, MLX, semantic indexing, full menu bar parity, studio control, and extensions are not blockers for 2.0.
+
+### Phase 3 extension: Thaw feature-set target
+
+Decision (2026-11-08): the documented feature set of Thaw is the minimum functionality target for the Menu Bar module. Portside implements it independently from public documentation and Apple APIs; no REA run against Thaw, no Thaw source read or copied (it is GPL-3.0), no reuse of names or assets. Existing MENU-01 to MENU-04 scope, status, gates and release priority are unchanged. The tickets below come after MENU-04, are conditional 2.1 scope, and do not block Phases 4 to 7 or 2.0 stable. Details, dependencies, acceptance and feasibility gates are in the [implementation plan](IMPLEMENTATION_PLAN_2_0.md#phase-3-extension-thaw-feature-set-target-menu-05-to-menu-14).
+
+| Ticket | Capability (user-visible) | Main feasibility risk |
+| --- | --- | --- |
+| P2-MENU-05 | Visible, Hidden and Always Hidden sections; drag layout editor | Per-item movement beyond MENU-04's validated set; items clipped under the notch |
+| P2-MENU-06 | Reveal by click, hotkey, optional hover/scroll on empty bar; automatic rehide | Secure input; hover trigger near menus and notch |
+| P2-MENU-07 | Portside Bar: hidden items in a panel below the menu bar | Clicking items that are hidden or covered; live previews need Screen Recording |
+| P2-MENU-08 | Global hotkeys, open-by-key and per-item open | Secure input; shortcut conflicts |
+| P2-MENU-09 | Item groups and saved profiles | Applying a profile on a crowded bar |
+| P2-MENU-10 | Hide/show app menus and Zen Mode | No known public API for app menus; needs its own spike |
+| P2-MENU-11 | Menu bar appearance (tint, gradient, shadow, border, shape) | Overlay window level with notch, full screen and Spaces |
+| P2-MENU-12 | Item spacing | Requires writing a global defaults domain; needs a decision record |
+| P2-MENU-13 | `portside://` URLs, Shortcuts actions, Control Center control | Packaging of App Intents from a SwiftPM executable |
+| P2-MENU-14 | Settings page, reset, support matrix per OS/display, manager coexistence | macOS 27 menu bar order access and its permission |
+
+Every ticket keeps the shared recovery rules: fail-open at launch, an always-reachable kill switch, native bar restored on quit or `kill -9`, sleep/wake/display change reveal, no writes to other apps' preferences, off by default.
 
 ## Consistent UX across surfaces
 
@@ -77,7 +96,7 @@ Use one set of entities and actions across Dock, Command Center, switcher, and n
 | --- | --- | --- |
 | Raycast / Floe | Native launcher, command actions, quicklinks, files, selected productivity tools | Unmodified Raycast extensions, hosted AI, universal compatibility |
 | PortKiller | Inspect listeners, project grouping, safe terminate | Privileged processes, arbitrary process-tree kills, automatic cleanup |
-| Bartender | Feasibility report, supported-item search/activation | Hide/reorder/shelf only where proven; private-API parity is not assumed |
+| Bartender and Thaw | Feasibility report, supported-item search/activation; Thaw's documented feature set is the minimum target for the Menu Bar module (own implementation, no REA, no Thaw source) | Each feature only where proven and recoverable; private-API parity is not assumed; a failed gate removes that ticket, not the module |
 | Window utilities | Specific-window activation, basic snap/move/restore | Arbitrary Spaces assignment, invisible/minimized-window capture guarantees |
 | Studio utilities | System audio selection, local shelves, read-only Live state | Hardware-specific preamp/routing controls, editing unsaved Live sets |
 
