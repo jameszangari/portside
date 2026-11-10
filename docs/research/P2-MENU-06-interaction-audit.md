@@ -99,3 +99,7 @@ The findings above describe the build at the time of the audit. Each listed defe
 - Found by these runs: `scrollingDeltaY` on a mouse event raises and AppKit swallows it, which silently disabled empty-bar click and Smart's outside click. Fixed, with a regression test.
 
 Still unproven on hardware: real Command-drag drop adoption, hover, scroll, automatic profile switching, external displays, macOS 26, and how it feels by hand.
+
+## Later the same day
+
+Added after the follow-up above and run on the same display: the Portside Bar opens items through Accessibility with no reveal and no pointer movement; Standard hiding was confirmed to remove Live Activities (Portside off showed the activity; 23 allow-list candidates did not bring it back), while Native hiding kept it; the iPhone Live Activities key removed and restored a running activity. A bug that made the Keep Live Activities switch apply the previous value was found by hand and fixed. Current state: 810 tests pass with no build warnings.

@@ -739,7 +739,7 @@ final class MenuBarAssertionTests: XCTestCase {
         let size = CGSize(width: 1000, height: 32)
         XCTAssertTrue(MenuBarStylePlan.rects(shape: .none, size: size, notch: nil, menusEnd: 10, itemsStart: 10).isEmpty)
         XCTAssertEqual(MenuBarStylePlan.rects(shape: .full, size: size, notch: 400...600, menusEnd: nil, itemsStart: nil), [CGRect(origin: .zero, size: size)])
-        XCTAssertEqual(MenuBarStylePlan.rects(shape: .notch, size: size, notch: 400...600, menusEnd: nil, itemsStart: nil).map(\.width), [400, 400])
+        XCTAssertEqual(MenuBarStylePlan.rects(shape: .notch, size: size, notch: 400...600, menusEnd: nil, itemsStart: nil).map(\.width), [392, 392])
         XCTAssertEqual(MenuBarStylePlan.rects(shape: .notch, size: size, notch: nil, menusEnd: nil, itemsStart: nil).count, 1, "no notch, one shape")
     }
 
@@ -810,5 +810,107 @@ final class MenuBarAssertionTests: XCTestCase {
         XCTAssertEqual(MenuBarBarCaption.name(for: entry(owner: "Malwarebytes Agent", title: "statusBar.icon.main")), "Malwarebytes Agent", "an identifier is not a name")
         XCTAssertEqual(MenuBarBarCaption.text(for: entry(owner: "PortKiller", title: ""), dimmed: true), "PortKiller opens only from the menu bar")
         XCTAssertEqual(MenuBarBarCaption.text(for: entry(owner: "PortKiller", title: ""), dimmed: false), "PortKiller")
+    }
+
+    // MARK: Control icon
+
+    func testChosenSymbolFillsWhileItemsShow() {
+        var look = MenuBarLook()
+        look.controlIcon = .symbol
+        look.customSymbol = "star"
+        let all: (String) -> Bool = { ["star", "star.fill", "bolt"].contains($0) }
+        XCTAssertEqual(look.controlSymbol(hidden: true, exists: all), "star")
+        XCTAssertEqual(look.controlSymbol(hidden: false, exists: all), "star.fill")
+        look.customSymbol = "bolt"
+        XCTAssertEqual(look.controlSymbol(hidden: false, exists: all), "bolt", "no filled form")
+        look.customSymbol = "gone"
+        XCTAssertEqual(look.controlSymbol(hidden: true, exists: all), "eye.slash", "a symbol from a newer macOS falls back")
+    }
+
+    func testUploadedIconIsShrunkAndClassified() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("icon-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        func png(_ name: String, opaque: Bool) throws -> URL {
+            let rep = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 200, pixelsHigh: 100, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+            let red = NSColor(deviceRed: 1, green: 0, blue: 0, alpha: 1)
+            if opaque { for x in 0..<200 { for y in 0..<100 { rep.setColor(red, atX: x, y: y) } } }
+            let url = folder.appendingPathComponent(name)
+            try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: url)
+            return url
+        }
+        let shape = try XCTUnwrap(MenuBarControlImage.store(from: try png("a.png", opaque: false), replacing: nil, in: folder))
+        XCTAssertTrue(shape.isTemplate, "transparency reads as a shape")
+        let photo = try XCTUnwrap(MenuBarControlImage.store(from: try png("b.png", opaque: true), replacing: shape.name, in: folder))
+        XCTAssertFalse(photo.isTemplate, "a full picture keeps its colors")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent(shape.name).path), "the old file is removed")
+        let loaded = try XCTUnwrap(MenuBarControlImage.load(photo.name, isTemplate: false, in: folder))
+        XCTAssertEqual(loaded.size.height, 13, accuracy: 0.5, "wide art is limited by width")
+        XCTAssertEqual(loaded.size.width, 26, accuracy: 0.5)
+        XCTAssertNil(MenuBarControlImage.load("../\(photo.name)", isTemplate: false, in: folder), "a saved name cannot leave the folder")
+        XCTAssertNil(MenuBarControlImage.store(from: folder.appendingPathComponent("missing.png"), replacing: nil, in: folder))
+    }
+
+    func testOnlySystemUIServersUntitledItemIsTimeMachine() {
+        func item(_ bundle: String, _ title: String) -> MenuBarItem {
+            MenuBarItem(pid: 1, ownerBundleID: bundle, ownerName: "x", ordinal: 0, identifier: nil, title: title, canPress: true)
+        }
+        XCTAssertTrue(MenuBarSystemExtra.isTimeMachine(item("com.apple.systemuiserver", "")))
+        XCTAssertFalse(MenuBarSystemExtra.isTimeMachine(item("com.apple.systemuiserver", "Siri")))
+        XCTAssertFalse(MenuBarSystemExtra.isTimeMachine(item("com.example.app", "")))
+        let named = MenuBarSystemExtra.named(MenuBarSlot(item: item("com.apple.systemuiserver", ""), minX: 0, maxX: 0, midY: 0, reachable: true))
+        XCTAssertEqual(named.item.displayTitle, "Time Machine")
+        XCTAssertTrue(MenuBarSystemExtra.isTimeMachine(named.item), "still recognized after naming")
+    }
+
+    func testCannotHideNoteNamesTheItems() {
+        XCTAssertTrue(MenuBarSystemExtra.cannotHide(["Time Machine"]).contains("turn it off"))
+        XCTAssertTrue(MenuBarSystemExtra.cannotHide(["Time Machine", "Siri"]).contains("turn them off"))
+        XCTAssertEqual(MenuBarSystemExtra.settingsURL.scheme, "x-apple.systempreferences")
+    }
+
+    // MARK: Live Activities
+
+    func testLiveActivitiesBackUpOnceAndWriteOnlyTheOneKey() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("live-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let backup = folder.appendingPathComponent("backup.plist")
+        var store: [String: Any] = [MenuBarLiveActivities.iPhoneKey: true]
+        var written: [String] = []
+        let model = MenuBarLiveActivities(read: { store[$0] }, write: { store[$0] = $1; written.append($0) }, backupURL: backup)
+        XCTAssertEqual(model.iPhoneEnabled, true)
+        model.setIPhone(false)
+        XCTAssertEqual(model.iPhoneEnabled, false)
+        model.setIPhone(true)
+        XCTAssertEqual(Set(written), [MenuBarLiveActivities.iPhoneKey])
+        let saved = try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(contentsOf: backup), format: nil) as? [String: Any])
+        XCTAssertEqual(saved[MenuBarLiveActivities.iPhoneKey] as? Bool, true, "the backup holds the first value")
+    }
+
+    func testMissingLiveActivitySettingIsLeftAlone() {
+        var writes = 0
+        let model = MenuBarLiveActivities(read: { _ in nil }, write: { _, _ in writes += 1 }, backupURL: URL(fileURLWithPath: "/tmp/portside-unused-\(UUID().uuidString)"))
+        XCTAssertNil(model.iPhoneEnabled)
+        model.setIPhone(true)
+        XCTAssertEqual(writes, 0)
+    }
+
+    func testAttachedNotchWidensWhatShapesGoAround() {
+        XCTAssertEqual(MenuBarStylePlan.blocked(notch: 400...600, reserved: 330...670), 330...670)
+        XCTAssertEqual(MenuBarStylePlan.blocked(notch: 400...600, reserved: nil), 400...600)
+        XCTAssertEqual(MenuBarStylePlan.blocked(notch: nil, reserved: 450...550), 450...550, "no notch: an in-bar panel still splits it")
+        XCTAssertNil(MenuBarStylePlan.blocked(notch: nil, reserved: nil))
+        let size = CGSize(width: 1000, height: 32)
+        XCTAssertEqual(MenuBarStylePlan.rects(shape: .notch, size: size, notch: 330...670, menusEnd: nil, itemsStart: nil).map(\.width), [322, 322])
+    }
+
+    func testSplitIsBuiltLikePillsWithEqualGaps() {
+        let size = CGSize(width: 1000, height: 32)
+        let rects = MenuBarStylePlan.rects(shape: .notch, size: size, notch: 400...600, menusEnd: nil, itemsStart: nil)
+        XCTAssertEqual(400 - rects[0].maxX, rects[1].minX - 600, "the same gap on both sides")
+        XCTAssertEqual(rects[0].minX, 1000 - rects[1].maxX, "the same margin at the screen edges")
+        let pills = MenuBarStylePlan.rects(shape: .pills, size: size, notch: 400...600, menusEnd: 300, itemsStart: 700)
+        XCTAssertEqual(rects[0].height, pills[0].height, "the same height, so the same corners")
+        XCTAssertEqual(rects[0].minY, pills[0].minY)
     }
 }

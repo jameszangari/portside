@@ -341,6 +341,26 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 /// can pick the pane before or while the window is open.
 final class SettingsNavigation: ObservableObject {
     @Published var tab: SettingsTab = SettingsNavigation.initialTab
+    /// Bumped by each search result, so picking the same one again still scrolls.
+    @Published private(set) var scrollRequest = 0
+    @Published private(set) var scrollTarget: String?
+    @Published private(set) var highlight: String?
+    private var clearHighlight: Task<Void, Never>?
+
+    /// Opens a search result: the pane, then its section, briefly highlighted.
+    @MainActor
+    func open(_ entry: SettingsSearchEntry) {
+        tab = entry.tab
+        scrollTarget = entry.section
+        highlight = entry.section
+        scrollRequest += 1
+        clearHighlight?.cancel()
+        clearHighlight = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.8))
+            guard !Task.isCancelled else { return }
+            self?.highlight = nil
+        }
+    }
 
     /// Debug builds: `PORTSIDE_SETTINGS_TAB=widgets` opens that pane, for
     /// screenshots of a sandboxed run.
@@ -373,24 +393,35 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationSplitView {
-            SettingsSidebar(selection: $navigation.tab)
+            SettingsSidebar(selection: $navigation.tab, onOpen: { navigation.open($0) })
                 .navigationSplitViewColumnWidth(min: SettingsLayout.sidebarWidth, ideal: SettingsLayout.sidebarWidth, max: SettingsLayout.sidebarWidth)
         } detail: {
-            Group {
-                switch tab {
-                case .dock: DockSettings(dockModel: dockModel, trash: trash)
-                case .appearance: AppearanceSettings(dockModel: dockModel, layout: layout, badges: badges)
-                case .widgets: WidgetSettings(dockModel: dockModel, widgets: widgets)
-                case .groups: GroupSettings(dockModel: dockModel)
-                case .commandCenter: CommandCenterSettings(dockModel: dockModel, integrations: integrations)
-                case .switcher: AppSwitcherSettings(dockModel: dockModel, integrations: integrations)
-                case .menuBar: MenuBarSettings(dockModel: dockModel, integrations: integrations)
-                case .notch: AgentNotchSettingsView(model: dockModel)
-                case .general: GeneralSettings(dockModel: dockModel, layout: layout, nativeDock: nativeDock, launchAtLogin: launchAtLogin, integrations: integrations)
+            ScrollViewReader { proxy in
+                Group {
+                    switch tab {
+                    case .dock: DockSettings(dockModel: dockModel, trash: trash)
+                    case .appearance: AppearanceSettings(dockModel: dockModel, layout: layout, badges: badges)
+                    case .widgets: WidgetSettings(dockModel: dockModel, widgets: widgets)
+                    case .groups: GroupSettings(dockModel: dockModel)
+                    case .commandCenter: CommandCenterSettings(dockModel: dockModel, integrations: integrations)
+                    case .switcher: AppSwitcherSettings(dockModel: dockModel, integrations: integrations)
+                    case .menuBar: MenuBarSettings(dockModel: dockModel, integrations: integrations)
+                    case .notch: AgentNotchSettingsView(model: dockModel)
+                    case .general: GeneralSettings(dockModel: dockModel, layout: layout, nativeDock: nativeDock, launchAtLogin: launchAtLogin, integrations: integrations)
+                    }
                 }
+                .formStyle(.grouped)
+                .navigationTitle(tab.title)
+                    .environment(\.settingsHighlight, navigation.highlight)
+                    .onChange(of: navigation.scrollRequest) {
+                        guard let target = navigation.scrollTarget else { return }
+                        // A pane just switched to needs a moment to lay out.
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(180))
+                            withAnimation { proxy.scrollTo(target, anchor: .top) }
+                        }
+                    }
             }
-            .formStyle(.grouped)
-            .navigationTitle(tab.title)
         }
         .frame(width: SettingsLayout.windowSize.width, height: SettingsLayout.windowSize.height)
     }
@@ -401,6 +432,9 @@ struct SettingsView: View {
 /// App identity at the top, the panes, and the update check at the bottom.
 private struct SettingsSidebar: View {
     @Binding var selection: SettingsTab
+    let onOpen: (SettingsSearchEntry) -> Void
+    @State private var query = ""
+    @FocusState private var searchFocused: Bool
     @State private var status: String?
     @State private var checking = false
     @State private var clearStatus: Task<Void, Never>?
@@ -413,7 +447,77 @@ private struct SettingsSidebar: View {
     @State private var sidebarLeading: CGFloat = 0
     @State private var firstRowLeading: CGFloat?
 
+    private var results: [SettingsSearchEntry] { SettingsSearch.results(query) }
+    private var isSearching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("Search settings", text: $query, prompt: Text(SettingsTextField.Kind.search.hint))
+                .textFieldStyle(.plain)
+                .focused($searchFocused)
+                .onSubmit { if let first = results.first { onOpen(first) } }
+                .onExitCommand { query = "" }
+            if !query.isEmpty {
+                Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search")
+            }
+        }
+        .font(.system(size: 13))
+        .padding(.horizontal, 8).frame(height: 28)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.08)))
+        .padding(.horizontal, rowLeading)
+        .padding(.bottom, 6)
+        .background(Button("") { searchFocused = true }.keyboardShortcut("f").hidden())
+    }
+
+    @ViewBuilder private var searchResults: some View {
+        if results.isEmpty {
+            Text("No matching settings").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            List(results) { entry in
+                Button { onOpen(entry) } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: entry.tab.symbol).foregroundStyle(.secondary).frame(width: 18)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(entry.title).lineLimit(1)
+                            Text(entry.path).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(entry.title), \(entry.path)")
+            }
+            .listStyle(.sidebar)
+        }
+    }
+
     var body: some View {
+        sidebarContent
+            .safeAreaInset(edge: .top, spacing: 0) {
+                VStack(spacing: 0) {
+                    identity
+                    searchField
+                }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) { updates }
+            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minX } action: { sidebarLeading = $0 }
+            .onChange(of: firstRowLeading) { updateRowLeading() }
+            .onChange(of: sidebarLeading) { updateRowLeading() }
+    }
+
+    @ViewBuilder private var sidebarContent: some View {
+        if isSearching {
+            searchResults
+        } else {
+            paneList
+        }
+    }
+
+    private var paneList: some View {
         List(selection: Binding(get: { selection }, set: { if let tab = $0 { selection = tab } })) {
             ForEach(SettingsTab.sidebarGroups, id: \.title) { group in
                 Section(group.title) {
@@ -428,11 +532,6 @@ private struct SettingsSidebar: View {
             }
         }
         .listStyle(.sidebar)
-        .safeAreaInset(edge: .top, spacing: 0) { identity }
-        .safeAreaInset(edge: .bottom, spacing: 0) { updates }
-        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minX } action: { sidebarLeading = $0 }
-        .onChange(of: firstRowLeading) { updateRowLeading() }
-        .onChange(of: sidebarLeading) { updateRowLeading() }
     }
 
     private func updateRowLeading() {
@@ -690,7 +789,7 @@ private struct DockSettings: View {
 
     var body: some View {
         Form {
-            Section("Layout") {
+            Section(header: Text("Layout").settingsAnchor("Layout")) {
                 Picker("Position", selection: Binding(
                     get: { dockModel.edge },
                     set: { dockModel.setEdge($0) }
@@ -787,7 +886,7 @@ private struct DockSettings: View {
                     )
                 }
             } header: {
-                Text("Auto-hide")
+                Text("Auto-hide").settingsAnchor("Auto-hide")
             } footer: {
                 if dockModel.autoHide {
                     Text("Auto-hide is paused while Settings is open so you can preview the dock.")
@@ -795,7 +894,7 @@ private struct DockSettings: View {
                 }
             }
 
-            Section("Motion") {
+            Section(header: Text("Motion").settingsAnchor("Motion")) {
                 SettingsSlider(
                     title: "Animation duration",
                     value: dockModel.animationDuration,
@@ -811,7 +910,7 @@ private struct DockSettings: View {
                 ))
             }
 
-            Section("Apps") {
+            Section(header: Text("Apps").settingsAnchor("Apps")) {
                 Toggle("Show indicators for open applications", isOn: Binding(
                     get: { dockModel.showIndicators },
                     set: { dockModel.setShowIndicators($0) }
@@ -851,7 +950,7 @@ private struct DockSettings: View {
                 }
                 activityToggle(\.working, "Working", "Pulsing dots while the app and its child processes are busy. Turn it on per app with Show Working Icon in the app's right-click menu.")
             } header: {
-                Text("Activity Icons")
+                Text("Activity Icons").settingsAnchor("Activity Icons")
             }
 
             Section {
@@ -896,7 +995,7 @@ private struct UpdatesAuthSection: View {
                     Text(status).helperStyle()
                 }
             } header: {
-                Text("Updates")
+                Text("Updates").settingsAnchor("Updates")
             }
         }
     }
@@ -956,7 +1055,7 @@ private struct GeneralSettings: View {
 
     var body: some View {
         Form {
-            Section("Startup") {
+            Section(header: Text("Startup").settingsAnchor("Startup")) {
                 LaunchAtLoginRow(launchAtLogin: launchAtLogin)
                 Toggle("Open Settings when Portside launches", isOn: Binding(
                     get: { dockModel.openSettingsOnLaunch },
@@ -972,13 +1071,13 @@ private struct GeneralSettings: View {
                     onChange: { dockModel.setSettingsHotkey($0) }
                 )
             } header: {
-                Text("Keyboard")
+                Text("Keyboard").settingsAnchor("Keyboard")
             } footer: {
                 Text("Open Settings works from any app. Default ⌘⇧D. The menu bar Settings… item always uses ⌘,. Command Center and App Switcher shortcuts are in their own panes.")
                     .footerStyle()
             }
 
-            Section("Automatic updates") {
+            Section(header: Text("Automatic updates").settingsAnchor("Automatic updates")) {
                 Toggle("Check for updates automatically", isOn: Binding(
                     get: { dockModel.automaticUpdateChecks },
                     set: { dockModel.setAutomaticUpdateChecks($0) }
@@ -994,7 +1093,7 @@ private struct GeneralSettings: View {
 
             UpdatesAuthSection(otherCopies: $otherCopies)
 
-            Section("macOS Dock") {
+            Section(header: Text("macOS Dock").settingsAnchor("macOS Dock")) {
                 Toggle(isOn: Binding(
                     get: { dockModel.hideNativeDock },
                     // Async: hiding may open a modal alert, which should not
@@ -1008,7 +1107,7 @@ private struct GeneralSettings: View {
                 }
             }
 
-            Section("Import") {
+            Section(header: Text("Import").settingsAnchor("Import")) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Button("Import from macOS Dock...") {
@@ -1258,7 +1357,7 @@ private struct AppearanceSettings: View {
         Form {
             // How big things are. Magnified size only appears once
             // magnification is on, so nothing here is ever greyed out.
-            Section("Size") {
+            Section(header: Text("Size").settingsAnchor("Size")) {
                 SettingsSlider(
                     title: "Icon size",
                     value: min(Double(dockModel.iconSize), Double(maxIconSize)),
@@ -1306,7 +1405,7 @@ private struct AppearanceSettings: View {
                 }
                 .pickerStyle(.segmented)
             } header: {
-                Text("Icons")
+                Text("Icons").settingsAnchor("Icons")
             } footer: {
                 Text(dockModel.iconStyle == .matchSystem
                      ? "Uses the icon style from System Settings > Appearance (Default, Dark, Clear, or Tinted), like the macOS Dock, and updates when you change it."
@@ -1329,7 +1428,7 @@ private struct AppearanceSettings: View {
                 },
                 header: {
                     HStack {
-                        Text("Background")
+                        Text("Background").settingsAnchor("Background")
                         Spacer()
                         Button("Reset \(dockModel.background.style.title)") { dockModel.resetBackgroundStyleToDefaults() }
                             .buttonStyle(.link)
@@ -1376,7 +1475,7 @@ private struct AppearanceSettings: View {
                     }
                 }
             } header: {
-                Text("Badges")
+                Text("Badges").settingsAnchor("Badges")
             } footer: {
                 if badges.isAvailable && dockModel.showBadges {
                     Text(dockModel.badgeColor == .macOS
@@ -1480,7 +1579,7 @@ struct DockBackgroundEditor<Extra: View, Header: View>: View {
 
     @ViewBuilder private var customGlassSections: some View {
         let glass = background.glass
-        Section("Glass") {
+        Section(header: Text("Glass").settingsAnchor("Glass")) {
             Toggle("Follow macOS blur", isOn: binding(\.glass.followsSystemBlur))
             if !glass.followsSystemBlur {
                 glassSlider("Blur", \.glass.blurRadius, GlassBackground.blurRange, snap: 0.5) { String(format: "%.1f pt", $0) }
@@ -1507,7 +1606,7 @@ struct DockBackgroundEditor<Extra: View, Header: View>: View {
                 }
             }
         } header: {
-            Text("Border")
+            Text("Border").settingsAnchor("Border")
         } footer: {
             Text("The glass's own edge. 35% matches the macOS Dock; 0% removes it.").footerStyle()
         }
@@ -1672,7 +1771,7 @@ private struct WidgetSettings: View {
                     ))
                     Text("Off by default. Some managed Macs block the Copilot CLI. Leave this off to use GitHub CLI sign-in over HTTPS, and ask IT about proxy or security blocks.").helperStyle()
                 } header: {
-                    Text("AI Usage Providers")
+                    Text("AI Usage Providers").settingsAnchor("AI Usage Providers")
                 } footer: {
                     Text("Refreshes every 5 minutes. Every provider you pick shows on the tile; hover for percentages.").footerStyle()
                 }
@@ -1763,7 +1862,7 @@ private struct AgentHooksSection: View {
     }
 
     var body: some View {
-        Section("Agent Hooks") {
+        Section(header: Text("Agent Hooks").settingsAnchor("Agent Hooks")) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(found.isEmpty ? "No agents found" : installed ? "Installed" : "Not installed")
@@ -1845,7 +1944,7 @@ private struct GroupSettings: View {
                 }
             }
 
-            Section("Groups") {
+            Section(header: Text("Groups").settingsAnchor("Groups")) {
                 if dockModel.groups.isEmpty {
                     Text("No groups yet. Right-click an app in the dock and choose Add to Group.")
                         .foregroundStyle(.secondary)
@@ -1928,11 +2027,11 @@ private struct GroupSettingsRow: View {
         }
     }
 
-    /// Looks like plain text until hovered or focused, then shows a field
-    /// outline. The text stays aligned with the app count below it.
+    /// Always boxed, so it reads as editable; the box strengthens on hover or
+    /// focus.
     private var nameField: some View {
         let active = hovering || nameFocused
-        return TextField("Name", text: $draft)
+        return TextField("Group name", text: $draft, prompt: Text(SettingsTextField.Kind.name.hint))
             .labelsHidden()
             .textFieldStyle(.plain)
             .focused($nameFocused)
@@ -1941,11 +2040,11 @@ private struct GroupSettingsRow: View {
             .padding(.vertical, 2)
             .background(
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(nameFocused ? Color(nsColor: .textBackgroundColor) : .clear)
+                    .fill(Color(nsColor: .textBackgroundColor).opacity(nameFocused ? 1 : 0.5))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .strokeBorder(active ? Color(nsColor: .separatorColor) : .clear)
+                    .strokeBorder(active ? Color(nsColor: .separatorColor) : Color.primary.opacity(0.18))
             )
             .padding(.horizontal, -6)
             .frame(maxWidth: 220, alignment: .leading)

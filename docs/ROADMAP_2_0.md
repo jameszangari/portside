@@ -52,9 +52,9 @@ Decision (2026-11-08): the documented feature set of Thaw is the minimum functio
 | --- | --- | --- |
 | P2-MENU-05 | (prototype built, hand gate open) Visible, Hidden and Always Hidden sections; layout editor with a Move to menu and drag between sections, applied on demand | Per-item movement beyond MENU-04's validated set; items clipped under the notch |
 | P2-MENU-06 | (built, hand gate open; click, hotkey, empty-bar click, scroll and rehide on, hover optional) Reveal by click, hotkey, optional hover/scroll on empty bar; automatic rehide | Secure input; hover trigger near menus and notch |
-| P2-MENU-07 | Portside Bar: hidden items in a panel below the menu bar | Clicking items that are hidden or covered; live previews need Screen Recording |
+| P2-MENU-07 | (built, hand gate open) Portside Bar: hidden items in a panel below the menu bar | Clicking items that are hidden or covered; live previews need Screen Recording |
 | P2-MENU-08 | Global hotkeys, open-by-key and per-item open | Secure input; shortcut conflicts |
-| P2-MENU-09 | Item groups and saved profiles | Applying a profile on a crowded bar |
+| P2-MENU-09 | (built, hand gate open) Item groups and saved profiles | Applying a profile on a crowded bar |
 | P2-MENU-10 | Hide/show app menus and Zen Mode | No known public API for app menus; needs its own spike |
 | P2-MENU-11 | Menu bar appearance (tint, gradient, shadow, border, shape) | Overlay window level with notch, full screen and Spaces |
 | P2-MENU-12 | Item spacing | Requires writing a global defaults domain; needs a decision record |

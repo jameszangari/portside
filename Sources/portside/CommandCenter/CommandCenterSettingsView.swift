@@ -55,7 +55,7 @@ struct CommandCenterSettingsSection: View {
                     .disabled(history.isEmpty)
             }
         } header: {
-            Text("Command Center")
+            Text("Command Center").settingsAnchor("Command Center")
         } footer: {
             Text("Quicklinks open from Command Center by name. Allowed links start with \(QuicklinkURL.allowedSchemes.map { "\($0):" }.joined(separator: ", ")). Searchable folders feed file name search (turn on Files in Settings > Integrations): names only, nothing outside the folders you add, symbolic links not followed, and removing a folder drops its index at once. Snippets are text you type here; picking one in Command Center copies it as plain text and nothing more, and they are stored only on this Mac, outside dock.json. History ranks what you open often or recently first. It keeps only which result you opened, how often and when, never what you typed, and stays on this Mac.")
                 .footerStyle()
@@ -97,11 +97,9 @@ private struct QuicklinkRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                TextField("Name", text: binding(\.name))
+                SettingsTextField("Quicklink name", text: binding(\.name))
                     .frame(width: 150)
-                    .accessibilityLabel("Quicklink name")
-                TextField("https://example.com", text: binding(\.url))
-                    .accessibilityLabel("Quicklink URL")
+                SettingsTextField("Quicklink URL", text: binding(\.url), kind: .url)
                 Button {
                     dockModel.removeQuicklink(id: link.id)
                 } label: {
@@ -141,8 +139,7 @@ private struct SnippetRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                TextField("Snippet name", text: binding(\.name))
-                    .accessibilityLabel("Snippet name")
+                SettingsTextField("Snippet name", text: binding(\.name))
                 Button {
                     store.remove(id: snippet.id)
                 } label: {
@@ -152,12 +149,7 @@ private struct SnippetRow: View {
                 .help("Remove")
                 .accessibilityLabel("Remove \(snippet.title)")
             }
-            TextEditor(text: binding(\.text))
-                .font(.system(size: 12, design: .monospaced))
-                .frame(height: 64)
-                .scrollContentBackground(.hidden)
-                .padding(4)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
+            SettingsTextArea(label: "Snippet text", text: binding(\.text), hint: "Enter the text to copy", monospaced: true)
                 .accessibilityLabel("Snippet text")
             if snippet.isEmpty {
                 Label {
@@ -254,7 +246,7 @@ struct ClipboardSettingsSection: View {
                 }
             }
         } header: {
-            Text("Clipboard History")
+            Text("Clipboard History").settingsAnchor("Clipboard History")
         } footer: {
             Text("Keeps the text you copy, encrypted on this Mac with a key in your keychain (your login keychain in an unsigned build), and finds it again when you type clip in Command Center. It skips what apps mark as secret, copies made while a password field has the keyboard, and password managers (\(ClipboardPolicy.builtInExcludedApps.count) built in), plus the apps you add here. It cannot recognize every secret, so pause it or exclude an app when that matters. Text only, never synced or sent anywhere, and it is dropped from memory when the module is off (the encrypted file stays until it expires or you clear it).")
                 .footerStyle()

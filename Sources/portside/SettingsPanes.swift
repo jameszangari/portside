@@ -1,3 +1,4 @@
+import UniformTypeIdentifiers
 import SwiftUI
 
 // Settings panes for the tools that used to share General and Integrations:
@@ -49,7 +50,7 @@ struct CommandCenterSettings: View {
                     }
                 }
             } header: {
-                Text("Launcher")
+                Text("Launcher").settingsAnchor("Launcher")
             } footer: {
                 Text("Searches apps, Portside's commands, Settings panes and quicklinks. Default ⌥Space; while it is on it is also in the menu bar menu.")
                     .footerStyle()
@@ -125,7 +126,7 @@ struct AppSwitcherSettings: View {
                     Text("While the switcher is open, / starts a search that stays open after you let go. Type to filter, Return switches, Esc cancels.").helperStyle()
                 }
             } header: {
-                Text("Switcher")
+                Text("Switcher").settingsAnchor("Switcher")
             }
 
             Section {
@@ -146,7 +147,7 @@ struct AppSwitcherSettings: View {
                     }
                 }
             } header: {
-                Text("Keyboard")
+                Text("Keyboard").settingsAnchor("Keyboard")
             } footer: {
                 Text("Default ⌥Tab: tap it for the previous app (or window), or hold ⌥ and press Tab (Shift-Tab or the arrow keys to go back), then let go. With apps, ↓ chooses one of the selected app's windows. Esc cancels. Windows and their titles need Accessibility; without it the switcher shows apps. Windows on other Spaces may not be listed, and choosing a full screen window goes to its Space. ⌘Tab stays macOS's.")
                     .footerStyle()
@@ -165,104 +166,26 @@ struct AppSwitcherSettings: View {
 struct MenuBarSettings: View {
     @ObservedObject var dockModel: DockModel
     @ObservedObject var integrations: IntegrationSettings
-    @AppStorage(PortsideMenuIcon.defaultsKey) private var showsAppIcon = true
-    @State private var showOptions = false
-    @State private var showLook = false
-    @State private var showArrange = false
 
     private var layoutRunning: Bool {
         integrations.modules.first { $0.id == MenuBarLayoutModule.moduleID }?.state == .running
     }
 
-    private func triggerBinding<Value>(_ path: WritableKeyPath<MenuBarTriggerSettings, Value>) -> Binding<Value> {
-        Binding(
-            get: { dockModel.menuBarTriggers[keyPath: path] },
-            set: { value in
-                var next = dockModel.menuBarTriggers
-                next[keyPath: path] = value
-                dockModel.setMenuBarTriggers(next)
-            }
-        )
-    }
-
     var body: some View {
         Form {
+            ModuleRowsSection(integrations: integrations, ids: [MenuBarShelfModule.moduleID])
             if layoutRunning, let layout = integrations.menuLayout {
-                if let triggers = integrations.menuTriggers {
-                    if layout.hidesByMembership {
-                        Section {
-                            Picker("Show hidden items", selection: triggerBinding(\.presentation)) {
-                                ForEach(MenuBarPresentation.allCases) { Text($0.title).tag($0) }
-                            }
-                            if dockModel.menuBarTriggers.presentation != .menuBar {
-                                Picker("Portside Bar position", selection: triggerBinding(\.barLocation)) {
-                                    ForEach(MenuBarBarLocation.allCases) { Text($0.title).tag($0) }
-                                }
-                            }
-                            Toggle(isOn: triggerBinding(\.emptyClick)) {
-                                Text("Click anywhere on the menu bar to open")
-                                Text("Any empty spot, including the notch. Clicks on an app's menu or a status icon still go to them.").helperStyle()
-                            }
-                            Picker("Menu bar icon", selection: triggerBinding(\.look.controlIcon)) {
-                                ForEach(MenuBarControlIcon.allCases) { Text($0.title).tag($0) }
-                            }
-                            Toggle(isOn: $showsAppIcon) {
-                                Text("Show the Portside menu")
-                                Text("The Portside logo in the menu bar. Without it, open Portside from Spotlight or Finder to reach Settings.").helperStyle()
-                            }
-                            if dockModel.menuBarTriggers.look.controlIcon == .off, !dockModel.menuBarTriggers.emptyClick, dockModel.menuBarTriggers.hotkey == nil {
-                                Text("Without the icon, turn on Click anywhere or set a shortcut, or nothing will open your items.").helperStyle().foregroundStyle(.orange)
-                            }
-                        } footer: {
-                            Text("The Portside Bar is a separate panel under the menu bar. Your hidden items stay out of the menu bar and open from the panel.").helperStyle()
-                        }
-                    }
-                    if layout.hidesByMembership {
-                        Section {
-                            Button {
-                                showLook.toggle()
-                            } label: {
-                                HStack {
-                                    Text("Appearance")
-                                    Spacer()
-                                    Image(systemName: showLook ? "chevron.up" : "chevron.down").foregroundStyle(.secondary)
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        if showLook { MenuBarLookSection(dockModel: dockModel) }
-                    }
-                    Section {
-                        Button {
-                            showOptions.toggle()
-                        } label: {
-                            HStack {
-                                Text("Shortcut and hide-again options")
-                                Spacer()
-                                Image(systemName: showOptions ? "chevron.up" : "chevron.down").foregroundStyle(.secondary)
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    if showOptions { MenuBarTriggersSection(dockModel: dockModel, service: triggers, files: integrations.menuFiles) }
-                    Section {
-                        Button {
-                            showArrange.toggle()
-                        } label: {
-                            HStack {
-                                Text("Profiles and groups")
-                                Spacer()
-                                Image(systemName: showArrange ? "chevron.up" : "chevron.down").foregroundStyle(.secondary)
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    if showArrange { MenuBarProfilesSection(service: layout) }
+                if layout.hidesByMembership {
+                    Section { MenuBarLivePreviewCard(settings: dockModel.menuBarTriggers, dock: dockModel.look) }
                 }
                 MenuBarLayoutSection(service: layout)
+                if let triggers = integrations.menuTriggers {
+                    MenuBarTriggersSection(dockModel: dockModel, service: triggers, hidesByMembership: layout.hidesByMembership)
+                    if layout.hidesByMembership { MenuBarLookSection(dockModel: dockModel) }
+                    if layout.hidesByMembership { MenuBarLiveActivitiesSection(dockModel: dockModel, appList: integrations.menuFiles?.appList) }
+                    MenuBarProfilesSection(service: layout)
+                    MenuBarAdvancedSection(dockModel: dockModel, service: triggers, files: integrations.menuFiles)
+                }
             } else {
                 MenuBarLayoutSetup(integrations: integrations)
             }
@@ -320,7 +243,7 @@ private struct MenuBarLayoutSetup: View {
 struct MenuBarTriggersSection: View {
     @ObservedObject var dockModel: DockModel
     @ObservedObject var service: MenuBarTriggerService
-    let files: (layout: MenuBarFileGrant, appList: MenuBarFileGrant)?
+    let hidesByMembership: Bool
 
     private var settings: MenuBarTriggerSettings { dockModel.menuBarTriggers }
     private let pointerAvailable = true
@@ -357,14 +280,39 @@ struct MenuBarTriggersSection: View {
         conflict(for: settings.alwaysHiddenHotkey, sibling: ("menu bar show and hide", settings.hotkey))
     }
 
-    var body: some View {
-        Section {
-            MenuBarTriggersPreviewCard(settings: settings, pointerAvailable: pointerAvailable)
-            Label {
-                Text("In the menu bar, an open eye means your items are showing and a crossed eye means they are hidden. A thin bar marks where the hidden items sit. Click the eye to flip it. Right-click it for options, including Turn Off.").helperStyle()
-            } icon: {
-                Image(systemName: "eye").foregroundStyle(.secondary)
+    private func gesture(_ kind: MenuBarGestureGlyph.Kind, _ path: WritableKeyPath<MenuBarTriggerSettings, Bool>, title: String, detail: String) -> some View {
+        Toggle(isOn: binding(path)) {
+            HStack(spacing: 10) {
+                MenuBarGestureGlyph(kind: kind)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                    Text(detail).helperStyle()
+                }
             }
+        }
+    }
+
+    var body: some View {
+        if hidesByMembership {
+            Section {
+                SettingsChoiceCards(selection: binding(\.presentation), choices: MenuBarPresentation.allCases.map { ($0, $0.title) }, columns: 3) {
+                    MenuBarPresentationPicture(presentation: $0)
+                }
+                if settings.presentation != .menuBar {
+                    SettingsChoiceCards(selection: binding(\.barLocation), choices: MenuBarBarLocation.allCases.map { ($0, $0.title) }, columns: 5) {
+                        MenuBarLocationPicture(location: $0)
+                    }
+                }
+            } header: {
+                Text("Show hidden items").settingsAnchor("Show hidden items")
+            } footer: {
+                Text("The Portside Bar is a panel under the menu bar. Hidden items stay out of the menu bar and open from the panel.").footerStyle()
+            }
+        }
+        Section {
+            gesture(.click, \.emptyClick, title: "Click anywhere on the menu bar", detail: "Any empty spot, including the notch. Double-click also shows Always Hidden.")
+            gesture(.scroll, \.scroll, title: "Scroll on the menu bar", detail: "Scroll up shows, scroll down hides.")
+            gesture(.hover, \.hover, title: "Hover over the menu bar", detail: "Shows your items after the pointer rests there.")
             HotkeyRecorderButton(
                 title: "Shortcut",
                 chord: settings.hotkey,
@@ -379,40 +327,6 @@ struct MenuBarTriggersSection: View {
             if service.isRunning, settings.hotkey != nil, service.secureInputOn {
                 Text("Secure input is on right now (often a password field). The shortcut may not fire until it ends.").helperStyle()
             }
-            if !service.isRunning { Text("Menu Bar Shelf is off. Turn it on from the Layout setup.").helperStyle() }
-        } header: {
-            Text("Open")
-        }
-        Section {
-            Toggle(isOn: binding(\.scroll)) {
-                Text("Scroll on the empty menu bar")
-                Text("Scroll up shows, scroll down hides.").helperStyle()
-            }
-            Toggle(isOn: binding(\.hover)) {
-                Text("Hover over the empty menu bar")
-                Text("Shows your items after the pointer rests there.").helperStyle()
-            }
-        } header: {
-            Text("Also open with")
-        } footer: {
-            Text("These need Accessibility and never act over an app's menu, a status item or an open menu. Scroll and hover also skip the notch.").footerStyle()
-        }
-        Section {
-            Picker("Hide again", selection: binding(\.strategy)) {
-                ForEach(MenuBarRehideStrategy.allCases) { Text($0.title).tag($0) }
-            }
-            Picker("After", selection: binding(\.rehideSeconds)) {
-                ForEach(MenuBarTriggerSettings.rehideChoices, id: \.self) { seconds in
-                    Text(seconds == 0 ? "Never" : "\(seconds) seconds").tag(seconds)
-                }
-            }
-            if let status = service.status { Text(status).helperStyle() }
-        } header: {
-            Text("Hide again")
-        } footer: {
-            Text("Smart also hides shortly after you click elsewhere or switch apps. An open menu, the pointer on the menu bar or an open layout editor waits it out.").footerStyle()
-        }
-        Section {
             HotkeyRecorderButton(
                 title: "Show Always Hidden",
                 chord: settings.alwaysHiddenHotkey,
@@ -424,8 +338,108 @@ struct MenuBarTriggersSection: View {
                 }
             )
             if let alwaysHiddenWarning { Text(alwaysHiddenWarning).helperStyle().foregroundStyle(.orange) }
+            if !service.isRunning { Text("Menu Bar Shelf is off. Turn it on from the Layout setup.").helperStyle() }
+        } header: {
+            Text("Open with").settingsAnchor("Open with")
+        } footer: {
+            Text("Clicks on an app's menu or a status icon still go to them, and nothing acts over an open menu. Scroll and hover also skip the notch.").footerStyle()
+        }
+        Section {
+            SettingsChoiceCards(selection: binding(\.strategy), choices: MenuBarRehideStrategy.allCases.map { ($0, $0.title) }, columns: 3) {
+                MenuBarRehidePicture(strategy: $0)
+            }
+            Picker("After", selection: binding(\.rehideSeconds)) {
+                ForEach(MenuBarTriggerSettings.rehideChoices, id: \.self) { seconds in
+                    Text(seconds == 0 ? "Never" : "\(seconds) seconds").tag(seconds)
+                }
+            }
+            MenuBarRehideFlow(settings: settings)
+            if let status = service.status { Text(status).helperStyle() }
+        } header: {
+            Text("Hide again").settingsAnchor("Hide again")
+        } footer: {
+            Text("An open menu, the pointer on the menu bar or this settings page waits it out.").footerStyle()
+        }
+    }
+}
+
+/// Whether Live Activities from a paired iPhone show.
+private struct MenuBarLiveActivitiesSection: View {
+    @ObservedObject var dockModel: DockModel
+    let appList: MenuBarFileGrant?
+    @StateObject private var model = MenuBarLiveActivities()
+
+    private var keepsShowing: Bool { dockModel.menuBarTriggers.hidingMethod == .native }
+
+    private func setKeepsShowing(_ on: Bool) {
+        if on, let appList, !appList.isGranted { appList.request() }
+        var next = dockModel.menuBarTriggers
+        next.hidingMethod = on ? .native : .standard
+        dockModel.setMenuBarTriggers(next)
+    }
+
+    private func row(_ symbol: String, _ title: String, _ detail: String, value: Bool, set: @escaping (Bool) -> Void) -> some View {
+        Toggle(isOn: Binding(get: { value }, set: set)) {
+            HStack(spacing: 10) {
+                Image(systemName: symbol)
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 46, height: 26)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.07)))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                    Text(detail).helperStyle()
+                }
+            }
+        }
+    }
+
+    var body: some View {
+        Section {
+            if let iPhoneEnabled = model.iPhoneEnabled {
+                row("iphone", "Live Activities from iPhone", "Sports scores, deliveries and other activity from your paired iPhone.", value: iPhoneEnabled) { model.setIPhone($0) }
+            }
+            if model.iPhoneEnabled == nil {
+                Text("This version of macOS doesn't expose these settings.").helperStyle()
+            }
+            row(
+                "eye", "Keep Live Activities showing",
+                keepsShowing
+                    ? "They stay visible while your items are hidden. This uses Native hiding, which can't hide Clock, Control Center or Siri, and some apps may stay in the menu bar."
+                    : "They disappear while your items are hidden. Turn on to keep them, using Native hiding.",
+                value: keepsShowing
+            ) { setKeepsShowing($0) }
+        } header: {
+            Text("Live Activities").settingsAnchor("Live Activities")
+        }
+        .onAppear { model.refresh() }
+    }
+}
+
+/// Settings most people never need to change.
+private struct MenuBarAdvancedSection: View {
+    @ObservedObject var dockModel: DockModel
+    @ObservedObject var service: MenuBarTriggerService
+    let files: (layout: MenuBarFileGrant, appList: MenuBarFileGrant)?
+
+    private var settings: MenuBarTriggerSettings { dockModel.menuBarTriggers }
+
+    private func binding<T>(_ keyPath: WritableKeyPath<MenuBarTriggerSettings, T>) -> Binding<T> {
+        Binding(
+            get: { dockModel.menuBarTriggers[keyPath: keyPath] },
+            set: {
+                var next = dockModel.menuBarTriggers
+                next[keyPath: keyPath] = $0
+                dockModel.setMenuBarTriggers(next)
+            }
+        )
+    }
+
+    var body: some View {
+        Section {
             Picker("New apps go to", selection: binding(\.newItemsSection)) {
-                ForEach(MenuBarSection.allCases) { Text($0.title).tag($0) }
+                ForEach(MenuBarSection.allCases) { Label($0.title, systemImage: $0.symbolName).tag($0) }
             }
             Picker("Item arrangement", selection: binding(\.arrangement)) {
                 ForEach(MenuBarArrangement.allCases) { Text($0.title).tag($0) }
@@ -438,16 +452,120 @@ struct MenuBarTriggersSection: View {
                 if settings.hidingMethod == .native { MenuBarGrantRow(title: "Native hiding needs the app list", grant: files.appList) }
             }
         } header: {
-            Text("Layout")
+            Text("Advanced").settingsAnchor("Advanced")
         } footer: {
-            Text("Automatic puts your saved order back before each reveal; Manual leaves it alone. Standard hides any app and Apple's items while Portside runs. Native uses macOS's per-app switch, which keeps Focus and Now Playing but restarts Control Center each time.").footerStyle()
+            Text("Automatic puts your saved order back before each reveal; Manual leaves it alone. Standard hides any app and Apple's items while Portside runs. Native uses macOS's own per-app switch.").footerStyle()
         }
+    }
+}
+
+private struct MenuBarIconPreview: View {
+    let look: MenuBarLook
+
+    var body: some View {
+        if let image = look.controlArtwork(hidden: true, description: "Menu bar icon") {
+            Image(nsImage: image)
+                .renderingMode(image.isTemplate ? .template : .original)
+                .foregroundStyle(.secondary)
+        } else {
+            Text("None").foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Pick the menu bar icon from every SF Symbol, or use your own image.
+private struct MenuBarIconPicker: View {
+    @ObservedObject var dockModel: DockModel
+    @State private var query = ""
+    @State private var results = SymbolCatalog.suggested
+    @State private var failed = false
+
+    private var look: MenuBarLook { dockModel.menuBarTriggers.look }
+
+    private func change(_ edit: (inout MenuBarLook) -> Void) {
+        var next = dockModel.menuBarTriggers
+        edit(&next.look)
+        dockModel.setMenuBarTriggers(next)
+    }
+
+    private func upload() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image, .svg, .pdf]
+        panel.allowsMultipleSelection = false
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let stored = MenuBarControlImage.store(from: url, replacing: look.customImage) else {
+            failed = true
+            return
+        }
+        failed = false
+        change {
+            $0.controlIcon = .image
+            $0.customImage = stored.name
+            $0.customImageIsTemplate = stored.isTemplate
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SettingsTextField("Search symbols", text: $query, kind: .search)
+            ScrollView {
+                if results.isEmpty {
+                    Text("No symbols match").foregroundStyle(.secondary).padding(.top, 24)
+                }
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 8), spacing: 2) {
+                    ForEach(results, id: \.self) { name in
+                        let selected = look.controlIcon == .symbol && look.customSymbol == name
+                        Image(systemName: name)
+                            .font(.system(size: 16))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 34)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(selected ? Color.accentColor.opacity(0.35) : Color.primary.opacity(0.0001))
+                            )
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                change {
+                                    $0.controlIcon = .symbol
+                                    $0.customSymbol = name
+                                }
+                            }
+                            .help(name)
+                            .accessibilityLabel(name)
+                            .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+                    }
+                }
+            }
+            .frame(height: 260)
+            if look.controlIcon == .image {
+                Toggle("Match the menu bar's color", isOn: Binding(
+                    get: { look.customImageIsTemplate },
+                    set: { value in change { $0.customImageIsTemplate = value } }
+                ))
+            }
+            if failed {
+                Text("That file could not be used as an image.").helperStyle().foregroundStyle(.orange)
+            }
+            HStack {
+                Button("Upload Image…", action: upload)
+                Spacer()
+                Button("Eye") { change { $0.controlIcon = .eye } }
+                Button("No Icon") { change { $0.controlIcon = .off } }
+            }
+        }
+        .padding(12)
+        .frame(width: 320)
+        .onChange(of: query) { _, text in results = SymbolCatalog.shared.search(text) }
     }
 }
 
 /// The Portside Bar's and the real menu bar's look.
 private struct MenuBarLookSection: View {
     @ObservedObject var dockModel: DockModel
+
+    @AppStorage(PortsideMenuIcon.defaultsKey) private var showsAppIcon = true
+    @State private var showIconPicker = false
 
     private var look: MenuBarLook { dockModel.menuBarTriggers.look }
 
@@ -478,24 +596,43 @@ private struct MenuBarLookSection: View {
 
     var body: some View {
         Section {
-            Picker("Style", selection: binding(\.barStyle)) {
-                ForEach(MenuBarBarStyle.allCases) { Text($0.title).tag($0) }
+            HStack(spacing: 10) {
+                MenuBarIconPreview(look: look)
+                    .frame(width: 34, height: 26)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
+                Text("Menu bar icon")
+                Spacer()
+                Button("Change…") { showIconPicker = true }
+                    .popover(isPresented: $showIconPicker, arrowEdge: .trailing) { MenuBarIconPicker(dockModel: dockModel) }
             }
-            .pickerStyle(.segmented)
+            Toggle(isOn: $showsAppIcon) {
+                Text("Show the Portside menu")
+                Text("The Portside logo in the menu bar. Without it, open Portside from Spotlight or Finder to reach Settings.").helperStyle()
+            }
+            if look.controlIcon == .off, !dockModel.menuBarTriggers.emptyClick, dockModel.menuBarTriggers.hotkey == nil {
+                Text("Without the icon, turn on Click anywhere or set a shortcut, or nothing will open your items.").helperStyle().foregroundStyle(.orange)
+            }
+        } header: {
+            Text("Icons").settingsAnchor("Icons")
+        }
+        Section {
+            SettingsChoiceCards(selection: binding(\.barStyle), choices: MenuBarBarStyle.allCases.map { ($0, $0.title) }, columns: 3) {
+                MenuBarBarStylePicture(style: $0, look: look, dock: dockModel.look)
+            }
             if look.barStyle == .system { cornerSlider(\.barCornerRadius) }
             SettingsSlider(title: "Icon size", value: look.barIconSize, range: MenuBarLook.iconSizeRange, snap: 1, format: { "\(Int($0)) pt" }, set: { set(\.barIconSize, $0, persist: $1) })
         } header: {
-            Text("Portside Bar")
+            Text("Portside Bar style").settingsAnchor("Portside Bar style")
         }
         if look.barStyle == .custom {
-            DockBackgroundEditor(background: look.barBackground, update: update(\.barBackground), surface: "bar", extra: { cornerSlider(\.barCornerRadius) }, header: { Text("Portside Bar background") })
+            DockBackgroundEditor(background: look.barBackground, update: update(\.barBackground), surface: "bar", extra: { cornerSlider(\.barCornerRadius) }, header: { Text("Portside Bar background").settingsAnchor("Portside Bar background") })
         }
         Section {
-            Picker("Shape", selection: binding(\.shape)) {
-                ForEach(MenuBarShape.allCases) { Text($0.title).tag($0) }
+            SettingsChoiceCards(selection: binding(\.shape), choices: MenuBarShape.allCases.map { ($0, $0.title) }, columns: 4) {
+                MenuBarShapePicture(shape: $0, look: look)
             }
         } header: {
-            Text("Menu bar")
+            Text("Menu bar shape").settingsAnchor("Menu bar shape")
         } footer: {
             Text("Drawn behind your menu bar. macOS still picks the color of its text and icons.").footerStyle()
         }
@@ -508,7 +645,7 @@ private struct MenuBarLookSection: View {
                     cornerSlider(\.cornerRadius)
                     Toggle("Shadow", isOn: binding(\.shadow))
                 },
-                header: { Text("Menu bar background") }
+                header: { Text("Menu bar background").settingsAnchor("Menu bar background") }
             )
         }
     }
@@ -537,6 +674,18 @@ struct MenuBarProfilesSection: View {
     @State private var newProfile = ""
     @State private var newGroup = ""
 
+    private func saveProfile() {
+        guard !newProfile.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        service.saveNewProfile(named: newProfile)
+        newProfile = ""
+    }
+
+    private func addGroup() {
+        guard !newGroup.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        service.addGroup(named: newGroup)
+        newGroup = ""
+    }
+
     var body: some View {
         Section {
             ForEach(service.profiles) { profile in
@@ -556,24 +705,22 @@ struct MenuBarProfilesSection: View {
                 }
                 HotkeyRecorderButton(title: "Shortcut", chord: profile.hotkey, defaultChord: nil, onChange: { service.setProfileHotkey(profile.id, chord: $0) })
             }
-            HStack {
-                TextField("New profile", text: $newProfile)
-                Button("Save") {
-                    service.saveNewProfile(named: newProfile)
-                    newProfile = ""
-                }
-                .disabled(newProfile.trimmingCharacters(in: .whitespaces).isEmpty)
+            HStack(spacing: 10) {
+                Text("New profile")
+                SettingsTextField("New profile name", text: $newProfile, onSubmit: saveProfile)
+                Button("Save", action: saveProfile)
+                    .disabled(newProfile.trimmingCharacters(in: .whitespaces).isEmpty)
                 if service.activeProfileID != nil { Button("Update Current") { service.updateActiveProfile() } }
             }
         } header: {
-            Text("Profiles")
+            Text("Profiles").settingsAnchor("Profiles")
         } footer: {
-            Text("A profile saves sections, order and groups. Switch from the eye's right-click menu or a shortcut.").footerStyle()
+            Text("A profile saves sections, order and groups. Switch from the menu bar icon's right-click menu or a shortcut.").footerStyle()
         }
         Section {
             ForEach(service.groups) { group in
                 HStack {
-                    TextField("Name", text: Binding(get: { group.name }, set: { service.renameGroup(group.id, to: $0) }))
+                    SettingsTextField("Group name", text: Binding(get: { group.name }, set: { service.renameGroup(group.id, to: $0) }))
                     Text("\(group.bundles.count) apps").helperStyle()
                     Toggle("Menu bar icon", isOn: Binding(get: { group.showsIcon }, set: { service.setGroupIcon(group.id, shown: $0) }))
                         .toggleStyle(.checkbox)
@@ -582,18 +729,16 @@ struct MenuBarProfilesSection: View {
                         .accessibilityLabel("Delete \(group.name)")
                 }
             }
-            HStack {
-                TextField("New group", text: $newGroup)
-                Button("Add") {
-                    service.addGroup(named: newGroup)
-                    newGroup = ""
-                }
-                .disabled(newGroup.trimmingCharacters(in: .whitespaces).isEmpty)
+            HStack(spacing: 10) {
+                Text("New group")
+                SettingsTextField("New group name", text: $newGroup, onSubmit: addGroup)
+                Button("Add", action: addGroup)
+                    .disabled(newGroup.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         } header: {
-            Text("Groups")
+            Text("Groups").settingsAnchor("Groups")
         } footer: {
-            Text("Right-click an icon below to add its app to a group. Groups appear as rows in the Portside Bar.").footerStyle()
+            Text("Right-click an icon in Visible, Hidden or Always Hidden to add its app to a group. Groups appear as rows in the Portside Bar.").footerStyle()
         }
     }
 }

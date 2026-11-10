@@ -293,7 +293,8 @@ final class StatusItemShelfSurface: NSObject, MenuBarShelfSurface {
     private var separator: NSStatusItem?
     private var alwaysHiddenSeparator: NSStatusItem?
     private var hidden = false
-    private(set) var icon = MenuBarControlIcon.eye
+    private var look = MenuBarLook()
+    var icon: MenuBarControlIcon { look.controlIcon }
     /// No marker while items open in the Portside Bar or there is no control.
     var hidesDivider = false
 
@@ -343,9 +344,9 @@ final class StatusItemShelfSurface: NSObject, MenuBarShelfSurface {
     /// control's left marks where the hidden items sit.
     private func showState(hidden: Bool) {
         control?.isVisible = icon != .off
-        guard let button = control?.button, let name = icon.symbol(hidden: hidden) else { return }
+        guard let button = control?.button, icon != .off else { return }
         let state = hidden ? "Menu bar items are hidden." : "Menu bar items are showing."
-        button.image = NSImage(systemSymbolName: name, accessibilityDescription: state)
+        button.image = look.controlArtwork(hidden: hidden, description: state)
         button.toolTip = "\(state) Click to \(hidden ? "show" : "hide") them. Right-click for options."
         button.setAccessibilityLabel("Menu bar shelf. \(state)")
     }
@@ -366,11 +367,13 @@ final class StatusItemShelfSurface: NSObject, MenuBarShelfSurface {
         let collapsed = hidden || (hidesDivider && dividerMode)
         separator?.length = collapsed ? hiddenLength(of: separator) : Self.revealedLength
         separator?.button?.image = collapsed ? nil : Self.dividerImage()
+        // Even at zero length macOS keeps a gap for an item, so take it out.
+        if dividerMode { separator?.isVisible = !collapsed }
         showState(hidden: hidden)
     }
 
     func applyLook(_ look: MenuBarLook) {
-        icon = look.controlIcon
+        self.look = look
         hidesDivider = hidesDivider || icon == .off
         apply(hidden: hidden)
     }
@@ -395,6 +398,7 @@ final class StatusItemShelfSurface: NSObject, MenuBarShelfSurface {
         let collapsed = hidden || (hidesDivider && dividerMode)
         alwaysHiddenSeparator?.length = collapsed ? hiddenLength(of: alwaysHiddenSeparator) : Self.revealedLength
         alwaysHiddenSeparator?.button?.image = collapsed ? nil : Self.dividerImage()
+        if dividerMode { alwaysHiddenSeparator?.isVisible = !collapsed }
     }
 
     func removeAlwaysHidden() {

@@ -330,135 +330,391 @@ struct SwitcherPreviewCard: View {
 
 // MARK: - Menu Bar
 
-/// Left to right in the real menu bar: Always Hidden, separator, Hidden,
-/// separator, Visible. Collapsed, only Visible shows; revealing slides the
-/// Hidden items in. Always Hidden only appears when that section is on.
-struct MenuBarSectionsPreview: View {
-    let alwaysHiddenOn: Bool
+/// A row of picture cards for a choice whose options are easier seen than read.
+struct SettingsChoiceCards<Value: Hashable, Picture: View>: View {
+    let selection: Binding<Value>
+    let choices: [(value: Value, title: String)]
+    let columns: Int
+    @ViewBuilder let picture: (Value) -> Picture
+
+    init(selection: Binding<Value>, choices: [(Value, String)], columns: Int, @ViewBuilder picture: @escaping (Value) -> Picture) {
+        self.selection = selection
+        self.choices = choices.map { (value: $0.0, title: $0.1) }
+        self.columns = columns
+        self.picture = picture
+    }
+
+    var body: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8, alignment: .top), count: columns), spacing: 8) {
+            ForEach(choices, id: \.value) { choice in
+                let selected = selection.wrappedValue == choice.value
+                Button {
+                    selection.wrappedValue = choice.value
+                } label: {
+                    VStack(spacing: 5) {
+                        picture(choice.value)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 44)
+                            .accessibilityHidden(true)
+                        Text(choice.title)
+                            .font(.system(size: 11))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(6)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(selected ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.04)))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(selected ? Color.accentColor : Color.clear, lineWidth: 1.5))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(choice.title)
+                .accessibilityAddTraits(selected ? [.isSelected] : [])
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+private let previewAppColors: [Color] = [.orange, .green, .blue, .pink, .purple, .teal]
+
+/// A miniature screen top: the bar, its notch, and what sits on it.
+private struct PreviewMiniBar<Overlay: View>: View {
+    var notch = false
+    @ViewBuilder var overlay: (CGSize) -> Overlay
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.07))
+                Rectangle().fill(Color.primary.opacity(0.14)).frame(height: 10)
+                if notch {
+                    UnevenRoundedRectangle(bottomLeadingRadius: 3, bottomTrailingRadius: 3)
+                        .fill(Color.black)
+                        .frame(width: size.width * 0.2, height: 10)
+                        .offset(x: size.width * 0.4)
+                }
+                overlay(size)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+        }
+    }
+}
+
+private struct PreviewDots: View {
+    let count: Int
+    var size: CGFloat = 5
+
+    var body: some View {
+        HStack(spacing: size * 0.5) {
+            ForEach(0..<count, id: \.self) { index in
+                RoundedRectangle(cornerRadius: size * 0.25).fill(previewAppColors[index % previewAppColors.count]).frame(width: size, height: size)
+            }
+        }
+    }
+}
+
+private struct PreviewMiniPanel: View {
+    var body: some View {
+        PreviewDots(count: 4)
+            .padding(3)
+            .background(RoundedRectangle(cornerRadius: 3).fill(Color.primary.opacity(0.28)))
+    }
+}
+
+struct MenuBarPresentationPicture: View {
+    let presentation: MenuBarPresentation
+
+    var body: some View {
+        PreviewMiniBar(notch: presentation == .portsideBarOnNotch) { size in
+            if presentation == .menuBar {
+                PreviewDots(count: 5, size: 4)
+                    .frame(width: size.width - 6, height: 10, alignment: .trailing)
+            } else {
+                PreviewMiniPanel().frame(width: size.width, alignment: .center).offset(y: 18)
+            }
+        }
+    }
+}
+
+struct MenuBarLocationPicture: View {
+    let location: MenuBarBarLocation
+
+    var body: some View {
+        PreviewMiniBar { size in
+            let visible = NSRect(origin: .zero, size: size)
+            let icon = NSRect(x: size.width * 0.74, y: 0, width: 8, height: 10)
+            let pointerX = size.width * 0.34
+            let panelWidth: CGFloat = 26
+            let followsPointer = location == .pointer || location == .dynamic
+            let placement = MenuBarBarPlacement(location: location, pointer: NSPoint(x: pointerX, y: 0), pointerOnEmptyBar: location == .dynamic)
+            Circle().fill(Color.accentColor).frame(width: 6, height: 6).offset(x: icon.midX - 3, y: 2)
+            if followsPointer {
+                Image(systemName: "cursorarrow").font(.system(size: 9)).offset(x: pointerX - 3, y: 0)
+            }
+            if location == .dynamic {
+                RoundedRectangle(cornerRadius: 3)
+                    .strokeBorder(Color.primary.opacity(0.35), style: StrokeStyle(lineWidth: 0.75, dash: [2, 2]))
+                    .frame(width: panelWidth, height: 11)
+                    .offset(x: MenuBarBarPlacement(location: .icon).x(width: panelWidth, visible: visible, anchor: icon), y: 18)
+            }
+            RoundedRectangle(cornerRadius: 3)
+                .fill(Color.primary.opacity(0.3))
+                .frame(width: panelWidth, height: 11)
+                .offset(x: placement.x(width: panelWidth, visible: visible, anchor: icon), y: 18)
+        }
+    }
+}
+
+struct MenuBarRehidePicture: View {
+    let strategy: MenuBarRehideStrategy
+
+    private var symbol: String {
+        switch strategy {
+        case .smart: "sparkles"
+        case .timed: "timer"
+        case .focusedApp: "macwindow.on.rectangle"
+        }
+    }
+
+    var body: some View {
+        Image(systemName: symbol).font(.system(size: 22)).foregroundStyle(.secondary)
+    }
+}
+
+struct MenuBarShapePicture: View {
+    let shape: MenuBarShape
+    let look: MenuBarLook
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = CGSize(width: proxy.size.width, height: 14)
+            let notch = (size.width * 0.42)...(size.width * 0.58)
+            let rects = MenuBarStylePlan.rects(shape: shape, size: size, notch: notch, menusEnd: size.width * 0.26, itemsStart: size.width * 0.68)
+            let fill = DockLook(background: look.background, cornerRadius: min(look.cornerRadius, 4))
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.07))
+                ForEach(rects.indices, id: \.self) { index in
+                    let rect = rects[index]
+                    Color.clear
+                        .frame(width: rect.width, height: rect.height)
+                        .dockBackground(fill, in: RoundedRectangle(cornerRadius: min(look.cornerRadius, rect.height / 2), style: .continuous))
+                        .offset(x: rect.minX, y: rect.minY)
+                }
+                Capsule().fill(Color.primary.opacity(0.6)).frame(width: size.width * 0.16, height: 3).offset(x: 7, y: 5.5)
+                PreviewDots(count: 3, size: 4).frame(width: size.width - 8, height: 14, alignment: .trailing)
+                UnevenRoundedRectangle(bottomLeadingRadius: 3, bottomTrailingRadius: 3)
+                    .fill(Color.black)
+                    .frame(width: size.width * 0.16, height: 12)
+                    .offset(x: size.width * 0.42)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+        }
+    }
+}
+
+struct MenuBarBarStylePicture: View {
+    let style: MenuBarBarStyle
+    let look: MenuBarLook
+    let dock: DockLook
+
+    var body: some View {
+        var chosen = look
+        chosen.barStyle = style
+        return MenuBarPreviewPanel(look: chosen.panelLook(dock: dock), iconScale: 0.45, count: 4)
+    }
+}
+
+/// The Portside Bar, drawn with the same look as the real one.
+private struct MenuBarPreviewPanel: View {
+    let look: MenuBarOverflowPanel.Look
+    let iconScale: CGFloat
+    let count: Int
+
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: min(look.cornerRadius, 12), style: .continuous) }
+
+    var body: some View {
+        let content = PreviewDots(count: count, size: max(look.iconSize * iconScale, 5)).padding(5)
+        if let dock = look.dock {
+            content.dockBackground(dock, in: shape)
+        } else {
+            content.background(.regularMaterial, in: shape)
+        }
+    }
+}
+
+/// A small bar with the pointer on its empty part, showing the gesture.
+struct MenuBarGestureGlyph: View {
+    enum Kind { case click, scroll, hover }
+    let kind: Kind
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.07))
+            Rectangle().fill(Color.primary.opacity(0.14)).frame(height: 10)
+            PreviewDots(count: 2, size: 4).frame(width: 40, height: 10, alignment: .trailing)
+            switch kind {
+            case .click:
+                Circle().strokeBorder(Color.accentColor, lineWidth: 1).frame(width: 12, height: 12).offset(x: 6, y: -1)
+            case .scroll:
+                Image(systemName: "arrow.up.arrow.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(Color.accentColor).offset(x: 22, y: 12)
+            case .hover:
+                ForEach(0..<3, id: \.self) { step in
+                    Circle().fill(Color.accentColor.opacity(0.7 - Double(step) * 0.2)).frame(width: 3, height: 3).offset(x: CGFloat(22 + step * 5), y: 17)
+                }
+            }
+            Image(systemName: "cursorarrow").font(.system(size: 11)).offset(x: 9, y: 3)
+        }
+        .frame(width: 46, height: 26)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .accessibilityHidden(true)
+    }
+}
+
+/// When the shelf closes: open, then the chosen condition, then hidden.
+struct MenuBarRehideFlow: View {
+    let settings: MenuBarTriggerSettings
+
+    private var condition: (symbol: String, text: String)? {
+        guard settings.rehideSeconds > 0 else { return nil }
+        let time = "\(settings.rehideSeconds) s"
+        switch settings.strategy {
+        case .smart: return ("sparkles", "\(time), or a click elsewhere")
+        case .timed: return ("timer", "\(time) off the menu bar")
+        case .focusedApp: return ("macwindow.on.rectangle", "You switch apps")
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            step("eye", "Open")
+            if let condition {
+                arrow
+                step(condition.symbol, condition.text)
+                arrow
+                step("eye.slash", "Hidden")
+            } else {
+                arrow
+                step("hand.raised", "Stays open until you hide it")
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var arrow: some View {
+        Image(systemName: "arrow.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+    }
+
+    private func step(_ symbol: String, _ text: String) -> some View {
+        Label(text, systemImage: symbol)
+            .font(.system(size: 11))
+            .lineLimit(1)
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .background(Capsule().fill(Color.primary.opacity(0.07)))
+    }
+}
+
+/// The menu bar and Portside Bar as they are set up now: shape, fill, icon,
+/// where hidden items appear and where the bar opens.
+struct MenuBarLivePreview: View {
+    let settings: MenuBarTriggerSettings
+    let dock: DockLook
     let revealed: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private static let barHeight: CGFloat = 24
+    private static let hiddenCount = 5
+    private static let iconScale: CGFloat = 0.55
+
+    private var look: MenuBarLook { settings.look }
+    private var usesBar: Bool { settings.presentation != .menuBar }
+
     var body: some View {
-        ZStack(alignment: .top) {
-            PreviewDesktop()
-            VStack(spacing: 10) {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let size = CGSize(width: width, height: Self.barHeight)
+            let notch = (width * 0.44)...(width * 0.56)
+            let inline = revealed && !usesBar
+            let visibleWidth: CGFloat = 96
+            let itemsStart = width - visibleWidth - (inline ? 72 : 0)
+            let rects = MenuBarStylePlan.rects(shape: look.shape, size: size, notch: notch, menusEnd: width * 0.2, itemsStart: itemsStart)
+            let fill = DockLook(background: look.background, cornerRadius: look.cornerRadius)
+            ZStack(alignment: .topLeading) {
+                PreviewDesktop()
+                ForEach(rects.indices, id: \.self) { index in
+                    let rect = rects[index]
+                    Color.clear
+                        .frame(width: rect.width, height: rect.height)
+                        .dockBackground(fill, in: RoundedRectangle(cornerRadius: min(look.cornerRadius, rect.height / 2), style: .continuous), shadow: look.shadow)
+                        .offset(x: rect.minX, y: rect.minY)
+                }
                 HStack(spacing: 8) {
                     Image(systemName: "apple.logo")
                     Text("App").fontWeight(.semibold)
                     Text("File")
-                    Text("Edit")
                     Spacer()
-                    if alwaysHiddenOn && revealed {
-                        group([.red, .indigo], label: "Always Hidden", tint: .red)
-                            .transition(.opacity)
-                        separatorBar
-                    }
-                    if revealed {
-                        group([.orange, .green, .blue], label: "Hidden", tint: .orange)
-                            .transition(.opacity)
-                    }
-                    if revealed || alwaysHiddenOn { separatorBar }
-                    group([.gray, .teal], label: "Visible", tint: .accentColor)
-                    Text("9:41").font(.system(size: 11))
+                    if inline { PreviewDots(count: Self.hiddenCount, size: 9).transition(.opacity) }
+                    controlIcon
+                    Image(systemName: "wifi")
+                    Text("9:41")
                 }
                 .font(.system(size: 11))
-                .padding(.horizontal, 10).frame(height: 24)
-                .background(.regularMaterial)
+                .padding(.horizontal, 10)
+                .frame(width: width, height: Self.barHeight)
+                UnevenRoundedRectangle(bottomLeadingRadius: 6, bottomTrailingRadius: 6)
+                    .fill(Color.black)
+                    .frame(width: notch.upperBound - notch.lowerBound, height: Self.barHeight)
+                    .offset(x: notch.lowerBound)
+                if revealed && usesBar {
+                    bar(width: width).transition(.opacity)
+                }
                 Text(caption)
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
                     .padding(.horizontal, 12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Spacer(minLength: 0)
+                    .frame(width: width, height: proxy.size.height - 6, alignment: .bottomLeading)
             }
             .animation(previewAnimation(reduceMotion), value: revealed)
-            .animation(previewAnimation(reduceMotion), value: alwaysHiddenOn)
         }
+    }
+
+    @ViewBuilder private var controlIcon: some View {
+        if let image = look.controlArtwork(hidden: !revealed, description: "") {
+            Image(nsImage: image).renderingMode(image.isTemplate ? .template : .original)
+        }
+    }
+
+    private func bar(width: CGFloat) -> some View {
+        let panel = MenuBarPreviewPanel(look: look.panelLook(dock: dock), iconScale: Self.iconScale, count: Self.hiddenCount)
+        let panelWidth = CGFloat(Self.hiddenCount) * (max(look.barIconSize * Self.iconScale, 5) * 1.5) + 10
+        let anchor = NSRect(x: width - 100, y: 0, width: 16, height: Self.barHeight)
+        let placement = MenuBarBarPlacement(location: settings.barLocation, pointer: NSPoint(x: width * 0.34, y: 0), pointerOnEmptyBar: false)
+        let visible = NSRect(x: 0, y: 0, width: width, height: 132)
+        return panel.offset(x: placement.x(width: panelWidth, visible: visible, anchor: anchor), y: Self.barHeight + 8)
     }
 
     private var caption: String {
-        if revealed {
-            return alwaysHiddenOn
-                ? "Shelf open: Always Hidden and Hidden items show left of the bars."
-                : "Shelf open: Hidden items show left of the bar."
-        }
-        return alwaysHiddenOn
-            ? "Shelf closed: only Visible items show. Always Hidden stays out until you turn the section off."
-            : "Shelf closed: only Visible items show."
-    }
-
-    private var separatorBar: some View {
-        Capsule().fill(.secondary).frame(width: 2, height: 14)
-    }
-
-    private func group(_ colors: [Color], label: String, tint: Color) -> some View {
-        HStack(spacing: 4) {
-            ForEach(Array(colors.enumerated()), id: \.offset) { _, color in
-                RoundedRectangle(cornerRadius: 3).fill(color.opacity(0.85)).frame(width: 14, height: 14)
-            }
-        }
-        .padding(3)
-        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(tint.opacity(0.9), lineWidth: 1))
-        .overlay(alignment: .bottom) {
-            Text(label).font(.system(size: 8)).foregroundStyle(tint)
-                .fixedSize().offset(y: 12)
-        }
-        .padding(.bottom, 10)
+        guard revealed else { return "Closed: only your Visible items are in the menu bar." }
+        return usesBar ? "Open: hidden items appear in the Portside Bar." : "Open: hidden items appear in the menu bar."
     }
 }
 
-/// The shelf with the chosen ways to open it listed under the bar, and when it
-/// closes again. Chips only; the pointer triggers show only when available.
-struct MenuBarTriggersPreview: View {
+struct MenuBarLivePreviewCard: View {
     let settings: MenuBarTriggerSettings
-    let revealed: Bool
-    let pointerAvailable: Bool
-
-    var body: some View {
-        ZStack(alignment: .bottom) {
-            MenuBarSectionsPreview(alwaysHiddenOn: false, revealed: revealed)
-            VStack(spacing: 4) {
-                HStack(spacing: 4) {
-                    chip("Click the control", on: true)
-                    chip(settings.hotkey?.displayString ?? "No shortcut", on: settings.hotkey != nil)
-                    chip("Hover", on: settings.hover && pointerAvailable)
-                    chip("Scroll", on: settings.scroll && pointerAvailable)
-                    chip("Empty bar click", on: settings.emptyClick && pointerAvailable)
-                }
-                Text(rehide).font(.system(size: 10)).foregroundStyle(.secondary)
-            }
-            .padding(.bottom, 6)
-        }
-    }
-
-    private var rehide: String {
-        var parts: [String] = []
-        if settings.rehideSeconds > 0 { parts.append("after \(settings.rehideSeconds) s") }
-        if settings.rehideOnAppChange { parts.append("when you switch apps") }
-        return parts.isEmpty ? "Stays open until you hide it." : "Hides again " + parts.joined(separator: " or ") + "."
-    }
-
-    private func chip(_ title: String, on: Bool) -> some View {
-        Text(title)
-            .font(.system(size: 10, weight: .medium))
-            .padding(.horizontal, 6).padding(.vertical, 2)
-            .foregroundStyle(on ? Color.white : Color.secondary)
-            .background(Capsule().fill(on ? Color.accentColor : Color.secondary.opacity(0.15)))
-    }
-}
-
-struct MenuBarTriggersPreviewCard: View {
-    let settings: MenuBarTriggerSettings
-    let pointerAvailable: Bool
-    @State private var revealed = false
+    let dock: DockLook
+    @State private var revealed = true
 
     var body: some View {
         SettingsPreviewCard(
-            title: "Reveal and hide",
-            summary: "Lit chips are the ways to open the shelf. It hides again on its own as chosen below.",
-            actions: AnyView(PreviewButton(title: revealed ? "Hide again" : "Reveal") { revealed.toggle() })
+            title: "Your menu bar",
+            summary: "Shows your current shape, colors, icon and where hidden items appear.",
+            actions: AnyView(PreviewButton(title: revealed ? "Close" : "Open") { revealed.toggle() })
         ) {
-            MenuBarTriggersPreview(settings: settings, revealed: revealed, pointerAvailable: pointerAvailable)
+            MenuBarLivePreview(settings: settings, dock: dock, revealed: revealed)
         }
     }
 }

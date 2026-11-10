@@ -98,7 +98,7 @@ struct WorkMacSection: View {
                     .helperStyle()
             }
         } header: {
-            Text("Work Mac")
+            Text("Work Mac").settingsAnchor("Work Mac")
         } footer: {
             Text("Portside never changes macOS security, privacy or managed settings, and never grants or resets Full Disk Access. Existing features (AI Usage, Agent Notch hooks, Weather) keep their own switches in their panes.")
                 .footerStyle()
@@ -112,7 +112,7 @@ struct PermissionsSection: View {
     @ObservedObject var integrations: IntegrationSettings
 
     var body: some View {
-        Section("Permissions") {
+        Section(header: Text("Permissions").settingsAnchor("Permissions")) {
             PermissionSetupRow(
                 next: integrations.missingPermissions.first,
                 missing: integrations.missingPermissions.count,
@@ -161,7 +161,7 @@ struct IntelligenceSettingsSection: View {
             .disabled(!canCheck)
             .accessibilityHint("Asks the local provider whether it can run. Nothing is downloaded or sent.")
         } header: {
-            Text("Local Intelligence")
+            Text("Local Intelligence").settingsAnchor("Local Intelligence")
         } footer: {
             Text("Runs only on this Mac. Portside sends no requests to hosted AI services, never falls back to the cloud, never downloads a model or starts a runtime, and runs nothing in the background. Nothing uses it yet; search and commands work the same with it off.")
                 .footerStyle()
@@ -197,7 +197,8 @@ struct MenuBarLayoutSection: View {
         if service.isActive {
             Section {
                 HStack(spacing: 8) {
-                    Text(hint).helperStyle().lineLimit(2)
+                    // Two lines tall always, so a long hint never moves the strips.
+                    Text(hint).helperStyle().lineLimit(2).frame(maxWidth: .infinity, minHeight: 32, maxHeight: 32, alignment: .leading)
                     Spacer()
                     if service.isBusy { ProgressView().controlSize(.small) }
                     Button { Task { await service.refresh() } } label: { Image(systemName: "arrow.clockwise") }
@@ -236,7 +237,7 @@ struct MenuBarLayoutSection: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .trailing)
                 } header: {
-                    Text("Off screen")
+                    Text("Off screen").settingsAnchor("Off screen")
                 } footer: {
                     Text("macOS has no room to draw these, usually because of the notch. Portside can only move what is on screen, so quit a menu bar app to make room, then refresh.").footerStyle()
                 }
@@ -305,6 +306,15 @@ private struct LayoutStrip: View {
                 Task { await service.drop(id, into: section) }
                 return true
             } isTargeted: { targeted = $0 }
+            if section == .visible, !service.cannotHideNames.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "info.circle").foregroundStyle(.secondary)
+                    Text(MenuBarSystemExtra.cannotHide(service.cannotHideNames)).helperStyle()
+                    Spacer()
+                    Button("Open Menu Bar Settings") { NSWorkspace.shared.open(MenuBarSystemExtra.settingsURL) }
+                        .help("Turn these off in System Settings")
+                }
+            }
         } header: {
             HStack(spacing: 8) {
                 Label(section.title, systemImage: section.symbolName)
@@ -319,6 +329,7 @@ private struct LayoutStrip: View {
                         .accessibilityLabel("Always Hidden section")
                 }
             }
+            .settingsAnchor(section.title)
         }
     }
 }
@@ -336,10 +347,12 @@ private struct LayoutTile: View {
 
     private var icon: some View {
         Group {
-            if let image = NSRunningApplication(processIdentifier: row.slot.item.pid)?.icon {
+            if !MenuBarSystemExtra.isTimeMachine(row.slot.item), let image = NSRunningApplication(processIdentifier: row.slot.item.pid)?.icon {
                 Image(nsImage: image).resizable().scaledToFit()
             } else {
-                Image(systemName: MenuBarAssertionPlan.appleItems.first { $0.bundle == row.slot.item.ownerBundleID }?.symbol ?? "square.dashed")
+                Image(systemName: MenuBarSystemExtra.isTimeMachine(row.slot.item)
+                    ? MenuBarSystemExtra.timeMachineSymbol
+                    : MenuBarAssertionPlan.appleItems.first { $0.bundle == row.slot.item.ownerBundleID }?.symbol ?? "square.dashed")
                     .resizable().scaledToFit().foregroundStyle(.secondary)
             }
         }

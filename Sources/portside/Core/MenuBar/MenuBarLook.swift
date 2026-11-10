@@ -4,7 +4,7 @@ import SwiftUI
 /// What Portside's own menu bar control looks like. `off` removes it; the
 /// shelf then opens from an empty-bar click or a shortcut.
 enum MenuBarControlIcon: String, Codable, CaseIterable, Identifiable {
-    case eye, chevron, dots, grid, off
+    case eye, chevron, dots, grid, off, symbol, image
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -13,6 +13,8 @@ enum MenuBarControlIcon: String, Codable, CaseIterable, Identifiable {
         case .dots: "Dots"
         case .grid: "Grid"
         case .off: "No icon"
+        case .symbol: "Symbol"
+        case .image: "Your image"
         }
     }
 
@@ -23,7 +25,7 @@ enum MenuBarControlIcon: String, Codable, CaseIterable, Identifiable {
         case .chevron: hidden ? "chevron.left.2" : "chevron.right.2"
         case .dots: hidden ? "ellipsis.circle" : "ellipsis.circle.fill"
         case .grid: hidden ? "square.grid.2x2" : "square.grid.2x2.fill"
-        case .off: nil
+        case .off, .symbol, .image: nil
         }
     }
 }
@@ -60,6 +62,12 @@ struct MenuBarLook: Codable, Equatable {
     static let iconSizeRange: ClosedRange<Double> = 16...32
 
     var controlIcon = MenuBarControlIcon.eye
+    /// With `symbol`: the SF Symbol picked in Settings.
+    var customSymbol: String?
+    /// With `image`: a file in Portside's support folder, see `MenuBarControlImage`.
+    var customImage: String?
+    /// Drawn in the menu bar's own color, like a system icon.
+    var customImageIsTemplate = true
     var barStyle = MenuBarBarStyle.system
     var barBackground = DockBackground()
     var barCornerRadius = 10.0
@@ -73,7 +81,7 @@ struct MenuBarLook: Codable, Equatable {
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case controlIcon, barStyle, barBackground, barCornerRadius, barIconSize, shape, background, cornerRadius, shadow
+        case controlIcon, customSymbol, customImage, customImageIsTemplate, barStyle, barBackground, barCornerRadius, barIconSize, shape, background, cornerRadius, shadow
     }
 
     /// Earlier builds saved a solid color only.
@@ -89,6 +97,9 @@ struct MenuBarLook: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         controlIcon = c.value(.controlIcon, or: MenuBarControlIcon.eye)
+        customSymbol = try? c.decodeIfPresent(String.self, forKey: .customSymbol)
+        customImage = try? c.decodeIfPresent(String.self, forKey: .customImage)
+        customImageIsTemplate = c.value(.customImageIsTemplate, or: true)
         barStyle = c.value(.barStyle, or: MenuBarBarStyle.system)
         let legacy = try decoder.container(keyedBy: LegacyKeys.self)
         let oldBar = (try? legacy.decodeIfPresent(SolidBackground.self, forKey: .barFill)).flatMap { $0 }
@@ -111,6 +122,25 @@ struct MenuBarLook: Codable, Equatable {
         return copy
     }
 
+    /// The SF Symbol to draw. A chosen symbol fills in while the items show,
+    /// when it has a filled form. Nil means no symbol: an image, or no icon.
+    func controlSymbol(hidden: Bool, exists: (String) -> Bool = { NSImage(systemSymbolName: $0, accessibilityDescription: nil) != nil }) -> String? {
+        guard controlIcon == .symbol else { return controlIcon.symbol(hidden: hidden) }
+        guard let customSymbol, exists(customSymbol) else { return MenuBarControlIcon.eye.symbol(hidden: hidden) }
+        let filled = customSymbol + ".fill"
+        return !hidden && !customSymbol.hasSuffix(".fill") && exists(filled) ? filled : customSymbol
+    }
+
+    /// The artwork for the control, sized for the menu bar.
+    func controlArtwork(hidden: Bool, description: String) -> NSImage? {
+        if controlIcon == .image, let customImage, let image = MenuBarControlImage.load(customImage, isTemplate: customImageIsTemplate) {
+            image.accessibilityDescription = description
+            return image
+        }
+        guard let name = controlSymbol(hidden: hidden) ?? (controlIcon == .image ? MenuBarControlIcon.eye.symbol(hidden: hidden) : nil) else { return nil }
+        return NSImage(systemSymbolName: name, accessibilityDescription: description)
+    }
+
     /// How the Portside Bar draws, given the Dock's current look.
     func panelLook(dock: DockLook) -> MenuBarOverflowPanel.Look {
         switch barStyle {
@@ -124,8 +154,92 @@ struct MenuBarLook: Codable, Equatable {
     }
 }
 
+/// The user's own menu bar icon: copied into Portside's support folder as a
+/// small PNG, so the original can move or go away.
+enum MenuBarControlImage {
+    private static let largestFile = 10 * 1024 * 1024
+    private static let largestSide: CGFloat = 64
+    private static let menuBarHeight: CGFloat = 18
+    private static let menuBarWidest: CGFloat = 26
+
+    static var folder: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("com.james.portside", isDirectory: true)
+    }
+
+    /// Returns the new file's name and whether it suits being drawn in the
+    /// menu bar's color (a shape on transparency does, a full picture doesn't).
+    static func store(from source: URL, replacing previous: String?, in folder: URL = MenuBarControlImage.folder) -> (name: String, isTemplate: Bool)? {
+        guard let size = try? source.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= largestFile,
+              let image = NSImage(contentsOf: source), image.size.width > 0, image.size.height > 0 else { return nil }
+        let scale = min(largestSide / max(image.size.width, image.size.height), 1)
+        let width = max(Int((image.size.width * scale).rounded()), 1)
+        let height = max(Int((image.size.height * scale).rounded()), 1)
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ), let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        image.draw(in: NSRect(x: 0, y: 0, width: width, height: height))
+        NSGraphicsContext.restoreGraphicsState()
+        guard let data = bitmap.representation(using: .png, properties: [:]) else { return nil }
+        // Scaling softens the edge of even a solid picture, so a few see-through
+        // pixels do not make it a shape.
+        var clear = 0
+        for x in 0..<width {
+            for y in 0..<height where (bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 1) < 0.5 { clear += 1 }
+        }
+        let transparent = clear * 100 > width * height
+        let name = "menu-bar-icon-\(UUID().uuidString).png"
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try data.write(to: folder.appendingPathComponent(name), options: .atomic)
+        } catch {
+            return nil
+        }
+        if let previous { try? FileManager.default.removeItem(at: folder.appendingPathComponent(previous)) }
+        return (name, transparent)
+    }
+
+    /// `name` comes from dock.json, so it may only name a file in the folder.
+    static func load(_ name: String, isTemplate: Bool, in folder: URL = MenuBarControlImage.folder) -> NSImage? {
+        guard name == (name as NSString).lastPathComponent, let image = NSImage(contentsOf: folder.appendingPathComponent(name)), image.size.height > 0 else { return nil }
+        let ratio = image.size.width / image.size.height
+        let width = min(menuBarHeight * ratio, menuBarWidest)
+        image.size = NSSize(width: width, height: width / ratio)
+        image.isTemplate = isTemplate
+        return image
+    }
+}
+
+/// Parts of the menu bar Portside itself occupies (the attached Agent Notch),
+/// so a shape can stop at their edges. Main thread only.
+enum MenuBarReservedSpans {
+    struct Span: Equatable {
+        /// The display it is on.
+        var screen: CGRect
+        /// From the display's left edge.
+        var range: ClosedRange<CGFloat>
+    }
+
+    static let didChange = Notification.Name("com.james.portside.menuBarReservedSpansChanged")
+    private(set) static var current: [Span] = []
+
+    static func update(_ spans: [Span]) {
+        guard spans != current else { return }
+        current = spans
+        NotificationCenter.default.post(name: didChange, object: nil)
+    }
+}
+
 /// Where the outlines go, in a display's bar with its origin top-left. Pure.
 enum MenuBarStylePlan {
+    /// The hardware notch widened to cover whatever sits around it.
+    static func blocked(notch: ClosedRange<CGFloat>?, reserved: ClosedRange<CGFloat>?) -> ClosedRange<CGFloat>? {
+        guard let notch, let reserved else { return notch ?? reserved }
+        return min(notch.lowerBound, reserved.lowerBound)...max(notch.upperBound, reserved.upperBound)
+    }
+
     private static let pillInset: CGFloat = 2
     private static let pillPadding: CGFloat = 8
     private static let edge: CGFloat = 4
@@ -138,10 +252,12 @@ enum MenuBarStylePlan {
         case .full:
             return [bar]
         case .notch:
-            guard let notch else { return [bar] }
+            // Built like pills, so the two read as the same style.
+            let height = size.height - pillInset * 2
+            guard let notch else { return [CGRect(x: edge, y: pillInset, width: size.width - edge * 2, height: height)] }
             return [
-                CGRect(x: 0, y: 0, width: notch.lowerBound, height: size.height),
-                CGRect(x: notch.upperBound, y: 0, width: size.width - notch.upperBound, height: size.height),
+                CGRect(x: edge, y: pillInset, width: notch.lowerBound - edge * 2, height: height),
+                CGRect(x: notch.upperBound + edge, y: pillInset, width: size.width - notch.upperBound - edge * 2, height: height),
             ]
         case .pills:
             let height = size.height - pillInset * 2
@@ -202,6 +318,7 @@ final class MenuBarStyleOverlay {
             (workspace, NSWorkspace.didActivateApplicationNotification),
             (workspace, NSWorkspace.activeSpaceDidChangeNotification),
             (NotificationCenter.default, NSApplication.didChangeScreenParametersNotification),
+            (NotificationCenter.default, MenuBarReservedSpans.didChange),
         ]
         for (center, name) in watched {
             let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -244,6 +361,7 @@ final class MenuBarStyleOverlay {
             if screen.safeAreaInsets.top > 0, let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea, left.maxX < right.minX {
                 notch = (left.maxX - frame.minX)...(right.minX - frame.minX)
             }
+            notch = MenuBarStylePlan.blocked(notch: notch, reserved: MenuBarReservedSpans.current.first { $0.screen == screen.frame }?.range)
             let top = primaryMaxY - screen.frame.maxY
             let starts = (items ?? []).filter {
                 $0.frame.width > 0 && $0.frame.midX >= frame.minX && $0.frame.midX <= frame.maxX && $0.frame.midY >= top && $0.frame.midY <= top + frame.height + 8

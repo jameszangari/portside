@@ -256,7 +256,16 @@ final class MenuBarLayoutService: ObservableObject {
     @Published private(set) var barsReady = false
     var hidesByMembership: Bool { shelf.hidesByMembership }
 
+    /// Apple's items this hiding method can't reach, for the settings shortcut.
+    var cannotHideNames: [String] {
+        guard hidesByMembership else { return [] }
+        return rows.filter {
+            MenuBarSystemExtra.isTimeMachine($0.slot.item) || ($0.structural != nil && $0.slot.item.ownerBundleID?.lowercased().hasPrefix("com.apple.") == true)
+        }.map(\.slot.item.displayTitle)
+    }
+
     func menuBarOnlyNote(for row: Row) -> String? {
+        if hidesByMembership, MenuBarSystemExtra.isTimeMachine(row.slot.item) { return MenuBarSystemExtra.neverHidden }
         guard hidesByMembership, row.section != .visible, arrangement.opensOnlyFromMenuBar(Self.bundle(of: row.id)) else { return nil }
         return "\(row.slot.item.displayTitle) opens only from the menu bar. Keep it in Visible to use it."
     }
@@ -477,6 +486,7 @@ final class MenuBarLayoutService: ObservableObject {
     /// needed to change section. A drop on an icon also moves the real item
     /// next to it, in Automatic only.
     private func dropByMembership(_ row: Row, into section: MenuBarSection, before beforeID: String?) async -> Result<Void, CommandFailure> {
+        if MenuBarSystemExtra.isTimeMachine(row.slot.item), section != .visible { return fail(MenuBarSystemExtra.neverHidden) }
         assignApp(of: row.id, to: section)
         if section == .alwaysHidden, !shelf.alwaysHiddenEnabled {
             shelf.setAlwaysHidden(true)
@@ -1027,6 +1037,9 @@ final class MenuBarLayoutService: ObservableObject {
             var structural: String?
             if case .unsupported(let reason) = MenuBarLayoutRules.support(for: probe, osMajor: osMajor) { structural = reason }
             if shelf.hidesByMembership {
+                if MenuBarSystemExtra.isTimeMachine(row.slot.item) {
+                    return Row(slot: MenuBarSystemExtra.named(row.slot), support: .movable, structural: nil, saved: nil, current: .visible, byMembership: true)
+                }
                 return Row(slot: row.slot, support: row.support, structural: structural, saved: saved[row.id], current: saved[row.id], byMembership: true)
             }
             return Row(
@@ -1051,6 +1064,30 @@ final class MenuBarLayoutService: ObservableObject {
             pendingCount = 0
             driftCount = 0
         }
+    }
+}
+
+/// Time Machine's menu extra. macOS never hides it with the assertion, but
+/// it has an entry in the position table, so it can be reordered. Pure.
+enum MenuBarSystemExtra {
+    static let timeMachineTitle = "Time Machine"
+    static let timeMachineSymbol = "clock.arrow.circlepath"
+    static let neverHidden = "macOS never hides Time Machine. Drag it within Visible to reorder it."
+    static let settingsURL = URL(string: "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension")!
+
+    static func cannotHide(_ names: [String]) -> String {
+        "macOS won't hide \(ListFormatter.localizedString(byJoining: names)). You can turn \(names.count == 1 ? "it" : "them") off in System Settings."
+    }
+
+    /// SystemUIServer reports no title for this item; its other one is Siri.
+    static func isTimeMachine(_ item: MenuBarItem) -> Bool {
+        item.ownerBundleID?.lowercased() == "com.apple.systemuiserver" && (item.title.isEmpty || item.title == timeMachineTitle)
+    }
+
+    static func named(_ slot: MenuBarSlot) -> MenuBarSlot {
+        let item = slot.item
+        let titled = MenuBarItem(pid: item.pid, ownerBundleID: item.ownerBundleID, ownerName: timeMachineTitle, ordinal: item.ordinal, identifier: item.identifier, title: timeMachineTitle, canPress: item.canPress)
+        return MenuBarSlot(item: titled, minX: slot.minX, maxX: slot.maxX, midY: slot.midY, reachable: slot.reachable)
     }
 }
 
