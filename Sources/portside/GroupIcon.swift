@@ -364,9 +364,7 @@ struct GroupIconPicker: View {
 
     private var symbolTab: some View {
         VStack(spacing: 8) {
-            TextField("Search symbols", text: $query)
-                .textFieldStyle(.roundedBorder)
-                .accessibilityLabel("Search symbols")
+            SettingsTextField("Search symbols", text: $query, kind: .search)
             symbolGrid
         }
     }

@@ -396,6 +396,19 @@ final class DockModel: Codable, ObservableObject {
             .eraseToAnyPublisher()
     }
 
+    /// How the menu bar shelf is revealed and hidden again (P2-MENU-06).
+    @Published private(set) var menuBarTriggers = MenuBarTriggerSettings()
+
+    func setMenuBarTriggers(_ settings: MenuBarTriggerSettings, persist shouldPersist: Bool = true) {
+        let next = settings.sanitized
+        guard next != menuBarTriggers else {
+            if shouldPersist { persist() }
+            return
+        }
+        menuBarTriggers = next
+        if shouldPersist { persist() }
+    }
+
     /// Command Center quicklinks, in Settings order. URLs are kept as typed;
     /// `QuicklinkURL` decides at use whether one may open.
     @Published private(set) var commandCenterQuicklinks: [Quicklink] = []
@@ -1167,7 +1180,7 @@ final class DockModel: Codable, ObservableObject {
         /// Before per-style backgrounds. Read only, for migration.
         case backgroundStyle, backgroundFrost, backgroundTint
         case settingsHotkey, commandCenterHotkey, commandCenterQuicklinks, switcherHotkey
-        case switcherMode, switcherTitleSearch, switcherPreviews
+        case switcherMode, switcherTitleSearch, switcherPreviews, menuBarTriggers
         /// Before Milestone D: a flat list of apps. Read only, for migration.
         case pinnedApps
     }
@@ -1279,6 +1292,7 @@ final class DockModel: Codable, ObservableObject {
         switcherMode = c.value(.switcherMode, or: SwitcherMode.apps)
         switcherTitleSearch = c.value(.switcherTitleSearch, or: true)
         switcherPreviews = c.value(.switcherPreviews, or: false)
+        menuBarTriggers = c.value(.menuBarTriggers, or: MenuBarTriggerSettings())
         var seenQuicklinks = Set<UUID>()
         commandCenterQuicklinks = Array(c.value(.commandCenterQuicklinks, or: [DecodedQuicklink]())
             .compactMap(\.value)
@@ -1354,6 +1368,7 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(switcherMode, forKey: .switcherMode)
         try c.encode(switcherTitleSearch, forKey: .switcherTitleSearch)
         try c.encode(switcherPreviews, forKey: .switcherPreviews)
+        if menuBarTriggers != MenuBarTriggerSettings() { try c.encode(menuBarTriggers, forKey: .menuBarTriggers) }
         if !commandCenterQuicklinks.isEmpty { try c.encode(commandCenterQuicklinks, forKey: .commandCenterQuicklinks) }
     }
 
@@ -1607,6 +1622,7 @@ final class DockModel: Codable, ObservableObject {
         switcherMode = old.switcherMode
         switcherTitleSearch = old.switcherTitleSearch
         switcherPreviews = old.switcherPreviews
+        menuBarTriggers = old.menuBarTriggers
         commandCenterQuicklinks = old.commandCenterQuicklinks
         openGroupsOnHover = old.openGroupsOnHover
         usageClaudeConsent = old.usageClaudeConsent

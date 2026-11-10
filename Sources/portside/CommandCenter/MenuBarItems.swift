@@ -35,7 +35,7 @@ final class MenuBarItemsService {
     private var generation = 0
     private let source: MenuBarItemSource
     private let pressDelay: Duration
-    private let report: @MainActor (String) -> Void
+    private let report: @MainActor @Sendable (String) -> Void
     private let log = Logger(subsystem: "com.james.portside", category: "menubar")
 
     /// `report` runs when the delayed press fails, after the panel is gone;
@@ -43,7 +43,7 @@ final class MenuBarItemsService {
     nonisolated init(
         source: MenuBarItemSource = AXMenuBarItemSource.live,
         pressDelay: Duration = MenuBarItemsService.pressDelay,
-        report: @escaping @MainActor (String) -> Void = { _ in NSSound.beep() }
+        report: @escaping @MainActor @Sendable (String) -> Void = { _ in NSSound.beep() }
     ) {
         self.source = source
         self.pressDelay = pressDelay

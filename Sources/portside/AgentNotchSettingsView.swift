@@ -22,7 +22,7 @@ struct AgentNotchSettingsView: View {
                     Button("Detailed") { preset("detailed") }
                 }
             }
-            Section("Placement") {
+            Section(header: Text("Placement").settingsAnchor("Placement")) {
                 Picker("Position", selection: binding(\.position)) {
                     ForEach(AgentNotchPosition.allCases) { Text($0.title).tag($0) }
                 }
@@ -35,7 +35,7 @@ struct AgentNotchSettingsView: View {
                 }
                 Text("Attached mode wraps the camera housing and keeps its center clear. On displays without a notch it sits inside the menu bar, centered. Below the notch floats under the menu bar. Left and right positions can overlap menu items.").helperStyle()
             }
-            Section("Compact appearance") {
+            Section(header: Text("Compact appearance").settingsAnchor("Compact appearance")) {
                 Picker("Style", selection: binding(\.compactStyle)) {
                     ForEach(AgentNotchCompactStyle.allCases) { Text($0.title).tag($0) }
                 }
@@ -68,7 +68,7 @@ struct AgentNotchSettingsView: View {
                     }
                 }
             }
-            Section("Dashboard") {
+            Section(header: Text("Dashboard").settingsAnchor("Dashboard")) {
                 slider("Expanded width", \.expandedWidth, 340...560, unit: "pt")
                 slider("Text size", \.fontSize, 10...16, unit: "pt")
                 slider("Card spacing", \.rowSpacing, 4...16, unit: "pt")
@@ -81,11 +81,11 @@ struct AgentNotchSettingsView: View {
                 Toggle("Show plan usage", isOn: binding(\.showUsage))
                 Text("Usage shares your Widgets provider selections and consent. Gauges show plan usage, not session context.").helperStyle()
             }
-            Section("Media") {
+            Section(header: Text("Media").settingsAnchor("Media")) {
                 Toggle("Show now playing", isOn: binding(\.showMedia))
                 Text("Animated bars in the compact notch while Spotify or Music is playing, same sources as the Now Playing widget. Hidden when paused or stopped. Keeps the notch visible even when no agent sessions match.").helperStyle()
             }
-            Section("Behavior") {
+            Section(header: Text("Behavior").settingsAnchor("Behavior")) {
                 Toggle("Expand on hover", isOn: binding(\.expandOnHover))
                 if preferences.expandOnHover { slider("Hover delay", \.hoverDelay, 0...1, unit: "ms", milliseconds: true) }
                 slider("Collapse delay", \.collapseDelay, 0.1...2, unit: "ms", milliseconds: true)
@@ -98,7 +98,7 @@ struct AgentNotchSettingsView: View {
                 Toggle("Hide when no sessions match", isOn: binding(\.hideWhenEmpty))
                 Text("Pin the dashboard to keep it open. The close button always collapses it; clicking outside closes it when unpinned. Escape works while Portside receives keyboard events. Reduce Motion disables animation. Hide-when-empty still shows the notch while media is playing.").helperStyle()
             }
-            Section("Sessions") {
+            Section(header: Text("Sessions").settingsAnchor("Sessions")) {
                 Toggle("Claude Code", isOn: binding(\.claude))
                 Toggle("Codex", isOn: binding(\.codex))
                 Toggle("OpenCode", isOn: binding(\.opencode))

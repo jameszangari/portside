@@ -118,7 +118,10 @@ final class AgentNotch {
         mediaSubscription = nil
         surfaces.forEach { $0.state.stop(); $0.panel.close() }
         surfaces = []
-        guard enabled, let agents else { return }
+        guard enabled, let agents else {
+            publishBarSpans()
+            return
+        }
         let screens: [NSScreen]
         switch preferences.display {
         case .automatic: screens = (NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.screens.first).map { [$0] } ?? []
@@ -203,6 +206,18 @@ final class AgentNotch {
             if preferences.hideWhenEmpty && sessions.isEmpty && !playing && !state.expanded { surface.panel.orderOut(nil) }
             else if !surface.panel.isVisible { surface.panel.orderFrontRegardless() }
         }
+        publishBarSpans()
+    }
+
+    /// Where an attached notch sits in the menu bar. Always the compact width:
+    /// expanding draws over the bar without changing what it should go around.
+    private func publishBarSpans() {
+        MenuBarReservedSpans.update(surfaces.filter { $0.state.topAttached && $0.panel.isVisible }.map { surface in
+            let width = surface.state.compactWidth
+            // Window positions land on whole points, rounding down.
+            let left = (surface.screen.frame.width / 2 - width / 2).rounded(.down)
+            return MenuBarReservedSpans.Span(screen: surface.screen.frame, range: left...(left + width))
+        })
     }
 
     /// The menu bar's height on `screen`: the strip above `visibleFrame`.

@@ -375,7 +375,7 @@ private struct GroupNameField: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        TextField("Group name", text: $text)
+        TextField("Group name", text: $text, prompt: Text(SettingsTextField.Kind.name.hint))
             .textFieldStyle(.roundedBorder)
             .font(.system(size: 13, weight: .semibold))
             .multilineTextAlignment(.center)

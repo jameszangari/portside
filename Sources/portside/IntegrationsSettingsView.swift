@@ -98,7 +98,7 @@ struct WorkMacSection: View {
                     .helperStyle()
             }
         } header: {
-            Text("Work Mac")
+            Text("Work Mac").settingsAnchor("Work Mac")
         } footer: {
             Text("Portside never changes macOS security, privacy or managed settings, and never grants or resets Full Disk Access. Existing features (AI Usage, Agent Notch hooks, Weather) keep their own switches in their panes.")
                 .footerStyle()
@@ -112,7 +112,7 @@ struct PermissionsSection: View {
     @ObservedObject var integrations: IntegrationSettings
 
     var body: some View {
-        Section("Permissions") {
+        Section(header: Text("Permissions").settingsAnchor("Permissions")) {
             PermissionSetupRow(
                 next: integrations.missingPermissions.first,
                 missing: integrations.missingPermissions.count,
@@ -161,7 +161,7 @@ struct IntelligenceSettingsSection: View {
             .disabled(!canCheck)
             .accessibilityHint("Asks the local provider whether it can run. Nothing is downloaded or sent.")
         } header: {
-            Text("Local Intelligence")
+            Text("Local Intelligence").settingsAnchor("Local Intelligence")
         } footer: {
             Text("Runs only on this Mac. Portside sends no requests to hosted AI services, never falls back to the cloud, never downloads a model or starts a runtime, and runs nothing in the background. Nothing uses it yet; search and commands work the same with it off.")
                 .footerStyle()
@@ -176,94 +176,70 @@ struct IntelligenceSettingsSection: View {
     }
 }
 
-/// Menu Bar Reorder: each listed item with Move Left / Move Right where it
-/// is supported and the reason where it is not, plus Restore. Nothing runs
-/// until a button is pressed; the list loads when the module is on.
-struct MenuBarReorderSection: View {
-    @ObservedObject var service: MenuBarReorderService
-
-    var body: some View {
-        if service.isActive {
-            Section {
-                if service.accessDenied {
-                    Text("Accessibility permission is denied or was revoked.").helperStyle()
-                } else if service.rows.isEmpty {
-                    Text("No menu bar items listed yet. Choose Refresh.").helperStyle()
-                }
-                ForEach(service.rows) { row in
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack {
-                            Text(row.slot.item.displayTitle)
-                            Spacer()
-                            Button { Task { await service.move(row.id, .left) } } label: { Image(systemName: "arrow.left") }
-                                .disabled(service.isBusy || !service.canMove(row.id, .left) || !row.support.isMovable)
-                                .accessibilityLabel("Move \(row.slot.item.displayTitle) left")
-                            Button { Task { await service.move(row.id, .right) } } label: { Image(systemName: "arrow.right") }
-                                .disabled(service.isBusy || !service.canMove(row.id, .right) || !row.support.isMovable)
-                                .accessibilityLabel("Move \(row.slot.item.displayTitle) right")
-                        }
-                        if case .unsupported(let reason) = row.support { Text(reason).helperStyle() }
-                    }
-                    .accessibilityElement(children: .contain)
-                }
-                HStack {
-                    Button("Refresh") { Task { await service.refresh() } }.disabled(service.isBusy)
-                    Button("Restore Original Order") { Task { await service.restore() } }
-                        .disabled(service.isBusy || !service.hasBaseline)
-                        .accessibilityHint("Drags items back to the order they had before your first move.")
-                    if service.hasBaseline {
-                        Button("Forget Saved Order") { service.discardBaseline() }.disabled(service.isBusy)
-                    }
-                }
-                if let status = service.status { Text(status).helperStyle() }
-            } header: {
-                Text("Menu Bar Reorder")
-            } footer: {
-                Text("Moves are real Command-drags, one at a time, and each is checked afterwards. \(service.successes) of \(service.attempts) moves landed this session. Left is the left side of the menu bar.")
-                    .footerStyle()
-            }
-        }
-    }
-}
-
-/// Menu Bar Layout: items listed under Visible, Hidden and Always Hidden.
-/// Each row has a Move to menu (works with the keyboard and VoiceOver) and can
-/// also be dragged onto another section. Choosing only saves; Apply Layout
-/// does the Command-drags. Nothing runs until a button is pressed.
+/// Menu Bar Layout: one strip per section, drawn like the menu bar itself,
+/// with items in their real left-to-right order. Drag an icon to another strip
+/// or onto another icon and it moves right away, with one verified Command-drag.
 struct MenuBarLayoutSection: View {
     @ObservedObject var service: MenuBarLayoutService
+    /// Under the pointer, so its name and any reason show without a tooltip wait.
+    @State private var hovered: MenuBarLayoutService.Row?
+
+    private var hint: String {
+        if let title = service.movingTitle { return "Moving \(title). The pointer moves for a moment." }
+        if let hovered {
+            if let note = service.menuBarOnlyNote(for: hovered) { return note }
+            return hovered.blockedReason.map { "\(hovered.slot.item.displayTitle): \($0)" } ?? hovered.slot.item.displayTitle
+        }
+        return service.status ?? "Drag icons to arrange your menu bar. Changes apply right away."
+    }
 
     var body: some View {
         if service.isActive {
             Section {
-                MenuBarSectionsPreviewCard(alwaysHiddenOn: service.alwaysHiddenOn)
-                Toggle("Always Hidden section (this session only)", isOn: Binding(get: { service.alwaysHiddenOn }, set: { service.setAlwaysHidden($0) }))
-                    .disabled(service.isBusy)
-                    .accessibilityHint("Adds a second separator that hides its left side until you turn this off. Starts off every launch.")
-                if !service.barsReady {
-                    Text("The shelf separators are not visible. Show the menu bar items (click the shelf control), then Refresh.").helperStyle()
+                HStack(spacing: 8) {
+                    // Two lines tall always, so a long hint never moves the strips.
+                    Text(hint).helperStyle().lineLimit(2).frame(maxWidth: .infinity, minHeight: 32, maxHeight: 32, alignment: .leading)
+                    Spacer()
+                    if service.isBusy { ProgressView().controlSize(.small) }
+                    Button { Task { await service.refresh() } } label: { Image(systemName: "arrow.clockwise") }
+                        .buttonStyle(.borderless)
+                        .disabled(service.isBusy)
+                        .help("Read the menu bar again")
+                        .accessibilityLabel("Refresh")
                 }
-                if service.rows.isEmpty {
-                    Text("No menu bar items listed yet. Choose Refresh.").helperStyle()
+                if service.accessDenied {
+                    Text("Portside needs Accessibility to see your menu bar items. Allow it in General > Permissions.").helperStyle()
+                } else if service.rows.isEmpty {
+                    Text("Looking for menu bar items.").helperStyle()
+                } else if let blocked = service.hidingBlockedReason {
+                    Text("\(blocked) Until then every item stays in the menu bar, whatever its section here.").helperStyle().foregroundStyle(.orange)
+                } else if !service.barsReady, !service.hidesByMembership {
+                    Text("Portside cannot find its separators in the menu bar. Turn the shelf off from its menu bar control (right-click) and on again here.").helperStyle()
                 }
-            } header: {
-                Text("Menu Bar Layout")
+                if service.driftCount > 0 {
+                    HStack {
+                        Text("\(service.driftCount) item\(service.driftCount == 1 ? " is" : "s are") not where you put \(service.driftCount == 1 ? "it" : "them").").helperStyle()
+                        Spacer()
+                        Button("Put Back") { Task { await service.apply(onlySaved: true) } }.disabled(service.isBusy)
+                    }
+                }
             }
-            ForEach(sections, id: \.self) { section in
+            .task { await service.beginEditing() }
+            .onDisappear { service.endEditing() }
+            ForEach(MenuBarSection.allCases) { section in
+                LayoutStrip(section: section, rows: service.rows.filter { $0.isListed && $0.section == section }, service: service, hovered: $hovered)
+            }
+            let offScreen = service.rows.filter(\.isOffScreen)
+            if !offScreen.isEmpty {
                 Section {
-                    let rows = service.rows.filter { $0.section == section }
-                    VStack(alignment: .leading, spacing: 6) {
-                        if rows.isEmpty { Text("Drop items here.").helperStyle() }
-                        ForEach(rows) { row in LayoutRow(row: row, service: service) }
+                    TrailingFlow {
+                        ForEach(offScreen) { LayoutTile(row: $0, section: nil, service: service, hovered: $hovered) }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .dropDestination(for: String.self) { ids, _ in
-                        for id in ids { service.assign(id, to: section) }
-                        return !ids.isEmpty
-                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                 } header: {
-                    Text(section.title)
+                    Text("Off screen").settingsAnchor("Off screen")
+                } footer: {
+                    Text("macOS has no room to draw these, usually because of the notch. Portside can only move what is on screen, so quit a menu bar app to make room, then refresh.").footerStyle()
                 }
             }
             Section {
@@ -275,10 +251,6 @@ struct MenuBarLayoutSection: View {
                     }
                 }
                 HStack {
-                    Button("Refresh") { Task { await service.refresh() } }.disabled(service.isBusy)
-                    Button(service.pendingCount > 0 ? "Apply Layout (\(service.pendingCount))" : "Apply Layout") { Task { await service.apply() } }
-                        .disabled(service.isBusy)
-                        .accessibilityHint("Drags items into their sections one at a time. The pointer moves while it runs.")
                     Button("Reset to Native") { Task { await service.resetToNative() } }
                         .disabled(service.isBusy)
                         .accessibilityHint("Clears every choice, moves items back right of the separator and restores the saved original order.")
@@ -287,48 +259,202 @@ struct MenuBarLayoutSection: View {
                         NSPasteboard.general.setString(service.exportedLayout, forType: .string)
                     }
                 }
-                if let status = service.status { Text(status).helperStyle() }
             } header: {
                 if !service.missing.isEmpty { Text("Saved, not in the menu bar now") }
-            } footer: {
-                Text("Choosing a section only saves it. Apply Layout shows every item, then moves each one with a real Command-drag and checks the result. Left of the separator is Hidden. Copy Layout puts the saved choices on the clipboard as JSON.")
-                    .footerStyle()
             }
         }
-    }
-
-    private var sections: [MenuBarSection] {
-        service.alwaysHiddenOn ? MenuBarSection.allCases : [.visible, .hidden]
     }
 }
 
-private struct LayoutRow: View {
-    let row: MenuBarLayoutService.Row
+/// One section as a bar. Dropping on the bar itself lands at its separator
+/// edge; dropping on an icon lands just left of that icon.
+private struct LayoutStrip: View {
+    let section: MenuBarSection
+    let rows: [MenuBarLayoutService.Row]
     @ObservedObject var service: MenuBarLayoutService
+    @Binding var hovered: MenuBarLayoutService.Row?
+    @State private var targeted = false
+
+    private var subtitle: String {
+        switch section {
+        case .visible: return "Always in the menu bar."
+        case .hidden: return "Shown when you open the shelf."
+        case .alwaysHidden:
+            return service.hidesByMembership
+                ? "Only shown when you double-click the menu bar or Option-click its icon."
+                : "Out of sight until you turn this off. Ends when Portside quits."
+        }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack {
-                Text(row.slot.item.displayTitle)
-                if row.saved != nil, row.saved != row.current { Text("not applied").helperStyle() }
-                Spacer()
-                Menu("Move to") {
-                    ForEach(MenuBarSection.allCases.filter { $0 != .alwaysHidden || service.alwaysHiddenOn }) { target in
-                        Button(target.title) { service.assign(row.id, to: target) }
-                    }
-                }
-                .fixedSize()
-                .disabled(service.isBusy || !row.canAssign)
-                .accessibilityLabel("Move \(row.slot.item.displayTitle) to another section")
+        Section {
+            TrailingFlow {
+                ForEach(rows) { LayoutTile(row: $0, section: section, service: service, hovered: $hovered) }
             }
-            if let reason = row.structural {
-                Text(reason).helperStyle()
-            } else if case .unsupported(let reason) = row.support {
-                Text(reason).helperStyle()
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .trailing)
+            .padding(5)
+            .background(RoundedRectangle(cornerRadius: 9).fill(Color.primary.opacity(targeted ? 0.14 : 0.06)))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9).strokeBorder(targeted ? Color.accentColor : .clear, lineWidth: 1.5)
+            }
+            .overlay {
+                if rows.isEmpty { Text("Drag icons here").helperStyle() }
+            }
+            .contentShape(Rectangle())
+            .dropDestination(for: String.self) { ids, _ in
+                guard let id = ids.first else { return false }
+                Task { await service.drop(id, into: section) }
+                return true
+            } isTargeted: { targeted = $0 }
+            if section == .visible, !service.cannotHideNames.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "info.circle").foregroundStyle(.secondary)
+                    Text(MenuBarSystemExtra.cannotHide(service.cannotHideNames)).helperStyle()
+                    Spacer()
+                    Button("Open Menu Bar Settings") { NSWorkspace.shared.open(MenuBarSystemExtra.settingsURL) }
+                        .help("Turn these off in System Settings")
+                }
+            }
+        } header: {
+            HStack(spacing: 8) {
+                Label(section.title, systemImage: section.symbolName)
+                Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                Spacer()
+                if section == .alwaysHidden, !service.hidesByMembership {
+                    Toggle("Always Hidden", isOn: Binding(get: { service.alwaysHiddenOn }, set: { service.setAlwaysHidden($0) }))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .disabled(service.isBusy)
+                        .accessibilityLabel("Always Hidden section")
+                }
+            }
+            .settingsAnchor(section.title)
+        }
+    }
+}
+
+/// One item at menu bar size, its owner's icon. The name shows above the strips
+/// while hovering. `section` is nil for an item off screen, which is no target.
+private struct LayoutTile: View {
+    let row: MenuBarLayoutService.Row
+    let section: MenuBarSection?
+    @ObservedObject var service: MenuBarLayoutService
+    @Binding var hovered: MenuBarLayoutService.Row?
+    @State private var targeted = false
+
+    private var title: String { row.slot.item.displayTitle }
+
+    private var icon: some View {
+        Group {
+            if !MenuBarSystemExtra.isTimeMachine(row.slot.item), let image = NSRunningApplication(processIdentifier: row.slot.item.pid)?.icon {
+                Image(nsImage: image).resizable().scaledToFit()
+            } else {
+                Image(systemName: MenuBarSystemExtra.isTimeMachine(row.slot.item)
+                    ? MenuBarSystemExtra.timeMachineSymbol
+                    : MenuBarAssertionPlan.appleItems.first { $0.bundle == row.slot.item.ownerBundleID }?.symbol ?? "square.dashed")
+                    .resizable().scaledToFit().foregroundStyle(.secondary)
             }
         }
-        .draggable(row.canAssign ? row.id : "")
-        .accessibilityElement(children: .contain)
+        .frame(width: 22, height: 22)
+    }
+
+    private var tile: some View {
+        icon
+            .frame(width: 34, height: 30)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(hovered?.id == row.id ? 0.12 : 0)))
+            .overlay(alignment: .bottomTrailing) {
+                if !row.canDrag, !row.isOffScreen {
+                    Image(systemName: "lock.fill").font(.system(size: 8)).foregroundStyle(.secondary)
+                }
+            }
+            .overlay(alignment: .leading) {
+                if targeted { Capsule().fill(Color.accentColor).frame(width: 2.5).padding(.vertical, 2).offset(x: -2) }
+            }
+            .opacity(row.canDrag ? 1 : 0.45)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { hovered = row } else if hovered?.id == row.id { hovered = nil }
+            }
+            .help(row.blockedReason ?? title)
+            .contextMenu {
+                ForEach(MenuBarSection.allCases) { target in
+                    Button("Move to \(target.title)") { Task { await service.drop(row.id, into: target) } }
+                        .disabled(service.isBusy || !row.canDrag || target == section)
+                }
+                if !service.groups.isEmpty {
+                    Menu("Group") {
+                        Button("None") { service.setGroup(nil, forItem: row.id) }
+                        ForEach(service.groups) { group in
+                            Button(service.groupID(forItem: row.id) == group.id ? "\u{2713} \(group.name)" : group.name) { service.setGroup(group.id, forItem: row.id) }
+                        }
+                    }
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(title + (row.blockedReason.map { ". \($0)" } ?? ""))
+            .accessibilityAction(named: "Move to Visible") { Task { await service.drop(row.id, into: .visible) } }
+            .accessibilityAction(named: "Move to Hidden") { Task { await service.drop(row.id, into: .hidden) } }
+            .accessibilityAction(named: "Move to Always Hidden") { Task { await service.drop(row.id, into: .alwaysHidden) } }
+    }
+
+    var body: some View {
+        if let section {
+            draggableTile.dropDestination(for: String.self) { ids, _ in
+                guard let id = ids.first, id != row.id else { return false }
+                Task { await service.drop(id, into: section, before: row.id) }
+                return true
+            } isTargeted: { targeted = $0 }
+        } else {
+            tile
+        }
+    }
+
+    @ViewBuilder private var draggableTile: some View {
+        if row.canDrag {
+            tile.draggable(row.id) { icon }
+        } else {
+            tile
+        }
+    }
+}
+
+/// Wraps its children into right-aligned rows, like items in a menu bar.
+private struct TrailingFlow: Layout {
+    var spacing: CGFloat = 2
+
+    private func lines(_ subviews: Subviews, width: CGFloat) -> [[(view: LayoutSubview, size: CGSize)]] {
+        var result: [[(view: LayoutSubview, size: CGSize)]] = [[]]
+        var used: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if used + size.width > width, !result[result.count - 1].isEmpty {
+                result.append([])
+                used = 0
+            }
+            result[result.count - 1].append((view, size))
+            used += size.width + spacing
+        }
+        return result
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 480
+        let rows = lines(subviews, width: width)
+        let height = rows.reduce(0) { $0 + ($1.map(\.size.height).max() ?? 0) } + spacing * CGFloat(max(rows.count - 1, 0))
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in lines(subviews, width: bounds.width) {
+            var x = bounds.maxX - row.reduce(0) { $0 + $1.size.width } - spacing * CGFloat(max(row.count - 1, 0))
+            for (view, size) in row {
+                view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += (row.map(\.size.height).max() ?? 0) + spacing
+        }
     }
 }
 
