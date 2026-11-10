@@ -8,15 +8,17 @@ import Combine
 final class MenuBarShelfModule: PortsideModule {
     static let moduleID = ModuleID("menuBarShelf")!
     static let toggleCommand = CommandID("menuBarShelf.toggle")!
+    nonisolated static let collapseDelay: Duration = .seconds(1)
 
     let id = MenuBarShelfModule.moduleID
-    let title = "Menu Bar Shelf (prototype)"
-    let summary = "Adds a Portside control to the menu bar that hides the items to its left and shows them again. Prototype: items already clipped by the notch stay clipped, and it can fight another menu bar manager, so turn that one off first. It starts shown every launch, shows everything again on sleep, wake or a display change, and goes away completely when you turn it off or quit. The control shows an open eye while items are showing and a crossed eye while they are hidden. Click it, press an optional shortcut, and it can hide again by itself (Settings > Menu Bar > Show & Hide). Right-click the control for Turn Off."
+    let title = "Menu Bar Shelf"
+    let summary = "Hides the menu bar items you choose and shows them again. An open eye in the menu bar means your items are showing and a crossed eye means they are hidden. Click it to show or hide, double-click or Option-click for Always Hidden, and right-click for Turn Off. Hold Command and drag an icon across the divider to change its section. macOS hides by app, so all of an app's items move together. Needs Portside installed in /Applications and Accessibility. If hiding fails, the bar stays as macOS drew it."
     let fallback = "Your menu bar stays exactly as macOS lays it out."
 
     private let shelf: MenuBarShelf
     private let triggers: MenuBarTriggerService
     private let settings: AnyPublisher<MenuBarTriggerSettings, Never>
+    private let overlay = MenuBarStyleOverlay()
 
     /// `settings` publishes the saved trigger choices, current value first.
     init(shelf: MenuBarShelf, triggers: MenuBarTriggerService,
@@ -48,10 +50,17 @@ final class MenuBarShelfModule: PortsideModule {
     func start(_ context: ModuleContext) throws {
         shelf.start()
         triggers.start(MenuBarTriggerSettings())
-        let saved = settings.sink { [triggers] value in
-            MainActor.assumeIsolated { triggers.apply(value) }
+        let saved = settings.sink { [triggers, shelf, overlay] value in
+            MainActor.assumeIsolated {
+                triggers.apply(value)
+                shelf.applyLook(value.look)
+                overlay.apply(value.look)
+            }
         }
-        context.onStop { saved.cancel() }
+        context.onStop { [overlay] in
+            saved.cancel()
+            MainActor.assumeIsolated { overlay.stop() }
+        }
         let workspace = NSWorkspace.shared.notificationCenter
         let center = NotificationCenter.default
         let watched: [(NotificationCenter, Notification.Name, String)] = [
@@ -63,6 +72,13 @@ final class MenuBarShelfModule: PortsideModule {
         for (source, name, reason) in watched {
             let token = source.addObserver(forName: name, object: nil, queue: .main) { [shelf, triggers] _ in
                 MainActor.assumeIsolated {
+                    // An assertion is not tied to display geometry, so a
+                    // collapsed bar stays collapsed across sleep and displays.
+                    guard !shelf.hidesByMembership else {
+                        triggers.displayChanged()
+                        shelf.revalidate()
+                        return
+                    }
                     triggers.cancelPending()
                     shelf.failOpen(reason)
                 }
@@ -75,6 +91,18 @@ final class MenuBarShelfModule: PortsideModule {
             MainActor.assumeIsolated { triggers.appActivated(bundleID: bundleID) }
         }
         context.onStop { workspace.removeObserver(activation) }
+        let space = workspace.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [triggers] _ in
+            MainActor.assumeIsolated { triggers.spaceChanged() }
+        }
+        context.onStop { workspace.removeObserver(space) }
+        // The bar starts collapsed. Shortly after launch, so the saved choices
+        // are applied and login items have had a moment to appear.
+        let collapse = Task { [triggers] in
+            try? await Task.sleep(for: Self.collapseDelay)
+            guard !Task.isCancelled else { return }
+            triggers.startCollapsed()
+        }
+        context.onStop { collapse.cancel() }
         context.onStop { [shelf, triggers] in
             MainActor.assumeIsolated {
                 triggers.stop()

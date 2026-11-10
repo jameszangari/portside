@@ -6,6 +6,11 @@ import UniformTypeIdentifiers
 /// Process entry point. Runs before SwiftUI and AppKit start, so native
 /// Dock crash recovery happens before anything else, and
 /// `portside --restore-dock` can restore and exit without showing any UI.
+/// Whether Portside's own logo menu is in the menu bar.
+enum PortsideMenuIcon {
+    static let defaultsKey = "showsPortsideMenuIcon"
+}
+
 @main
 enum PortsideMain {
     /// Kept alive for the life of the process.
@@ -163,8 +168,10 @@ enum PortsideMain {
 struct PortsideApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
+    @AppStorage(PortsideMenuIcon.defaultsKey) private var showsMenuIcon = true
+
     var body: some Scene {
-        MenuBarExtra {
+        MenuBarExtra(isInserted: $showsMenuIcon) {
             Text("Portside")
             Divider()
             UpdateMenuItem()
@@ -287,6 +294,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarLayout: MenuBarLayoutService?
     private var menuBarShelf: MenuBarShelf?
     private(set) var menuBarTriggers: MenuBarTriggerService?
+    private var menuBarEnvironment: LiveMenuBarTriggerEnvironment?
+    private var menuBarAssertionSurface: AssertionShelfSurface?
+    @MainActor private lazy var menuBarLayoutFile = MenuBarSystemFiles.layoutGrant()
+    @MainActor private lazy var menuBarAppListFile = MenuBarSystemFiles.appListGrant()
     private let intelligence = ModelRouter(provider: FakeLocalModelProvider.fromEnvironment() ?? AppleOnDeviceModelProvider())
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -386,13 +397,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try modules.register(ShortcutsModule(service: shortcutsService))
                 try modules.register(MenuBarModule(service: menuBarService))
                 let shelf = makeMenuBarShelf()
-                let triggers = MenuBarTriggerService(
-                    shelf: shelf,
-                    environment: LiveMenuBarTriggerEnvironment(busy: { [weak self] in
+                let environment = LiveMenuBarTriggerEnvironment(busy: { [weak self] in
                         (self?.menuBarLayout?.isBusy ?? false) || (self?.menuBarReorder?.isBusy ?? false)
                     }, editing: { [weak self] in
                         self?.menuBarLayout?.isEditing ?? false
-                    }),
+                    })
+                menuBarEnvironment = environment
+                let triggers = MenuBarTriggerService(
+                    shelf: shelf,
+                    environment: environment,
                     probe: LiveMenuBarEmptyAreaProbe()
                 )
                 menuBarTriggers = triggers
@@ -402,6 +415,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try modules.register(MenuBarReorderModule(service: reorder))
                 let layout = MenuBarLayoutService(reorder: reorder, shelf: shelf)
                 menuBarLayout = layout
+                layout.persistAlwaysHidden = { [weak self] on in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        var next = self.dockModel.menuBarTriggers
+                        next.alwaysHiddenEnabled = on
+                        self.dockModel.setMenuBarTriggers(next)
+                    }
+                }
+                layout.positionTable = MenuBarPositionTable(grant: menuBarLayoutFile)
+                layout.onGroupsChanged = { [weak self] in MainActor.assumeIsolated { self?.menuBarAssertionSurface?.groupsDidChange() } }
+                triggers.beforeReveal = { [weak self, weak layout] in
+                    MainActor.assumeIsolated {
+                        // The Portside Bar never puts the items back on the real bar.
+                        guard self?.dockModel.menuBarTriggers.presentation != .portsideBar else { return }
+                        layout?.restoreOrderBeforeReveal()
+                    }
+                }
+                layout.movesRealItems = { [weak self] in MainActor.assumeIsolated { self?.dockModel.menuBarTriggers.arrangement != .manual } }
                 try modules.register(MenuBarLayoutModule(service: layout))
                 try modules.register(ClipboardModule(service: ClipboardService.shared))
                 try modules.register(FilesModule(index: FileIndexService.shared, actions: .live))
@@ -413,17 +444,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor private func makeMenuBarShelf() -> MenuBarShelf {
-        let shelf = MenuBarShelf(surface: StatusItemShelfSurface(
-            onToggle: { [weak self] in MainActor.assumeIsolated { self?.menuBarTriggers?.activate(.control) } },
-            turnOff: { [weak self] in
-                // After the menu closes: disabling removes the control that ran it.
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.dockModel.setModuleEnabled(MenuBarShelfModule.moduleID, false)
-                    self.modules.disable(MenuBarShelfModule.moduleID)
-                }
+        let onToggle: () -> Void = { [weak self] in MainActor.assumeIsolated { _ = self?.menuBarTriggers?.activate(.control) } }
+        let turnOff: () -> Void = { [weak self] in
+            // After the menu closes: disabling removes the control that ran it.
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.dockModel.setModuleEnabled(MenuBarShelfModule.moduleID, false)
+                self.modules.disable(MenuBarShelfModule.moduleID)
             }
-        ))
+        }
+        let surface: MenuBarShelfSurface
+        if MenuBarAssertionOptIn.isEnabled() {
+            // macOS 27 no longer reflows wide status items: hide with an
+            // assertion. Bridge or inputs missing leaves the bar as it is and says why.
+            let onAlwaysHidden: () -> Void = { [weak self] in MainActor.assumeIsolated { self?.menuBarTriggers?.toggleAlwaysHidden() } }
+            let available: () -> Bool = { [weak self] in MainActor.assumeIsolated { self?.menuBarTriggers?.alwaysHiddenAvailable ?? false } }
+            let controlSurface = StatusItemShelfSurface(onToggle: onToggle, turnOff: turnOff, dividerMode: true, onAlwaysHidden: onAlwaysHidden, alwaysHiddenAvailable: available)
+            controlSurface.extraMenuItems = { [weak self] in self?.menuBarLayout?.profileMenuItems() ?? [] }
+            let assertionSurface = AssertionShelfSurface(
+                base: controlSurface,
+                bridge: LiveMenuBarAssertionBridge(),
+                assignments: { MenuBarLayoutStore(defaults: .standard).assignments },
+                assign: { [weak self] bundle, section in MainActor.assumeIsolated { self?.menuBarLayout?.assignBundle(bundle, to: section) } },
+                newItemsSection: { [weak self] in MainActor.assumeIsolated { self?.dockModel.menuBarTriggers.newItemsSection ?? .visible } },
+                overflowAllowed: { [weak self] in MainActor.assumeIsolated { !(self?.menuBarLayout?.isEditing ?? false) } },
+                presentation: { [weak self] in MainActor.assumeIsolated { self?.dockModel.menuBarTriggers.presentation ?? .menuBar } },
+                barLocation: { [weak self] in MainActor.assumeIsolated { self?.dockModel.menuBarTriggers.barLocation ?? .dynamic } },
+                barLook: { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self else { return MenuBarOverflowPanel.Look() }
+                        return self.dockModel.menuBarTriggers.look.panelLook(dock: self.dockModel.look)
+                    }
+                },
+                emptyClickToggles: { [weak self] in MainActor.assumeIsolated { self?.dockModel.menuBarTriggers.emptyClick ?? false } },
+                dismissBar: { [weak self] in MainActor.assumeIsolated { _ = self?.menuBarTriggers?.activate(.control, action: .hide) } },
+                method: { [weak self] in MainActor.assumeIsolated { self?.dockModel.menuBarTriggers.hidingMethod ?? .standard } },
+                nativeHider: MenuBarNativeHider(grant: menuBarAppListFile),
+                developerHooks: MenuBarAssertionOptIn.developerHooks(),
+                onToggle: onToggle,
+                turnOff: turnOff
+            )
+            assertionSurface.onDeveloperGrant = { [weak self] in
+                guard let self else { return }
+                if !self.menuBarLayoutFile.isGranted { self.menuBarLayoutFile.request() }
+                if !self.menuBarAppListFile.isGranted { self.menuBarAppListFile.request() }
+                MenuBarSystemFiles.dumpSchema([("layout", self.menuBarLayoutFile), ("appList", self.menuBarAppListFile)], to: "/tmp/portside-file-schema.json")
+            }
+            menuBarAssertionSurface = assertionSurface
+            surface = assertionSurface
+        } else {
+            surface = StatusItemShelfSurface(onToggle: onToggle, turnOff: turnOff)
+        }
+        let shelf = MenuBarShelf(surface: surface)
         menuBarShelf = shelf
         return shelf
     }
@@ -486,7 +558,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             SettingsWindowController(
                 dockModel: dockModel, layout: dockEngine.layout, nativeDock: nativeDock, trash: dockEngine.trash,
                 badges: dockEngine.badges, widgets: dockEngine.widgets,
-                integrations: IntegrationSettings(registry: modules, permissions: permissions, model: dockModel, intelligence: intelligence, menuReorder: menuBarReorder, menuLayout: menuBarLayout, menuTriggers: menuBarTriggers)
+                integrations: IntegrationSettings(registry: modules, permissions: permissions, model: dockModel, intelligence: intelligence, menuReorder: menuBarReorder, menuLayout: menuBarLayout, menuFiles: (menuBarLayoutFile, menuBarAppListFile), menuTriggers: menuBarTriggers)
             )
         }
         controller.onActivationPolicyChanged = { [weak dockEngine] in dockEngine?.activationPolicyChanged() }

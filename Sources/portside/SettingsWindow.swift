@@ -1245,11 +1245,8 @@ private struct AppearanceSettings: View {
     @ObservedObject var layout: DockLayout
     @ObservedObject var badges: DockBadges
     /// Which gradient stop the color editor shows (Solid).
-    @State private var editingEndColor = false
     /// The one expanded row, so color editors never stack up.
-    @State private var openPanel: Panel?
 
-    private enum Panel { case fill, adjustments, rimColor, solidBorderColor }
 
     /// Same limit the separator drag clamps to. Kept one point above the
     /// minimum so the slider range is never empty.
@@ -1317,41 +1314,30 @@ private struct AppearanceSettings: View {
                     .footerStyle()
             }
 
-            Section {
-                Picker("Background", selection: binding(\.style)) {
-                    ForEach(DockBackgroundStyle.allCases) { Text($0.title).tag($0) }
+            DockBackgroundEditor(
+                background: dockModel.background,
+                update: { persist, change in dockModel.updateBackground(persist: persist, change) },
+                extra: {
+                    SettingsSlider(
+                        title: "Corner radius",
+                        value: Double(dockModel.cornerRadius),
+                        range: Double(DockModel.cornerRadiusRange.lowerBound)...Double(DockModel.cornerRadiusRange.upperBound),
+                        snap: 1,
+                        format: { "\(Int($0)) pt" },
+                        set: { dockModel.setCornerRadius(CGFloat($0), persist: $1) }
+                    )
+                },
+                header: {
+                    HStack {
+                        Text("Background")
+                        Spacer()
+                        Button("Reset \(dockModel.background.style.title)") { dockModel.resetBackgroundStyleToDefaults() }
+                            .buttonStyle(.link)
+                            .font(.system(size: 12))
+                            .help("Resets this style and the corner radius. Other styles keep their settings.")
+                    }
                 }
-                .pickerStyle(.segmented)
-
-                switch dockModel.background.style {
-                case .glass: glassControls
-                case .solid: solidControls
-                }
-
-                SettingsSlider(
-                    title: "Corner radius",
-                    value: Double(dockModel.cornerRadius),
-                    range: Double(DockModel.cornerRadiusRange.lowerBound)...Double(DockModel.cornerRadiusRange.upperBound),
-                    snap: 1,
-                    format: { "\(Int($0)) pt" },
-                    set: { dockModel.setCornerRadius(CGFloat($0), persist: $1) }
-                )
-            } header: {
-                HStack {
-                    Text("Background")
-                    Spacer()
-                    Button("Reset \(dockModel.background.style.title)") { dockModel.resetBackgroundStyleToDefaults() }
-                        .buttonStyle(.link)
-                        .font(.system(size: 12))
-                        .help("Resets this style and the corner radius. Other styles keep their settings.")
-                }
-            } footer: {
-                Text(backgroundHelp).footerStyle()
-            }
-
-            if dockModel.background.style == .glass && dockModel.background.glass.variant == .custom {
-                customGlassSections
-            }
+            )
 
             // Show/hide and color live together so badges are one decision.
             Section {
@@ -1407,13 +1393,53 @@ private struct AppearanceSettings: View {
             }
         }
     }
+}
+
+/// The Dock's background controls, for anything drawn with a `DockBackground`.
+struct DockBackgroundEditor<Extra: View, Header: View>: View {
+    let background: DockBackground
+    /// (persist, change)
+    let update: (Bool, (inout DockBackground) -> Void) -> Void
+    /// Named in the help text.
+    var surface = "dock"
+    @ViewBuilder let extra: () -> Extra
+    @ViewBuilder let header: () -> Header
+
+    @State private var editingEndColor = false
+    @State private var openPanel: Panel?
+
+    private enum Panel { case fill, adjustments, rimColor, solidBorderColor }
+
+    var body: some View {
+        Section {
+            Picker("Background", selection: binding(\.style)) {
+                ForEach(DockBackgroundStyle.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+
+            switch background.style {
+            case .glass: glassControls
+            case .solid: solidControls
+            }
+
+            extra()
+        } header: {
+            header()
+        } footer: {
+            Text(backgroundHelp).footerStyle()
+        }
+
+        if background.style == .glass && background.glass.variant == .custom {
+            customGlassSections
+        }
+    }
 
     private var backgroundHelp: String {
-        switch dockModel.background.style {
-        case .glass: dockModel.background.glass.variant == .regular
+        switch background.style {
+        case .glass: background.glass.variant == .regular
             ? "The macOS Dock's glass. Its blur follows the Liquid Glass slider in System Settings > Appearance."
             : "Starts from the macOS Dock's values. Reset returns to them."
-        case .solid: "Your own color or gradient. Each color keeps its own opacity, and Opacity scales the whole fill. Blur softens whatever sits behind the dock (like CSS backdrop-filter)."
+        case .solid: "Your own color or gradient. Each color keeps its own opacity, and Opacity scales the whole fill. Blur softens whatever sits behind the \(surface) (like CSS backdrop-filter)."
         }
     }
 
@@ -1421,27 +1447,27 @@ private struct AppearanceSettings: View {
 
     private func binding<T>(_ path: WritableKeyPath<DockBackground, T>) -> Binding<T> {
         Binding(
-            get: { dockModel.background[keyPath: path] },
-            set: { value in dockModel.updateBackground { $0[keyPath: path] = value } }
+            get: { background[keyPath: path] },
+            set: { value in update(true) { $0[keyPath: path] = value } }
         )
     }
 
     private func percentSlider(_ title: String, _ path: WritableKeyPath<DockBackground, Double>) -> SettingsSlider {
         SettingsSlider(
             title: title,
-            value: dockModel.background[keyPath: path],
+            value: background[keyPath: path],
             range: 0...1,
             snap: 0.01,
             format: { "\(Int(($0 * 100).rounded()))%" },
-            set: { value, persist in dockModel.updateBackground(persist: persist) { $0[keyPath: path] = value } }
+            set: { value, persist in update(persist) { $0[keyPath: path] = value } }
         )
     }
 
     private func colorEditor(_ path: WritableKeyPath<DockBackground, PaletteColor>, showsOpacity: Bool,
                              opacityTitle: String = "Opacity") -> PaletteColorEditor {
-        PaletteColorEditor(color: dockModel.background[keyPath: path], showsOpacity: showsOpacity,
+        PaletteColorEditor(color: background[keyPath: path], showsOpacity: showsOpacity,
                            opacityTitle: opacityTitle) { value, persist in
-            dockModel.updateBackground(persist: persist) { $0[keyPath: path] = value }
+            update(persist) { $0[keyPath: path] = value }
         }
     }
 
@@ -1453,7 +1479,7 @@ private struct AppearanceSettings: View {
     }
 
     @ViewBuilder private var customGlassSections: some View {
-        let glass = dockModel.background.glass
+        let glass = background.glass
         Section("Glass") {
             Toggle("Follow macOS blur", isOn: binding(\.glass.followsSystemBlur))
             if !glass.followsSystemBlur {
@@ -1507,7 +1533,7 @@ private struct AppearanceSettings: View {
     }
 
     @ViewBuilder private func borderControls(_ path: WritableKeyPath<DockBackground, DockBorder>) -> some View {
-        let border = dockModel.background[keyPath: path]
+        let border = background[keyPath: path]
         HStack(spacing: 12) {
             Text("Border")
             Spacer()
@@ -1530,16 +1556,16 @@ private struct AppearanceSettings: View {
                              snap: Double, format: @escaping (Double) -> String) -> SettingsSlider {
         SettingsSlider(
             title: title,
-            value: dockModel.background[keyPath: path],
+            value: background[keyPath: path],
             range: range,
             snap: snap,
             format: format,
-            set: { value, persist in dockModel.updateBackground(persist: persist) { $0[keyPath: path] = value } }
+            set: { value, persist in update(persist) { $0[keyPath: path] = value } }
         )
     }
 
     @ViewBuilder private var solidControls: some View {
-        let solid = dockModel.background.solid
+        let solid = background.solid
         let editingEnd = solid.fill.isGradient && editingEndColor
         Picker("Fill", selection: binding(\.solid.fill)) {
             ForEach(SolidFill.allCases) { Text($0.title).tag($0) }
@@ -1553,7 +1579,7 @@ private struct AppearanceSettings: View {
                 ColorChip(color: solid.color.color, isSelected: !editingEnd) { editingEndColor = false }
                     .help(solid.fill == .radial ? "Center color" : "Start color")
                 Button {
-                    dockModel.updateBackground { bg in
+                    update(true) { bg in
                         swap(&bg.solid.color, &bg.solid.endColor)
                     }
                 } label: {
@@ -1585,7 +1611,7 @@ private struct AppearanceSettings: View {
                 range: SolidBackground.angleRange,
                 snap: 1,
                 format: { "\(Int($0))°" },
-                set: { value, persist in dockModel.updateBackground(persist: persist) { $0.solid.angle = value } }
+                set: { value, persist in update(persist) { $0.solid.angle = value } }
             )
         }
         percentSlider("Opacity", \.solid.opacity)

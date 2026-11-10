@@ -50,12 +50,14 @@ final class IntegrationSettings: ObservableObject {
     let menuLayout: MenuBarLayoutService?
     /// Menu bar reveal triggers for its tab; nil hides it.
     let menuTriggers: MenuBarTriggerService?
+    /// The granted system files: MenuBarAgent's order and Control Center's app list.
+    let menuFiles: (layout: MenuBarFileGrant, appList: MenuBarFileGrant)?
 
     private let registry: ModuleRegistry
     private let gate: PermissionGate
     private let model: DockModel
 
-    init(registry: ModuleRegistry, permissions: PermissionGate, model: DockModel, intelligence: ModelRouter? = nil, menuReorder: MenuBarReorderService? = nil, menuLayout: MenuBarLayoutService? = nil, menuTriggers: MenuBarTriggerService? = nil) {
+    init(registry: ModuleRegistry, permissions: PermissionGate, model: DockModel, intelligence: ModelRouter? = nil, menuReorder: MenuBarReorderService? = nil, menuLayout: MenuBarLayoutService? = nil, menuFiles: (layout: MenuBarFileGrant, appList: MenuBarFileGrant)? = nil, menuTriggers: MenuBarTriggerService? = nil) {
         self.registry = registry
         self.gate = permissions
         self.model = model
@@ -63,6 +65,7 @@ final class IntegrationSettings: ObservableObject {
         self.menuReorder = menuReorder
         self.menuLayout = menuLayout
         self.menuTriggers = menuTriggers
+        self.menuFiles = menuFiles
         reload()
     }
 

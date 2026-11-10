@@ -46,12 +46,12 @@ These are dependency gates, not calendar promises. Optional research and adapter
 
 ### Phase 3 extension: Thaw feature-set target
 
-Decision (2026-11-08): the documented feature set of Thaw is the minimum functionality target for the Menu Bar module. Portside implements it independently from public documentation and Apple APIs; no REA run against Thaw, no Thaw source read or copied (it is GPL-3.0), no reuse of names or assets. Existing MENU-01 to MENU-04 scope, status, gates and release priority are unchanged. The tickets below come after MENU-04, are conditional 2.1 scope, and do not block Phases 4 to 7 or 2.0 stable. Details, dependencies, acceptance and feasibility gates are in the [implementation plan](IMPLEMENTATION_PLAN_2_0.md#phase-3-extension-thaw-feature-set-target-menu-05-to-menu-14).
+Decision (2026-11-08): the documented feature set of Thaw is the minimum functionality target for the Menu Bar module. Portside implements it independently from public documentation and Apple APIs; no reuse of names or assets, and no Thaw code copied (it is GPL-3.0). Revised 2026-11-09 at the maintainer's direction: Thaw 3.0.0-alpha.13 was reverse engineered and its source read to match its menu bar hiding behavior; see thaw-simple-mode-analysis.md. Existing MENU-01 to MENU-04 scope, status, gates and release priority are unchanged. The tickets below come after MENU-04, are conditional 2.1 scope, and do not block Phases 4 to 7 or 2.0 stable. Details, dependencies, acceptance and feasibility gates are in the [implementation plan](IMPLEMENTATION_PLAN_2_0.md#phase-3-extension-thaw-feature-set-target-menu-05-to-menu-14).
 
 | Ticket | Capability (user-visible) | Main feasibility risk |
 | --- | --- | --- |
 | P2-MENU-05 | (prototype built, hand gate open) Visible, Hidden and Always Hidden sections; layout editor with a Move to menu and drag between sections, applied on demand | Per-item movement beyond MENU-04's validated set; items clipped under the notch |
-| P2-MENU-06 | (built, hand gate open; click, hotkey and rehide ship, hover/scroll/empty click stay off until validated) Reveal by click, hotkey, optional hover/scroll on empty bar; automatic rehide | Secure input; hover trigger near menus and notch |
+| P2-MENU-06 | (built, hand gate open; click, hotkey, empty-bar click, scroll and rehide on, hover optional) Reveal by click, hotkey, optional hover/scroll on empty bar; automatic rehide | Secure input; hover trigger near menus and notch |
 | P2-MENU-07 | Portside Bar: hidden items in a panel below the menu bar | Clicking items that are hidden or covered; live previews need Screen Recording |
 | P2-MENU-08 | Global hotkeys, open-by-key and per-item open | Secure input; shortcut conflicts |
 | P2-MENU-09 | Item groups and saved profiles | Applying a profile on a crowded bar |
@@ -105,3 +105,7 @@ Use [REA](REA_RESEARCH_2_0.md) to study specific behavior where source/docs do n
 ## Maintaining the roadmap
 
 Each implementation PR names ticket IDs, records evidence and test limitations, and updates the existing checklist. Mark tickets done only when their acceptance criteria and relevant test rows pass. Update the current architecture/data docs as code lands; these proposal documents must not imply new types or keys already exist. Keep failed spikes and support limitations linked so later contributors do not repeat them.
+
+### Menu bar parity audit, 2026-11-09
+
+[Interaction audit](research/P2-MENU-06-interaction-audit.md) lists the defects found and their follow-up. MENU-06 remains experimental. Thaw hide, reveal and rehide rules plus groups, saved order and profiles are built and most were run natively on one notched macOS 27 display; hover, scroll, real Command-drag drops, automatic profile switching, external displays and macOS 26 remain open.

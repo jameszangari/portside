@@ -2,6 +2,65 @@ import AppKit
 import Combine
 import OSLog
 
+/// When a shown shelf hides again by itself. Smart also hides shortly after a
+/// click elsewhere or an app switch; Timed only counts down; Focused App only
+/// hides on an app switch.
+enum MenuBarRehideStrategy: String, Codable, CaseIterable, Identifiable {
+    case smart, timed, focusedApp
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .smart: "Smart"
+        case .timed: "After a delay"
+        case .focusedApp: "When I switch apps"
+        }
+    }
+}
+
+/// Whether a layout drop may also move the real item (a Command-drag).
+/// Manual only records sections and never touches the pointer.
+enum MenuBarArrangement: String, Codable, CaseIterable, Identifiable {
+    case automatic, manual
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
+/// How apps leave the bar on macOS 27. Standard uses the assertion and can
+/// also hide Apple's items. Native uses macOS's own per-app switch.
+enum MenuBarHidingMethod: String, Codable, CaseIterable, Identifiable {
+    case standard, native
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
+/// Where hidden items appear when the shelf opens.
+enum MenuBarPresentation: String, Codable, CaseIterable, Identifiable {
+    case menuBar, portsideBar, portsideBarOnNotch
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .menuBar: "In the menu bar"
+        case .portsideBar: "In the Portside Bar"
+        case .portsideBarOnNotch: "In the Portside Bar on notched displays"
+        }
+    }
+}
+
+/// Where the Portside Bar opens.
+enum MenuBarBarLocation: String, Codable, CaseIterable, Identifiable {
+    case dynamic, pointer, icon, left, right
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .dynamic: "Pointer or Portside icon"
+        case .pointer: "Under the pointer"
+        case .icon: "Under the Portside icon"
+        case .left: "Left edge"
+        case .right: "Right edge"
+        }
+    }
+}
+
 /// How the menu bar shelf is revealed and hidden (P2-MENU-06). Saved in
 /// dock.json as `menuBarTriggers`; every key is optional on read.
 struct MenuBarTriggerSettings: Codable, Equatable {
@@ -10,18 +69,32 @@ struct MenuBarTriggerSettings: Codable, Equatable {
     static let defaultRehideSeconds = 15
 
     var hotkey: HotkeyChord?
-    /// Optional triggers on the empty part of the menu bar. Off by default and
-    /// held off until they are validated (`MenuBarTriggerFeasibility`).
+    var alwaysHiddenHotkey: HotkeyChord?
+    /// Triggers on the empty part of the menu bar.
     var hover = false
-    var scroll = false
-    var emptyClick = false
+    var scroll = true
+    var emptyClick = true
     var rehideSeconds = MenuBarTriggerSettings.defaultRehideSeconds
     var rehideOnAppChange = false
+    var strategy = MenuBarRehideStrategy.smart
+    /// Saved, unlike the separator shelf's session-only Always Hidden.
+    var alwaysHiddenEnabled = false
+    /// Where an app seen for the first time goes.
+    var newItemsSection = MenuBarSection.visible
+    var arrangement = MenuBarArrangement.automatic
+    var hidingMethod = MenuBarHidingMethod.standard
+    var presentation = MenuBarPresentation.menuBar
+    var barLocation = MenuBarBarLocation.dynamic
+    var look = MenuBarLook()
+
+    /// Whether another app becoming frontmost hides the shelf.
+    var rehidesOnAppChange: Bool { strategy != .timed || rehideOnAppChange }
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case hotkey, hover, scroll, emptyClick, rehideSeconds, rehideOnAppChange
+        case hotkey, alwaysHiddenHotkey, hover, scroll, emptyClick, rehideSeconds, rehideOnAppChange
+        case strategy, alwaysHiddenEnabled, newItemsSection, arrangement, hidingMethod, presentation, barLocation, look
     }
 
     /// A malformed or unknown value keeps that field's default; a chord that
@@ -30,9 +103,19 @@ struct MenuBarTriggerSettings: Codable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let chord = try? c.decodeIfPresent(HotkeyChord.self, forKey: .hotkey)
         hotkey = chord.flatMap { $0.isRegisterable ? $0 : nil }
+        let second = try? c.decodeIfPresent(HotkeyChord.self, forKey: .alwaysHiddenHotkey)
+        alwaysHiddenHotkey = second.flatMap { $0.isRegisterable ? $0 : nil }
         hover = c.value(.hover, or: false)
-        scroll = c.value(.scroll, or: false)
-        emptyClick = c.value(.emptyClick, or: false)
+        scroll = c.value(.scroll, or: true)
+        emptyClick = c.value(.emptyClick, or: true)
+        strategy = c.value(.strategy, or: MenuBarRehideStrategy.smart)
+        alwaysHiddenEnabled = c.value(.alwaysHiddenEnabled, or: false)
+        newItemsSection = c.value(.newItemsSection, or: MenuBarSection.visible)
+        arrangement = c.value(.arrangement, or: MenuBarArrangement.automatic)
+        hidingMethod = c.value(.hidingMethod, or: MenuBarHidingMethod.standard)
+        presentation = c.value(.presentation, or: MenuBarPresentation.menuBar)
+        barLocation = c.value(.barLocation, or: MenuBarBarLocation.dynamic)
+        look = c.value(.look, or: MenuBarLook())
         let seconds = c.value(.rehideSeconds, or: Self.defaultRehideSeconds)
         rehideSeconds = Self.rehideChoices.contains(seconds) ? seconds : Self.defaultRehideSeconds
         rehideOnAppChange = c.value(.rehideOnAppChange, or: false)
@@ -41,6 +124,15 @@ struct MenuBarTriggerSettings: Codable, Equatable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encodeIfPresent(hotkey, forKey: .hotkey)
+        try c.encodeIfPresent(alwaysHiddenHotkey, forKey: .alwaysHiddenHotkey)
+        try c.encode(strategy, forKey: .strategy)
+        try c.encode(alwaysHiddenEnabled, forKey: .alwaysHiddenEnabled)
+        try c.encode(newItemsSection, forKey: .newItemsSection)
+        try c.encode(arrangement, forKey: .arrangement)
+        try c.encode(hidingMethod, forKey: .hidingMethod)
+        try c.encode(presentation, forKey: .presentation)
+        try c.encode(barLocation, forKey: .barLocation)
+        try c.encode(look, forKey: .look)
         try c.encode(hover, forKey: .hover)
         try c.encode(scroll, forKey: .scroll)
         try c.encode(emptyClick, forKey: .emptyClick)
@@ -52,7 +144,9 @@ struct MenuBarTriggerSettings: Codable, Equatable {
     var sanitized: MenuBarTriggerSettings {
         var copy = self
         if let chord = copy.hotkey, !chord.isRegisterable { copy.hotkey = nil }
+        if let chord = copy.alwaysHiddenHotkey, !chord.isRegisterable { copy.alwaysHiddenHotkey = nil }
         if !Self.rehideChoices.contains(copy.rehideSeconds) { copy.rehideSeconds = Self.defaultRehideSeconds }
+        copy.look = copy.look.sanitized
         return copy
     }
 }
@@ -77,17 +171,13 @@ enum MenuBarTrigger: String, CaseIterable {
     }
 }
 
-/// Which risky triggers have passed their physical feasibility checks. None
-/// has: the pointer triggers cannot yet tell the empty bar from another app's
-/// menu or status item reliably (MENU-02 found item frames unreliable), and
-/// secure-input starvation is untested on hardware. `PORTSIDE_MENU_TRIGGERS_EXPERIMENTAL=1`
-/// unlocks them for those checks only; it is never a setting.
+/// Which pointer triggers are offered. All of them now that the empty-bar
+/// test reads MenuBarAgent's own window.
 enum MenuBarTriggerFeasibility {
-    static let validated: Set<MenuBarTrigger> = []
+    static let validated: Set<MenuBarTrigger> = [.hover, .scroll, .emptyClick]
 
-    static func isAvailable(_ trigger: MenuBarTrigger, environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
-        guard trigger.isPointerTrigger else { return true }
-        return validated.contains(trigger) || environment["PORTSIDE_MENU_TRIGGERS_EXPERIMENTAL"] == "1"
+    static func isAvailable(_ trigger: MenuBarTrigger) -> Bool {
+        !trigger.isPointerTrigger || validated.contains(trigger)
     }
 }
 
@@ -109,6 +199,18 @@ protocol MenuBarTriggerEnvironment: AnyObject {
     func layoutIsBusy() -> Bool
     /// The layout editor is open and needs every item on screen.
     func layoutIsEditing() -> Bool
+    /// The pointer is over a menu bar, so the user is still working there.
+    func pointerInMenuBar() -> Bool
+    /// The window under the pointer belongs to the active app or the Dock.
+    func cursorOverActiveAppOrDock() -> Bool
+    /// The shelf just opened. Menus open from now on count; panels already up do not.
+    func noteRevealed()
+}
+
+extension MenuBarTriggerEnvironment {
+    func pointerInMenuBar() -> Bool { false }
+    func cursorOverActiveAppOrDock() -> Bool { true }
+    func noteRevealed() {}
 }
 
 /// Whether a point is on the empty part of the menu bar: in the bar, not in
@@ -116,6 +218,14 @@ protocol MenuBarTriggerEnvironment: AnyObject {
 @MainActor
 protocol MenuBarEmptyAreaProbe: AnyObject {
     func isEmptyBar(_ point: CGPoint) -> Bool
+    /// A click also counts on the notch, which is still menu bar.
+    func isClickableBar(_ point: CGPoint) -> Bool
+    /// Clicks, scrolls and dwell ends must read the bar as it is now.
+    func discardCache()
+}
+
+extension MenuBarEmptyAreaProbe {
+    func discardCache() {}
 }
 
 /// The pure geometry behind the empty-bar test, in one coordinate space.
@@ -127,6 +237,10 @@ enum MenuBarBarGeometry {
         if let notch, notch.insetBy(dx: -margin, dy: 0).contains(CGPoint(x: point.x, y: notch.midY)) { return false }
         return !occupied.contains { $0.insetBy(dx: -margin, dy: -margin).contains(CGPoint(x: point.x, y: band.midY)) }
     }
+}
+
+extension MenuBarEmptyAreaProbe {
+    func isClickableBar(_ point: CGPoint) -> Bool { isEmptyBar(point) }
 }
 
 /// Reveal and hide triggers plus automatic rehide, on top of the existing
@@ -159,7 +273,7 @@ final class MenuBarTriggerService: ObservableObject {
     var secureInputOn: Bool { environment.secureInputActive() }
 
     /// Wait before a hover reveals, so crossing the bar does not.
-    nonisolated static let hoverDwell: Duration = .milliseconds(250)
+    nonisolated static let hoverDwell: Duration = .milliseconds(200)
     /// Retry wait when a rehide is deferred and no delay is set.
     nonisolated static let deferWait = 3
 
@@ -167,12 +281,22 @@ final class MenuBarTriggerService: ObservableObject {
     private let environment: MenuBarTriggerEnvironment
     private let probe: MenuBarEmptyAreaProbe
     private let unit: (Int) -> Duration
+    private let smartUnit: (Int) -> Duration
     private let dwell: Duration
     private let featureCheck: (MenuBarTrigger) -> Bool
     private(set) var settings = MenuBarTriggerSettings()
     private var rehideTask: Task<Void, Never>?
     private var dwellTask: Task<Void, Never>?
+    private var smartTask: Task<Void, Never>?
+    private var focusTask: Task<Void, Never>?
+    private var rehideMonitor: Any?
+    private var lastPointerCheck: TimeInterval = 0
+    private var lastReveal: ContinuousClock.Instant?
+    private var lastEmptyClick: TimeInterval = 0
+    private let eligibilityPoll: Duration
+    private let focusGrace: Duration
     private var hotKey: HotKey?
+    private var alwaysHiddenHotKey: HotKey?
     private var monitors: [Any] = []
     private let log = Logger(subsystem: "com.james.portside", category: "menubar-triggers")
 
@@ -181,15 +305,26 @@ final class MenuBarTriggerService: ObservableObject {
         environment: MenuBarTriggerEnvironment,
         probe: MenuBarEmptyAreaProbe,
         unit: @escaping (Int) -> Duration = { .seconds($0) },
+        smartUnit: ((Int) -> Duration)? = nil,
         dwell: Duration = MenuBarTriggerService.hoverDwell,
+        eligibilityPoll: Duration = .milliseconds(250),
+        focusGrace: Duration = .milliseconds(500),
         featureCheck: @escaping (MenuBarTrigger) -> Bool = { MenuBarTriggerFeasibility.isAvailable($0) }
     ) {
         self.shelf = shelf
         self.environment = environment
         self.probe = probe
         self.unit = unit
+        self.smartUnit = smartUnit ?? unit
         self.dwell = dwell
+        self.eligibilityPoll = eligibilityPoll
+        self.focusGrace = focusGrace
         self.featureCheck = featureCheck
+        shelf.onRecovery = { [weak self] reason in
+            guard let self, self.isRunning else { return }
+            self.cancelPending()
+            self.status = "Hiding stopped: \(reason)"
+        }
     }
 
     func start(_ settings: MenuBarTriggerSettings) {
@@ -202,6 +337,7 @@ final class MenuBarTriggerService: ObservableObject {
         cancelPending()
         removeMonitors()
         hotKey = nil
+        alwaysHiddenHotKey = nil
         hotkeyFailure = nil
         status = nil
     }
@@ -212,11 +348,20 @@ final class MenuBarTriggerService: ObservableObject {
         settings = next
         guard isRunning else { return }
         if next.hotkey != previous.hotkey || hotKey == nil && next.hotkey != nil { registerHotKey() }
-        if next.hover != previous.hover || next.scroll != previous.scroll || next.emptyClick != previous.emptyClick || monitors.isEmpty {
+        if next.alwaysHiddenHotkey != previous.alwaysHiddenHotkey || alwaysHiddenHotKey == nil && next.alwaysHiddenHotkey != nil { registerAlwaysHiddenHotKey() }
+        if next.hover != previous.hover || next.scroll != previous.scroll || next.emptyClick != previous.emptyClick
+            || next.strategy != previous.strategy || monitors.isEmpty {
             installMonitors()
         }
-        if next.rehideSeconds != previous.rehideSeconds, rehidePending { armRehide() }
-        if !next.rehideOnAppChange, next.rehideSeconds == 0 { rehidePending = false }
+        if next.hidingMethod != previous.hidingMethod { shelf.membershipDidChange() }
+        if shelf.hidesByMembership, !shelf.alwaysHiddenEnabled { shelf.setAlwaysHidden(true) }
+        if next.rehideSeconds != previous.rehideSeconds || next.strategy != previous.strategy {
+            smartTask?.cancel()
+            smartTask = nil
+            focusTask?.cancel()
+            focusTask = nil
+            startRehideChecks()
+        }
     }
 
     // MARK: Triggers
@@ -237,9 +382,9 @@ final class MenuBarTriggerService: ObservableObject {
         }
         if wantReveal {
             guard shelf.mode == .hidden else { return .revealed }
+            beforeReveal()
             shelf.reveal()
-            rehidePending = true
-            armRehide()
+            noteOpened()
             return .revealed
         }
         cancelPending()
@@ -260,43 +405,144 @@ final class MenuBarTriggerService: ObservableObject {
         return nil
     }
 
-    // MARK: Rehide
-
-    private func armRehide() {
-        rehideTask?.cancel()
-        rehideTask = nil
-        guard rehidePending, settings.rehideSeconds > 0 else { return }
-        scheduleRehide(after: settings.rehideSeconds)
+    /// Double-click, Option-click and the second shortcut: also shows Always Hidden.
+    func showAlwaysHidden(_ trigger: MenuBarTrigger = .control) {
+        guard refusal(for: trigger) == nil, shelf.alwaysHiddenEnabled else { return }
+        beforeReveal()
+        shelf.showAlwaysHidden()
+        noteOpened()
     }
 
-    private func scheduleRehide(after seconds: Int) {
-        rehideTask?.cancel()
-        let wait = unit(seconds)
-        rehideTask = Task { [weak self] in
-            try? await Task.sleep(for: wait)
-            guard !Task.isCancelled else { return }
-            self?.rehideDue()
+    /// Runs just before the shelf opens, so items appear in their saved order.
+    var beforeReveal: () -> Void = {}
+
+    private func noteOpened() {
+        rehidePending = true
+        lastReveal = .now
+        environment.noteRevealed()
+        startRehideChecks()
+    }
+
+    func toggleAlwaysHidden(_ trigger: MenuBarTrigger = .control) {
+        if shelf.alwaysHiddenShown {
+            activate(trigger, action: .hide)
+        } else {
+            showAlwaysHidden(trigger)
         }
     }
 
-    /// Hides unless something is in the way, then waits again; never stacks.
-    func rehideDue() {
+    var alwaysHiddenAvailable: Bool { shelf.alwaysHiddenEnabled }
+
+    /// The launch state: every assigned app hidden, no rehide owed.
+    func startCollapsed() {
+        guard isRunning, shelf.hidesByMembership, shelf.hasHiddenAssignments else { return }
+        shelf.hide()
+    }
+
+    // MARK: Rehide
+
+    /// Starts whatever the chosen policy does while the shelf is open.
+    private func startRehideChecks() {
+        rehideTask?.cancel()
         rehideTask = nil
+        removeRehideMonitor()
+        guard rehidePending, settings.rehideSeconds > 0 else { return }
+        switch settings.strategy {
+        case .smart:
+            // The countdown backs up the click-based path.
+            rehideTask = makeRehideTask { [weak self] in self?.startRehideChecks() }
+        case .timed:
+            rehideMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
+                MainActor.assumeIsolated { self?.pointerMovedWhileOpen() }
+            }
+            updateTimedRehide()
+        case .focusedApp:
+            break
+        }
+    }
+
+    private func removeRehideMonitor() {
+        if let rehideMonitor { NSEvent.removeMonitor(rehideMonitor) }
+        rehideMonitor = nil
+    }
+
+    /// Timed counts only while the pointer is off the menu bar.
+    func pointerMovedWhileOpen() {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastPointerCheck > 0.05 else { return }
+        lastPointerCheck = now
+        updateTimedRehide()
+    }
+
+    private func updateTimedRehide() {
+        guard rehidePending, settings.strategy == .timed else { return }
+        if environment.pointerInMenuBar() {
+            rehideTask?.cancel()
+            rehideTask = nil
+        } else if rehideTask == nil {
+            rehideTask = makeRehideTask { [weak self] in self?.restartTimedCountdown() }
+        }
+    }
+
+    private func restartTimedCountdown() {
+        rehideTask = makeRehideTask { [weak self] in self?.restartTimedCountdown() }
+    }
+
+    /// Hides after a full eligible interval. Time with a menu open or a drag
+    /// under way does not count. The pointer on the bar abandons the wait.
+    private func makeRehideTask(onBlocked: @escaping @MainActor () -> Void) -> Task<Void, Never> {
+        let interval = unit(settings.rehideSeconds)
+        return Task { [weak self, eligibilityPoll] in
+            let clock = ContinuousClock()
+            var eligibleSince = clock.now
+            while !Task.isCancelled {
+                try? await Task.sleep(for: eligibilityPoll)
+                guard !Task.isCancelled, let self else { return }
+                if self.environment.pointerInMenuBar() {
+                    self.rehideTask = nil
+                    return
+                }
+                if self.heldOpen() != nil {
+                    eligibleSince = clock.now
+                    continue
+                }
+                if eligibleSince.duration(to: clock.now) >= interval {
+                    self.rehideTask = nil
+                    self.finishRehide(onBlocked: onBlocked)
+                    return
+                }
+            }
+        }
+    }
+
+    private func finishRehide(onBlocked: @MainActor () -> Void) {
         guard rehidePending, shelf.isRunning, shelf.mode == .revealed else {
             rehidePending = false
             return
         }
-        if let reason = deferral() {
+        if let reason = heldOpen() ?? (environment.pointerInMenuBar() ? "the pointer is on the menu bar." : nil) {
             status = "Hiding again is waiting: \(reason)"
-            scheduleRehide(after: max(settings.rehideSeconds, Self.deferWait))
+            onBlocked()
             return
         }
+        hideNow()
+    }
+
+    private func hideNow() {
+        rehideTask?.cancel()
+        rehideTask = nil
+        smartTask?.cancel()
+        smartTask = nil
+        focusTask?.cancel()
+        focusTask = nil
+        removeRehideMonitor()
         rehidePending = false
         status = nil
         shelf.hide()
     }
 
-    private func deferral() -> String? {
+    /// What keeps the shelf open without counting toward the delay.
+    private func heldOpen() -> String? {
         if environment.layoutIsBusy() { return "a layout change is running." }
         if environment.layoutIsEditing() { return "the layout editor is open." }
         if environment.mouseButtonDown() { return "a mouse button is down." }
@@ -305,10 +551,68 @@ final class MenuBarTriggerService: ObservableObject {
     }
 
     /// Another app became frontmost. Portside itself never counts, so opening
-    /// Settings does not hide the items being edited.
+    /// Settings does not hide the items being edited. Waits the delay, and
+    /// ignores the focus change a reveal itself often causes.
     func appActivated(bundleID: String?) {
-        guard settings.rehideOnAppChange, rehidePending, bundleID != Bundle.main.bundleIdentifier else { return }
-        rehideDue()
+        guard settings.rehidesOnAppChange, settings.rehideSeconds > 0, rehidePending, bundleID != Bundle.main.bundleIdentifier,
+              !environment.pointerInMenuBar() else { return }
+        focusTask?.cancel()
+        let wait = smartUnit(settings.rehideSeconds)
+        focusTask = Task { [weak self] in
+            try? await Task.sleep(for: wait)
+            guard !Task.isCancelled, let self, self.rehidePending else { return }
+            self.focusTask = nil
+            if let last = self.lastReveal, last.duration(to: .now) < self.focusGrace { return }
+            if self.settings.strategy == .smart, self.environment.menuIsOpen() { return }
+            if self.environment.layoutIsEditing() || self.environment.layoutIsBusy() { return }
+            self.hideNow()
+        }
+    }
+
+    /// Smart: a click away from the bar starts the wait, and the newest click
+    /// decides. Hides only if the pointer is then over the active app or the
+    /// Dock and no menu is open, so a click on a panel or popover keeps it open.
+    func clickedElsewhere() {
+        guard settings.strategy == .smart, rehidePending, settings.rehideSeconds > 0, !environment.pointerInMenuBar() else { return }
+        smartTask?.cancel()
+        let wait = smartUnit(settings.rehideSeconds)
+        smartTask = Task { [weak self] in
+            try? await Task.sleep(for: wait)
+            guard !Task.isCancelled else { return }
+            self?.smartDue(requireActiveApp: true)
+        }
+    }
+
+    /// A click that also changed Space settles it at once.
+    func spaceChanged() {
+        guard smartTask != nil else { return }
+        smartDue(requireActiveApp: false)
+    }
+
+    private func smartDue(requireActiveApp: Bool) {
+        smartTask?.cancel()
+        smartTask = nil
+        guard rehidePending, settings.strategy == .smart, settings.rehideSeconds > 0 else { return }
+        if requireActiveApp, !environment.cursorOverActiveAppOrDock() { return }
+        if heldOpen() != nil { return }
+        hideNow()
+    }
+
+    /// Hides at once when something outside the policies asks, or waits again.
+    func rehideDue() {
+        rehideTask = nil
+        finishRehide { [weak self] in self?.startRehideChecks() }
+    }
+
+    /// Nothing pending survives a stale decision, but the shelf stays as it is.
+    func displayChanged() {
+        dwellTask?.cancel()
+        dwellTask = nil
+        smartTask?.cancel()
+        smartTask = nil
+        focusTask?.cancel()
+        focusTask = nil
+        startRehideChecks()
     }
 
     /// Sleep, wake, a display change, the module turning off: nothing may
@@ -316,8 +620,13 @@ final class MenuBarTriggerService: ObservableObject {
     func cancelPending() {
         rehideTask?.cancel()
         rehideTask = nil
+        removeRehideMonitor()
         dwellTask?.cancel()
         dwellTask = nil
+        smartTask?.cancel()
+        smartTask = nil
+        focusTask?.cancel()
+        focusTask = nil
         rehidePending = false
     }
 
@@ -326,12 +635,25 @@ final class MenuBarTriggerService: ObservableObject {
     private func registerHotKey() {
         hotKey = nil
         hotkeyFailure = nil
+        defer { registerAlwaysHiddenHotKey() }
         guard let chord = settings.hotkey else { return }
         hotKey = HotKey(chord: chord, name: "Menu bar shelf \(chord.displayString)") { [weak self] in
             MainActor.assumeIsolated { _ = self?.activate(.hotkey) }
         }
         if hotKey == nil {
             hotkeyFailure = "macOS refused \(chord.displayString), usually because another app already holds it."
+        }
+    }
+
+    private func registerAlwaysHiddenHotKey() {
+        alwaysHiddenHotKey = nil
+        guard let chord = settings.alwaysHiddenHotkey else { return }
+        alwaysHiddenHotKey = HotKey(chord: chord, name: "Menu bar Always Hidden \(chord.displayString)") { [weak self] in
+            MainActor.assumeIsolated { self?.toggleAlwaysHidden(.hotkey) }
+        }
+        if alwaysHiddenHotKey == nil {
+            let failure = "macOS refused \(chord.displayString), usually because another app already holds it."
+            hotkeyFailure = hotkeyFailure ?? failure
         }
     }
 
@@ -343,13 +665,32 @@ final class MenuBarTriggerService: ObservableObject {
         if settings.hover && featureCheck(.hover) { mask.insert(.mouseMoved) }
         if settings.scroll && featureCheck(.scroll) { mask.insert(.scrollWheel) }
         if settings.emptyClick && featureCheck(.emptyClick) { mask.insert(.leftMouseDown) }
+        if settings.strategy == .smart { mask.insert(.leftMouseDown); mask.insert(.rightMouseDown) }
         guard !mask.isEmpty else { return }
         let monitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
-            let type = event.type
-            let deltaY = event.scrollingDeltaY
-            MainActor.assumeIsolated { self?.pointerEvent(type, scrollDelta: deltaY) }
+            self?.receive(event.type, scrollDelta: Self.scrollDelta(of: event))
         }
         if let monitor { monitors.append(monitor) }
+        // A global monitor sees only other apps' events, so with Settings in
+        // front the bar would stop answering without this one.
+        let local = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
+            self?.receive(event.type, scrollDelta: Self.scrollDelta(of: event))
+            return event
+        }
+        if let local { monitors.append(local) }
+    }
+
+    /// `scrollingDeltaY` raises on anything but a scroll, and AppKit swallows
+    /// the exception, so reading it on a click would silently drop the click.
+    nonisolated static func scrollDelta(of event: NSEvent) -> CGFloat {
+        event.type == .scrollWheel ? event.scrollingDeltaY : 0
+    }
+
+    private nonisolated func receive(_ type: NSEvent.EventType, scrollDelta: CGFloat) {
+        MainActor.assumeIsolated {
+            if type == .leftMouseDown || type == .rightMouseDown { clickedElsewhere() }
+            pointerEvent(type, scrollDelta: scrollDelta)
+        }
     }
 
     private func removeMonitors() {
@@ -362,7 +703,8 @@ final class MenuBarTriggerService: ObservableObject {
     /// Delivered for every pointer event while a pointer trigger is on, so it
     /// returns before doing any work unless the pointer is on the bar.
     func pointerEvent(_ type: NSEvent.EventType, scrollDelta: CGFloat = 0, at point: CGPoint = NSEvent.mouseLocation) {
-        guard probe.isEmptyBar(point) else {
+        if type != .mouseMoved { probe.discardCache() }
+        guard type == .leftMouseDown ? probe.isClickableBar(point) : probe.isEmptyBar(point) else {
             dwellTask?.cancel()
             dwellTask = nil
             return
@@ -380,7 +722,15 @@ final class MenuBarTriggerService: ObservableObject {
             activate(.scroll, action: scrollDelta > 0 ? .reveal : .hide)
         case .leftMouseDown:
             guard settings.emptyClick else { return }
-            activate(.emptyClick)
+            // A second click inside the double-click window opens Always Hidden.
+            let now = ProcessInfo.processInfo.systemUptime
+            let second = now - lastEmptyClick < NSEvent.doubleClickInterval
+            lastEmptyClick = second ? 0 : now
+            if second, shelf.alwaysHiddenEnabled {
+                showAlwaysHidden(.emptyClick)
+            } else {
+                activate(.emptyClick)
+            }
         default:
             break
         }
@@ -388,7 +738,8 @@ final class MenuBarTriggerService: ObservableObject {
 
     private func dwellDone() {
         dwellTask = nil
-        guard settings.hover else { return }
+        probe.discardCache()
+        guard settings.hover, probe.isEmptyBar(NSEvent.mouseLocation) else { return }
         activate(.hover, action: .reveal)
     }
 }

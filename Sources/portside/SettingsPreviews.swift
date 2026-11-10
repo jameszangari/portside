@@ -214,7 +214,7 @@ struct DockPlacementPreviewCard: View {
         ) {
             DockPlacementPreview(edge: edge, autoHide: autoHide, reserveSpace: reserveSpace, showTrash: showTrash, revealed: revealed)
         }
-        .onChange(of: autoHide) { _ in revealed = false }
+        .onChange(of: autoHide) { revealed = false }
     }
 
     private var summary: String {

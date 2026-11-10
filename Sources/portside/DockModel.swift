@@ -399,11 +399,14 @@ final class DockModel: Codable, ObservableObject {
     /// How the menu bar shelf is revealed and hidden again (P2-MENU-06).
     @Published private(set) var menuBarTriggers = MenuBarTriggerSettings()
 
-    func setMenuBarTriggers(_ settings: MenuBarTriggerSettings) {
+    func setMenuBarTriggers(_ settings: MenuBarTriggerSettings, persist shouldPersist: Bool = true) {
         let next = settings.sanitized
-        guard next != menuBarTriggers else { return }
+        guard next != menuBarTriggers else {
+            if shouldPersist { persist() }
+            return
+        }
         menuBarTriggers = next
-        persist()
+        if shouldPersist { persist() }
     }
 
     /// Command Center quicklinks, in Settings order. URLs are kept as typed;

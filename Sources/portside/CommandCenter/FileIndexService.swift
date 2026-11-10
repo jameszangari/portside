@@ -203,7 +203,9 @@ final class FileIndexService: ObservableObject {
         store: FileRootStore,
         watcher: (any FileChangeWatching)? = nil,
         limits: FileScanLimits = FileScanLimits(),
-        scan: @escaping @Sendable (FileRoot, FileScanLimits) async -> FileScanResult = FileIndexService.cancellableScan,
+        scan: @escaping @Sendable (FileRoot, FileScanLimits) async -> FileScanResult = { root, limits in
+            await FileIndexService.cancellableScan(root, limits)
+        },
         probe: @escaping @Sendable (FileRoot) async -> FileScanOutcome = { root in
             await Task.detached(priority: .utility) { FileScanner.probe(root) }.value
         }

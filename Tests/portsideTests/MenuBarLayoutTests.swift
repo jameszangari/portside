@@ -81,6 +81,9 @@ final class MenuBarLayoutTests: XCTestCase {
         var mode = MenuBarShelf.Mode.revealed
         var hides = 0
         func hide() { hides += 1; mode = .hidden }
+        var hidesByMembership = false
+        var membershipChanges = 0
+        func membershipDidChange() { membershipChanges += 1 }
     }
 
     private var defaults: UserDefaults!
@@ -233,6 +236,171 @@ final class MenuBarLayoutTests: XCTestCase {
         XCTAssertEqual(layout.driftCount, 1)
         _ = await layout.apply(onlySaved: true)
         XCTAssertEqual(world.order, ["A", "|1", "B"], "A stays Hidden: it was never placed")
+    }
+
+    // MARK: Membership hiding
+
+    func testMembershipDropMovesNothingAndSavesAtOnce() async {
+        let world = World(["A", "|1", "B", "C"])
+        let (layout, _, shelf) = make(world)
+        shelf.hidesByMembership = true
+        await layout.beginEditing()
+        let row = layout.rows.first { $0.id == Self.id("C") }
+        XCTAssertEqual(row?.byMembership, true)
+        XCTAssertEqual(row?.canDrag, true)
+        _ = await layout.drop(Self.id("C"), into: .hidden)
+        XCTAssertEqual(world.dragCount, 0, "no pointer interruption")
+        XCTAssertEqual(world.order, ["A", "|1", "B", "C"])
+        XCTAssertEqual(layout.rows.first { $0.id == Self.id("C") }?.section, .hidden)
+        XCTAssertEqual(shelf.membershipChanges, 1)
+    }
+
+    func testMembershipDropOnAnIconMovesTheRealItem() async {
+        let world = World(["|1", "A", "B", "C"])
+        let (layout, _, shelf) = make(world)
+        shelf.hidesByMembership = true
+        await layout.beginEditing()
+        layout.movesRealItems = { false }
+        _ = await layout.drop(Self.id("C"), into: .visible, before: Self.id("A"))
+        XCTAssertEqual(world.order, ["|1", "C", "A", "B"], "Manual still does what a Layout edit asks")
+    }
+
+    private final class FakeTable: MenuBarPositionStoring {
+        var table: [String: Int]
+        var writes = 0
+        init(_ table: [String: Int]) { self.table = table }
+        func read() -> [String: Int]? { table }
+        func write(_ changes: [String: Int]) -> Bool {
+            writes += 1
+            table.merge(changes) { _, new in new }
+            return true
+        }
+    }
+
+    private func bundleKey(_ name: String) -> String {
+        "status:\(Self.id(name).split(separator: ":")[0])::Item-0"
+    }
+
+    func testDropWritesTheTableInsteadOfDragging() async {
+        let world = World(["|1", "A", "B", "C"])
+        let (layout, _, shelf) = make(world)
+        shelf.hidesByMembership = true
+        let fake = FakeTable([bundleKey("A"): 300, bundleKey("B"): 200, bundleKey("C"): 100, "status:com.james.portside::PortsideShelfSeparator": 400])
+        layout.positionTable = fake
+        layout.currentBundle = "com.james.portside"
+        await layout.beginEditing()
+        _ = await layout.drop(Self.id("C"), into: .visible, before: Self.id("A"))
+        XCTAssertEqual(world.dragCount, 0, "no pointer")
+        XCTAssertEqual(fake.writes, 1)
+        XCTAssertGreaterThan(fake.table[bundleKey("C")]!, fake.table[bundleKey("A")]!, "bigger is further left")
+        XCTAssertGreaterThan(fake.table["status:com.james.portside::PortsideShelfSeparator"]!, fake.table[bundleKey("C")]!, "Visible stays right of the divider")
+    }
+
+    func testSavedOrderIsPutBackBeforeARevealOnlyInAutomatic() async {
+        let world = World(["|1", "A", "B"])
+        let (layout, _, shelf) = make(world)
+        shelf.hidesByMembership = true
+        let fake = FakeTable([bundleKey("A"): 300, bundleKey("B"): 200])
+        layout.positionTable = fake
+        await layout.beginEditing()
+        _ = await layout.drop(Self.id("B"), into: .visible, before: Self.id("A"))
+        let writes = fake.writes
+        fake.table = [bundleKey("A"): 300, bundleKey("B"): 200]
+        layout.movesRealItems = { false }
+        layout.restoreOrderBeforeReveal()
+        XCTAssertEqual(fake.writes, writes)
+        layout.movesRealItems = { true }
+        layout.restoreOrderBeforeReveal()
+        XCTAssertEqual(fake.writes, writes + 1)
+        XCTAssertGreaterThan(fake.table[bundleKey("B")]!, fake.table[bundleKey("A")]!)
+    }
+
+    func testGroupsHoldAnAppOnceAndSurviveReload() async {
+        let world = World(["|1", "A", "B"])
+        let (layout, _, shelf) = make(world)
+        shelf.hidesByMembership = true
+        await layout.beginEditing()
+        layout.addGroup(named: " Audio ")
+        layout.addGroup(named: "Dev")
+        let audio = layout.groups[0].id, dev = layout.groups[1].id
+        XCTAssertEqual(layout.groups[0].name, "Audio")
+        layout.setGroup(audio, forItem: Self.id("A"))
+        layout.setGroup(dev, forItem: Self.id("A"))
+        XCTAssertEqual(layout.groups[0].bundles, [])
+        XCTAssertEqual(layout.groups[1].bundles.count, 1)
+        XCTAssertEqual(layout.groupID(forItem: Self.id("A")), dev)
+        layout.setGroup(nil, forItem: Self.id("A"))
+        XCTAssertNil(layout.groupID(forItem: Self.id("A")))
+        layout.setGroupIcon(dev, shown: true)
+        XCTAssertTrue(layout.groups[1].showsIcon)
+        layout.removeGroup(audio)
+        XCTAssertEqual(layout.groups.count, 1)
+    }
+
+    func testProfileRestoresSectionsOrderAndGroups() async {
+        let world = World(["|1", "A", "B"])
+        let (layout, _, shelf) = make(world)
+        shelf.hidesByMembership = true
+        await layout.beginEditing()
+        layout.addGroup(named: "Audio")
+        _ = await layout.drop(Self.id("A"), into: .hidden)
+        let first = layout.saveNewProfile(named: "Work")!
+        _ = await layout.drop(Self.id("A"), into: .visible)
+        layout.removeGroup(layout.groups[0].id)
+        XCTAssertEqual(layout.rows.first { $0.id == Self.id("A") }?.section, .visible)
+        layout.applyProfile(first.id)
+        XCTAssertEqual(layout.rows.first { $0.id == Self.id("A") }?.section, .hidden)
+        XCTAssertEqual(layout.groups.map(\.name), ["Audio"])
+        XCTAssertEqual(layout.activeProfileID, first.id)
+        layout.deleteProfile(first.id)
+        XCTAssertNil(layout.activeProfileID)
+        XCTAssertTrue(layout.profiles.isEmpty)
+    }
+
+    func testAppleItemsAreListedOnlyWhenHidingByMembership() async {
+        let world = World(["|1", "A"])
+        let (layout, _, shelf) = make(world)
+        await layout.beginEditing()
+        XCTAssertFalse(layout.rows.contains { $0.id.hasPrefix("apple.") })
+        shelf.hidesByMembership = true
+        await layout.refresh()
+        XCTAssertEqual(layout.rows.filter { $0.id.hasPrefix("apple.") }.count, 6)
+    }
+
+    func testMembershipDropIntoAlwaysHiddenSavesTheSwitch() async {
+        let world = World(["A", "|1", "B"])
+        let (layout, _, shelf) = make(world)
+        shelf.hidesByMembership = true
+        var saved: [Bool] = []
+        layout.persistAlwaysHidden = { saved.append($0) }
+        await layout.beginEditing()
+        _ = await layout.drop(Self.id("B"), into: .alwaysHidden)
+        XCTAssertEqual(saved, [true])
+    }
+
+    func testMembershipDropUpdatesSavedSiblingsNotCurrentlyListed() async {
+        let world = World(["A", "|1", "B"])
+        let (layout, _, shelf) = make(world)
+        shelf.hidesByMembership = true
+        let oldID = MenuBarLayoutService.bundle(of: Self.id("B")) + ":id=old"
+        MenuBarLayoutStore(defaults: defaults).set(.visible, for: oldID)
+        await layout.beginEditing()
+        _ = await layout.drop(Self.id("B"), into: .hidden)
+        XCTAssertEqual(MenuBarLayoutStore(defaults: defaults).assignments[oldID], .hidden)
+    }
+
+    func testMembershipSortReportsFailedPhysicalMove() async {
+        let world = World(["A", "|1", "B"])
+        let (layout, _, shelf) = make(world)
+        shelf.hidesByMembership = true
+        world.set(works: false)
+        await layout.beginEditing()
+        let result = await layout.drop(Self.id("B"), into: .visible, before: Self.id("A"))
+        guard case .failure = result else { return XCTFail("failed ordering must not report success") }
+    }
+
+    func testBundleOfAnItemIDIgnoresTheItemPart() {
+        XCTAssertEqual(MenuBarLayoutService.bundle(of: "Com.A.App:id=x:y"), "com.a.app")
     }
 
     // MARK: Editing session

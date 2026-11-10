@@ -17,6 +17,10 @@ final class MenuBarTriggersTests: XCTestCase {
         func layoutIsBusy() -> Bool { busy }
         var editing = false
         func layoutIsEditing() -> Bool { editing }
+        var inBar = false
+        var overActive = true
+        func pointerInMenuBar() -> Bool { inBar }
+        func cursorOverActiveAppOrDock() -> Bool { overActive }
     }
 
     final class FakeProbe: MenuBarEmptyAreaProbe {
@@ -39,7 +43,7 @@ final class MenuBarTriggersTests: XCTestCase {
         let probe = FakeProbe()
         let service = MenuBarTriggerService(
             shelf: shelf, environment: env, probe: probe,
-            unit: { .milliseconds($0 * 20) }, dwell: .milliseconds(10),
+            unit: { .milliseconds($0 * 20) }, smartUnit: { .milliseconds($0 * 2) }, dwell: .milliseconds(10), eligibilityPoll: .milliseconds(5), focusGrace: .zero,
             featureCheck: { !$0.isPointerTrigger || pointerOK }
         )
         shelf.start()
@@ -54,7 +58,11 @@ final class MenuBarTriggersTests: XCTestCase {
     func testSettingsDefaultsAndRoundTrip() throws {
         let defaults = MenuBarTriggerSettings()
         XCTAssertNil(defaults.hotkey)
-        XCTAssertFalse(defaults.hover || defaults.scroll || defaults.emptyClick || defaults.rehideOnAppChange)
+        XCTAssertFalse(defaults.hover || defaults.rehideOnAppChange || defaults.alwaysHiddenEnabled)
+        XCTAssertTrue(defaults.scroll && defaults.emptyClick, "on by default")
+        XCTAssertEqual(defaults.strategy, .smart)
+        XCTAssertEqual(defaults.newItemsSection, .visible)
+        XCTAssertEqual(defaults.arrangement, .automatic)
         XCTAssertEqual(defaults.rehideSeconds, 15)
         var custom = defaults
         custom.hotkey = HotkeyChord(keyCode: UInt32(kVK_ANSI_B), modifiers: UInt32(cmdKey | optionKey))
@@ -78,13 +86,21 @@ final class MenuBarTriggersTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(MenuBarTriggerSettings.self, from: Data("{}".utf8)), MenuBarTriggerSettings())
     }
 
-    func testPointerTriggersAreNotValidatedByDefault() {
-        for trigger in MenuBarTrigger.allCases where trigger.isPointerTrigger {
-            XCTAssertFalse(MenuBarTriggerFeasibility.isAvailable(trigger, environment: [:]))
-            XCTAssertTrue(MenuBarTriggerFeasibility.isAvailable(trigger, environment: ["PORTSIDE_MENU_TRIGGERS_EXPERIMENTAL": "1"]))
+    func testPointerTriggersAreAvailable() {
+        for trigger in MenuBarTrigger.allCases {
+            XCTAssertTrue(MenuBarTriggerFeasibility.isAvailable(trigger))
         }
-        XCTAssertTrue(MenuBarTriggerFeasibility.isAvailable(.control, environment: [:]))
-        XCTAssertTrue(MenuBarTriggerFeasibility.isAvailable(.hotkey, environment: [:]))
+    }
+
+    func testStrategyDecidesWhetherAppChangeHides() {
+        var settings = MenuBarTriggerSettings()
+        XCTAssertTrue(settings.rehidesOnAppChange, "Smart")
+        settings.strategy = .focusedApp
+        XCTAssertTrue(settings.rehidesOnAppChange)
+        settings.strategy = .timed
+        XCTAssertFalse(settings.rehidesOnAppChange)
+        settings.rehideOnAppChange = true
+        XCTAssertTrue(settings.rehidesOnAppChange)
     }
 
     // MARK: Click and command
@@ -191,8 +207,122 @@ final class MenuBarTriggersTests: XCTestCase {
 
     // MARK: Rehide
 
+    func testRecoveryCancelsRehideAndExplainsWhy() async {
+        var settings = MenuBarTriggerSettings()
+        settings.strategy = .timed
+        settings.rehideSeconds = 5
+        let rig = make(settings: settings)
+        defer { rig.service.stop() }
+        rig.service.activate(.control)
+        rig.service.activate(.control)
+        rig.shelf.failOpen("control unavailable")
+        await settle(250)
+        XCTAssertEqual(rig.shelf.mode, .revealed)
+        XCTAssertFalse(rig.service.rehidePending)
+        XCTAssertEqual(rig.service.status, "Hiding stopped: control unavailable")
+    }
+
+    func testSmartCountdownBacksUpTheClickPath() async {
+        var settings = MenuBarTriggerSettings()
+        settings.rehideSeconds = 5
+        let rig = make(settings: settings)
+        defer { rig.service.stop() }
+        rig.service.activate(.control)
+        rig.service.activate(.control)
+        XCTAssertEqual(rig.shelf.mode, .revealed)
+        await settle(250)
+        XCTAssertEqual(rig.shelf.mode, .hidden)
+    }
+
+    func testSmartAbandonsTheCountdownWhileThePointerIsOnTheBar() async {
+        var settings = MenuBarTriggerSettings()
+        settings.rehideSeconds = 5
+        let rig = make(settings: settings)
+        defer { rig.service.stop() }
+        rig.env.inBar = true
+        rig.service.activate(.control)
+        rig.service.activate(.control)
+        await settle(250)
+        XCTAssertEqual(rig.shelf.mode, .revealed)
+    }
+
+    func testNeverMeansNeverForEveryPolicy() async {
+        for strategy in MenuBarRehideStrategy.allCases {
+            var settings = MenuBarTriggerSettings()
+            settings.strategy = strategy
+            settings.rehideSeconds = 0
+            let rig = make(settings: settings)
+            rig.service.activate(.control)
+            rig.service.activate(.control)
+            rig.service.appActivated(bundleID: "com.example.other")
+            rig.service.clickedElsewhere()
+            await settle(80)
+            XCTAssertEqual(rig.shelf.mode, .revealed, "\(strategy)")
+            rig.service.stop()
+        }
+    }
+
+    func testOpenMenuTimeDoesNotCountTowardTheDelay() async {
+        var settings = MenuBarTriggerSettings()
+        settings.rehideSeconds = 5
+        let rig = make(settings: settings)
+        defer { rig.service.stop() }
+        rig.env.menuOpen = true
+        rig.service.activate(.control)
+        rig.service.activate(.control)
+        await settle(200)
+        XCTAssertEqual(rig.shelf.mode, .revealed)
+        rig.env.menuOpen = false
+        await settle(40)
+        XCTAssertEqual(rig.shelf.mode, .revealed, "needs a full interval from when the menu closed")
+        await settle(120)
+        XCTAssertEqual(rig.shelf.mode, .hidden)
+    }
+
+    func testFocusedAppDoesNotUseTheTimedCountdown() async {
+        var settings = MenuBarTriggerSettings()
+        settings.strategy = .focusedApp
+        settings.rehideSeconds = 5
+        let rig = make(settings: settings)
+        defer { rig.service.stop() }
+        rig.service.activate(.control)
+        rig.service.activate(.control)
+        await settle(250)
+        XCTAssertEqual(rig.shelf.mode, .revealed)
+        rig.service.appActivated(bundleID: "com.example.other")
+        await settle(60)
+        XCTAssertEqual(rig.shelf.mode, .hidden)
+    }
+
+    func testDisablingDelayCancelsAnAlreadyArmedSmartClick() async {
+        var settings = MenuBarTriggerSettings()
+        settings.rehideSeconds = 30
+        let rig = make(settings: settings)
+        defer { rig.service.stop() }
+        rig.service.activate(.control)
+        rig.service.activate(.control)
+        rig.service.clickedElsewhere()
+        settings.rehideSeconds = 0
+        rig.service.apply(settings)
+        await settle(150)
+        XCTAssertEqual(rig.shelf.mode, .revealed)
+    }
+
+    func testHoverRechecksEmptyAreaAtDwellCompletion() async {
+        var settings = MenuBarTriggerSettings()
+        settings.hover = true
+        let rig = make(settings: settings, pointerOK: true)
+        defer { rig.service.stop() }
+        rig.shelf.hide()
+        rig.service.pointerEvent(.mouseMoved, at: .zero)
+        rig.probe.empty = false
+        await settle(60)
+        XCTAssertEqual(rig.shelf.mode, .hidden)
+    }
+
     func testTriggerRevealRehidesOnce() async {
         var settings = MenuBarTriggerSettings()
+        settings.strategy = .timed
         settings.rehideSeconds = 5
         let rig = make(settings: settings)
         rig.service.activate(.control)
@@ -207,6 +337,7 @@ final class MenuBarTriggersTests: XCTestCase {
 
     func testRepeatedRevealsDoNotStackTimers() async {
         var settings = MenuBarTriggerSettings()
+        settings.strategy = .timed
         settings.rehideSeconds = 10
         settings.scroll = true
         let rig = make(settings: settings, pointerOK: true)
@@ -241,6 +372,7 @@ final class MenuBarTriggersTests: XCTestCase {
 
     func testOpenMenuAndDragDeferRehide() async {
         var settings = MenuBarTriggerSettings()
+        settings.strategy = .timed
         settings.rehideSeconds = 5
         let rig = make(settings: settings)
         rig.service.activate(.control)
@@ -248,7 +380,6 @@ final class MenuBarTriggersTests: XCTestCase {
         rig.env.menuOpen = true
         await settle(150)
         XCTAssertEqual(rig.shelf.mode, .revealed)
-        XCTAssertNotNil(rig.service.status)
         rig.env.menuOpen = false
         rig.env.mouseDown = true
         await settle(150)
@@ -260,6 +391,7 @@ final class MenuBarTriggersTests: XCTestCase {
 
     func testOpenLayoutEditorDefersRehideButNotTheControl() async {
         var settings = MenuBarTriggerSettings()
+        settings.strategy = .timed
         settings.rehideSeconds = 5
         let rig = make(settings: settings)
         rig.service.activate(.control)
@@ -287,25 +419,38 @@ final class MenuBarTriggersTests: XCTestCase {
         XCTAssertEqual(rig.shelf.mode, .revealed)
     }
 
-    func testAppChangeRehidesWhenOn() {
+    func testAppChangeRehidesWhenOn() async {
         var settings = MenuBarTriggerSettings()
-        settings.rehideSeconds = 0
-        settings.rehideOnAppChange = true
+        settings.strategy = .focusedApp
+        settings.rehideSeconds = 5
         let rig = make(settings: settings)
         rig.service.activate(.control)
         rig.service.activate(.control)
         rig.service.appActivated(bundleID: Bundle.main.bundleIdentifier)
+        await settle(60)
         XCTAssertEqual(rig.shelf.mode, .revealed, "Portside itself does not count")
-        rig.env.menuOpen = true
         rig.service.appActivated(bundleID: "com.example.other")
-        XCTAssertEqual(rig.shelf.mode, .revealed, "an open menu defers it")
-        rig.env.menuOpen = false
-        rig.service.appActivated(bundleID: "com.example.other")
+        await settle(60)
         XCTAssertEqual(rig.shelf.mode, .hidden)
     }
 
+    func testSmartAppChangeWaitsForAnOpenMenu() async {
+        var settings = MenuBarTriggerSettings()
+        settings.rehideSeconds = 30
+        let rig = make(settings: settings)
+        defer { rig.service.stop() }
+        rig.service.activate(.control)
+        rig.service.activate(.control)
+        rig.env.menuOpen = true
+        rig.service.appActivated(bundleID: "com.example.other")
+        await settle(120)
+        XCTAssertEqual(rig.shelf.mode, .revealed)
+    }
+
     func testAppChangeIgnoredWhenOffOrNotPending() {
-        let rig = make()
+        var timed = MenuBarTriggerSettings()
+        timed.strategy = .timed
+        let rig = make(settings: timed)
         rig.shelf.hide()
         rig.service.activate(.control)
         rig.service.appActivated(bundleID: "com.example.other")
@@ -317,6 +462,46 @@ final class MenuBarTriggersTests: XCTestCase {
         on.shelf.reveal()
         on.service.appActivated(bundleID: "com.example.other")
         XCTAssertEqual(on.shelf.mode, .revealed, "nothing hides what no trigger revealed")
+    }
+
+    func testSmartClickElsewhereHidesAfterTheDelay() async {
+        var settings = MenuBarTriggerSettings()
+        settings.rehideSeconds = 30
+        let rig = make(settings: settings)
+        rig.service.activate(.control)
+        rig.service.activate(.control)
+        XCTAssertEqual(rig.shelf.mode, .revealed)
+        rig.service.clickedElsewhere()
+        await settle(150)
+        XCTAssertEqual(rig.shelf.mode, .hidden)
+    }
+
+    func testSmartKeepsOpenWhenPointerIsNotOverTheActiveApp() async {
+        var settings = MenuBarTriggerSettings()
+        settings.rehideSeconds = 30
+        let rig = make(settings: settings)
+        rig.env.overActive = false
+        rig.service.activate(.control)
+        rig.service.activate(.control)
+        rig.service.clickedElsewhere()
+        await settle(150)
+        XCTAssertEqual(rig.shelf.mode, .revealed, "a click on a panel or popover keeps it open")
+    }
+
+    func testPointerOnTheBarDefersRehide() async {
+        var settings = MenuBarTriggerSettings()
+        settings.strategy = .timed
+        settings.rehideSeconds = 5
+        let rig = make(settings: settings)
+        rig.service.activate(.control)
+        rig.service.activate(.control)
+        rig.env.inBar = true
+        await settle(150)
+        XCTAssertEqual(rig.shelf.mode, .revealed)
+        rig.env.inBar = false
+        rig.service.pointerMovedWhileOpen()
+        await settle(200)
+        XCTAssertEqual(rig.shelf.mode, .hidden)
     }
 
     func testCancelPendingStopsRehide() async {
@@ -382,5 +567,28 @@ final class MenuBarTriggerPersistenceTests: XCTestCase {
         let again = try JSONDecoder().decode(DockModel.self, from: try JSONEncoder().encode(loaded))
         XCTAssertTrue(again.menuBarTriggers.rehideOnAppChange)
         XCTAssertEqual(again.menuBarTriggers.rehideSeconds, 0)
+    }
+
+    func testScrollDeltaIgnoresEventsThatAreNotScrolls() throws {
+        let click = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .leftMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+        ))
+        XCTAssertEqual(MenuBarTriggerService.scrollDelta(of: click), 0)
+    }
+
+    func testPresentationDefaultsToTheMenuBarAndDropsUnknownValues() throws {
+        let fresh = try JSONDecoder().decode(MenuBarTriggerSettings.self, from: Data("{}".utf8))
+        XCTAssertEqual(fresh.presentation, .menuBar)
+        XCTAssertEqual(fresh.barLocation, .dynamic)
+        let bad = try JSONDecoder().decode(MenuBarTriggerSettings.self, from: Data(#"{"presentation":"nope","barLocation":"nope"}"#.utf8))
+        XCTAssertEqual(bad.presentation, .menuBar)
+        XCTAssertEqual(bad.barLocation, .dynamic)
+        var chosen = MenuBarTriggerSettings()
+        chosen.presentation = .portsideBar
+        chosen.barLocation = .left
+        let round = try JSONDecoder().decode(MenuBarTriggerSettings.self, from: JSONEncoder().encode(chosen))
+        XCTAssertEqual(round.presentation, .portsideBar)
+        XCTAssertEqual(round.barLocation, .left)
     }
 }

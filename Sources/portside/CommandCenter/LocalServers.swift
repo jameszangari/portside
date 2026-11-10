@@ -154,7 +154,7 @@ final class LocalServerStore {
     private(set) var autoRefreshes = 0
     private let policy: VisibleRefreshPolicy
     private let inspector: any ProcessInspector
-    private nonisolated let makeMonitor: @MainActor () -> any ProcessExitMonitoring
+    private nonisolated let makeMonitor: @MainActor @Sendable () -> any ProcessExitMonitoring
     private var monitor: (any ProcessExitMonitoring)?
     private var autoTask: Task<Void, Never>?
     private var loopGeneration = 0
@@ -167,7 +167,7 @@ final class LocalServerStore {
         confirmationLifetime: Duration = .seconds(60),
         policy: VisibleRefreshPolicy = VisibleRefreshPolicy(),
         inspector: any ProcessInspector = LibprocProcessInspector(),
-        makeMonitor: @escaping @MainActor () -> any ProcessExitMonitoring = { ProcessExitMonitor() }
+        makeMonitor: @escaping @MainActor @Sendable () -> any ProcessExitMonitoring = { ProcessExitMonitor() }
     ) {
         self.service = service
         self.stopper = stopper

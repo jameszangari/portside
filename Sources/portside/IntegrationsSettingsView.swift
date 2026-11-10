@@ -187,6 +187,7 @@ struct MenuBarLayoutSection: View {
     private var hint: String {
         if let title = service.movingTitle { return "Moving \(title). The pointer moves for a moment." }
         if let hovered {
+            if let note = service.menuBarOnlyNote(for: hovered) { return note }
             return hovered.blockedReason.map { "\(hovered.slot.item.displayTitle): \($0)" } ?? hovered.slot.item.displayTitle
         }
         return service.status ?? "Drag icons to arrange your menu bar. Changes apply right away."
@@ -209,7 +210,9 @@ struct MenuBarLayoutSection: View {
                     Text("Portside needs Accessibility to see your menu bar items. Allow it in General > Permissions.").helperStyle()
                 } else if service.rows.isEmpty {
                     Text("Looking for menu bar items.").helperStyle()
-                } else if !service.barsReady {
+                } else if let blocked = service.hidingBlockedReason {
+                    Text("\(blocked) Until then every item stays in the menu bar, whatever its section here.").helperStyle().foregroundStyle(.orange)
+                } else if !service.barsReady, !service.hidesByMembership {
                     Text("Portside cannot find its separators in the menu bar. Turn the shelf off from its menu bar control (right-click) and on again here.").helperStyle()
                 }
                 if service.driftCount > 0 {
@@ -223,7 +226,7 @@ struct MenuBarLayoutSection: View {
             .task { await service.beginEditing() }
             .onDisappear { service.endEditing() }
             ForEach(MenuBarSection.allCases) { section in
-                LayoutStrip(section: section, rows: service.rows.filter { $0.slot.reachable && $0.section == section }, service: service, hovered: $hovered)
+                LayoutStrip(section: section, rows: service.rows.filter { $0.isListed && $0.section == section }, service: service, hovered: $hovered)
             }
             let offScreen = service.rows.filter(\.isOffScreen)
             if !offScreen.isEmpty {
@@ -275,7 +278,10 @@ private struct LayoutStrip: View {
         switch section {
         case .visible: return "Always in the menu bar."
         case .hidden: return "Shown when you open the shelf."
-        case .alwaysHidden: return "Out of sight until you turn this off. Ends when Portside quits."
+        case .alwaysHidden:
+            return service.hidesByMembership
+                ? "Only shown when you double-click the menu bar or Option-click its icon."
+                : "Out of sight until you turn this off. Ends when Portside quits."
         }
     }
 
@@ -304,7 +310,7 @@ private struct LayoutStrip: View {
                 Label(section.title, systemImage: section.symbolName)
                 Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
-                if section == .alwaysHidden {
+                if section == .alwaysHidden, !service.hidesByMembership {
                     Toggle("Always Hidden", isOn: Binding(get: { service.alwaysHiddenOn }, set: { service.setAlwaysHidden($0) }))
                         .labelsHidden()
                         .toggleStyle(.switch)
@@ -333,7 +339,8 @@ private struct LayoutTile: View {
             if let image = NSRunningApplication(processIdentifier: row.slot.item.pid)?.icon {
                 Image(nsImage: image).resizable().scaledToFit()
             } else {
-                Image(systemName: "square.dashed").resizable().scaledToFit().foregroundStyle(.secondary)
+                Image(systemName: MenuBarAssertionPlan.appleItems.first { $0.bundle == row.slot.item.ownerBundleID }?.symbol ?? "square.dashed")
+                    .resizable().scaledToFit().foregroundStyle(.secondary)
             }
         }
         .frame(width: 22, height: 22)
@@ -361,6 +368,14 @@ private struct LayoutTile: View {
                 ForEach(MenuBarSection.allCases) { target in
                     Button("Move to \(target.title)") { Task { await service.drop(row.id, into: target) } }
                         .disabled(service.isBusy || !row.canDrag || target == section)
+                }
+                if !service.groups.isEmpty {
+                    Menu("Group") {
+                        Button("None") { service.setGroup(nil, forItem: row.id) }
+                        ForEach(service.groups) { group in
+                            Button(service.groupID(forItem: row.id) == group.id ? "\u{2713} \(group.name)" : group.name) { service.setGroup(group.id, forItem: row.id) }
+                        }
+                    }
                 }
             }
             .accessibilityElement(children: .ignore)

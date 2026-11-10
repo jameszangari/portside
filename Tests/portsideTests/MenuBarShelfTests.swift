@@ -19,6 +19,7 @@ final class MenuBarShelfTests: XCTestCase {
         func applyAlwaysHidden(hidden: Bool) { alwaysHiddenClipped = hidden }
         func removeAlwaysHidden() { alwaysHiddenInstalled = false; alwaysHiddenClipped = false }
         func barFrames() -> MenuBarBars? { frames }
+        var failureHandler: (@MainActor (String) -> Void)?
     }
 
     private func make(delay: Duration = .milliseconds(10)) -> (MenuBarShelf, FakeSurface) {

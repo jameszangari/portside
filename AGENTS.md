@@ -15,7 +15,7 @@ Portside is a native macOS dock replacement in Swift (SwiftUI and AppKit), built
 4. **Responsiveness is the point.** No polling timers in the reveal/hide path. Allowed: one cancelable hide-delay timer, widget refresh, running-app cache refresh. Reveal starts within about one frame of the cursor touching the edge; the first click works without stealing focus.
 5. **Public APIs by default.** A private API goes in its own file behind `dlopen`/`dlsym` with a graceful fallback, and gets a line in the Notes section of `docs/ARCHITECTURE.md`.
 6. **Native Dock settings.** Only the "Hide the macOS Dock" feature changes `com.apple.dock`, and it saves the exact prior values and restores them on quit. Do not change those settings while testing; use the left or right edge instead.
-7. **Never touch other apps' preferences or `/Applications`.** Use `CFFIXED_USER_HOME=/tmp/somewhere` to keep test runs away from your real settings and logs.
+7. **Never touch other apps' preferences or `/Applications`.** Maintainer-approved exceptions (2026-11-09): `scripts/install-app.sh` replaces `/Applications/Portside.app`, because macOS 27 menu bar hiding only works from there; and menu bar hiding may edit `com.apple.MenuBar.plist` and Control Center's app list, only after the user grants that file, with a backup first. Use `CFFIXED_USER_HOME=/tmp/somewhere` to keep test runs away from your real settings and logs.
 8. **No secrets in the repo or logs.** Tokens are never logged or written to disk.
 9. **No em dashes in docs or comments.** Match the surrounding comment density and naming.
 

@@ -295,7 +295,7 @@ final class WindowPreviewService: ObservableObject {
     private func observeSystem() {
         let workspace = NSWorkspace.shared.notificationCenter
         let distributed = DistributedNotificationCenter.default()
-        let stop: (Notification) -> Void = { [weak self] _ in
+        let stop: @Sendable (Notification) -> Void = { [weak self] _ in
             MainActor.assumeIsolated { self?.stop() }
         }
         for name in [NSWorkspace.sessionDidResignActiveNotification, NSWorkspace.screensDidSleepNotification] {
