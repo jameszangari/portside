@@ -179,15 +179,18 @@ struct MenuBarSettings: View {
                     Section { MenuBarLivePreviewCard(settings: dockModel.menuBarTriggers, dock: dockModel.look) }
                 }
                 MenuBarLayoutSection(service: layout)
-                if let triggers = integrations.menuTriggers {
-                    MenuBarTriggersSection(dockModel: dockModel, service: triggers, hidesByMembership: layout.hidesByMembership)
-                    if layout.hidesByMembership { MenuBarLookSection(dockModel: dockModel) }
-                    if layout.hidesByMembership { MenuBarLiveActivitiesSection(dockModel: dockModel, appList: integrations.menuFiles?.appList) }
+            } else {
+                MenuBarLayoutSetup(integrations: integrations)
+            }
+            if let triggers = integrations.menuTriggers, triggers.isRunning || layoutRunning {
+                let hidesByMembership = integrations.menuLayout?.hidesByMembership ?? false
+                MenuBarTriggersSection(dockModel: dockModel, service: triggers, hidesByMembership: hidesByMembership)
+                if layoutRunning, hidesByMembership, let layout = integrations.menuLayout {
+                    MenuBarLookSection(dockModel: dockModel)
+                    MenuBarLiveActivitiesSection(dockModel: dockModel, appList: integrations.menuFiles?.appList)
                     MenuBarProfilesSection(service: layout)
                     MenuBarAdvancedSection(dockModel: dockModel, service: triggers, files: integrations.menuFiles)
                 }
-            } else {
-                MenuBarLayoutSetup(integrations: integrations)
             }
         }
         .keepsIntegrationsCurrent(integrations)

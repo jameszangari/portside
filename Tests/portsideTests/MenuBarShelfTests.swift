@@ -150,12 +150,12 @@ final class MenuBarShelfTests: XCTestCase {
         XCTAssertEqual(module.commands().first?.id, MenuBarShelfModule.toggleCommand)
     }
 
-    func testHidingWidthReachesTheScreenEdgeNotAFixedFew() {
-        XCTAssertEqual(StatusItemShelfSurface.widthToClear(rightEdge: 1500, screenMinX: 0), 1540, "pushes every item on its left off screen")
-        XCTAssertEqual(StatusItemShelfSurface.widthToClear(rightEdge: 1500, screenMinX: -1920), 3460, "a display left of the primary")
-        XCTAssertEqual(StatusItemShelfSurface.widthToClear(rightEdge: 40, screenMinX: 0), StatusItemShelfSurface.hiddenLength, "never under the old width")
-        XCTAssertEqual(StatusItemShelfSurface.widthToClear(rightEdge: 90_000, screenMinX: 0), StatusItemShelfSurface.maxHiddenLength)
-        XCTAssertEqual(StatusItemShelfSurface.widthToClear(rightEdge: nil, screenMinX: nil), 3000, "no reading still clears any display")
+    func testSeparatorLengthForEachHidingMechanism() {
+        XCTAssertEqual(StatusItemShelfSurface.separatorLength(collapsed: true, dividerMode: false), 10_000)
+        XCTAssertEqual(StatusItemShelfSurface.separatorLength(collapsed: true, dividerMode: true), 0)
+        for dividerMode in [false, true] {
+            XCTAssertEqual(StatusItemShelfSurface.separatorLength(collapsed: false, dividerMode: dividerMode), 14)
+        }
     }
 
     func testSeedPositionsDoesNotOverwriteUserChoice() {

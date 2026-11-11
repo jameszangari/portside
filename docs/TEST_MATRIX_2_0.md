@@ -71,3 +71,15 @@ Existing focused debug probes include `--check-notch`, `--check-windows` and `--
 Alpha requires T-01 through T-06 and T-11/T-13 for enabled slices. Beta adds T-07/T-09/T-10/T-12/T-14. Cmd+Tab interception additionally requires T-08; menu bar hiding requires T-15 regardless of milestone. Studio requires T-17 through T-19; advanced actions require T-20/T-21; extensions require T-22. Stable requires applicable rows on both supported OS versions, T-02/T-23, accessibility and restricted-work-Mac coverage, and no unresolved data-loss, consent-bypass or input-trapping defect.
 
 Record each run as: commit, planning IDs, exact environment, feature flags, test row, steps/fixture, expected, actual, pass/fail/not-run, evidence path, remaining limitation and owner. Synthetic pass does not close a physical test. Missing machines, permissions or reference artifacts are “not run”, never assumed pass. Rollback means disable the affected module and restore compatible saved settings; do not erase user data or remove their prior utility until replacement coverage is proven.
+
+## Menu bar compatibility before Top Shelf
+
+Use the same candidate commit on both OS versions. Record the OS build, app commit, signing identity type, installation path, display setup, Accessibility state and first failing action. Quit any other menu bar manager for the first pass.
+
+| Setup | Verify on hardware |
+| --- | --- |
+| macOS 26 work Mac, external display | Launch the signed app from Applications. In Settings > Menu Bar, enable the shelf and click the eye twice. Put a known third-party icon left of the divider and verify it disappears and returns. Confirm the shortcut works and the shelf controls remain available with Accessibility denied. With Accessibility granted, move an icon in Layout and test Always Hidden with Option-click. |
+| macOS 27, built-in notch and external display | Install the signed app in `/Applications`. Move the same type of app to Hidden and verify hide, reveal, Always Hidden, and opening from Portside Bar. Confirm layout access opens the correct file and Native hiding recovers after disable or quit. |
+| Both | Check that the eye stays reachable on a crowded bar, then verify reveal or recovery after sleep/wake, display connect/disconnect, disabling the shelf, quit and force quit. Record failures by feature and display. |
+
+Top Shelf follows the two hardware passes. The macOS 26 check covers the separator shelf and layout. Portside Bar, assertion-based hiding and the system-file controls are macOS 27 features in this build.

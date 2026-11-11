@@ -762,7 +762,7 @@ final class MenuBarLayoutService: ObservableObject {
     }
 
     private func registerProfileHotKeys() {
-        guard isActive else { return }
+        guard isActive, shelf.hidesByMembership else { return }
         profileHotKeys = profiles.compactMap { profile in
             guard let chord = profile.hotkey else { return nil }
             return HotKey(chord: chord, name: "Menu bar profile \(chord.displayString)") { [weak self, id = profile.id] in

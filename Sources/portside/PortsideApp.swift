@@ -423,7 +423,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self.dockModel.setMenuBarTriggers(next)
                     }
                 }
-                layout.positionTable = MenuBarPositionTable(grant: menuBarLayoutFile)
+                if shelf.hidesByMembership {
+                    layout.positionTable = MenuBarPositionTable(grant: menuBarLayoutFile)
+                }
                 layout.onGroupsChanged = { [weak self] in MainActor.assumeIsolated { self?.menuBarAssertionSurface?.groupsDidChange() } }
                 triggers.beforeReveal = { [weak self, weak layout] in
                     MainActor.assumeIsolated {
@@ -453,13 +455,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.modules.disable(MenuBarShelfModule.moduleID)
             }
         }
+        let usesAssertion = MenuBarAssertionOptIn.isEnabled()
+        let onAlwaysHidden: () -> Void = { [weak self] in MainActor.assumeIsolated { self?.menuBarTriggers?.toggleAlwaysHidden() } }
+        let available: () -> Bool = { [weak self] in MainActor.assumeIsolated { self?.menuBarTriggers?.alwaysHiddenAvailable ?? false } }
+        let controlSurface = StatusItemShelfSurface(onToggle: onToggle, turnOff: turnOff, dividerMode: usesAssertion, onAlwaysHidden: onAlwaysHidden, alwaysHiddenAvailable: available)
         let surface: MenuBarShelfSurface
-        if MenuBarAssertionOptIn.isEnabled() {
-            // macOS 27 no longer reflows wide status items: hide with an
-            // assertion. Bridge or inputs missing leaves the bar as it is and says why.
-            let onAlwaysHidden: () -> Void = { [weak self] in MainActor.assumeIsolated { self?.menuBarTriggers?.toggleAlwaysHidden() } }
-            let available: () -> Bool = { [weak self] in MainActor.assumeIsolated { self?.menuBarTriggers?.alwaysHiddenAvailable ?? false } }
-            let controlSurface = StatusItemShelfSurface(onToggle: onToggle, turnOff: turnOff, dividerMode: true, onAlwaysHidden: onAlwaysHidden, alwaysHiddenAvailable: available)
+        if usesAssertion {
+            // macOS 27 no longer reflows wide status items. Bridge or inputs
+            // missing leaves the bar as it is and says why.
             controlSurface.extraMenuItems = { [weak self] in self?.menuBarLayout?.profileMenuItems() ?? [] }
             let assertionSurface = AssertionShelfSurface(
                 base: controlSurface,
@@ -495,7 +498,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menuBarAssertionSurface = assertionSurface
             surface = assertionSurface
         } else {
-            surface = StatusItemShelfSurface(onToggle: onToggle, turnOff: turnOff)
+            surface = controlSurface
         }
         let shelf = MenuBarShelf(surface: surface)
         menuBarShelf = shelf
@@ -560,7 +563,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             SettingsWindowController(
                 dockModel: dockModel, layout: dockEngine.layout, nativeDock: nativeDock, trash: dockEngine.trash,
                 badges: dockEngine.badges, widgets: dockEngine.widgets,
-                integrations: IntegrationSettings(registry: modules, permissions: permissions, model: dockModel, intelligence: intelligence, menuReorder: menuBarReorder, menuLayout: menuBarLayout, menuFiles: (menuBarLayoutFile, menuBarAppListFile), menuTriggers: menuBarTriggers)
+                integrations: IntegrationSettings(registry: modules, permissions: permissions, model: dockModel, intelligence: intelligence, menuReorder: menuBarReorder, menuLayout: menuBarLayout, menuFiles: menuBarAssertionSurface == nil ? nil : (menuBarLayoutFile, menuBarAppListFile), menuTriggers: menuBarTriggers)
             )
         }
         controller.onActivationPolicyChanged = { [weak dockEngine] in dockEngine?.activationPolicyChanged() }

@@ -282,7 +282,7 @@ private struct LayoutStrip: View {
         case .alwaysHidden:
             return service.hidesByMembership
                 ? "Only shown when you double-click the menu bar or Option-click its icon."
-                : "Out of sight until you turn this off. Ends when Portside quits."
+                : "Option-click the shelf icon to show these temporarily. This section resets when Portside quits."
         }
     }
 
@@ -382,7 +382,7 @@ private struct LayoutTile: View {
                     Button("Move to \(target.title)") { Task { await service.drop(row.id, into: target) } }
                         .disabled(service.isBusy || !row.canDrag || target == section)
                 }
-                if !service.groups.isEmpty {
+                if service.hidesByMembership, !service.groups.isEmpty {
                     Menu("Group") {
                         Button("None") { service.setGroup(nil, forItem: row.id) }
                         ForEach(service.groups) { group in
