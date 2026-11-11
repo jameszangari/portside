@@ -380,8 +380,9 @@ final class MenuBarStyleOverlay {
         for (index, (frame, layout)) in wanted.enumerated() {
             let panel = panels[index]
             if panel.frame != frame { panel.setFrame(frame, display: true) }
-            guard index >= previous.count || previous[index] != layout || panel.contentView == nil else { continue }
-            panel.contentView = NSHostingView(rootView: MenuBarStyleContent(rects: layout.rects, look: layout.look, shadow: layout.shadow))
+            if index >= previous.count || previous[index] != layout || panel.contentView == nil {
+                panel.contentView = NSHostingView(rootView: MenuBarStyleContent(rects: layout.rects, look: layout.look, shadow: layout.shadow))
+            }
             panel.orderFrontRegardless()
         }
     }
@@ -401,7 +402,7 @@ final class MenuBarStyleOverlay {
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = true
         panel.isExcludedFromWindowsMenu = true
-        panel.collectionBehavior = [.fullScreenNone, .ignoresCycle, .stationary, .canJoinAllSpaces]
+        panel.collectionBehavior = [.fullScreenAuxiliary, .ignoresCycle, .stationary, .canJoinAllSpaces]
         return panel
     }
 }

@@ -638,6 +638,31 @@ final class MenuBarAssertionTests: XCTestCase {
         return (value, base)
     }
 
+    func testLegacyBarFallbackAndRecoveryNeverActivateAssertion() async {
+        let bridge = FakeBridge()
+        let base = MenuBarShelfTests.FakeSurface()
+        let surface = AssertionShelfSurface(
+            base: base, bridge: bridge, hidesByMembership: false, legacySlots: { [] },
+            assignments: { ["com.a.app:#0": .hidden] },
+            presentation: { .portsideBar },
+            itemSnapshot: { MenuBarSnapshot(access: .accessibilityDenied, items: []) }
+        )
+        surface.install()
+        surface.apply(hidden: true)
+        await settle()
+        XCTAssertTrue(base.hidden)
+        surface.apply(hidden: false)
+        await settle()
+        XCTAssertFalse(base.hidden, "Empty or denied panel must reveal the native items")
+        XCTAssertTrue(bridge.handles.isEmpty)
+        surface.apply(hidden: true)
+        surface.noteFailOpen()
+        surface.apply(hidden: false)
+        await settle()
+        XCTAssertFalse(base.hidden, "A pending hide must not survive recovery")
+        surface.remove()
+    }
+
     func testBarWithNothingToListReallyReveals() async {
         let bridge = FakeBridge()
         let (surface, _) = barSurface(bridge)

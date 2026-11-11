@@ -82,12 +82,12 @@ final class MenuBarShelfTests: XCTestCase {
         XCTAssertEqual(shelf.lastFailOpen, "the displays changed")
     }
 
-    func testFailOpenWhileRevealedIsQuiet() {
+    func testFailOpenWhilePanelIsRevealedRestoresNativeItems() {
         let (shelf, surface) = make()
         shelf.start()
-        let before = surface.applied.count
+        surface.hidden = true // A panel may be open while native items stay clipped.
         shelf.failOpen("the Mac woke")
-        XCTAssertEqual(surface.applied.count, before)
+        XCTAssertFalse(surface.hidden)
         XCTAssertNil(shelf.lastFailOpen)
     }
 

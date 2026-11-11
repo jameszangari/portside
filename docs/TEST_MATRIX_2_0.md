@@ -82,4 +82,4 @@ Use the same candidate commit on both OS versions. Record the OS build, app comm
 | macOS 27, built-in notch and external display | Install the signed app in `/Applications`. Move the same type of app to Hidden and verify hide, reveal, Always Hidden, and opening from Portside Bar. Confirm layout access opens the correct file and Native hiding recovers after disable or quit. |
 | Both | Check that the eye stays reachable on a crowded bar, then verify reveal or recovery after sleep/wake, display connect/disconnect, disabling the shelf, quit and force quit. Record failures by feature and display. |
 
-Top Shelf follows the two hardware passes. The macOS 26 check covers the separator shelf and layout. Portside Bar, assertion-based hiding and the system-file controls are macOS 27 features in this build.
+Top Shelf follows the two hardware passes. The macOS 26 check covers the separator shelf and layout. Portside Bar and Groups now use the separator surface on macOS 26 and need hardware verification. Assertion-based hiding and system-file controls remain macOS 27 features.

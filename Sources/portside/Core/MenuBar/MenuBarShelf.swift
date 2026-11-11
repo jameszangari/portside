@@ -190,8 +190,9 @@ final class MenuBarShelf {
     func openForLayout() {
         guard isRunning else { return }
         // A real move needs the items on the real bar, not in the Portside Bar.
-        if mode == .hidden { surface.noteFailOpen() }
+        surface.noteFailOpen()
         reveal()
+        surface.apply(hidden: false)
         if alwaysHiddenEnabled { surface.applyAlwaysHidden(hidden: false) }
     }
 
@@ -227,6 +228,8 @@ final class MenuBarShelf {
             alwaysHiddenEnabled = false
         }
         guard mode == .hidden else {
+            surface.noteFailOpen()
+            surface.apply(hidden: false)
             if hadAlwaysHidden {
                 lastFailOpen = reason
                 log.notice("menu bar always hidden off: \(reason, privacy: .public)")

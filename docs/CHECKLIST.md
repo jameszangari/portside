@@ -326,3 +326,12 @@ Validation note: overwriting the executable inside an already-used temporary tes
 - Restored menu bar appearance, icon customization and saved profiles on the separator surface. Portside Bar presentation, groups and system-file hiding remain tied to the assertion surface.
 - Separator availability now uses its configured length instead of assuming the native window has less than 28 points of width. macOS 26 Command-drags no longer require AXPress. Move results remain visible while the pointer is over a tile.
 - Legacy profile selection now applies saved sections through verified moves. Built-in and external-display drag/drop, appearance and profiles still need the work-Mac check. Screen Recording permission recognition remains unresolved.
+
+
+### macOS 26 Portside Bar and appearance integration
+
+- Restored the menu bar simulation, presentation chooser, Portside Bar styling, Groups and the iPhone Live Activities section. The iPhone toggle appears only when macOS exposes its preference. Native hiding's keep-visible switch remains specific to macOS 27.
+- The separator shelf now reuses the existing panel, grouped rows, menu actions and group icons. It records section positions before hiding, opens the panel while items remain clipped, and reveals the native bar if Accessibility is unavailable or the panel is empty. Recovery, Settings layout and stopping the module cancel pending hides and close the panel.
+- Empty-bar detection on macOS 26 reads status window bounds instead of requiring MenuBarAgent. Bare AXMenuBar hits count as background. Styling restores its panels after Space changes and allows full-screen Spaces.
+- [Thaw 2.0 appearance investigation](https://github.com/thaw-app/Thaw/blob/2.0.0/Thaw/MenuBar/Appearance/MenuBarOverlayPanel.swift): its overlay stays behind the native bar because raising it covers the menu contents. Reduce Transparency can cover these overlays. Portside now explains that condition in Settings. The work Mac's setting has not been observed.
+- Hardware checks remain open for empty clicks, grouped Portside Bar actions, shape/background rendering and recovery on macOS 26. iPhone Live Activities cannot be validated on the managed work Mac with Apple ID blocked.

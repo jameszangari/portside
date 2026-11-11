@@ -175,9 +175,7 @@ struct MenuBarSettings: View {
         Form {
             ModuleRowsSection(integrations: integrations, ids: [MenuBarShelfModule.moduleID])
             if layoutRunning, let layout = integrations.menuLayout {
-                if layout.hidesByMembership {
-                    Section { MenuBarLivePreviewCard(settings: dockModel.menuBarTriggers, dock: dockModel.look) }
-                }
+                Section { MenuBarLivePreviewCard(settings: dockModel.menuBarTriggers, dock: dockModel.look) }
                 MenuBarLayoutSection(service: layout)
             } else {
                 MenuBarLayoutSetup(integrations: integrations)
@@ -185,12 +183,12 @@ struct MenuBarSettings: View {
             if let triggers = integrations.menuTriggers, triggers.isRunning || layoutRunning {
                 let hidesByMembership = integrations.menuLayout?.hidesByMembership ?? false
                 MenuBarTriggersSection(dockModel: dockModel, service: triggers, hidesByMembership: hidesByMembership)
-                MenuBarLookSection(dockModel: dockModel, supportsPortsideBar: hidesByMembership)
+                MenuBarLookSection(dockModel: dockModel, supportsPortsideBar: true)
                 if layoutRunning, let layout = integrations.menuLayout {
                     MenuBarProfilesSection(service: layout)
                 }
+                MenuBarLiveActivitiesSection(dockModel: dockModel, appList: integrations.menuFiles?.appList)
                 if hidesByMembership {
-                    MenuBarLiveActivitiesSection(dockModel: dockModel, appList: integrations.menuFiles?.appList)
                     MenuBarAdvancedSection(dockModel: dockModel, service: triggers, files: integrations.menuFiles)
                 }
             }
@@ -298,7 +296,7 @@ struct MenuBarTriggersSection: View {
     }
 
     var body: some View {
-        if hidesByMembership {
+        do {
             Section {
                 SettingsChoiceCards(selection: binding(\.presentation), choices: MenuBarPresentation.allCases.map { ($0, $0.title) }, columns: 3) {
                     MenuBarPresentationPicture(presentation: $0)
@@ -408,6 +406,7 @@ private struct MenuBarLiveActivitiesSection: View {
             if model.iPhoneEnabled == nil {
                 Text("This version of macOS doesn't expose these settings.").helperStyle()
             }
+            if appList != nil {
             row(
                 "eye", "Keep Live Activities showing",
                 keepsShowing
@@ -415,6 +414,7 @@ private struct MenuBarLiveActivitiesSection: View {
                     : "They disappear while your items are hidden. Turn on to keep them, using Native hiding.",
                 value: keepsShowing
             ) { setKeepsShowing($0) }
+            }
         } header: {
             Text("Live Activities").settingsAnchor("Live Activities")
         }
@@ -643,6 +643,9 @@ private struct MenuBarLookSection: View {
             Text("Menu bar shape").settingsAnchor("Menu bar shape")
         } footer: {
             Text("Drawn behind your menu bar. macOS still picks the color of its text and icons.").footerStyle()
+            if NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency {
+                Text("Reduce Transparency makes the macOS menu bar opaque, which can cover the shape and background. You can change it in System Settings > Accessibility > Display.").footerStyle()
+            }
         }
         if look.shape != .none {
             DockBackgroundEditor(
@@ -725,7 +728,7 @@ struct MenuBarProfilesSection: View {
         } footer: {
             Text("A profile saves sections, order and groups. Switch from the menu bar icon's right-click menu or a shortcut.").footerStyle()
         }
-        if service.hidesByMembership {
+        do {
             Section {
                 ForEach(service.groups) { group in
                     HStack {

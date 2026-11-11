@@ -201,6 +201,9 @@ final class LiveMenuBarEmptyAreaProbe: MenuBarEmptyAreaProbe {
         var pid: pid_t = 0
         guard AXUIElementCopyElementAtPosition(system, Float(point.x), Float(primary.frame.maxY - point.y), &element) == .success, let element,
               AXUIElementGetPid(element, &pid) == .success else { return false }
+        var role: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role) == .success,
+           role as? String == kAXMenuBarRole { return false }
         let id = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
         return id != "com.apple.MenuBarAgent" && id != "com.apple.systemuiserver" && pid != NSWorkspace.shared.frontmostApplication?.processIdentifier
     }

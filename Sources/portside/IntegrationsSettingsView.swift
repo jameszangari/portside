@@ -383,7 +383,7 @@ private struct LayoutTile: View {
                     Button("Move to \(target.title)") { Task { await service.drop(row.id, into: target) } }
                         .disabled(service.isBusy || !row.canDrag || target == section)
                 }
-                if service.hidesByMembership, !service.groups.isEmpty {
+                if !service.groups.isEmpty {
                     Menu("Group") {
                         Button("None") { service.setGroup(nil, forItem: row.id) }
                         ForEach(service.groups) { group in
