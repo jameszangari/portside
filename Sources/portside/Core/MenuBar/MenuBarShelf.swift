@@ -9,6 +9,7 @@ protocol MenuBarShelfSurface: AnyObject {
     /// Shrinks or grows the separator. Hidden pushes the items to its left
     /// into the clipped zone; revealed lets them come back (spike O4, O5).
     func apply(hidden: Bool)
+    func setControlHidden(_ hidden: Bool)
     /// Both of Portside's own items are on a screen. False means the hide
     /// pushed the control out of reach, so the shelf must reveal again.
     func controlIsOnScreen() -> Bool
@@ -45,6 +46,7 @@ extension MenuBarShelfSurface {
     var hasHiddenAssignments: Bool { false }
     func membershipDidChange() {}
     func revalidate() {}
+    func setControlHidden(_ hidden: Bool) {}
 }
 
 /// P2-MENU-03: a recoverable reveal shelf. A separator status item of
@@ -337,6 +339,13 @@ final class StatusItemShelfSurface: NSObject, MenuBarShelfSurface {
     /// The control shows the state, not the action: an open eye while the
     /// items are showing, a crossed eye while they are hidden. A bar to the
     /// control's left marks where the hidden items sit.
+    private var controlHidden = false
+
+    func setControlHidden(_ hidden: Bool) {
+        controlHidden = hidden
+        showState(hidden: hidden)
+    }
+
     private func showState(hidden: Bool) {
         control?.isVisible = icon != .off
         guard let button = control?.button, icon != .off else { return }
@@ -364,13 +373,15 @@ final class StatusItemShelfSurface: NSObject, MenuBarShelfSurface {
         separator?.button?.image = collapsed ? nil : Self.dividerImage()
         // Even at zero length macOS keeps a gap for an item, so take it out.
         if dividerMode { separator?.isVisible = !collapsed }
-        showState(hidden: hidden)
+        setControlHidden(hidden)
     }
 
     func applyLook(_ look: MenuBarLook) {
+        let indicator = controlHidden
         self.look = look
         hidesDivider = hidesDivider || icon == .off
         apply(hidden: hidden)
+        setControlHidden(indicator)
     }
 
     func controlIsOnScreen() -> Bool {

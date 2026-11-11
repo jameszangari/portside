@@ -268,7 +268,7 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
     var failureHandler: (@MainActor (String) -> Void)?
 
     let hidesByMembership: Bool
-    private var legacyAssignments: [String: MenuBarSection] = [:]
+    private(set) var legacyAssignments: [String: MenuBarSection] = [:]
     private var legacyHideTask: Task<Void, Never>?
     private let legacySlots: () async -> [MenuBarSlot]?
     var hasHiddenAssignments: Bool {
@@ -391,7 +391,6 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
     func applyLook(_ look: MenuBarLook) { base.applyLook(look) }
 
     func apply(hidden: Bool) {
-        legacyHideTask?.cancel()
         let wasHidden = self.hidden
         defer { failingOpen = false }
         let bar = !failingOpen && usesBar()
@@ -399,19 +398,22 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
         control?.hidesDivider = bar || control?.icon == .off
         if !hidden, wasHidden, bar {
             barOpen = true
-            base.apply(hidden: !hidesByMembership)
+            if hidesByMembership { base.apply(hidden: false) }
+            base.setControlHidden(false)
             openBar()
             return
         }
+        legacyHideTask?.cancel()
         barOpen = false
         self.hidden = hidden
+        base.setControlHidden(hidden)
         if hidden, !hidesByMembership {
             let bars = base.barFrames()
             legacyHideTask = Task { [weak self, legacySlots] in
                 let slots = await legacySlots()
                 guard !Task.isCancelled, let self, self.installed, self.hidden else { return }
-                self.legacyAssignments = self.assignments()
-                if let bars {
+                if let bars, slots != nil {
+                    self.legacyAssignments = self.assignments()
                     for slot in slots ?? [] {
                         if let section = MenuBarLayoutPlanner.section(of: slot, bars: bars) {
                             self.legacyAssignments[slot.id] = section
@@ -419,6 +421,7 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
                     }
                 }
                 self.base.apply(hidden: true)
+                self.base.setControlHidden(!self.barOpen)
             }
         } else {
             base.apply(hidden: hidden)
@@ -606,8 +609,10 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
         let probe = LiveMenuBarEmptyAreaProbe()
         let placement = MenuBarBarPlacement(location: location, pointer: pointer, pointerOnEmptyBar: location == .dynamic && probe.isClickableBar(pointer))
         panelTask?.cancel()
+        let pendingHide = legacyHideTask
         panelTask = Task { [weak self] in
-            guard let self else { return }
+            await pendingHide?.value
+            guard !Task.isCancelled, let self, self.barOpen else { return }
             let shown = await self.showPanel(only: nil, sections: sections, anchor: anchor, placement: placement, bar: true)
             guard !Task.isCancelled, self.barOpen, !shown else { return }
             self.barOpen = false
@@ -645,7 +650,7 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
             guard let bundle = item.ownerBundleID?.lowercased() else { continue }
             if !hidesByMembership, !sections.contains(selected[item.id] ?? .visible) { continue }
             let entry = MenuBarOverflowPanel.Entry(
-                item: item, bundle: bundle, icon: NSRunningApplication(processIdentifier: item.pid)?.icon,
+                item: item, bundle: bundle, icon: item.menuBarIcon,
                 menuBarOnly: store.opensOnlyFromMenuBar(bundle)
             )
             byBundle[bundle, default: []].append(entry)

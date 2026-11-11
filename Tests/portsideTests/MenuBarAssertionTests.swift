@@ -638,6 +638,39 @@ final class MenuBarAssertionTests: XCTestCase {
         return (value, base)
     }
 
+    func testLegacyBarWaitsForCaptureAndKeepsSectionsAfterClosing() async {
+        let base = MenuBarShelfTests.FakeSurface()
+        base.frames = MenuBarBars(separator: 100...114, alwaysHiddenSeparator: nil)
+        let item = MenuBarItem(pid: 1, ownerBundleID: "com.test.app", ownerName: "Test", ordinal: 0, identifier: nil, title: "Test", canPress: true)
+        let snapshots = Counter()
+        let surface = AssertionShelfSurface(
+            base: base, bridge: FakeBridge(), hidesByMembership: false,
+            legacySlots: {
+                try? await Task.sleep(for: .milliseconds(20))
+                return [MenuBarSlot(item: item, minX: 20, maxX: 40, midY: 10, reachable: true)]
+            },
+            assignments: { [:] }, presentation: { .portsideBar },
+            itemSnapshot: {
+                XCTAssertTrue(base.hidden, "Capture must finish and native items must be clipped before opening the panel")
+                XCTAssertFalse(base.controlHidden, "The eye represents the open panel, not native clipping")
+                snapshots.value += 1
+                return .denied
+            }
+        )
+        surface.install()
+        surface.apply(hidden: true)
+        surface.apply(hidden: false)
+        await settle()
+        XCTAssertEqual(snapshots.value, 1)
+        XCTAssertEqual(surface.legacyAssignments[item.id], .hidden)
+        base.frames = nil
+        surface.apply(hidden: true)
+        await settle()
+        XCTAssertEqual(surface.legacyAssignments[item.id], .hidden, "Closing while already clipped must preserve the physical section map")
+        XCTAssertTrue(base.controlHidden)
+        surface.remove()
+    }
+
     func testLegacyBarFallbackAndRecoveryNeverActivateAssertion() async {
         let bridge = FakeBridge()
         let base = MenuBarShelfTests.FakeSurface()

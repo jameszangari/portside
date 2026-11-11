@@ -6,10 +6,12 @@ final class MenuBarShelfTests: XCTestCase {
     final class FakeSurface: MenuBarShelfSurface {
         var installed = false
         var hidden = false
+        var controlHidden = false
+        func setControlHidden(_ hidden: Bool) { controlHidden = hidden }
         var onScreen = true
         var applied: [Bool] = []
         func install() { installed = true }
-        func apply(hidden: Bool) { self.hidden = hidden; applied.append(hidden) }
+        func apply(hidden: Bool) { self.hidden = hidden; controlHidden = hidden; applied.append(hidden) }
         func controlIsOnScreen() -> Bool { onScreen }
         func remove() { installed = false }
         var alwaysHiddenInstalled = false

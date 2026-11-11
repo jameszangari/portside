@@ -348,7 +348,7 @@ private struct LayoutTile: View {
 
     private var icon: some View {
         Group {
-            if !MenuBarSystemExtra.isTimeMachine(row.slot.item), let image = NSRunningApplication(processIdentifier: row.slot.item.pid)?.icon {
+            if !MenuBarSystemExtra.isTimeMachine(row.slot.item), let image = row.slot.item.menuBarIcon {
                 Image(nsImage: image).resizable().scaledToFit()
             } else {
                 Image(systemName: MenuBarSystemExtra.isTimeMachine(row.slot.item)

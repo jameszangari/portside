@@ -25,7 +25,44 @@ struct MenuBarItem: Equatable, Identifiable, Sendable {
         return "\(owner):\(identifier.map { "id=\($0)" } ?? "#\(ordinal)")"
     }
 
-    var displayTitle: String { title.isEmpty ? ownerName : title }
+    var displayTitle: String {
+        if let extra = systemExtra { return extra.name }
+        if isSystemHost, title.isEmpty || (title == ownerName && ownerBundleID?.lowercased() == "com.apple.controlcenter") {
+            return identifier ?? "\(ownerName) item \(ordinal + 1)"
+        }
+        return title.isEmpty ? ownerName : title
+    }
+
+    var isSystemHost: Bool {
+        ["com.apple.controlcenter", "com.apple.systemuiserver"].contains(ownerBundleID?.lowercased() ?? "")
+    }
+
+    /// Identify individual extras, not their shared hosting application.
+    var systemExtra: (name: String, symbol: String, movable: Bool)? {
+        guard isSystemHost else { return nil }
+        let names: [(String, String, String, Bool)] = [
+            ("wifi", "Wi-Fi", "wifi", true), ("bluetooth", "Bluetooth", "antenna.radiowaves.left.and.right", true),
+            ("battery", "Battery", "battery.100", true), ("sound", "Sound", "speaker.wave.2", true),
+            ("nowplaying", "Now Playing", "play.circle", true), ("focus", "Focus", "moon", true),
+            ("donotdisturb", "Focus", "moon", true), ("display", "Display", "display", true),
+            ("screenmirroring", "Screen Mirroring", "rectangle.on.rectangle", true),
+            ("user", "Fast User Switching", "person.crop.circle", true),
+            ("accessibilityshortcuts", "Accessibility", "accessibility", true),
+            ("controlcenter", "Control Center", "switch.2", false), ("clock", "Clock", "clock", false)
+        ]
+        func key(_ value: String) -> String { value.lowercased().filter { $0.isLetter || $0.isNumber } }
+        let identifierKey = identifier.map { key(String($0.split(separator: ".").last ?? "")) }
+        let titleKey = key(title.components(separatedBy: ",").first ?? title)
+        guard let extra = names.first(where: { $0.0 == identifierKey || $0.0 == titleKey }) else { return nil }
+        return (extra.1, extra.2, extra.3)
+    }
+
+    @MainActor var menuBarIcon: NSImage? {
+        if isSystemHost {
+            return NSImage(systemSymbolName: systemExtra?.symbol ?? "slider.horizontal.3", accessibilityDescription: displayTitle)
+        }
+        return NSRunningApplication(processIdentifier: pid)?.icon
+    }
 }
 
 /// What a sweep found. `denied` is distinct from an empty `items`.
@@ -218,7 +255,8 @@ struct AXMenuBarItemSource: MenuBarItemSource {
         var names: CFArray?
         AXUIElementCopyActionNames(element, &names)
         let actions = names as? [String] ?? []
-        let title = string(element, kAXTitleAttribute) ?? string(element, kAXDescriptionAttribute) ?? ""
+        let title = [string(element, kAXTitleAttribute), string(element, kAXDescriptionAttribute)]
+            .compactMap { $0 }.first { !$0.isEmpty } ?? ""
         return MenuBarItem(
             pid: pid, ownerBundleID: bundleID, ownerName: String(name.prefix(MenuBarItem.textLimit)), ordinal: ordinal,
             identifier: string(element, kAXIdentifierAttribute).flatMap { $0.isEmpty ? nil : $0 },

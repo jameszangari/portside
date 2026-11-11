@@ -333,6 +333,7 @@ extension MenuBarOverflowContent {
 /// What an icon is called, and why it may be disabled. Pure.
 enum MenuBarBarCaption {
     static func name(for entry: MenuBarOverflowPanel.Entry) -> String {
+        if entry.item.isSystemHost { return entry.item.displayTitle }
         let owner = entry.item.ownerName
         let title = entry.item.title
         guard !title.isEmpty, title != owner, title.count <= 30, !title.contains(".") else { return owner }
