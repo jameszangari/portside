@@ -37,7 +37,7 @@ enum MenuBarLayoutRules {
         if osMajor < minimumOSMajor { return .unsupported("Moving needs macOS \(minimumOSMajor) or later.") }
         guard let bundle = slot.item.ownerBundleID else { return .unsupported("Its app has no bundle identifier, so it cannot be told apart after a restart.") }
         if bundle.lowercased().hasPrefix("com.apple.") { return .unsupported("macOS owns the order of its own items.") }
-        if !slot.item.canPress { return .unsupported("It does not offer an open action, so it is not a validated item.") }
+        if osMajor >= 27, !slot.item.canPress { return .unsupported("It does not offer an open action, so it is not a validated item.") }
         if failed.contains(slot.id) { return .unsupported("It did not move when tried, so Portside leaves it alone until you refresh.") }
         if !slot.reachable { return .unsupported("It is hidden, clipped by the notch or covered. Show it in the menu bar first.") }
         return .movable

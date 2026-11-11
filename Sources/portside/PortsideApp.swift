@@ -498,6 +498,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menuBarAssertionSurface = assertionSurface
             surface = assertionSurface
         } else {
+            controlSurface.extraMenuItems = { [weak self] in self?.menuBarLayout?.profileMenuItems() ?? [] }
             surface = controlSurface
         }
         let shelf = MenuBarShelf(surface: surface)

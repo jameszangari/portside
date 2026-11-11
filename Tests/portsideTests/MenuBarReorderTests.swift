@@ -70,6 +70,7 @@ final class MenuBarReorderTests: XCTestCase {
     func testSupportReasons() {
         let ok = Self.slot(a, at: 0)
         XCTAssertEqual(MenuBarLayoutRules.support(for: ok, osMajor: 27), .movable)
+        XCTAssertTrue(MenuBarLayoutRules.support(for: Self.slot(Self.item("N", canPress: false), at: 0), osMajor: 26).isMovable)
         XCTAssertFalse(MenuBarLayoutRules.support(for: ok, osMajor: 25).isMovable)
         XCTAssertFalse(MenuBarLayoutRules.support(for: Self.slot(Self.item("S", bundle: "com.apple.controlcenter"), at: 0), osMajor: 27).isMovable)
         XCTAssertFalse(MenuBarLayoutRules.support(for: Self.slot(a, at: 0, reachable: false), osMajor: 27).isMovable)

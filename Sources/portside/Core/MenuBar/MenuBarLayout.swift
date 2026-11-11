@@ -751,7 +751,14 @@ final class MenuBarLayoutService: ObservableObject {
         shelf.membershipDidChange()
         writeOrderToTable()
         rebuild()
-        status = "Using profile \(profile.name)."
+        if shelf.hidesByMembership {
+            status = "Using profile \(profile.name)."
+        } else {
+            Task { [weak self] in
+                guard let self else { return }
+                _ = await self.apply(onlySaved: true)
+            }
+        }
     }
 
     /// A display was attached or removed.
@@ -762,7 +769,7 @@ final class MenuBarLayoutService: ObservableObject {
     }
 
     private func registerProfileHotKeys() {
-        guard isActive, shelf.hidesByMembership else { return }
+        guard isActive else { return }
         profileHotKeys = profiles.compactMap { profile in
             guard let chord = profile.hotkey else { return nil }
             return HotKey(chord: chord, name: "Menu bar profile \(chord.displayString)") { [weak self, id = profile.id] in

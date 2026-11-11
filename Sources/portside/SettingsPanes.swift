@@ -185,10 +185,12 @@ struct MenuBarSettings: View {
             if let triggers = integrations.menuTriggers, triggers.isRunning || layoutRunning {
                 let hidesByMembership = integrations.menuLayout?.hidesByMembership ?? false
                 MenuBarTriggersSection(dockModel: dockModel, service: triggers, hidesByMembership: hidesByMembership)
-                if layoutRunning, hidesByMembership, let layout = integrations.menuLayout {
-                    MenuBarLookSection(dockModel: dockModel)
-                    MenuBarLiveActivitiesSection(dockModel: dockModel, appList: integrations.menuFiles?.appList)
+                MenuBarLookSection(dockModel: dockModel, supportsPortsideBar: hidesByMembership)
+                if layoutRunning, let layout = integrations.menuLayout {
                     MenuBarProfilesSection(service: layout)
+                }
+                if hidesByMembership {
+                    MenuBarLiveActivitiesSection(dockModel: dockModel, appList: integrations.menuFiles?.appList)
                     MenuBarAdvancedSection(dockModel: dockModel, service: triggers, files: integrations.menuFiles)
                 }
             }
@@ -566,6 +568,7 @@ private struct MenuBarIconPicker: View {
 /// The Portside Bar's and the real menu bar's look.
 private struct MenuBarLookSection: View {
     @ObservedObject var dockModel: DockModel
+    let supportsPortsideBar: Bool
 
     @AppStorage(PortsideMenuIcon.defaultsKey) private var showsAppIcon = true
     @State private var showIconPicker = false
@@ -618,17 +621,19 @@ private struct MenuBarLookSection: View {
         } header: {
             Text("Icons").settingsAnchor("Icons")
         }
-        Section {
-            SettingsChoiceCards(selection: binding(\.barStyle), choices: MenuBarBarStyle.allCases.map { ($0, $0.title) }, columns: 3) {
-                MenuBarBarStylePicture(style: $0, look: look, dock: dockModel.look)
+        if supportsPortsideBar {
+            Section {
+                SettingsChoiceCards(selection: binding(\.barStyle), choices: MenuBarBarStyle.allCases.map { ($0, $0.title) }, columns: 3) {
+                    MenuBarBarStylePicture(style: $0, look: look, dock: dockModel.look)
+                }
+                if look.barStyle == .system { cornerSlider(\.barCornerRadius) }
+                SettingsSlider(title: "Icon size", value: look.barIconSize, range: MenuBarLook.iconSizeRange, snap: 1, format: { "\(Int($0)) pt" }, set: { set(\.barIconSize, $0, persist: $1) })
+            } header: {
+                Text("Portside Bar style").settingsAnchor("Portside Bar style")
             }
-            if look.barStyle == .system { cornerSlider(\.barCornerRadius) }
-            SettingsSlider(title: "Icon size", value: look.barIconSize, range: MenuBarLook.iconSizeRange, snap: 1, format: { "\(Int($0)) pt" }, set: { set(\.barIconSize, $0, persist: $1) })
-        } header: {
-            Text("Portside Bar style").settingsAnchor("Portside Bar style")
-        }
-        if look.barStyle == .custom {
-            DockBackgroundEditor(background: look.barBackground, update: update(\.barBackground), surface: "bar", extra: { cornerSlider(\.barCornerRadius) }, header: { Text("Portside Bar background").settingsAnchor("Portside Bar background") })
+            if look.barStyle == .custom {
+                DockBackgroundEditor(background: look.barBackground, update: update(\.barBackground), surface: "bar", extra: { cornerSlider(\.barCornerRadius) }, header: { Text("Portside Bar background").settingsAnchor("Portside Bar background") })
+            }
         }
         Section {
             SettingsChoiceCards(selection: binding(\.shape), choices: MenuBarShape.allCases.map { ($0, $0.title) }, columns: 4) {
@@ -720,28 +725,31 @@ struct MenuBarProfilesSection: View {
         } footer: {
             Text("A profile saves sections, order and groups. Switch from the menu bar icon's right-click menu or a shortcut.").footerStyle()
         }
-        Section {
-            ForEach(service.groups) { group in
-                HStack {
-                    SettingsTextField("Group name", text: Binding(get: { group.name }, set: { service.renameGroup(group.id, to: $0) }))
-                    Text("\(group.bundles.count) apps").helperStyle()
-                    Toggle("Menu bar icon", isOn: Binding(get: { group.showsIcon }, set: { service.setGroupIcon(group.id, shown: $0) }))
-                        .toggleStyle(.checkbox)
-                    Button { service.removeGroup(group.id) } label: { Image(systemName: "minus.circle") }
-                        .buttonStyle(.borderless)
-                        .accessibilityLabel("Delete \(group.name)")
+        if service.hidesByMembership {
+            Section {
+                ForEach(service.groups) { group in
+                    HStack {
+                        SettingsTextField("Group name", text: Binding(get: { group.name }, set: { service.renameGroup(group.id, to: $0) }))
+                        Text("\(group.bundles.count) apps").helperStyle()
+                        Toggle("Menu bar icon", isOn: Binding(get: { group.showsIcon }, set: { service.setGroupIcon(group.id, shown: $0) }))
+                            .toggleStyle(.checkbox)
+                        Button { service.removeGroup(group.id) } label: { Image(systemName: "minus.circle") }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Delete \(group.name)")
+                    }
                 }
+                HStack(spacing: 10) {
+                    Text("New group")
+                    SettingsTextField("New group name", text: $newGroup, onSubmit: addGroup)
+                    Button("Add", action: addGroup)
+                        .disabled(newGroup.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            } header: {
+                Text("Groups").settingsAnchor("Groups")
+            } footer: {
+                Text("Right-click an icon in Visible, Hidden or Always Hidden to add its app to a group. Groups appear as rows in the Portside Bar.").footerStyle()
             }
-            HStack(spacing: 10) {
-                Text("New group")
-                SettingsTextField("New group name", text: $newGroup, onSubmit: addGroup)
-                Button("Add", action: addGroup)
-                    .disabled(newGroup.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-        } header: {
-            Text("Groups").settingsAnchor("Groups")
-        } footer: {
-            Text("Right-click an icon in Visible, Hidden or Always Hidden to add its app to a group. Groups appear as rows in the Portside Bar.").footerStyle()
         }
+
     }
 }

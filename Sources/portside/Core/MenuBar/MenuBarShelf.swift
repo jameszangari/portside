@@ -399,10 +399,12 @@ final class StatusItemShelfSurface: NSObject, MenuBarShelfSurface {
     }
 
     func barFrames() -> MenuBarBars? {
-        guard let frame = separator?.button?.window?.frame, frame.width < Self.revealedLength * 2 else { return nil }
+        guard let separator, separator.length == Self.revealedLength,
+              let frame = separator.button?.window?.frame else { return nil }
         var second: ClosedRange<Double>?
         if let item = alwaysHiddenSeparator {
-            guard let other = item.button?.window?.frame, other.width < Self.revealedLength * 2, other.maxX <= frame.minX else { return nil }
+            guard item.length == Self.revealedLength, let other = item.button?.window?.frame,
+                  other.maxX <= frame.minX else { return nil }
             second = Double(other.minX)...Double(other.maxX)
         }
         return MenuBarBars(separator: Double(frame.minX)...Double(frame.maxX), alwaysHiddenSeparator: second)

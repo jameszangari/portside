@@ -190,7 +190,7 @@ struct MenuBarLayoutSection: View {
             if let note = service.menuBarOnlyNote(for: hovered) { return note }
             return hovered.blockedReason.map { "\(hovered.slot.item.displayTitle): \($0)" } ?? hovered.slot.item.displayTitle
         }
-        return service.status ?? "Drag icons to arrange your menu bar. Changes apply right away."
+        return "Drag icons to arrange your menu bar. Changes apply right away."
     }
 
     var body: some View {
@@ -207,6 +207,7 @@ struct MenuBarLayoutSection: View {
                         .help("Read the menu bar again")
                         .accessibilityLabel("Refresh")
                 }
+                if let status = service.status { Text(status).helperStyle() }
                 if service.accessDenied {
                     Text("Portside needs Accessibility to see your menu bar items. Allow it in General > Permissions.").helperStyle()
                 } else if service.rows.isEmpty {

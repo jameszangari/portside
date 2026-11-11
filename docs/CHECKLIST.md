@@ -318,3 +318,11 @@ Validation note: overwriting the executable inside an already-used temporary tes
 - [x] Debug build and 190 focused menu bar tests pass on macOS 27.0.1. Isolated launch smoke checks ran with the default and forced separator modes. The full suite reported 18 failures outside the menu bar, all reproduced on the unchanged nightly commit in the same environment.
 - [ ] macOS 26: Reproduce the work-Mac failure and run the signed-app checks in the [test matrix](TEST_MATRIX_2_0.md#menu-bar-compatibility-before-top-shelf). Record OS build, app commit, signature, Accessibility state and display configuration.
 - [ ] macOS 27: Run the same shared checks and verify the assertion, Native hiding and Portside Bar with a signed install in `/Applications`.
+
+
+### macOS 26 follow-up after work-Mac testing
+
+- Basic eye hide/reveal was confirmed by the maintainer. Settings drag-and-drop failed on that Mac.
+- Restored menu bar appearance, icon customization and saved profiles on the separator surface. Portside Bar presentation, groups and system-file hiding remain tied to the assertion surface.
+- Separator availability now uses its configured length instead of assuming the native window has less than 28 points of width. macOS 26 Command-drags no longer require AXPress. Move results remain visible while the pointer is over a tile.
+- Legacy profile selection now applies saved sections through verified moves. Built-in and external-display drag/drop, appearance and profiles still need the work-Mac check. Screen Recording permission recognition remains unresolved.

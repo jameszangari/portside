@@ -58,10 +58,8 @@ final class MenuBarShelfModule: PortsideModule {
         let saved = settings.sink { [triggers, shelf, overlay] value in
             MainActor.assumeIsolated {
                 triggers.apply(value)
-                if shelf.hidesByMembership {
-                    shelf.applyLook(value.look)
-                    overlay.apply(value.look)
-                }
+                shelf.applyLook(value.look)
+                overlay.apply(value.look)
             }
         }
         context.onStop { [overlay] in
