@@ -234,6 +234,13 @@ enum MenuBarReservedSpans {
 
 /// Where the outlines go, in a display's bar with its origin top-left. Pure.
 enum MenuBarStylePlan {
+    /// Status-item thickness can be shorter than the display's menu bar.
+    /// Measure the reserved top strip, retaining a fallback for auto-hide.
+    static func barFrame(screen: CGRect, visible: CGRect, statusThickness: CGFloat, safeTop: CGFloat) -> CGRect {
+        let height = min(screen.height, max(statusThickness, safeTop, screen.maxY - visible.maxY))
+        return CGRect(x: screen.minX, y: screen.maxY - height, width: screen.width, height: height)
+    }
+
     /// The hardware notch widened to cover whatever sits around it.
     static func blocked(notch: ClosedRange<CGFloat>?, reserved: ClosedRange<CGFloat>?) -> ClosedRange<CGFloat>? {
         guard let notch, let reserved else { return notch ?? reserved }
@@ -381,15 +388,20 @@ final class MenuBarStyleOverlay {
             let panel = panels[index]
             if panel.frame != frame { panel.setFrame(frame, display: true) }
             if index >= previous.count || previous[index] != layout || panel.contentView == nil {
-                panel.contentView = NSHostingView(rootView: MenuBarStyleContent(rects: layout.rects, look: layout.look, shadow: layout.shadow))
+                let content = NSHostingView(rootView: MenuBarStyleContent(rects: layout.rects, look: layout.look, shadow: layout.shadow))
+                // The panel is the menu bar itself, including the top safe area.
+                content.safeAreaRegions = []
+                panel.contentView = content
             }
             panel.orderFrontRegardless()
         }
     }
 
     private static func barFrame(on screen: NSScreen) -> CGRect {
-        let height = max(NSStatusBar.system.thickness, screen.safeAreaInsets.top)
-        return CGRect(x: screen.frame.minX, y: screen.frame.maxY - height, width: screen.frame.width, height: height)
+        MenuBarStylePlan.barFrame(
+            screen: screen.frame, visible: screen.visibleFrame,
+            statusThickness: NSStatusBar.system.thickness, safeTop: screen.safeAreaInsets.top
+        )
     }
 
     private static func makePanel() -> NSPanel {

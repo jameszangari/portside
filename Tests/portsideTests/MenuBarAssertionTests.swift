@@ -638,6 +638,17 @@ final class MenuBarAssertionTests: XCTestCase {
         return (value, base)
     }
 
+    func testTintCoversDisplayMenuBarBeyondStatusItemThickness() {
+        let screen = CGRect(x: -1920, y: 200, width: 1920, height: 1080)
+        let visible = CGRect(x: -1920, y: 200, width: 1920, height: 1052)
+        let frame = MenuBarStylePlan.barFrame(screen: screen, visible: visible, statusThickness: 22, safeTop: 0)
+        XCTAssertEqual(frame, CGRect(x: -1920, y: 1252, width: 1920, height: 28))
+        let fill = MenuBarStylePlan.rects(shape: .full, size: frame.size, notch: nil, menusEnd: nil, itemsStart: nil)
+        XCTAssertEqual(fill, [CGRect(x: 0, y: 0, width: 1920, height: 28)])
+        XCTAssertEqual(MenuBarStylePlan.barFrame(screen: screen, visible: screen, statusThickness: 24, safeTop: 0).height, 24)
+        XCTAssertEqual(MenuBarStylePlan.barFrame(screen: screen, visible: screen, statusThickness: 24, safeTop: 38).height, 38)
+    }
+
     func testLegacyBarWaitsForCaptureAndKeepsSectionsAfterClosing() async {
         let base = MenuBarShelfTests.FakeSurface()
         base.frames = MenuBarBars(separator: 100...114, alwaysHiddenSeparator: nil)
