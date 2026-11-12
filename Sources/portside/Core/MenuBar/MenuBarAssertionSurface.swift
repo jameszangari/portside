@@ -229,6 +229,7 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
     private let controller: MenuBarAssertionController
     private let assignments: () -> [String: MenuBarSection]
     private let assign: (String, MenuBarSection) -> Void
+    var moveLegacyItem: (String, MenuBarSection) -> Void = { _, _ in }
     private let newItemsSection: () -> MenuBarSection
     private let runningBundles: () -> [String]
     private let drawnOwners: () async -> Set<pid_t>?
@@ -266,7 +267,10 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
     private let watchInterval: Duration
     var failureHandler: (@MainActor (String) -> Void)?
 
-    var hidesByMembership: Bool { true }
+    let hidesByMembership: Bool
+    private(set) var legacyAssignments: [String: MenuBarSection] = [:]
+    private var legacyHideTask: Task<Void, Never>?
+    private let legacySlots: () async -> [MenuBarSlot]?
     var hasHiddenAssignments: Bool {
         MenuBarAssertionPlan.locationProblem(bundlePath: bundlePath) == nil
             && !MenuBarAssertionPlan.hiddenBundles(assignments: assignments(), sections: [.hidden, .alwaysHidden]).isEmpty
@@ -280,6 +284,8 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
     init(
         base: MenuBarShelfSurface,
         bridge: MenuBarAssertionBridge,
+        hidesByMembership: Bool = true,
+        legacySlots: @escaping () async -> [MenuBarSlot]? = { await Task.detached(priority: .userInitiated) { AXMenuBarMover.live.slots() }.value },
         assignments: @escaping () -> [String: MenuBarSection],
         assign: @escaping (String, MenuBarSection) -> Void = { _, _ in },
         newItemsSection: @escaping () -> MenuBarSection = { .visible },
@@ -307,6 +313,8 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
         turnOff: @escaping () -> Void = {}
     ) {
         self.base = base
+        self.hidesByMembership = hidesByMembership
+        self.legacySlots = legacySlots
         self.assignments = assignments
         self.assign = assign
         self.newItemsSection = newItemsSection
@@ -359,7 +367,7 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
         installed = true
         base.install()
         nativeHider?.recover()
-        startWatching()
+        if hidesByMembership { startWatching() }
         syncGroupIcons()
         let center = NSWorkspace.shared.notificationCenter
         observers.append(center.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] note in
@@ -374,7 +382,11 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
         }
     }
 
-    func noteFailOpen() { failingOpen = true }
+    func noteFailOpen() {
+        failingOpen = true
+        legacyHideTask?.cancel()
+        closePanel()
+    }
 
     func applyLook(_ look: MenuBarLook) { base.applyLook(look) }
 
@@ -386,13 +398,34 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
         control?.hidesDivider = bar || control?.icon == .off
         if !hidden, wasHidden, bar {
             barOpen = true
-            base.apply(hidden: false)
+            if hidesByMembership { base.apply(hidden: false) }
+            base.setControlHidden(false)
             openBar()
             return
         }
+        legacyHideTask?.cancel()
         barOpen = false
         self.hidden = hidden
-        base.apply(hidden: hidden)
+        base.setControlHidden(hidden)
+        if hidden, !hidesByMembership {
+            let bars = base.barFrames()
+            legacyHideTask = Task { [weak self, legacySlots] in
+                let slots = await legacySlots()
+                guard !Task.isCancelled, let self, self.installed, self.hidden else { return }
+                if let bars, slots != nil {
+                    self.legacyAssignments = self.assignments()
+                    for slot in slots ?? [] {
+                        if let section = MenuBarLayoutPlanner.section(of: slot, bars: bars) {
+                            self.legacyAssignments[slot.id] = section
+                        }
+                    }
+                }
+                self.base.apply(hidden: true)
+                self.base.setControlHidden(!self.barOpen)
+            }
+        } else {
+            base.apply(hidden: hidden)
+        }
         refresh()
         if hidden {
             closePanel()
@@ -405,6 +438,7 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
 
     func remove() {
         installed = false
+        legacyHideTask?.cancel()
         launchTask?.cancel()
         launchTask = nil
         watchTask?.cancel()
@@ -441,7 +475,7 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
     /// Releases when nothing should be hidden. Otherwise asks for the
     /// allow-list that hides the assigned apps; no assignment, no hide.
     private func refresh(force: Bool = false) {
-        guard installed else { return }
+        guard installed, hidesByMembership else { return }
         let sections: Set<MenuBarSection> = hidden ? [.hidden, .alwaysHidden] : (alwaysHiddenClipped ? [.alwaysHidden] : [])
         if method() == .native, let nativeHider, nativeHider.isAvailable {
             controller.release()
@@ -575,12 +609,15 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
         let probe = LiveMenuBarEmptyAreaProbe()
         let placement = MenuBarBarPlacement(location: location, pointer: pointer, pointerOnEmptyBar: location == .dynamic && probe.isClickableBar(pointer))
         panelTask?.cancel()
+        let pendingHide = legacyHideTask
         panelTask = Task { [weak self] in
-            guard let self else { return }
+            await pendingHide?.value
+            guard !Task.isCancelled, let self, self.barOpen else { return }
             let shown = await self.showPanel(only: nil, sections: sections, anchor: anchor, placement: placement, bar: true)
             guard !Task.isCancelled, self.barOpen, !shown else { return }
             self.barOpen = false
             self.hidden = false
+            if !self.hidesByMembership { self.base.apply(hidden: false) }
             self.refresh()
         }
     }
@@ -601,19 +638,24 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
     /// that is meant to stay out. False when there was nothing to show.
     @discardableResult
     private func showPanel(only group: UUID?, sections: Set<MenuBarSection>, anchor: NSRect?, placement: MenuBarBarPlacement = MenuBarBarPlacement(), bar: Bool = false) async -> Bool {
-        let eligible = MenuBarAssertionPlan.hiddenBundles(assignments: assignments(), sections: sections)
+        let selected = hidesByMembership ? assignments() : assignments().merging(legacyAssignments) { _, actual in actual }
+        var eligible = hidesByMembership
+            ? MenuBarAssertionPlan.hiddenBundles(assignments: selected, sections: sections)
+            : Set(selected.filter { sections.contains($0.value) }.keys.map(MenuBarLayoutService.bundle(of:)))
         let groups = store.groups
         let snapshot = await itemSnapshot()
         guard !Task.isCancelled else { return false }
         var byBundle: [String: [MenuBarOverflowPanel.Entry]] = [:]
         for item in snapshot.items {
             guard let bundle = item.ownerBundleID?.lowercased() else { continue }
+            if !hidesByMembership, !sections.contains(selected[item.id] ?? .visible) { continue }
             let entry = MenuBarOverflowPanel.Entry(
-                item: item, bundle: bundle, icon: NSRunningApplication(processIdentifier: item.pid)?.icon,
+                item: item, bundle: bundle, icon: item.menuBarIcon,
                 menuBarOnly: store.opensOnlyFromMenuBar(bundle)
             )
             byBundle[bundle, default: []].append(entry)
         }
+        if !hidesByMembership, sections.contains(.visible) { eligible.formUnion(byBundle.keys) }
         let rows = MenuBarBarPlan.rows(groups: groups, only: group, eligible: eligible, byBundle: byBundle)
         guard !rows.isEmpty else { return false }
         let ignores: @MainActor (NSPoint) -> Bool = { [weak self] point in bar && (self?.clickWillToggle(point) ?? false) }
@@ -660,7 +702,7 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
             return
         case .stuck:
             // A selection left behind keeps the bar from auto-hiding until this restarts.
-            MenuBarSystemProcess.killall("MenuBarAgent")
+            if hidesByMembership { MenuBarSystemProcess.killall("MenuBarAgent") }
         case .noEffect:
             break
         }
@@ -684,7 +726,11 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
             let item = MenuBarMirrorMenu.item("Move to \(section.title)") { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    self.assign(entry.bundle, section)
+                    if self.hidesByMembership {
+                        self.assign(entry.bundle, section)
+                    } else {
+                        self.moveLegacyItem(entry.item.id, section)
+                    }
                     self.panel.close()
                     self.barDismissed()
                 }
@@ -847,6 +893,17 @@ enum MenuBarDrawnOwners {
 
     /// Every drawn item with its frame (Accessibility coordinates: x as AppKit, y from the top).
     nonisolated static func items() -> [Item]? {
+        if ProcessInfo.processInfo.operatingSystemVersion.majorVersion < 27 {
+            guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
+            let layer = Int(CGWindowLevelForKey(.statusWindow))
+            return windows.compactMap { window in
+                guard let level = window[kCGWindowLayer as String] as? Int, level == layer,
+                      let pid = window[kCGWindowOwnerPID as String] as? pid_t,
+                      let bounds = window[kCGWindowBounds as String] as? NSDictionary,
+                      let frame = CGRect(dictionaryRepresentation: bounds), frame.width > 0, frame.height > 0 else { return nil }
+                return Item(pid: pid, frame: frame, isOverflowControl: false)
+            }
+        }
         guard AXIsProcessTrusted(),
               let agent = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.MenuBarAgent").first else { return nil }
         let agentPID = agent.processIdentifier

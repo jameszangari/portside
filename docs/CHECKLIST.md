@@ -311,3 +311,31 @@ Validation note: overwriting the executable inside an already-used temporary tes
 
 - Final audit evidence: debug/release builds and signed-bundle verification pass; isolated `swift run portside` stays up for 8 seconds. Final native AX runner samples 61 times over a 20-second hold and **fails** own-control preservation plus no-spontaneous-reveal. Existing installed baseline passes an 8-second hold. See the audit for hashes and coverage. Passing Swift tests do not close this blocker.
 - Audit follow-up (2026-11-09): every remaining defect in the audit table was addressed in the same worktree: location loss is refused up front and `scripts/install-app.sh` installs to `/Applications`; saved order and pre-reveal restore; per-item Portside Bar; lifecycle cancellation; Command-drag opens all sections and resolves the real owner; exact Timed and Smart deferral; continuous new-item watch; Always Hidden shortcut conflict warning; wake and display handling; zero delay disables every rehide. 776 tests pass; debug, release and test builds have no warnings. Real Command-drag drop adoption, hover, scroll, automatic profile switching, external displays and macOS 26 are still unproven on hardware.
+
+## Menu bar compatibility before Top Shelf
+
+- [x] Separate the legacy separator shelf from the macOS 27 assertion-only settings and file grants. Keep shelf trigger settings reachable while the layout editor is waiting for Accessibility. Use a fixed expanded separator width on the legacy path (see [Thaw 2.0's macOS 26 implementation](https://github.com/thaw-app/Thaw/blob/2.0.0/Thaw/MenuBar/ControlItem/ControlItem.swift#L57-L61)), keep its eye visible with settings carried over from macOS 27, and wire the legacy shelf icon to temporarily reveal Always Hidden when enabled.
+- [x] Debug build and 190 focused menu bar tests pass on macOS 27.0.1. Isolated launch smoke checks ran with the default and forced separator modes. The full suite reported 18 failures outside the menu bar, all reproduced on the unchanged nightly commit in the same environment.
+- [ ] macOS 26: Reproduce the work-Mac failure and run the signed-app checks in the [test matrix](TEST_MATRIX_2_0.md#menu-bar-compatibility-before-top-shelf). Record OS build, app commit, signature, Accessibility state and display configuration.
+- [ ] macOS 27: Run the same shared checks and verify the assertion, Native hiding and Portside Bar with a signed install in `/Applications`.
+
+
+### macOS 26 follow-up after work-Mac testing
+
+- Basic eye hide/reveal was confirmed by the maintainer. Settings drag-and-drop failed on that Mac.
+- Restored menu bar appearance, icon customization and saved profiles on the separator surface. Portside Bar presentation, groups and system-file hiding remain tied to the assertion surface.
+- Separator availability now uses its configured length instead of assuming the native window has less than 28 points of width. macOS 26 Command-drags no longer require AXPress. Move results remain visible while the pointer is over a tile.
+- Legacy profile selection now applies saved sections through verified moves. Built-in and external-display drag/drop, appearance and profiles still need the work-Mac check. Screen Recording permission recognition remains unresolved.
+
+
+### macOS 26 Portside Bar and appearance integration
+
+- Restored the menu bar simulation, presentation chooser, Portside Bar styling, Groups and the iPhone Live Activities section. The iPhone toggle appears only when macOS exposes its preference. Native hiding's keep-visible switch remains specific to macOS 27.
+- The separator shelf now reuses the existing panel, grouped rows, menu actions and group icons. It records section positions before hiding, opens the panel while items remain clipped, and reveals the native bar if Accessibility is unavailable or the panel is empty. Recovery, Settings layout and stopping the module cancel pending hides and close the panel.
+- Empty-bar detection on macOS 26 reads status window bounds instead of requiring MenuBarAgent. Bare AXMenuBar hits count as background. Styling restores its panels after Space changes and allows full-screen Spaces.
+- [Thaw 2.0 appearance investigation](https://github.com/thaw-app/Thaw/blob/2.0.0/Thaw/MenuBar/Appearance/MenuBarOverlayPanel.swift): its overlay stays behind the native bar because raising it covers the menu contents. Reduce Transparency can cover these overlays. Portside now explains that condition in Settings. The work Mac's setting has not been observed.
+- Hardware checks remain open for empty clicks, grouped Portside Bar actions, shape/background rendering and recovery on macOS 26. iPhone Live Activities cannot be validated on the managed work Mac with Apple ID blocked.
+
+- Issue #72 follow-up: separate the eye indicator from native clipping, wait for the pending section capture before opening Portside Bar, and preserve that map when closing an already-clipped bar. macOS 26 now offers verified drags for individually recognized Control Center extras, with item-specific symbols and captions. Fixed and unknown system items stay locked; macOS 27 move policy is unchanged. Validation: debug build, 193 menu bar tests and isolated legacy-backend launch pass. Hardware validation on both OS versions remains pending.
+
+- Issue #72 tint-height follow-up: appearance overlays use each display's reserved top-strip height instead of status-item thickness alone, with status/notch fallbacks for auto-hide. The hosting view draws into the full panel without safe-area insets. Regression covers a taller external-display bar, offset display coordinates, auto-hide and notch fallback. Debug build, 194 menu bar tests and isolated launch pass. Visual confirmation with the reported black tint on macOS 26 remains pending.

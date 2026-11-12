@@ -751,7 +751,14 @@ final class MenuBarLayoutService: ObservableObject {
         shelf.membershipDidChange()
         writeOrderToTable()
         rebuild()
-        status = "Using profile \(profile.name)."
+        if shelf.hidesByMembership {
+            status = "Using profile \(profile.name)."
+        } else {
+            Task { [weak self] in
+                guard let self else { return }
+                _ = await self.apply(onlySaved: true)
+            }
+        }
     }
 
     /// A display was attached or removed.

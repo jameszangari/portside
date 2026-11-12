@@ -423,7 +423,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self.dockModel.setMenuBarTriggers(next)
                     }
                 }
-                layout.positionTable = MenuBarPositionTable(grant: menuBarLayoutFile)
+                if shelf.hidesByMembership {
+                    layout.positionTable = MenuBarPositionTable(grant: menuBarLayoutFile)
+                }
                 layout.onGroupsChanged = { [weak self] in MainActor.assumeIsolated { self?.menuBarAssertionSurface?.groupsDidChange() } }
                 triggers.beforeReveal = { [weak self, weak layout] in
                     MainActor.assumeIsolated {
@@ -453,17 +455,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.modules.disable(MenuBarShelfModule.moduleID)
             }
         }
+        let usesAssertion = MenuBarAssertionOptIn.isEnabled()
+        let onAlwaysHidden: () -> Void = { [weak self] in MainActor.assumeIsolated { self?.menuBarTriggers?.toggleAlwaysHidden() } }
+        let available: () -> Bool = { [weak self] in MainActor.assumeIsolated { self?.menuBarTriggers?.alwaysHiddenAvailable ?? false } }
+        let controlSurface = StatusItemShelfSurface(onToggle: onToggle, turnOff: turnOff, dividerMode: usesAssertion, onAlwaysHidden: onAlwaysHidden, alwaysHiddenAvailable: available)
         let surface: MenuBarShelfSurface
-        if MenuBarAssertionOptIn.isEnabled() {
-            // macOS 27 no longer reflows wide status items: hide with an
-            // assertion. Bridge or inputs missing leaves the bar as it is and says why.
-            let onAlwaysHidden: () -> Void = { [weak self] in MainActor.assumeIsolated { self?.menuBarTriggers?.toggleAlwaysHidden() } }
-            let available: () -> Bool = { [weak self] in MainActor.assumeIsolated { self?.menuBarTriggers?.alwaysHiddenAvailable ?? false } }
-            let controlSurface = StatusItemShelfSurface(onToggle: onToggle, turnOff: turnOff, dividerMode: true, onAlwaysHidden: onAlwaysHidden, alwaysHiddenAvailable: available)
+        do {
+            // macOS 27 no longer reflows wide status items. Bridge or inputs
+            // missing leaves the bar as it is and says why.
             controlSurface.extraMenuItems = { [weak self] in self?.menuBarLayout?.profileMenuItems() ?? [] }
             let assertionSurface = AssertionShelfSurface(
                 base: controlSurface,
                 bridge: LiveMenuBarAssertionBridge(),
+                hidesByMembership: usesAssertion,
                 assignments: { MenuBarLayoutStore(defaults: .standard).assignments },
                 assign: { [weak self] bundle, section in MainActor.assumeIsolated { self?.menuBarLayout?.assignBundle(bundle, to: section) } },
                 newItemsSection: { [weak self] in MainActor.assumeIsolated { self?.dockModel.menuBarTriggers.newItemsSection ?? .visible } },
@@ -481,11 +485,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // From the trigger service, not the model: a setting's change
                 // is published before the model's own value updates.
                 method: { [weak self] in MainActor.assumeIsolated { self?.menuBarTriggers?.settings.hidingMethod ?? .standard } },
-                nativeHider: MenuBarNativeHider(grant: menuBarAppListFile),
-                developerHooks: MenuBarAssertionOptIn.developerHooks(),
+                nativeHider: usesAssertion ? MenuBarNativeHider(grant: menuBarAppListFile) : nil,
+                developerHooks: usesAssertion && MenuBarAssertionOptIn.developerHooks(),
                 onToggle: onToggle,
                 turnOff: turnOff
             )
+            assertionSurface.moveLegacyItem = { [weak self] id, section in
+                Task { @MainActor [weak self] in
+                    guard let layout = self?.menuBarLayout else { return }
+                    await layout.refresh()
+                    _ = await layout.drop(id, into: section)
+                }
+            }
             assertionSurface.onDeveloperGrant = { [weak self] in
                 guard let self else { return }
                 if !self.menuBarLayoutFile.isGranted { self.menuBarLayoutFile.request() }
@@ -494,8 +505,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             menuBarAssertionSurface = assertionSurface
             surface = assertionSurface
-        } else {
-            surface = StatusItemShelfSurface(onToggle: onToggle, turnOff: turnOff)
         }
         let shelf = MenuBarShelf(surface: surface)
         menuBarShelf = shelf
@@ -560,7 +569,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             SettingsWindowController(
                 dockModel: dockModel, layout: dockEngine.layout, nativeDock: nativeDock, trash: dockEngine.trash,
                 badges: dockEngine.badges, widgets: dockEngine.widgets,
-                integrations: IntegrationSettings(registry: modules, permissions: permissions, model: dockModel, intelligence: intelligence, menuReorder: menuBarReorder, menuLayout: menuBarLayout, menuFiles: (menuBarLayoutFile, menuBarAppListFile), menuTriggers: menuBarTriggers)
+                integrations: IntegrationSettings(registry: modules, permissions: permissions, model: dockModel, intelligence: intelligence, menuReorder: menuBarReorder, menuLayout: menuBarLayout, menuFiles: menuBarShelf?.hidesByMembership == true ? (menuBarLayoutFile, menuBarAppListFile) : nil, menuTriggers: menuBarTriggers)
             )
         }
         controller.onActivationPolicyChanged = { [weak dockEngine] in dockEngine?.activationPolicyChanged() }

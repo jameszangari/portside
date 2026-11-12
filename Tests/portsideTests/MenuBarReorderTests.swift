@@ -70,6 +70,7 @@ final class MenuBarReorderTests: XCTestCase {
     func testSupportReasons() {
         let ok = Self.slot(a, at: 0)
         XCTAssertEqual(MenuBarLayoutRules.support(for: ok, osMajor: 27), .movable)
+        XCTAssertTrue(MenuBarLayoutRules.support(for: Self.slot(Self.item("N", canPress: false), at: 0), osMajor: 26).isMovable)
         XCTAssertFalse(MenuBarLayoutRules.support(for: ok, osMajor: 25).isMovable)
         XCTAssertFalse(MenuBarLayoutRules.support(for: Self.slot(Self.item("S", bundle: "com.apple.controlcenter"), at: 0), osMajor: 27).isMovable)
         XCTAssertFalse(MenuBarLayoutRules.support(for: Self.slot(a, at: 0, reachable: false), osMajor: 27).isMovable)
@@ -77,6 +78,23 @@ final class MenuBarReorderTests: XCTestCase {
         XCTAssertFalse(MenuBarLayoutRules.support(for: ok, osMajor: 27, failed: [a.id]).isMovable)
         let noBundle = MenuBarItem(pid: 1, ownerBundleID: nil, ownerName: "X", ordinal: 0, identifier: nil, title: "X", canPress: true)
         XCTAssertFalse(MenuBarLayoutRules.support(for: Self.slot(noBundle, at: 0), osMajor: 27).isMovable)
+    }
+
+    func testControlCenterExtrasAreIdentifiedIndividuallyOn26() {
+        func extra(_ identifier: String, title: String = "") -> MenuBarItem {
+            MenuBarItem(pid: 1, ownerBundleID: "com.apple.controlcenter", ownerName: "Control Center", ordinal: 2, identifier: identifier, title: title, canPress: false)
+        }
+        let wifi = extra("com.apple.menuextra.wifi")
+        XCTAssertEqual(wifi.displayTitle, "Wi-Fi")
+        XCTAssertEqual(wifi.systemExtra?.symbol, "wifi")
+        XCTAssertTrue(MenuBarLayoutRules.support(for: Self.slot(wifi, at: 0), osMajor: 26).isMovable)
+        XCTAssertFalse(MenuBarLayoutRules.support(for: Self.slot(wifi, at: 0), osMajor: 27).isMovable)
+        XCTAssertFalse(MenuBarLayoutRules.support(for: Self.slot(wifi, at: 0, reachable: false), osMajor: 26).isMovable)
+        for id in ["com.apple.menuextra.controlcenter", "com.apple.menuextra.clock", "unknown"] {
+            XCTAssertFalse(MenuBarLayoutRules.support(for: Self.slot(extra(id), at: 0), osMajor: 26).isMovable)
+        }
+        XCTAssertEqual(extra("unknown").displayTitle, "unknown")
+        XCTAssertEqual(extra("unrecognized", title: "Bluetooth").systemExtra?.name, "Bluetooth")
     }
 
     func testPlanReachesDesiredOrderWithinBound() {

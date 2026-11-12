@@ -223,7 +223,7 @@ final class MenuBarLayoutTests: XCTestCase {
         XCTAssertFalse(row.canDrag)
         _ = await layout.drop(row.id, into: .visible)
         XCTAssertEqual(world.dragCount, 0)
-        XCTAssertTrue(layout.status?.contains("macOS owns") ?? false)
+        XCTAssertTrue(layout.status?.contains("fixed or has not been identified as movable") ?? false)
     }
 
     func testPutBackLeavesItemsYouNeverPlacedAlone() async {
@@ -478,7 +478,7 @@ final class MenuBarLayoutTests: XCTestCase {
         XCTAssertEqual(world.order, ["S", "|1", "A"])
         XCTAssertEqual(world.dragCount, 0)
         XCTAssertEqual(try? result.get().stranded.count, 1)
-        XCTAssertTrue(layout.status?.contains("macOS owns") ?? false)
+        XCTAssertTrue(layout.status?.contains("fixed or has not been identified as movable") ?? false)
     }
 
     func testDragThatDoesNotLandStopsAndLocksTheItem() async {

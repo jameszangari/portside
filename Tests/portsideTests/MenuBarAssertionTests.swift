@@ -638,6 +638,75 @@ final class MenuBarAssertionTests: XCTestCase {
         return (value, base)
     }
 
+    func testTintCoversDisplayMenuBarBeyondStatusItemThickness() {
+        let screen = CGRect(x: -1920, y: 200, width: 1920, height: 1080)
+        let visible = CGRect(x: -1920, y: 200, width: 1920, height: 1052)
+        let frame = MenuBarStylePlan.barFrame(screen: screen, visible: visible, statusThickness: 22, safeTop: 0)
+        XCTAssertEqual(frame, CGRect(x: -1920, y: 1252, width: 1920, height: 28))
+        let fill = MenuBarStylePlan.rects(shape: .full, size: frame.size, notch: nil, menusEnd: nil, itemsStart: nil)
+        XCTAssertEqual(fill, [CGRect(x: 0, y: 0, width: 1920, height: 28)])
+        XCTAssertEqual(MenuBarStylePlan.barFrame(screen: screen, visible: screen, statusThickness: 24, safeTop: 0).height, 24)
+        XCTAssertEqual(MenuBarStylePlan.barFrame(screen: screen, visible: screen, statusThickness: 24, safeTop: 38).height, 38)
+    }
+
+    func testLegacyBarWaitsForCaptureAndKeepsSectionsAfterClosing() async {
+        let base = MenuBarShelfTests.FakeSurface()
+        base.frames = MenuBarBars(separator: 100...114, alwaysHiddenSeparator: nil)
+        let item = MenuBarItem(pid: 1, ownerBundleID: "com.test.app", ownerName: "Test", ordinal: 0, identifier: nil, title: "Test", canPress: true)
+        let snapshots = Counter()
+        let surface = AssertionShelfSurface(
+            base: base, bridge: FakeBridge(), hidesByMembership: false,
+            legacySlots: {
+                try? await Task.sleep(for: .milliseconds(20))
+                return [MenuBarSlot(item: item, minX: 20, maxX: 40, midY: 10, reachable: true)]
+            },
+            assignments: { [:] }, presentation: { .portsideBar },
+            itemSnapshot: {
+                XCTAssertTrue(base.hidden, "Capture must finish and native items must be clipped before opening the panel")
+                XCTAssertFalse(base.controlHidden, "The eye represents the open panel, not native clipping")
+                snapshots.value += 1
+                return .denied
+            }
+        )
+        surface.install()
+        surface.apply(hidden: true)
+        surface.apply(hidden: false)
+        await settle()
+        XCTAssertEqual(snapshots.value, 1)
+        XCTAssertEqual(surface.legacyAssignments[item.id], .hidden)
+        base.frames = nil
+        surface.apply(hidden: true)
+        await settle()
+        XCTAssertEqual(surface.legacyAssignments[item.id], .hidden, "Closing while already clipped must preserve the physical section map")
+        XCTAssertTrue(base.controlHidden)
+        surface.remove()
+    }
+
+    func testLegacyBarFallbackAndRecoveryNeverActivateAssertion() async {
+        let bridge = FakeBridge()
+        let base = MenuBarShelfTests.FakeSurface()
+        let surface = AssertionShelfSurface(
+            base: base, bridge: bridge, hidesByMembership: false, legacySlots: { [] },
+            assignments: { ["com.a.app:#0": .hidden] },
+            presentation: { .portsideBar },
+            itemSnapshot: { MenuBarSnapshot(access: .accessibilityDenied, items: []) }
+        )
+        surface.install()
+        surface.apply(hidden: true)
+        await settle()
+        XCTAssertTrue(base.hidden)
+        surface.apply(hidden: false)
+        await settle()
+        XCTAssertFalse(base.hidden, "Empty or denied panel must reveal the native items")
+        XCTAssertTrue(bridge.handles.isEmpty)
+        surface.apply(hidden: true)
+        surface.noteFailOpen()
+        surface.apply(hidden: false)
+        await settle()
+        XCTAssertFalse(base.hidden, "A pending hide must not survive recovery")
+        surface.remove()
+    }
+
     func testBarWithNothingToListReallyReveals() async {
         let bridge = FakeBridge()
         let (surface, _) = barSurface(bridge)

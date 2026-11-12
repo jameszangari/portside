@@ -175,19 +175,22 @@ struct MenuBarSettings: View {
         Form {
             ModuleRowsSection(integrations: integrations, ids: [MenuBarShelfModule.moduleID])
             if layoutRunning, let layout = integrations.menuLayout {
-                if layout.hidesByMembership {
-                    Section { MenuBarLivePreviewCard(settings: dockModel.menuBarTriggers, dock: dockModel.look) }
-                }
+                Section { MenuBarLivePreviewCard(settings: dockModel.menuBarTriggers, dock: dockModel.look) }
                 MenuBarLayoutSection(service: layout)
-                if let triggers = integrations.menuTriggers {
-                    MenuBarTriggersSection(dockModel: dockModel, service: triggers, hidesByMembership: layout.hidesByMembership)
-                    if layout.hidesByMembership { MenuBarLookSection(dockModel: dockModel) }
-                    if layout.hidesByMembership { MenuBarLiveActivitiesSection(dockModel: dockModel, appList: integrations.menuFiles?.appList) }
-                    MenuBarProfilesSection(service: layout)
-                    MenuBarAdvancedSection(dockModel: dockModel, service: triggers, files: integrations.menuFiles)
-                }
             } else {
                 MenuBarLayoutSetup(integrations: integrations)
+            }
+            if let triggers = integrations.menuTriggers, triggers.isRunning || layoutRunning {
+                let hidesByMembership = integrations.menuLayout?.hidesByMembership ?? false
+                MenuBarTriggersSection(dockModel: dockModel, service: triggers, hidesByMembership: hidesByMembership)
+                MenuBarLookSection(dockModel: dockModel, supportsPortsideBar: true)
+                if layoutRunning, let layout = integrations.menuLayout {
+                    MenuBarProfilesSection(service: layout)
+                }
+                MenuBarLiveActivitiesSection(dockModel: dockModel, appList: integrations.menuFiles?.appList)
+                if hidesByMembership {
+                    MenuBarAdvancedSection(dockModel: dockModel, service: triggers, files: integrations.menuFiles)
+                }
             }
         }
         .keepsIntegrationsCurrent(integrations)
@@ -293,7 +296,7 @@ struct MenuBarTriggersSection: View {
     }
 
     var body: some View {
-        if hidesByMembership {
+        do {
             Section {
                 SettingsChoiceCards(selection: binding(\.presentation), choices: MenuBarPresentation.allCases.map { ($0, $0.title) }, columns: 3) {
                     MenuBarPresentationPicture(presentation: $0)
@@ -403,6 +406,7 @@ private struct MenuBarLiveActivitiesSection: View {
             if model.iPhoneEnabled == nil {
                 Text("This version of macOS doesn't expose these settings.").helperStyle()
             }
+            if appList != nil {
             row(
                 "eye", "Keep Live Activities showing",
                 keepsShowing
@@ -410,6 +414,7 @@ private struct MenuBarLiveActivitiesSection: View {
                     : "They disappear while your items are hidden. Turn on to keep them, using Native hiding.",
                 value: keepsShowing
             ) { setKeepsShowing($0) }
+            }
         } header: {
             Text("Live Activities").settingsAnchor("Live Activities")
         }
@@ -563,6 +568,7 @@ private struct MenuBarIconPicker: View {
 /// The Portside Bar's and the real menu bar's look.
 private struct MenuBarLookSection: View {
     @ObservedObject var dockModel: DockModel
+    let supportsPortsideBar: Bool
 
     @AppStorage(PortsideMenuIcon.defaultsKey) private var showsAppIcon = true
     @State private var showIconPicker = false
@@ -615,17 +621,19 @@ private struct MenuBarLookSection: View {
         } header: {
             Text("Icons").settingsAnchor("Icons")
         }
-        Section {
-            SettingsChoiceCards(selection: binding(\.barStyle), choices: MenuBarBarStyle.allCases.map { ($0, $0.title) }, columns: 3) {
-                MenuBarBarStylePicture(style: $0, look: look, dock: dockModel.look)
+        if supportsPortsideBar {
+            Section {
+                SettingsChoiceCards(selection: binding(\.barStyle), choices: MenuBarBarStyle.allCases.map { ($0, $0.title) }, columns: 3) {
+                    MenuBarBarStylePicture(style: $0, look: look, dock: dockModel.look)
+                }
+                if look.barStyle == .system { cornerSlider(\.barCornerRadius) }
+                SettingsSlider(title: "Icon size", value: look.barIconSize, range: MenuBarLook.iconSizeRange, snap: 1, format: { "\(Int($0)) pt" }, set: { set(\.barIconSize, $0, persist: $1) })
+            } header: {
+                Text("Portside Bar style").settingsAnchor("Portside Bar style")
             }
-            if look.barStyle == .system { cornerSlider(\.barCornerRadius) }
-            SettingsSlider(title: "Icon size", value: look.barIconSize, range: MenuBarLook.iconSizeRange, snap: 1, format: { "\(Int($0)) pt" }, set: { set(\.barIconSize, $0, persist: $1) })
-        } header: {
-            Text("Portside Bar style").settingsAnchor("Portside Bar style")
-        }
-        if look.barStyle == .custom {
-            DockBackgroundEditor(background: look.barBackground, update: update(\.barBackground), surface: "bar", extra: { cornerSlider(\.barCornerRadius) }, header: { Text("Portside Bar background").settingsAnchor("Portside Bar background") })
+            if look.barStyle == .custom {
+                DockBackgroundEditor(background: look.barBackground, update: update(\.barBackground), surface: "bar", extra: { cornerSlider(\.barCornerRadius) }, header: { Text("Portside Bar background").settingsAnchor("Portside Bar background") })
+            }
         }
         Section {
             SettingsChoiceCards(selection: binding(\.shape), choices: MenuBarShape.allCases.map { ($0, $0.title) }, columns: 4) {
@@ -635,6 +643,9 @@ private struct MenuBarLookSection: View {
             Text("Menu bar shape").settingsAnchor("Menu bar shape")
         } footer: {
             Text("Drawn behind your menu bar. macOS still picks the color of its text and icons.").footerStyle()
+            if NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency {
+                Text("Reduce Transparency makes the macOS menu bar opaque, which can cover the shape and background. You can change it in System Settings > Accessibility > Display.").footerStyle()
+            }
         }
         if look.shape != .none {
             DockBackgroundEditor(
@@ -717,28 +728,31 @@ struct MenuBarProfilesSection: View {
         } footer: {
             Text("A profile saves sections, order and groups. Switch from the menu bar icon's right-click menu or a shortcut.").footerStyle()
         }
-        Section {
-            ForEach(service.groups) { group in
-                HStack {
-                    SettingsTextField("Group name", text: Binding(get: { group.name }, set: { service.renameGroup(group.id, to: $0) }))
-                    Text("\(group.bundles.count) apps").helperStyle()
-                    Toggle("Menu bar icon", isOn: Binding(get: { group.showsIcon }, set: { service.setGroupIcon(group.id, shown: $0) }))
-                        .toggleStyle(.checkbox)
-                    Button { service.removeGroup(group.id) } label: { Image(systemName: "minus.circle") }
-                        .buttonStyle(.borderless)
-                        .accessibilityLabel("Delete \(group.name)")
+        do {
+            Section {
+                ForEach(service.groups) { group in
+                    HStack {
+                        SettingsTextField("Group name", text: Binding(get: { group.name }, set: { service.renameGroup(group.id, to: $0) }))
+                        Text("\(group.bundles.count) apps").helperStyle()
+                        Toggle("Menu bar icon", isOn: Binding(get: { group.showsIcon }, set: { service.setGroupIcon(group.id, shown: $0) }))
+                            .toggleStyle(.checkbox)
+                        Button { service.removeGroup(group.id) } label: { Image(systemName: "minus.circle") }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Delete \(group.name)")
+                    }
                 }
+                HStack(spacing: 10) {
+                    Text("New group")
+                    SettingsTextField("New group name", text: $newGroup, onSubmit: addGroup)
+                    Button("Add", action: addGroup)
+                        .disabled(newGroup.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            } header: {
+                Text("Groups").settingsAnchor("Groups")
+            } footer: {
+                Text("Right-click an icon in Visible, Hidden or Always Hidden to add its app to a group. Groups appear as rows in the Portside Bar.").footerStyle()
             }
-            HStack(spacing: 10) {
-                Text("New group")
-                SettingsTextField("New group name", text: $newGroup, onSubmit: addGroup)
-                Button("Add", action: addGroup)
-                    .disabled(newGroup.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-        } header: {
-            Text("Groups").settingsAnchor("Groups")
-        } footer: {
-            Text("Right-click an icon in Visible, Hidden or Always Hidden to add its app to a group. Groups appear as rows in the Portside Bar.").footerStyle()
         }
+
     }
 }

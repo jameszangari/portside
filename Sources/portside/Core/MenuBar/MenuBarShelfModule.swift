@@ -12,7 +12,12 @@ final class MenuBarShelfModule: PortsideModule {
 
     let id = MenuBarShelfModule.moduleID
     let title = "Menu Bar Shelf"
-    let summary = "Hides the menu bar items you choose and shows them again. An open eye in the menu bar means your items are showing and a crossed eye means they are hidden. Click it to show or hide, double-click or Option-click for Always Hidden, and right-click for Turn Off. Hold Command and drag an icon across the divider to change its section. macOS hides by app, so all of an app's items move together. Needs Portside installed in /Applications and Accessibility. If hiding fails, the bar stays as macOS drew it."
+    var summary: String {
+        if shelf.hidesByMembership {
+            return "Click the eye to show or hide your chosen apps. Option-click or double-click for Always Hidden. Hiding needs Portside in /Applications and Accessibility. If hiding fails, the bar stays as macOS drew it."
+        }
+        return "Click the eye to show or hide items to the left of the divider. Hold Command and drag an icon across the divider to change its section. Editing the layout and detecting empty areas need Accessibility."
+    }
     let fallback = "Your menu bar stays exactly as macOS lays it out."
 
     private let shelf: MenuBarShelf

@@ -190,7 +190,7 @@ struct MenuBarLayoutSection: View {
             if let note = service.menuBarOnlyNote(for: hovered) { return note }
             return hovered.blockedReason.map { "\(hovered.slot.item.displayTitle): \($0)" } ?? hovered.slot.item.displayTitle
         }
-        return service.status ?? "Drag icons to arrange your menu bar. Changes apply right away."
+        return "Drag icons to arrange your menu bar. Changes apply right away."
     }
 
     var body: some View {
@@ -207,6 +207,7 @@ struct MenuBarLayoutSection: View {
                         .help("Read the menu bar again")
                         .accessibilityLabel("Refresh")
                 }
+                if let status = service.status { Text(status).helperStyle() }
                 if service.accessDenied {
                     Text("Portside needs Accessibility to see your menu bar items. Allow it in General > Permissions.").helperStyle()
                 } else if service.rows.isEmpty {
@@ -282,7 +283,7 @@ private struct LayoutStrip: View {
         case .alwaysHidden:
             return service.hidesByMembership
                 ? "Only shown when you double-click the menu bar or Option-click its icon."
-                : "Out of sight until you turn this off. Ends when Portside quits."
+                : "Option-click the shelf icon to show these temporarily. This section resets when Portside quits."
         }
     }
 
@@ -347,7 +348,7 @@ private struct LayoutTile: View {
 
     private var icon: some View {
         Group {
-            if !MenuBarSystemExtra.isTimeMachine(row.slot.item), let image = NSRunningApplication(processIdentifier: row.slot.item.pid)?.icon {
+            if !MenuBarSystemExtra.isTimeMachine(row.slot.item), let image = row.slot.item.menuBarIcon {
                 Image(nsImage: image).resizable().scaledToFit()
             } else {
                 Image(systemName: MenuBarSystemExtra.isTimeMachine(row.slot.item)
