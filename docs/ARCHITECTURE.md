@@ -191,6 +191,7 @@ Sources/portside/
   AgentNotch.swift          Non-activating notch panel lifecycle, multi-display surfaces and layout
   AgentNotchPreferences.swift Agent notch settings model, filters and value bounds
   AgentNotchView.swift      Compact header, expandable session dashboard and usage bars
+  NotchShelfState.swift     Notch Shelf open modes, hover regions and the compact / peek / open state machine (no AppKit)
   SettingsPanes.swift       Settings > Command Center, App Switcher and Menu Bar panes (split out of General and Integrations)
   SettingsPreviews.swift    Reusable Settings preview card (Simulation badge, enlarge popover) and the Dock, App Switcher, Menu Bar sections and reveal and hide, and Command Center illustrations; pure drawings, no system state
   SettingsSearch.swift      Settings search: hand-kept index, ranking, and `.settingsAnchor` for scrolling to a section

@@ -63,6 +63,10 @@ struct AgentNotchSettings: Codable, Equatable {
     /// the Now Playing widget). Hidden when paused or nothing is playing.
     var showMedia = true
     var expandOnHover = true
+    /// Notch Shelf preview (P2-SHELF): side hover peeks, `shelfOpenMode`
+    /// decides what opens the full shelf. Off keeps the classic island.
+    var shelfEnabled = false
+    var shelfOpenMode = NotchShelfOpenMode.hover
     var collapseAfterFocus = true
     var showProject = true
     var showHost = true
@@ -97,7 +101,7 @@ struct AgentNotchSettings: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case position, display, compactStyle, clickAction, filter, hideWhenEmpty, animate, showTotal, showUsage, showMedia
-        case expandOnHover, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
+        case expandOnHover, shelfEnabled, shelfOpenMode, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
         case showFinished, claude, codex, copilot, opencode, cursor, showBorder, compactWidth, compactHeight, expandedWidth, cornerRadius, opacity, fontSize
         case rowSpacing, maxSessions, hoverDelay, collapseDelay, animationDuration, horizontalOffset, verticalOffset, accent
     }
@@ -115,6 +119,8 @@ struct AgentNotchSettings: Codable, Equatable {
         showUsage = values.value(.showUsage, or: true)
         showMedia = values.value(.showMedia, or: true)
         expandOnHover = values.value(.expandOnHover, or: true)
+        shelfEnabled = values.value(.shelfEnabled, or: false)
+        shelfOpenMode = values.value(.shelfOpenMode, or: .hover)
         collapseAfterFocus = values.value(.collapseAfterFocus, or: true)
         showProject = values.value(.showProject, or: true)
         showHost = values.value(.showHost, or: true)

@@ -85,12 +85,25 @@ struct AgentNotchSettingsView: View {
                 Toggle("Show now playing", isOn: binding(\.showMedia))
                 Text("Animated bars in the compact notch while Spotify or Music is playing, same sources as the Now Playing widget. Hidden when paused or stopped. Keeps the notch visible even when no agent sessions match.").helperStyle()
             }
+            Section(header: Text("Notch Shelf (preview)").settingsAnchor("Notch Shelf")) {
+                Toggle("Use Notch Shelf", isOn: binding(\.shelfEnabled))
+                if preferences.shelfEnabled {
+                    Picker("Open shelf", selection: binding(\.shelfOpenMode)) {
+                        ForEach(NotchShelfOpenMode.allCases) { Text($0.title).tag($0) }
+                    }
+                }
+                Text("Hover either side of the notch to peek at that side's activity. Hover opens the shelf from the notch itself; Click opens it with a click; Hover opens, click pins keeps it open after a click until you click outside or press Escape. Pages come in later previews.").helperStyle()
+            }
             Section(header: Text("Behavior").settingsAnchor("Behavior")) {
-                Toggle("Expand on hover", isOn: binding(\.expandOnHover))
-                if preferences.expandOnHover { slider("Hover delay", \.hoverDelay, 0...1, unit: "ms", milliseconds: true) }
+                if !preferences.shelfEnabled { Toggle("Expand on hover", isOn: binding(\.expandOnHover)) }
+                if preferences.expandOnHover || preferences.shelfEnabled {
+                    slider("Hover delay", \.hoverDelay, 0...1, unit: "ms", milliseconds: true)
+                }
                 slider("Collapse delay", \.collapseDelay, 0.1...2, unit: "ms", milliseconds: true)
-                Picker("Click action", selection: binding(\.clickAction)) {
-                    ForEach(AgentNotchClickAction.allCases) { Text($0.title).tag($0) }
+                if !preferences.shelfEnabled {
+                    Picker("Click action", selection: binding(\.clickAction)) {
+                        ForEach(AgentNotchClickAction.allCases) { Text($0.title).tag($0) }
+                    }
                 }
                 Toggle("Collapse after opening a session", isOn: binding(\.collapseAfterFocus))
                 Toggle("Animate status and expansion", isOn: binding(\.animate))

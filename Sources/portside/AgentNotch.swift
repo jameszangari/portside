@@ -12,18 +12,93 @@ final class AgentNotchPresentation: ObservableObject {
     /// menu bar on a display without one): square-ish top corners, no border.
     @Published var topAttached = false
     @Published var compactWidth: CGFloat = 184
+    /// Shelf only: the side whose activity card is showing below the header.
+    @Published private(set) var peekSide: NotchShelfSide?
+    /// Shelf only: the side peeked at just before opening, so the open shelf
+    /// can keep that card where the peek showed it.
+    @Published private(set) var openedFrom: NotchShelfSide?
+    /// Current panel width, for mapping hover points to shelf regions.
+    var panelWidth: CGFloat = 0
+    /// Shelf only: the size the view draws, top centered in the panel. The
+    /// panel snaps to fit it and the view animates, so the top edge never
+    /// moves. Nil fills the panel (classic island).
+    @Published var surfaceSize: CGSize?
+    /// Shelf only: shrinks the panel to `surfaceSize` once the view has
+    /// animated down to it.
+    var settleTask: DispatchWorkItem?
+    /// Shelf only: whether a side has an activity card to peek at.
+    var canPeek: (NotchShelfSide) -> Bool = { _ in false }
     var onExpansion: (() -> Void)?
     private var hoverTask: DispatchWorkItem?
+    private var machine = NotchShelfMachine()
+
+    private var shelf: Bool { preferences.shelfEnabled }
 
     func setExpanded(_ value: Bool) {
         hoverTask?.cancel()
+        if shelf {
+            if value { machine.open() } else { machine.close() }
+            syncShelf()
+            return
+        }
         guard expanded != value else { return }
         expanded = value
         if !value { pinned = false }
         onExpansion?()
     }
 
+    func setPinned(_ value: Bool) {
+        guard shelf else { pinned = value; return }
+        machine.setPinned(value)
+        syncShelf()
+    }
+
+    /// Shelf only: the pointer moved to `region` (`.outside` when it left).
+    func shelfPointer(_ region: NotchShelfRegion) {
+        guard shelf else { return }
+        machine.mode = preferences.shelfOpenMode
+        let timer = machine.pointer(region, canPeek: canPeek)
+        schedule(timer)
+    }
+
+    /// Shelf only: a click on the header.
+    func shelfClick() {
+        guard shelf else { return }
+        machine.mode = preferences.shelfOpenMode
+        hoverTask?.cancel()
+        machine.click()
+        syncShelf()
+    }
+
+    private func schedule(_ timer: NotchShelfTimer?) {
+        hoverTask?.cancel()
+        hoverTask = nil
+        guard let timer else { return }
+        let delay: Double = switch timer {
+        case .peek, .open: preferences.hoverDelay
+        case .collapse: preferences.collapseDelay
+        case .collapsePeek: min(preferences.collapseDelay, 0.2)
+        }
+        let task = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.machine.fire(timer)
+            self.syncShelf()
+        }
+        hoverTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
+    }
+
+    private func syncShelf() {
+        let changed = expanded != machine.isOpen || peekSide != machine.peekSide
+        if machine.isOpen { if !expanded { openedFrom = peekSide } } else { openedFrom = nil }
+        expanded = machine.isOpen
+        peekSide = machine.peekSide
+        if pinned != machine.pinned { pinned = machine.pinned }
+        if changed { onExpansion?() }
+    }
+
     func hover(_ inside: Bool) {
+        guard !shelf else { return }
         hoverTask?.cancel()
         guard inside ? preferences.expandOnHover && !expanded : expanded && !pinned else { return }
         let task = DispatchWorkItem { [weak self] in
@@ -34,7 +109,7 @@ final class AgentNotchPresentation: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + (inside ? preferences.hoverDelay : preferences.collapseDelay), execute: task)
     }
 
-    func stop() { hoverTask?.cancel(); hoverTask = nil; onExpansion = nil }
+    func stop() { hoverTask?.cancel(); hoverTask = nil; settleTask?.cancel(); settleTask = nil; onExpansion = nil }
 }
 
 final class AgentNotch {
@@ -110,7 +185,9 @@ final class AgentNotch {
     }
 
     private func collapseUnpinned() {
-        surfaces.filter { !$0.state.pinned }.forEach { $0.state.setExpanded(false) }
+        // The shelf closes on any click outside, pinned or not; the classic
+        // island keeps a pinned dashboard.
+        surfaces.filter { preferences.shelfEnabled || !$0.state.pinned }.forEach { $0.state.setExpanded(false) }
     }
 
     private func rebuildPanels() {
@@ -140,6 +217,7 @@ final class AgentNotch {
             panel.hasShadow = preferences.showBorder
             panel.hidesOnDeactivate = false
             state.onExpansion = { [weak self] in self?.layoutPanels() }
+            state.canPeek = { [weak self] side in self?.hasPeekCard(side) ?? false }
             panel.contentView = NSHostingView(rootView: AgentNotchView(agents: agents, usage: usage, nowPlaying: nowPlaying, state: state))
             surfaces.append(Surface(panel: panel, state: state, screen: screen))
         }
@@ -150,6 +228,13 @@ final class AgentNotch {
             }
         }
         layoutPanels()
+    }
+
+    /// Leading side peeks at the latest session; trailing at Now Playing,
+    /// or the latest session when nothing plays.
+    private func hasPeekCard(_ side: NotchShelfSide) -> Bool {
+        let sessions = agents.map { preferences.sessions(from: $0.sessions) } ?? []
+        return side == .trailing && mediaPlaying || !sessions.isEmpty
     }
 
     private var mediaPlaying: Bool {
@@ -176,9 +261,14 @@ final class AgentNotch {
             state.headerHeight = attached ? max(screen.safeAreaInsets.top, preferences.compactHeight)
                 : inMenuBar ? Self.menuBarHeight(on: screen) : preferences.compactHeight
             state.compactWidth = min(screen.frame.width - 24, preferences.compactWidth + state.notchWidth)
-            let width = state.expanded ? min(screen.frame.width - 24, max(preferences.expandedWidth, state.compactWidth)) : state.compactWidth
+            let peeking = state.peekSide != nil && !state.expanded
+            let width = state.expanded ? min(screen.frame.width - 24, max(preferences.expandedWidth, state.compactWidth))
+                // Peek at the open width, so opening from a peek only grows downward.
+                : peeking ? min(screen.frame.width - 24, max(preferences.expandedWidth, state.compactWidth)) : state.compactWidth
             let contentHeight = AgentNotchView.dashboardHeight(preferences: preferences, sessionCount: sessions.count)
-            let height = min(screen.visibleFrame.height - 16, state.headerHeight + (state.expanded ? contentHeight : 0))
+            let height = min(screen.visibleFrame.height - 16, state.headerHeight
+                             + (state.expanded ? contentHeight : peeking ? AgentNotchView.peekHeight(preferences: preferences) : 0))
+            state.panelWidth = width
             var x = screen.frame.midX - width / 2 + (state.topAttached ? 0 : preferences.horizontalOffset)
             if beside {
                 x = preferences.position == .left
@@ -196,17 +286,52 @@ final class AgentNotch {
                 surface.panel.invalidateShadow()
             }
             let animate = preferences.animate && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && surface.panel.isVisible
-            if surface.panel.frame != frame {
-                NSAnimationContext.runAnimationGroup { context in
+            if preferences.shelfEnabled {
+                settleShelf(surface, to: frame, animate: animate)
+            } else {
+                if state.surfaceSize != nil { state.surfaceSize = nil }
+                if surface.panel.frame != frame { NSAnimationContext.runAnimationGroup { context in
                     context.duration = preferences.animationDuration
                     if animate { surface.panel.animator().setFrame(frame, display: true) }
                     else { surface.panel.setFrame(frame, display: true) }
-                }
+                } }
             }
-            if preferences.hideWhenEmpty && sessions.isEmpty && !playing && !state.expanded { surface.panel.orderOut(nil) }
+            if preferences.hideWhenEmpty && sessions.isEmpty && !playing && !state.expanded && !peeking { surface.panel.orderOut(nil) }
             else if !surface.panel.isVisible { surface.panel.orderFrontRegardless() }
         }
         publishBarSpans()
+    }
+
+    /// Shelf frames never animate the window: an animated `setFrame` moves
+    /// the origin and size separately, so the top edge dips and bounces.
+    /// The panel grows to cover both the old and new size at once, the view
+    /// animates its shape from the top, then the panel shrinks to fit.
+    private func settleShelf(_ surface: Surface, to frame: NSRect, animate: Bool) {
+        let state = surface.state
+        let panel = surface.panel
+        state.settleTask?.cancel()
+        state.settleTask = nil
+        let size = CGSize(width: frame.width, height: frame.height)
+        guard animate, state.surfaceSize != nil else {
+            state.surfaceSize = size
+            if panel.frame != frame { panel.setFrame(frame, display: true) }
+            return
+        }
+        let current = panel.frame
+        let width = max(current.width, frame.width)
+        let height = max(current.height, frame.height)
+        let cover = NSRect(x: frame.midX - width / 2, y: frame.maxY - height, width: width, height: height)
+        if current != cover { panel.setFrame(cover, display: true) }
+        state.surfaceSize = size
+        guard cover != frame else { return }
+        let task = DispatchWorkItem { [weak panel, weak state] in
+            guard let panel, let state, state.surfaceSize == size else { return }
+            state.settleTask = nil
+            panel.setFrame(frame, display: true)
+            panel.invalidateShadow()
+        }
+        state.settleTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + preferences.animationDuration + 0.05, execute: task)
     }
 
     /// Where an attached notch sits in the menu bar. Always the compact width:
