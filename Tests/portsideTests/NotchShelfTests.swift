@@ -345,4 +345,63 @@ final class NotchShelfTests: XCTestCase {
         XCTAssertGreaterThan(NotchClipboardPage.height(count: 2, paused: true), one, "the paused note adds a row")
         XCTAssertGreaterThan(NotchClipboardPage.height(count: 0, paused: false), 0, "empty state has room")
     }
+
+    // MARK: Strip priority and alerts (SHELF-07)
+
+    func testStripFollowsTheOrderAndAlertsBorrowTheRight() {
+        XCTAssertEqual(NotchShelfStrip.layout(active: [.meeting, .music], alert: nil), NotchShelfStrip(leading: .meeting, trailing: .meeting))
+        XCTAssertEqual(NotchShelfStrip.layout(active: [.music], alert: .battery), NotchShelfStrip(leading: .music, trailing: .battery))
+        XCTAssertEqual(NotchShelfStrip.layout(active: [], alert: .weather), NotchShelfStrip(leading: nil, trailing: .weather))
+        XCTAssertEqual(NotchShelfOrder.normalized([.agents, .battery, .agents]), [.agents, .meeting, .music],
+                       "alerts never own the strip; repeats dropped, missing appended")
+        XCTAssertEqual(AgentNotchSettings().stripOrder, [.meeting, .music, .agents])
+    }
+
+    func testMeetingWindowAndNextChange() {
+        let now = Date(timeIntervalSince1970: 100_000)
+        let starts = [(start: now.addingTimeInterval(600), allDay: false), (start: now.addingTimeInterval(120), allDay: true),
+                      (start: now.addingTimeInterval(240), allDay: false)]
+        XCTAssertEqual(NotchMeetingSoon.current(starts, now: now, minutes: 5), 2, "4 min away, all-day skipped")
+        XCTAssertNil(NotchMeetingSoon.current(starts, now: now, minutes: 1))
+        XCTAssertNil(NotchMeetingSoon.current(starts, now: now, minutes: 0), "off")
+        XCTAssertEqual(NotchMeetingSoon.nextChange(starts, now: now, minutes: 5), now.addingTimeInterval(300), "the 10 min meeting enters")
+        XCTAssertEqual(NotchMeetingSoon.current(starts, now: now.addingTimeInterval(290), minutes: 5), 2, "until a minute after start")
+        XCTAssertEqual(NotchMeetingCard.countdown(to: now.addingTimeInterval(61), now: now), "in 2 min")
+        XCTAssertEqual(NotchMeetingCard.countdown(to: now.addingTimeInterval(-10), now: now), "now")
+    }
+
+    func testBatteryAlerts() {
+        XCTAssertNil(NotchBatteryAlert.detect(previous: nil, current: (15, false), low: 20), "no alert for the first reading")
+        XCTAssertEqual(NotchBatteryAlert.detect(previous: (21, false), current: (20, false), low: 20), .low)
+        XCTAssertNil(NotchBatteryAlert.detect(previous: (19, false), current: (18, false), low: 20), "only when crossing")
+        XCTAssertEqual(NotchBatteryAlert.detect(previous: (40, false), current: (40, true), low: 20), .pluggedIn)
+        XCTAssertNil(NotchBatteryAlert.detect(previous: (40, true), current: (41, true), low: 20))
+    }
+
+    func testWeatherAlerts() {
+        let now = Date(timeIntervalSince1970: 200_000)
+        let hours = [(date: now.addingTimeInterval(-600), code: 3), (date: now.addingTimeInterval(3000), code: 61)]
+        let found = NotchWeatherAlert.detect(now: 3, hours: hours, at: now)
+        XCTAssertEqual(found?.kind, .rain)
+        XCTAssertEqual(found?.date, now.addingTimeInterval(3000))
+        XCTAssertNil(NotchWeatherAlert.detect(now: 63, hours: hours, at: now), "already raining")
+        XCTAssertNil(NotchWeatherAlert.detect(now: 0, hours: [(date: now.addingTimeInterval(9000), code: 71)], at: now), "too far out")
+        XCTAssertEqual(NotchWeatherAlert.kind(96), .storm)
+    }
+
+    func testAlertSettingsDefaultsAndBounds() throws {
+        let fresh = AgentNotchSettings()
+        XCTAssertEqual(fresh.meetingMinutes, 5)
+        XCTAssertTrue(fresh.alertAgents && fresh.alertBattery && fresh.alertWeather)
+        XCTAssertEqual(fresh.batteryLowPercent, 20)
+        let bad = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"meetingMinutes":7,"batteryLowPercent":3,"stripOrder":["agents","bogus"]}"#.utf8))
+        XCTAssertEqual(bad.meetingMinutes, 5)
+        XCTAssertEqual(bad.batteryLowPercent, 20)
+        XCTAssertEqual(bad.stripOrder, [.agents, .meeting, .music])
+        var on = AgentNotchSettings()
+        on.shelfEnabled = true
+        XCTAssertTrue(Set(WidgetStore.shelfKinds(on)).isSuperset(of: ["battery", "weather", "calendar"]))
+        on.alertBattery = false; on.alertWeather = false; on.meetingMinutes = 0
+        XCTAssertFalse(WidgetStore.shelfKinds(on).contains("battery"))
+    }
 }

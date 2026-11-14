@@ -472,3 +472,39 @@ struct NotchClipboardPage: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { if failure == message { failure = nil } }
     }
 }
+
+/// The meeting card (SHELF-07): its calendar color, title, time and a
+/// countdown, with Join when the event has a meeting link.
+struct NotchMeetingCard: View {
+    let event: CalendarWidget.NextEvent
+
+    /// "in 4 min", "in 1 min", "now".
+    static func countdown(to start: Date, now: Date) -> String {
+        let minutes = Int((start.timeIntervalSince(now) / 60).rounded(.up))
+        return minutes <= 0 ? "now" : "in \(minutes) min"
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Capsule().fill(event.color).frame(width: 4, height: 40)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(event.title).fontWeight(.semibold).lineLimit(1)
+                TimelineView(.periodic(from: .now, by: 15)) { context in
+                    Text("\(event.start.formatted(.dateTime.hour().minute()))  ·  \(Self.countdown(to: event.start, now: context.date))")
+                        .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55)).monospacedDigit()
+                }
+            }
+            Spacer(minLength: 4)
+            if let meeting = event.meeting {
+                Button("Join") { NSWorkspace.shared.open(meeting) }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .padding(.horizontal, 14).padding(.vertical, 6)
+                    .background(.green.opacity(0.85), in: Capsule())
+                    .accessibilityLabel("Join \(event.title)")
+            }
+        }
+        .frame(height: 52)
+        .accessibilityElement(children: .combine)
+    }
+}

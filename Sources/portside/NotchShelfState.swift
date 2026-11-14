@@ -1,9 +1,111 @@
 import CoreGraphics
+import Foundation
 
 enum NotchShelfSide: Equatable { case leading, trailing }
 
-/// Something running that the compact strip shows and that has a card.
-enum NotchShelfActivity: Equatable { case music, agents }
+/// Something the compact strip shows and that has a card. Music, agents
+/// and a meeting about to start last while they are true; battery and
+/// weather only ever come as short alerts (SHELF-07).
+enum NotchShelfActivity: String, Codable, CaseIterable, Identifiable {
+    case meeting, music, agents, battery, weather
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .meeting: "Meeting soon"
+        case .music: "Music"
+        case .agents: "Agents"
+        case .battery: "Battery"
+        case .weather: "Weather"
+        }
+    }
+    /// Lasts while true, so it can own the strip; the rest are alerts.
+    var isLasting: Bool { self == .meeting || self == .music || self == .agents }
+}
+
+/// A short alert on the strip's right side: what it is and its words.
+struct NotchShelfAlert: Equatable {
+    let activity: NotchShelfActivity
+    let symbol: String
+    /// On the strip, beside the symbol ("18%"); may be empty.
+    let short: String
+    let title: String
+    let detail: String
+    /// Drawn in red (low battery).
+    var isWarning = false
+}
+
+/// Which lasting activity owns the strip when several are on, first wins.
+/// Saved inside `agentNotchSettings` as `stripOrder`; unknown, repeated or
+/// alert-only entries are dropped and missing ones come back at the end.
+enum NotchShelfOrder {
+    static let defaults: [NotchShelfActivity] = [.meeting, .music, .agents]
+
+    static func normalized(_ order: [NotchShelfActivity]) -> [NotchShelfActivity] {
+        var seen = Set<NotchShelfActivity>()
+        let kept = order.filter { $0.isLasting && seen.insert($0).inserted }
+        return kept + defaults.filter { !seen.contains($0) }
+    }
+}
+
+/// When the strip shows a meeting: from `minutes` before it starts until a
+/// minute after. All-day events never count.
+enum NotchMeetingSoon {
+    static let after: TimeInterval = 60
+    static let choices = [0, 1, 5, 10, 15]
+
+    static func current(_ starts: [(start: Date, allDay: Bool)], now: Date, minutes: Int) -> Int? {
+        guard minutes > 0 else { return nil }
+        return starts.indices.filter { !starts[$0].allDay }.first { index in
+            let start = starts[index].start
+            return now >= start.addingTimeInterval(-TimeInterval(minutes * 60)) && now < start.addingTimeInterval(after)
+        }
+    }
+
+    /// The next time the answer of `current` can change, for one timer.
+    static func nextChange(_ starts: [(start: Date, allDay: Bool)], now: Date, minutes: Int) -> Date? {
+        guard minutes > 0 else { return nil }
+        return starts.filter { !$0.allDay }
+            .flatMap { [$0.start.addingTimeInterval(-TimeInterval(minutes * 60)), $0.start.addingTimeInterval(after)] }
+            .filter { $0 > now }.min()
+    }
+}
+
+/// Weather alerts: rain, snow or a storm in the next two hours when none
+/// is falling now (WMO codes from Open-Meteo).
+enum NotchWeatherAlert {
+    enum Kind: String { case rain, snow, storm }
+
+    static func kind(_ code: Int) -> Kind? {
+        switch code {
+        case 51...67, 80...82: .rain
+        case 71...77, 85, 86: .snow
+        case 95...99: .storm
+        default: nil
+        }
+    }
+
+    /// The first wet hour within two hours, when it is dry now.
+    static func detect(now code: Int?, hours: [(date: Date, code: Int)], at now: Date) -> (kind: Kind, date: Date)? {
+        guard let code, kind(code) == nil else { return nil }
+        return hours.lazy
+            .filter { $0.date.addingTimeInterval(3600) > now && $0.date <= now.addingTimeInterval(7200) }
+            .compactMap { hour in kind(hour.code).map { (kind: $0, date: hour.date) } }
+            .first
+    }
+}
+
+/// Battery alerts: the charger goes in, or the level drops to the low mark
+/// while on battery.
+enum NotchBatteryAlert: Equatable {
+    case pluggedIn, low
+
+    static func detect(previous: (percent: Int, onAC: Bool)?, current: (percent: Int, onAC: Bool), low: Int) -> NotchBatteryAlert? {
+        guard let previous else { return nil }
+        if current.onAC && !previous.onAC { return .pluggedIn }
+        if !current.onAC && previous.percent > low && current.percent <= low { return .low }
+        return nil
+    }
+}
 
 enum NotchShelfPhase: Equatable {
     case compact
@@ -12,18 +114,24 @@ enum NotchShelfPhase: Equatable {
     case open
 }
 
-/// What the compact strip shows on each side of the notch (SHELF-04c).
-/// Music playing takes both sides (art left, animation right); agents give
-/// up the strip to it, except for a short alert on the right. Without
-/// music, agents take both sides. Nil: that side shows nothing.
+/// What the compact strip shows on each side of the notch. The lasting
+/// activity first in `stripOrder` takes both sides (music: art left,
+/// animation right); an alert takes the right side for a few seconds
+/// (SHELF-07). Nil: that side shows nothing.
 struct NotchShelfStrip: Equatable {
     var leading: NotchShelfActivity?
     var trailing: NotchShelfActivity?
 
+    /// `active`: lasting activities that are on, in priority order; the
+    /// first takes both sides. `alert` borrows the right side.
+    static func layout(active: [NotchShelfActivity], alert: NotchShelfActivity?) -> NotchShelfStrip {
+        NotchShelfStrip(leading: active.first, trailing: alert ?? active.first)
+    }
+
+    /// SHELF-04c's fixed order: music over agents, an agent alert on the right.
     static func layout(music: Bool, agents: Bool, agentAlert: Bool) -> NotchShelfStrip {
-        if music { return NotchShelfStrip(leading: .music, trailing: agents && agentAlert ? .agents : .music) }
-        if agents { return NotchShelfStrip(leading: .agents, trailing: .agents) }
-        return NotchShelfStrip()
+        layout(active: [music ? .music : nil, agents ? .agents : nil].compactMap { $0 },
+               alert: agents && agentAlert && music ? .agents : nil)
     }
 
     func activity(_ side: NotchShelfSide) -> NotchShelfActivity? {

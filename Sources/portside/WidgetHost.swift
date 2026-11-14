@@ -148,13 +148,24 @@ final class WidgetStore: ObservableObject {
         self.dockModel = dockModel
         cancellable = dockModel.$widgetKinds.combineLatest(dockModel.$showAgentNotch, dockModel.$agentNotchSettings).sink { [weak self] kinds, notch, settings in
             self?.sync(kinds, notch: notch, usage: settings.showUsage, media: settings.showMedia,
-                       shelf: settings.shelfEnabled && settings.shelfPages.isOn(.widgets)
-                           ? [settings.shelfLeadingWidget, settings.shelfTrailingWidget].compactMap(\.widgetKind) : [])
+                       shelf: Self.shelfKinds(settings))
         }
     }
 
     func widget(_ kind: String) -> (any DockWidget)? {
         activeHosts.first { $0.id == kind }?.widget
+    }
+
+    /// What the Notch Shelf reads while it is on: its Widgets slots, and
+    /// the battery, weather and calendar behind its alerts (SHELF-07).
+    static func shelfKinds(_ settings: AgentNotchSettings) -> [String] {
+        guard settings.shelfEnabled else { return [] }
+        var kinds = settings.shelfPages.isOn(.widgets)
+            ? [settings.shelfLeadingWidget, settings.shelfTrailingWidget].compactMap(\.widgetKind) : []
+        if settings.alertBattery { kinds.append(BatteryWidget.kind) }
+        if settings.alertWeather { kinds.append(WeatherWidget.kind) }
+        if settings.meetingMinutes > 0 { kinds.append(CalendarWidget.kind) }
+        return kinds
     }
 
     /// A running host, in the dock or not (the notch and its shelf).

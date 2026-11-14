@@ -70,6 +70,8 @@ struct AgentNotchView: View {
             let rows = preferences.agentCard == .all ? min(preferences.maxSessions, max(1, sessionCount)) : 1
             let more: CGFloat = preferences.agentCard == .latest && sessionCount > 1 ? 22 : 0
             return dashboardTopPadding + CGFloat(rows) * rowHeight + CGFloat(rows - 1) * preferences.rowSpacing + more + dashboardBottomPadding
+        case .meeting: return dashboardTopPadding + 52 + dashboardBottomPadding
+        case .battery, .weather: return dashboardTopPadding + 44 + dashboardBottomPadding
         }
     }
     static let dashboardTopPadding: CGFloat = 12
@@ -411,12 +413,31 @@ struct AgentNotchView: View {
                 if let nowPlaying { NotchMusicCard(widget: nowPlaying, preferences: preferences, layout: .wide) }
             case .agents:
                 agentCard
+            case .meeting:
+                if let meeting = state.meeting { NotchMeetingCard(event: meeting) }
+            case .battery, .weather:
+                if let alert = state.alert { alertCard(alert) }
             }
         }
         .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding).padding(.bottom, Self.dashboardBottomPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .contentShape(Rectangle())
         .onTapGesture { state.shelfClick() }
+    }
+
+    /// A battery or weather alert's card: its symbol, what happened, detail.
+    private func alertCard(_ alert: NotchShelfAlert) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: alert.symbol).symbolRenderingMode(alert.activity == .weather ? .multicolor : .palette).font(.system(size: 26)).frame(width: 40)
+                .foregroundStyle(alert.isWarning ? Color.red : .white, alert.isWarning ? Color.red : .white)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(alert.title).fontWeight(.semibold)
+                Text(alert.detail).font(.system(size: max(9, preferences.fontSize - 1))).foregroundStyle(.white.opacity(0.55))
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(height: 44)
+        .accessibilityElement(children: .combine)
     }
 
     /// Bartender's agent card: the latest session, "+N more" below; or
@@ -530,6 +551,10 @@ struct AgentNotchView: View {
         if state.strip.leading == .agents || state.strip.trailing == .agents {
             parts.append("\(sessions.count) agent sessions\(attention > 0 ? ", \(attention) need you" : "")")
         }
+        if state.strip.leading == .meeting, let meeting = state.meeting {
+            parts.insert("\(meeting.title) \(NotchMeetingCard.countdown(to: meeting.start, now: Date()))", at: 0)
+        }
+        if let alert = state.alert { parts.append(alert.title) }
         return (parts.isEmpty ? "Notch shelf" : parts.joined(separator: ", ")) + ". Open shelf"
     }
 
@@ -567,6 +592,23 @@ struct AgentNotchView: View {
                     if attention > 0 { Circle().fill(.orange).frame(width: 5, height: 5) }
                     Text("\(attention > 0 ? attention : sessions.count)").monospacedDigit().fontWeight(.semibold)
                         .foregroundStyle(attention > 0 ? .orange : .white)
+                }
+            case (.meeting?, .leading):
+                Image(systemName: "calendar").foregroundStyle(state.meeting?.color ?? .red)
+            case (.meeting?, .trailing):
+                if let meeting = state.meeting {
+                    TimelineView(.periodic(from: .now, by: 15)) { context in
+                        Text(NotchMeetingCard.countdown(to: meeting.start, now: context.date)).monospacedDigit().fontWeight(.semibold)
+                    }
+                }
+            case (.battery?, _), (.weather?, _):
+                if let alert = state.alert {
+                    HStack(spacing: 4) {
+                        Image(systemName: alert.symbol).symbolRenderingMode(alert.activity == .weather ? .multicolor : .palette)
+                            .foregroundStyle(alert.isWarning ? Color.red : .white, alert.isWarning ? Color.red : .white)
+                        if !alert.short.isEmpty { Text(alert.short).monospacedDigit().fontWeight(.semibold) }
+                    }
+                    .foregroundStyle(alert.isWarning ? .red : .white)
                 }
             case (nil, _):
                 Color.clear

@@ -95,7 +95,7 @@ enum AgentNotchProbe {
                 id: "probe", title: "I'm On", artist: "Anderson .Paak, Cordae", artwork: art, artworkURL: nil, isPlaying: true,
                 player: NowPlayingWidget.Player(bundleID: "com.apple.Music", name: "Music", notification: ""),
                 duration: 233, elapsed: 72, elapsedAt: Date()))
-            let shelfVariants = ["shelf-agents", "shelf-widgets", "shelf-clipboard", "strip-music", "card-music", "card-vinyl", "card-agents"]
+            let shelfVariants = ["shelf-agents", "shelf-widgets", "shelf-clipboard", "strip-music", "card-music", "card-vinyl", "card-agents", "card-meeting", "card-battery"]
             for name in ["compact", "attached", "expanded", "large-text", "minimal"] + shelfVariants {
                 let state = AgentNotchPresentation()
                 state.preferences.animate = false
@@ -109,6 +109,16 @@ enum AgentNotchProbe {
                     state.compactWidth = 184 + 180 + 2 * NotchShape.flare
                     state.strip = name == "card-agents" ? NotchShelfStrip.layout(music: false, agents: true, agentAlert: false)
                         : NotchShelfStrip.layout(music: true, agents: true, agentAlert: false)
+                    if name == "card-meeting" {
+                        state.meeting = CalendarWidget.NextEvent(title: "Design review", start: Date().addingTimeInterval(240), isAllDay: false,
+                                                                 color: .orange, meeting: URL(string: "https://meet.google.com/abc-defg-hij"))
+                        state.strip = NotchShelfStrip.layout(active: [.meeting, .music], alert: nil)
+                    }
+                    if name == "card-battery" {
+                        state.alert = NotchShelfAlert(activity: .battery, symbol: "battery.25percent", short: "18%",
+                                                      title: "Low battery", detail: "18% left. Plug in soon.", isWarning: true)
+                        state.strip = NotchShelfStrip.layout(active: [.music], alert: .battery)
+                    }
                     if name.hasPrefix("shelf") {
                         state.pageAvailable = { _ in true }
                         state.showPage(name == "shelf-agents" ? .agents : name == "shelf-clipboard" ? .clipboard : .widgets)
@@ -125,7 +135,7 @@ enum AgentNotchProbe {
                     state.widgetHost = { kind in hosts.first { $0.id == kind } }
                     if name.hasPrefix("card") {
                         state.panelWidth = state.preferences.expandedWidth + 2 * NotchShape.flare
-                        state.shelfPointer(.side(.leading))
+                        state.shelfPointer(.side(name == "card-battery" ? .trailing : .leading))
                         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
                     }
                 }

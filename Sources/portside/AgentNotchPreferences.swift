@@ -87,6 +87,15 @@ struct AgentNotchSettings: Codable, Equatable {
     /// finish (Bartender's completed-task dismiss); 0 keeps them.
     var finishedDismissMinutes = 5
     static let finishedDismissChoices = [0, 1, 5, 15, 60]
+    /// Which lasting activity owns the strip when several are on (SHELF-07).
+    var stripOrder = NotchShelfOrder.defaults
+    /// Minutes before a meeting that the strip shows it; 0 turns it off.
+    var meetingMinutes = 5
+    var alertAgents = true
+    var alertBattery = true
+    var batteryLowPercent = 20
+    static let batteryLowChoices = [10, 20, 30]
+    var alertWeather = true
     var collapseAfterFocus = true
     var showProject = true
     var showHost = true
@@ -122,7 +131,8 @@ struct AgentNotchSettings: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case position, display, compactStyle, clickAction, filter, hideWhenEmpty, animate, showTotal, showUsage, showMedia
         case expandOnHover, shelfEnabled, shelfPages, shelfLeadingWidget, shelfTrailingWidget, shelfHoverDelay, shelfCollapseDelay
-        case shelfHaptics, musicStyle, musicSeeking, musicTint, musicHideWhenPaused, musicBanner, agentCard, finishedDismissMinutes, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
+        case shelfHaptics, musicStyle, musicSeeking, musicTint, musicHideWhenPaused, musicBanner, agentCard, finishedDismissMinutes, stripOrder, meetingMinutes
+        case alertAgents, alertBattery, batteryLowPercent, alertWeather, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
         case showFinished, claude, codex, copilot, opencode, cursor, showBorder, compactWidth, compactHeight, expandedWidth, cornerRadius, opacity, fontSize
         case rowSpacing, maxSessions, hoverDelay, collapseDelay, animationDuration, horizontalOffset, verticalOffset, accent
     }
@@ -159,6 +169,13 @@ struct AgentNotchSettings: Codable, Equatable {
         musicBanner = values.value(.musicBanner, or: true)
         agentCard = values.value(.agentCard, or: .latest)
         finishedDismissMinutes = values.value(.finishedDismissMinutes, or: 5)
+        let order = ((try? values.decodeIfPresent([String].self, forKey: .stripOrder)) ?? nil)?.compactMap(NotchShelfActivity.init(rawValue:))
+        stripOrder = order ?? NotchShelfOrder.defaults
+        meetingMinutes = values.value(.meetingMinutes, or: 5)
+        alertAgents = values.value(.alertAgents, or: true)
+        alertBattery = values.value(.alertBattery, or: true)
+        batteryLowPercent = values.value(.batteryLowPercent, or: 20)
+        alertWeather = values.value(.alertWeather, or: true)
         collapseAfterFocus = values.value(.collapseAfterFocus, or: true)
         showProject = values.value(.showProject, or: true)
         showHost = values.value(.showHost, or: true)
@@ -202,6 +219,9 @@ struct AgentNotchSettings: Codable, Equatable {
         rowSpacing = bounded(rowSpacing, 4...16, 8)
         maxSessions = min(10, max(2, maxSessions))
         if !Self.finishedDismissChoices.contains(finishedDismissMinutes) { finishedDismissMinutes = 5 }
+        stripOrder = NotchShelfOrder.normalized(stripOrder)
+        if !NotchMeetingSoon.choices.contains(meetingMinutes) { meetingMinutes = 5 }
+        if !Self.batteryLowChoices.contains(batteryLowPercent) { batteryLowPercent = 20 }
         hoverDelay = bounded(hoverDelay, 0...1, 0.25)
         collapseDelay = bounded(collapseDelay, 0.1...2, 0.6)
         shelfHoverDelay = bounded(shelfHoverDelay, 0...1, 0.15)

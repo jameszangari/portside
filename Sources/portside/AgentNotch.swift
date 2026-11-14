@@ -16,9 +16,11 @@ final class AgentNotchPresentation: ObservableObject {
     @Published private(set) var card: NotchShelfActivity?
     /// Shelf only: what the compact strip shows on each side.
     @Published var strip = NotchShelfStrip()
-    /// Shelf only: an agent just finished or needs you; it takes the
-    /// strip's right side from music for a few seconds.
-    @Published var agentAlert = false
+    /// Shelf only: a short alert (an agent finished or needs you, battery,
+    /// weather) on the strip's right side for a few seconds.
+    @Published var alert: NotchShelfAlert?
+    /// Shelf only: the meeting the strip is counting down to.
+    @Published var meeting: CalendarWidget.NextEvent?
     /// Shelf only: the Agents page's provider chip, nil for all. Kept for
     /// this run only.
     @Published var agentProvider: String?
@@ -200,6 +202,7 @@ final class AgentNotch {
                 self.agents = nextAgents
                 self.usage = nextUsage
                 self.nowPlaying = nextMedia
+                self.bindAlertSources(widgets)
                 if changed { self.rebuildPanels() }
                 else {
                     self.surfaces.forEach { $0.state.preferences = preferences }
@@ -234,6 +237,9 @@ final class AgentNotch {
         localMonitor = nil
         dismissTask?.cancel()
         dismissTask = nil
+        meetingTask?.cancel()
+        meetingTask = nil
+        alertSubscriptions = []
         enabled = false
         rebuildPanels()
     }
@@ -298,6 +304,80 @@ final class AgentNotch {
         layoutPanels()
     }
 
+    private weak var battery: BatteryWidget?
+    private weak var weather: WeatherWidget?
+    private weak var calendar: CalendarWidget?
+    private var alertSubscriptions: [AnyCancellable] = []
+    private var lastBattery: (percent: Int, onAC: Bool)?
+    private var weatherAlerted: Set<String> = []
+    private var meetingTask: DispatchWorkItem?
+
+    /// Battery, weather and calendar feed the strip while the shelf is on
+    /// (the widget store runs them for it). Rebound when their hosts change.
+    private func bindAlertSources(_ widgets: WidgetStore) {
+        let shelf = preferences.shelfEnabled
+        let nextBattery = shelf && preferences.alertBattery ? widgets.widget(BatteryWidget.kind) as? BatteryWidget : nil
+        let nextWeather = shelf && preferences.alertWeather ? widgets.widget(WeatherWidget.kind) as? WeatherWidget : nil
+        let nextCalendar = shelf && preferences.meetingMinutes > 0 ? widgets.widget(CalendarWidget.kind) as? CalendarWidget : nil
+        guard nextBattery !== battery || nextWeather !== weather || nextCalendar !== calendar else { return }
+        battery = nextBattery
+        weather = nextWeather
+        calendar = nextCalendar
+        lastBattery = nil
+        alertSubscriptions = []
+        if let nextBattery {
+            alertSubscriptions.append(nextBattery.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.checkBattery() })
+            checkBattery()
+        }
+        if let nextWeather {
+            alertSubscriptions.append(nextWeather.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.checkWeather() })
+        }
+        if let nextCalendar {
+            alertSubscriptions.append(nextCalendar.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.layoutPanels() })
+        }
+    }
+
+    private func checkBattery() {
+        guard let battery, let percent = battery.percent else { return }
+        let current = (percent: percent, onAC: battery.onAC)
+        defer { lastBattery = current }
+        switch NotchBatteryAlert.detect(previous: lastBattery, current: current, low: preferences.batteryLowPercent) {
+        case .pluggedIn?:
+            showAlert(NotchShelfAlert(activity: .battery, symbol: "battery.100percent.bolt", short: "\(percent)%",
+                                      title: "Charging", detail: "Battery at \(percent)%"))
+        case .low?:
+            showAlert(NotchShelfAlert(activity: .battery, symbol: "battery.25percent", short: "\(percent)%",
+                                      title: "Low battery", detail: "\(percent)% left. Plug in soon.", isWarning: true))
+        case nil: break
+        }
+    }
+
+    private func checkWeather() {
+        guard let weather, let found = NotchWeatherAlert.detect(now: weather.code, hours: weather.hourly, at: Date()) else { return }
+        let key = "\(found.kind.rawValue)-\(Int(found.date.timeIntervalSince1970))"
+        guard weatherAlerted.insert(key).inserted else { return }
+        let minutes = max(0, Int(found.date.timeIntervalSinceNow / 60))
+        let word = found.kind == .rain ? "Rain" : found.kind == .snow ? "Snow" : "Storms"
+        let symbol = found.kind == .rain ? "cloud.rain.fill" : found.kind == .snow ? "cloud.snow.fill" : "cloud.bolt.rain.fill"
+        showAlert(NotchShelfAlert(activity: .weather, symbol: symbol, short: "",
+                                  title: minutes < 5 ? "\(word) starting" : "\(word) in about \(minutes) min",
+                                  detail: weather.place.map { "Forecast for \($0)" } ?? "From the forecast"))
+    }
+
+    /// Shows `alert` on the strip's right side for 4 s.
+    private func showAlert(_ alert: NotchShelfAlert) {
+        guard preferences.shelfEnabled else { return }
+        surfaces.forEach { $0.state.alert = alert }
+        alertTask?.cancel()
+        let task = DispatchWorkItem { [weak self] in
+            self?.surfaces.forEach { $0.state.alert = nil }
+            self?.layoutPanels()
+        }
+        alertTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: task)
+        layoutPanels()
+    }
+
     /// Sessions already alerted for, so each finish or question alerts once.
     private var alerted: Set<String> = []
     private var alertTask: DispatchWorkItem?
@@ -312,16 +392,13 @@ final class AgentNotch {
         guard let agents else { return }
         let now = Set(preferences.sessions(from: agents.sessions).filter(Self.alerting).map(\.id))
         let fresh = !now.subtracting(alerted).isEmpty
+        let before = alerted
         alerted = now
-        guard fresh, preferences.shelfEnabled else { return }
-        surfaces.forEach { $0.state.agentAlert = true }
-        alertTask?.cancel()
-        let task = DispatchWorkItem { [weak self] in
-            self?.surfaces.forEach { $0.state.agentAlert = false }
-            self?.layoutPanels()
-        }
-        alertTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: task)
+        guard fresh, preferences.alertAgents, let session = preferences.sessions(from: agents.sessions)
+            .filter({ Self.alerting($0) && !before.contains($0.id) }).first else { return }
+        showAlert(NotchShelfAlert(activity: .agents, symbol: session.needsAttention ? "hand.raised.fill" : "checkmark.circle.fill",
+                                  short: "", title: session.needsAttention ? "Needs you" : "Finished",
+                                  detail: session.project ?? session.provider.name))
     }
 
     /// The song banner: a new track while music shows on the strip. Not for
@@ -346,6 +423,22 @@ final class AgentNotch {
 
     private var dismissTask: DispatchWorkItem?
 
+    /// The meeting the strip counts down to, and one timer for the next
+    /// time that can change (no polling).
+    private func currentMeeting() -> CalendarWidget.NextEvent? {
+        meetingTask?.cancel()
+        meetingTask = nil
+        guard preferences.shelfEnabled, let events = calendar?.upcoming, !events.isEmpty else { return nil }
+        let starts = events.map { (start: $0.start, allDay: $0.isAllDay) }
+        let now = Date()
+        if let next = NotchMeetingSoon.nextChange(starts, now: now, minutes: preferences.meetingMinutes) {
+            let task = DispatchWorkItem { [weak self] in self?.layoutPanels() }
+            meetingTask = task
+            DispatchQueue.main.asyncAfter(deadline: .now() + next.timeIntervalSince(now) + 0.05, execute: task)
+        }
+        return NotchMeetingSoon.current(starts, now: now, minutes: preferences.meetingMinutes).map { events[$0] }
+    }
+
     /// One timer for the next finished session to leave the list, so the
     /// list and the notch drop it on time without polling.
     private func scheduleDismiss(_ sessions: [AgentSession]) {
@@ -366,6 +459,7 @@ final class AgentNotch {
         let sessions = preferences.sessions(from: agents.sessions)
         scheduleDismiss(sessions)
         let clipboard = MainActor.assumeIsolated { (ClipboardService.shared.entries.count, ClipboardService.shared.prefs.paused) }
+        let meeting = currentMeeting()
         let playing = musicShowing
         for surface in surfaces {
             let screen = surface.screen
@@ -385,7 +479,16 @@ final class AgentNotch {
             // Attached, the flared top corners sit inside the frame; widen it so the body keeps its width.
             state.compactWidth = min(screen.frame.width - 24, preferences.compactWidth + state.notchWidth
                                      + (state.topAttached ? 2 * NotchShape.flare : 0))
-            let strip = NotchShelfStrip.layout(music: playing, agents: !sessions.isEmpty, agentAlert: state.agentAlert)
+            if state.meeting != meeting { state.meeting = meeting }
+            let active = preferences.stripOrder.filter { activity in
+                switch activity {
+                case .meeting: meeting != nil
+                case .music: playing
+                case .agents: !sessions.isEmpty
+                case .battery, .weather: false
+                }
+            }
+            let strip = NotchShelfStrip.layout(active: active, alert: state.alert?.activity)
             if state.strip != strip { state.strip = strip }
             if let card = state.card, strip.leading != card, strip.trailing != card, !state.expanded {
                 // Music stopped or the agents went away under the card.
@@ -437,7 +540,8 @@ final class AgentNotch {
                     else { surface.panel.setFrame(frame, display: true) }
                 } }
             }
-            if preferences.hideWhenEmpty && sessions.isEmpty && !playing && !state.expanded && !peeking { surface.panel.orderOut(nil) }
+            if preferences.hideWhenEmpty && sessions.isEmpty && !playing && meeting == nil && state.alert == nil
+                && !state.expanded && !peeking { surface.panel.orderOut(nil) }
             else if !surface.panel.isVisible { surface.panel.orderFrontRegardless() }
         }
         publishBarSpans()

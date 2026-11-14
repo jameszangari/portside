@@ -101,6 +101,39 @@ struct AgentNotchSettingsView: View {
                         Toggle("Haptic feedback on hover", isOn: binding(\.shelfHaptics))
                     }
                 }
+                if preferences.shelfEnabled {
+                    SettingsFold("Strip and alerts", symbol: "bell.badge", summary: alertsSummary) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("When several are on, the first one owns the strip")
+                            ForEach(Array(preferences.stripOrder.enumerated()), id: \.element) { index, activity in
+                                HStack(spacing: 8) {
+                                    Text("\(index + 1).").monospacedDigit().foregroundStyle(.secondary).frame(width: 18, alignment: .trailing)
+                                    Text(activity.title)
+                                    Spacer()
+                                    Button { model.updateAgentNotch { $0.stripOrder.swapAt(index, index - 1) } } label: { Image(systemName: "chevron.up") }
+                                        .buttonStyle(.borderless).disabled(index == 0).accessibilityLabel("Move \(activity.title) up")
+                                    Button { model.updateAgentNotch { $0.stripOrder.swapAt(index, index + 1) } } label: { Image(systemName: "chevron.down") }
+                                        .buttonStyle(.borderless).disabled(index == preferences.stripOrder.count - 1)
+                                        .accessibilityLabel("Move \(activity.title) down")
+                                }
+                            }
+                        }
+                        Picker("Meeting soon", selection: binding(\.meetingMinutes)) {
+                            ForEach(NotchMeetingSoon.choices, id: \.self) { minutes in
+                                Text(minutes == 0 ? "Off" : "\(minutes) min before").tag(minutes)
+                            }
+                        }
+                        Toggle("Agent finished or needs you", isOn: binding(\.alertAgents))
+                        Toggle("Battery low or charging", isOn: binding(\.alertBattery))
+                        if preferences.alertBattery {
+                            Picker("Low battery at", selection: binding(\.batteryLowPercent)) {
+                                ForEach(AgentNotchSettings.batteryLowChoices, id: \.self) { Text("\($0)%").tag($0) }
+                            }
+                        }
+                        Toggle("Rain or snow soon", isOn: binding(\.alertWeather))
+                        Text("Alerts take the strip's right side for 4 seconds. Meetings need Calendar access (Widgets > Calendar).").helperStyle()
+                    }
+                }
                 if preferences.showMedia, preferences.shelfEnabled {
                     SettingsFold("Music", symbol: "music.note", summary: musicSummary) {
                         cards("Style", \.musicStyle, NotchMusicStyle.allCases.map { ($0, $0.title) }, columns: 2) { NotchMusicStylePicture(style: $0) }
@@ -173,6 +206,13 @@ struct AgentNotchSettingsView: View {
 
     private var shelfSummary: String {
         "\(preferences.shelfLeadingWidget.title) and \(preferences.shelfTrailingWidget.title), opens on \(preferences.shelfPages.start.title.lowercased())"
+    }
+
+    private var alertsSummary: String {
+        let order = preferences.stripOrder.map { $0 == .meeting ? "meeting" : $0.title.lowercased() }.joined(separator: ", ")
+        let alerts = settingsList([("agents", preferences.alertAgents), ("battery", preferences.alertBattery),
+                                   ("weather", preferences.alertWeather)], none: "no alerts")
+        return "\(order.prefix(1).uppercased() + order.dropFirst()); \(alerts)"
     }
 
     private var musicSummary: String {
