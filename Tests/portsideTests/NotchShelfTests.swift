@@ -240,4 +240,31 @@ final class NotchShelfTests: XCTestCase {
         let settings = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"shelfEnabled":true}"#.utf8))
         XCTAssertEqual(settings.shelfPages, NotchShelfPages(), "older files get the default pages")
     }
+
+    // MARK: Widgets page (SHELF-04)
+
+    func testShelfWidgetsNormalize() {
+        XCTAssertEqual(NotchShelfWidgets.normalized(["weather", "bogus", "weather", "clock"]), ["weather", "clock"])
+        XCTAssertEqual(NotchShelfWidgets.normalized([]), NotchShelfWidgets.defaults)
+        XCTAssertEqual(NotchShelfWidgets.normalized(["agents"]), NotchShelfWidgets.defaults, "the agents widget is the Agents page, not a slot")
+        XCTAssertEqual(NotchShelfWidgets.normalized(NotchShelfWidgets.eligible).count, NotchShelfWidgets.maxSlots)
+    }
+
+    func testShelfWidgetsSettingRoundTrip() throws {
+        XCTAssertEqual(AgentNotchSettings().shelfWidgets, ["nowPlaying", "weather"])
+        let saved = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"shelfWidgets":["clock","nope"]}"#.utf8))
+        XCTAssertEqual(saved.shelfWidgets, ["clock"])
+    }
+
+    func testShelfWidgetLayoutSharesOneTileHeight() {
+        let natural: (String) -> WidgetSize = { $0 == "clock" || $0 == "weather" ? .small : .large }
+        // 420 pt shelf, 378 pt of room for 4 units: tiles stop at 76 pt.
+        let two = AgentNotchView.shelfWidgetLayout(kinds: ["nowPlaying", "weather"], width: 420, natural: natural)
+        XCTAssertEqual(two.tile, 76)
+        XCTAssertEqual(two.items.map(\.size), [.large, .small])
+        // Four widgets, 358 pt for 8 units: 44.75 pt after two step-downs.
+        let four = AgentNotchView.shelfWidgetLayout(kinds: ["nowPlaying", "calendar", "usage", "clock"], width: 420, natural: natural)
+        XCTAssertEqual(four.items.map(\.size), [.medium, .medium, .large, .small])
+        XCTAssertEqual(four.tile, 358 / 8)
+    }
 }

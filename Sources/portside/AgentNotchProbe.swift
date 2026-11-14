@@ -93,12 +93,20 @@ enum AgentNotchProbe {
                 if name.hasPrefix("shelf") {
                     state.preferences.shelfEnabled = true
                     state.showPage(name == "shelf-agents" ? .agents : .widgets)
+                    // Not started: no network or player queries, only each widget's empty state.
+                    let hosts = state.preferences.shelfWidgets.compactMap { WidgetCatalog.make($0).map(WidgetHost.init(widget:)) }
+                    state.widgetHost = { kind in hosts.first { $0.id == kind } }
                 }
                 state.preferences.showUsage = false
                 if name == "large-text" { state.preferences.fontSize = 16; state.preferences.expandedWidth = 340 }
                 if name == "minimal" { state.preferences.compactStyle = .minimal; state.preferences.providerColors = false; state.preferences.showTotal = false }
                 let width = state.expanded ? state.preferences.expandedWidth : state.preferences.compactWidth
-                let height = state.headerHeight + (state.expanded ? AgentNotchView.dashboardHeight(preferences: state.preferences, sessionCount: agents.sessions.count) : 0)
+                state.panelWidth = width
+                let content = state.preferences.shelfEnabled
+                    ? AgentNotchView.shelfHeight(page: state.currentPage, preferences: state.preferences, sessionCount: agents.sessions.count,
+                                                 width: width, natural: { state.widgetHost($0)?.size ?? .small })
+                    : AgentNotchView.dashboardHeight(preferences: state.preferences, sessionCount: agents.sessions.count)
+                let height = state.headerHeight + (state.expanded ? content : 0)
                 let view = AgentNotchView(agents: agents, usage: nil, nowPlaying: nil, state: state).frame(width: width, height: height)
                 // Hosting view bitmaps are more reliable than ImageRenderer for ScrollView.
                 let hosting = NSHostingView(rootView: view)

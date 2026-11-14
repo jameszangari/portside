@@ -2,14 +2,16 @@ import AppKit
 import SwiftUI
 import os.log
 
-/// The track playing in Spotify or Music: album art, song, artist, and
-/// previous / play-pause / next.
+/// The track playing: album art, song, artist, and previous / play-pause /
+/// next.
 ///
-/// Event-driven: each player posts a public distributed notification on
-/// every play, pause, or track change. Portside then asks that player for
+/// Event-driven: Spotify and Music post a public distributed notification
+/// on every play, pause, or track change. Portside then asks that player for
 /// the full track over AppleScript (needs Automation permission, asked once
 /// per player), which also gives the art. Without permission it shows what
 /// the notification carries: song and artist, with the player's icon.
+/// Every other player comes from the system's Now Playing stream
+/// (`MediaRemoteNowPlaying`), which is also how its controls are sent.
 final class NowPlayingWidget: DockWidget {
     static let kind = "nowPlaying"
     let name = "Now Playing"
@@ -77,6 +79,9 @@ final class NowPlayingWidget: DockWidget {
     private var lastNote: [String: [AnyHashable: Any]] = [:]
 
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
+    private let system = MediaRemoteNowPlaying()
+    /// The player the system stream last reported, if not Spotify or Music.
+    private var systemBundle: String?
     /// AppleScript runs here, off the main thread: an Apple event can wait
     /// on a busy player, and the first one waits on the permission prompt.
     private let scriptQueue = DispatchQueue(label: "com.james.portside.nowplaying")
@@ -99,11 +104,13 @@ final class NowPlayingWidget: DockWidget {
             }
         }
         observers.append((workspace, token))
+        system.start { [weak self] in self?.applySystem($0) }
     }
 
     func stop() {
         observers.forEach { $0.0.removeObserver($0.1) }
         observers = []
+        system.stop()
     }
 
     /// Once at start: pick up a track that was already playing.
@@ -122,6 +129,15 @@ final class NowPlayingWidget: DockWidget {
         if command == .playPause {
             // Show the new state now; the player's notification confirms.
             tracks[track.player.bundleID]?.isPlaying.toggle()
+        }
+        guard Self.players.contains(track.player) else {
+            let sent: MediaRemoteNowPlaying.Command = switch command {
+            case .previous: .previous
+            case .playPause: .togglePlayPause
+            case .next: .next
+            }
+            if !system.send(sent) { Self.postMediaKey(command.mediaKey) }
+            return
         }
         scriptQueue.async { [logger] in
             if PlayerScript.run("tell application \"\(track.player.name)\" to \(command.rawValue)", player: track.player) == nil {
@@ -171,6 +187,22 @@ final class NowPlayingWidget: DockWidget {
             set(Track(id: id, title: title, artist: note["Artist"] as? String, artwork: nil, artworkURL: nil,
                       isPlaying: state == "Playing", player: player), for: player.bundleID)
         }
+    }
+
+    /// Spotify and Music stay on AppleScript, which also gives their art
+    /// and works without the stream; a report for one of them only clears
+    /// the other player the stream had.
+    private func applySystem(_ snapshot: MediaRemoteNowPlaying.Snapshot?) {
+        let next = snapshot.flatMap { snapshot in
+            Self.players.contains { $0.bundleID == snapshot.bundleID } ? nil : snapshot
+        }
+        if let previous = systemBundle, previous != next?.bundleID { set(nil, for: previous) }
+        systemBundle = next?.bundleID
+        guard let next else { return }
+        let name = NSRunningApplication.runningApplications(withBundleIdentifier: next.bundleID).first?.localizedName
+        let player = Player(bundleID: next.bundleID, name: name ?? next.bundleID, notification: "")
+        set(Track(id: next.id, title: next.title, artist: next.artist, artwork: next.artwork, artworkURL: nil,
+                  isPlaying: next.isPlaying, player: player), for: next.bundleID)
     }
 
     private func set(_ track: Track?, for bundleID: String) {

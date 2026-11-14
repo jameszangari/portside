@@ -104,7 +104,19 @@ struct AgentNotchSettingsView: View {
                     ForEach(Array(preferences.shelfPages.order.enumerated()), id: \.element) { index, page in
                         shelfPageRow(page, index: index)
                     }
-                    Text("Tabs appear in this order at the bottom of the open shelf. Opening from a peek shows Agents, which holds the card you peeked at. Widgets and Clipboard content arrive in later previews.").helperStyle()
+                    Text("Tabs appear in this order at the bottom of the open shelf. Opening from a peek shows Agents, which holds the card you peeked at. Clipboard content arrives in a later preview.").helperStyle()
+                }
+                if preferences.shelfPages.isOn(.widgets) {
+                    Section(header: Text("Shelf widgets").settingsAnchor("Shelf widgets")) {
+                        ForEach(Array(preferences.shelfWidgets.enumerated()), id: \.element) { index, kind in
+                            shelfWidgetRow(kind, index: index)
+                        }
+                        if preferences.shelfWidgets.count < NotchShelfWidgets.maxSlots,
+                           let next = NotchShelfWidgets.eligible.first(where: { !preferences.shelfWidgets.contains($0) }) {
+                            Button("Add Widget") { model.updateAgentNotch { $0.shelfWidgets.append(next) } }
+                        }
+                        Text("One row of up to four live widgets, the same ones as in the dock, sized to fit the shelf. Each widget picks its widest size that fits its slot.").helperStyle()
+                    }
                 }
             }
             Section(header: Text("Behavior").settingsAnchor("Behavior")) {
@@ -140,6 +152,26 @@ struct AgentNotchSettingsView: View {
                 Button("Reset Notch Customization") { model.updateAgentNotch { $0 = AgentNotchSettings() } }
                 Text("Resets this pane's appearance, behavior and filters. The enable switch and Widgets settings are preserved.").helperStyle()
             }
+        }
+    }
+
+    private func shelfWidgetRow(_ kind: String, index: Int) -> some View {
+        let kinds = preferences.shelfWidgets
+        let choices = NotchShelfWidgets.eligible.filter { $0 == kind || !kinds.contains($0) }
+        return HStack(spacing: 8) {
+            Picker("Slot \(index + 1)", selection: Binding(get: { kind }, set: { next in
+                model.updateAgentNotch { $0.shelfWidgets[index] = next }
+            })) {
+                ForEach(choices, id: \.self) { choice in
+                    Text(WidgetCatalog.info(choice)?.name ?? choice).tag(choice)
+                }
+            }
+            Button { model.updateAgentNotch { $0.shelfWidgets.swapAt(index, index - 1) } } label: { Image(systemName: "chevron.up") }
+                .buttonStyle(.borderless).disabled(index == 0).accessibilityLabel("Move slot \(index + 1) earlier")
+            Button { model.updateAgentNotch { $0.shelfWidgets.swapAt(index, index + 1) } } label: { Image(systemName: "chevron.down") }
+                .buttonStyle(.borderless).disabled(index == kinds.count - 1).accessibilityLabel("Move slot \(index + 1) later")
+            Button { model.updateAgentNotch { $0.shelfWidgets.remove(at: index) } } label: { Image(systemName: "minus.circle") }
+                .buttonStyle(.borderless).disabled(kinds.count == 1).accessibilityLabel("Remove slot \(index + 1)")
         }
     }
 

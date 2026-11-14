@@ -238,3 +238,18 @@ struct NotchShelfPages: Codable, Equatable {
         return pages.first
     }
 }
+
+/// The Widgets page's slots (SHELF-04): widget kinds in order, 1 to 4.
+/// Saved inside `agentNotchSettings` as `shelfWidgets`.
+enum NotchShelfWidgets {
+    static let eligible = ["nowPlaying", "calendar", "weather", "usage", "systemStats", "cpu", "memory", "battery", "clock"]
+    static let defaults = ["nowPlaying", "weather"]
+    static let maxSlots = 4
+
+    /// Eligible, each once, at most `maxSlots`; nothing left gives the defaults.
+    static func normalized(_ kinds: [String]) -> [String] {
+        var seen = Set<String>()
+        let kept = kinds.filter { eligible.contains($0) && seen.insert($0).inserted }
+        return kept.isEmpty ? defaults : Array(kept.prefix(maxSlots))
+    }
+}

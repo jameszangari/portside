@@ -68,6 +68,8 @@ struct AgentNotchSettings: Codable, Equatable {
     var shelfEnabled = false
     var shelfOpenMode = NotchShelfOpenMode.hover
     var shelfPages = NotchShelfPages()
+    /// Widget kinds on the shelf's Widgets page, in order (1 to 4).
+    var shelfWidgets = NotchShelfWidgets.defaults
     var collapseAfterFocus = true
     var showProject = true
     var showHost = true
@@ -102,7 +104,7 @@ struct AgentNotchSettings: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case position, display, compactStyle, clickAction, filter, hideWhenEmpty, animate, showTotal, showUsage, showMedia
-        case expandOnHover, shelfEnabled, shelfOpenMode, shelfPages, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
+        case expandOnHover, shelfEnabled, shelfOpenMode, shelfPages, shelfWidgets, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
         case showFinished, claude, codex, copilot, opencode, cursor, showBorder, compactWidth, compactHeight, expandedWidth, cornerRadius, opacity, fontSize
         case rowSpacing, maxSessions, hoverDelay, collapseDelay, animationDuration, horizontalOffset, verticalOffset, accent
     }
@@ -123,6 +125,7 @@ struct AgentNotchSettings: Codable, Equatable {
         shelfEnabled = values.value(.shelfEnabled, or: false)
         shelfOpenMode = values.value(.shelfOpenMode, or: .hover)
         shelfPages = values.value(.shelfPages, or: NotchShelfPages())
+        shelfWidgets = NotchShelfWidgets.normalized(values.value(.shelfWidgets, or: NotchShelfWidgets.defaults))
         collapseAfterFocus = values.value(.collapseAfterFocus, or: true)
         showProject = values.value(.showProject, or: true)
         showHost = values.value(.showHost, or: true)
@@ -154,6 +157,7 @@ struct AgentNotchSettings: Codable, Equatable {
     }
 
     mutating func normalize() {
+        shelfWidgets = NotchShelfWidgets.normalized(shelfWidgets)
         func bounded(_ value: Double, _ range: ClosedRange<Double>, _ fallback: Double) -> Double {
             value.isFinite ? min(range.upperBound, max(range.lowerBound, value)) : fallback
         }

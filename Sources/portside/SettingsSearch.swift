@@ -158,6 +158,7 @@ enum SettingsSearch {
         .init(.notch, "Notch Shelf", "Open shelf", "hover click pin"),
         .init(.notch, "Shelf pages", "Shelf pages", "tabs order widgets agents clipboard"),
         .init(.notch, "Shelf pages", "Start on", "starting page last used default"),
+        .init(.notch, "Shelf widgets", "Shelf widgets", "now playing music weather calendar slots"),
         .init(.notch, "Behavior", "Behavior", ""),
         .init(.notch, "Behavior", "Expand on hover", "open"),
         .init(.notch, "Behavior", "Click action", ""),

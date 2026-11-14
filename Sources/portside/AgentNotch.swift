@@ -34,6 +34,13 @@ final class AgentNotchPresentation: ObservableObject {
     private var lastUsedPage: NotchShelfPage?
     /// Shelf only: whether a page can show now (Clipboard needs its module).
     var pageAvailable: (NotchShelfPage) -> Bool = { $0 != .clipboard }
+    /// Shelf only: a running widget, for the Widgets page.
+    var widgetHost: (String) -> WidgetHost? = { _ in nil }
+    /// Shelf only: the chosen page while it is still on, else the first that is.
+    var currentPage: NotchShelfPage? {
+        let pages = preferences.shelfPages.visible(available: pageAvailable)
+        return page.flatMap { pages.contains($0) ? $0 : nil } ?? pages.first
+    }
     /// Shelf only: whether a side has an activity card to peek at.
     var canPeek: (NotchShelfSide) -> Bool = { _ in false }
     var onExpansion: (() -> Void)?
@@ -98,8 +105,11 @@ final class AgentNotchPresentation: ObservableObject {
 
     /// Shelf only: a tab was picked.
     func showPage(_ next: NotchShelfPage) {
+        guard page != next else { return }
         page = next
         lastUsedPage = next
+        // Pages differ in height.
+        if expanded { onExpansion?() }
     }
 
     private func syncShelf() {
@@ -240,6 +250,7 @@ final class AgentNotch {
             panel.hidesOnDeactivate = false
             state.onExpansion = { [weak self] in self?.layoutPanels() }
             state.canPeek = { [weak self] side in self?.hasPeekCard(side) ?? false }
+            state.widgetHost = { [weak self] kind in self?.widgets.host(kind) }
             state.pageAvailable = { [weak self] page in
                 page != .clipboard || MainActor.assumeIsolated { self?.model?.clipboardHistoryOn == true }
             }
@@ -292,7 +303,11 @@ final class AgentNotch {
             let width = state.expanded ? min(screen.frame.width - 24, max(preferences.expandedWidth, state.compactWidth))
                 // Peek at the open width, so opening from a peek only grows downward.
                 : peeking ? min(screen.frame.width - 24, max(preferences.expandedWidth, state.compactWidth)) : state.compactWidth
-            let contentHeight = AgentNotchView.dashboardHeight(preferences: preferences, sessionCount: sessions.count)
+            let contentHeight = preferences.shelfEnabled
+                ? AgentNotchView.shelfHeight(page: state.currentPage, preferences: preferences, sessionCount: sessions.count,
+                                             width: min(screen.frame.width - 24, max(preferences.expandedWidth, state.compactWidth)),
+                                             natural: { [widgets] in widgets.host($0)?.size ?? .small })
+                : AgentNotchView.dashboardHeight(preferences: preferences, sessionCount: sessions.count)
             let height = min(screen.visibleFrame.height - 16, state.headerHeight
                              + (state.expanded ? contentHeight : peeking ? AgentNotchView.peekHeight(preferences: preferences) : 0))
             state.panelWidth = width

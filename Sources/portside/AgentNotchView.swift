@@ -217,11 +217,37 @@ struct AgentNotchView: View {
     // MARK: Shelf pages (SHELF-03)
 
     private var shelfPages: [NotchShelfPage] { preferences.shelfPages.visible(available: state.pageAvailable) }
+    private var currentPage: NotchShelfPage? { state.currentPage }
 
-    /// The chosen page while it is still on, else the first one that is.
-    private var currentPage: NotchShelfPage? {
-        let pages = shelfPages
-        return state.page.flatMap { pages.contains($0) ? $0 : nil } ?? pages.first
+    static let shelfBarHeight: CGFloat = 26 + 12
+    static let shelfWidgetSpacing: CGFloat = 10
+
+    /// The open shelf's content height below the header, per page.
+    static func shelfHeight(page: NotchShelfPage?, preferences: AgentNotchSettings, sessionCount: Int, width: CGFloat,
+                            natural: (String) -> WidgetSize) -> CGFloat {
+        switch page {
+        case .agents: dashboardHeight(preferences: preferences, sessionCount: sessionCount)
+        case .widgets:
+            dashboardTopPadding + shelfWidgetLayout(kinds: preferences.shelfWidgets, width: width, natural: natural).tile
+                + dashboardBottomPadding + shelfBarHeight
+        case .clipboard, nil: 150
+        }
+    }
+
+    /// Widget tiles for the shelf: one tile height for the row, each widget
+    /// at its own design width. When the row would make tiles shorter than
+    /// `minTile`, the widest widget steps down a size until it fits.
+    static func shelfWidgetLayout(kinds: [String], width: CGFloat, natural: (String) -> WidgetSize)
+        -> (tile: CGFloat, items: [(kind: String, size: WidgetSize)]) {
+        let minTile: CGFloat = 44
+        let maxTile: CGFloat = 76
+        let room = width - 32 - shelfWidgetSpacing * CGFloat(max(0, kinds.count - 1))
+        var sizes = kinds.map(natural)
+        func tile() -> CGFloat { min(maxTile, room / CGFloat(max(1, sizes.map(\.rawValue).reduce(0, +)))) }
+        while tile() < minTile, let widest = sizes.indices.max(by: { sizes[$0] < sizes[$1] }), sizes[widest] > .small {
+            sizes[widest] = WidgetSize(rawValue: sizes[widest].rawValue - 1) ?? .small
+        }
+        return (tile(), Array(zip(kinds, sizes)).map { (kind: $0.0, size: $0.1) })
     }
 
     /// The open shelf: the page, then a bottom row with the tabs, pin and
@@ -232,7 +258,7 @@ struct AgentNotchView: View {
             Group {
                 switch currentPage {
                 case .agents: dashboard
-                case .widgets: shelfPlaceholder(.widgets, "Widgets come to the shelf in a later preview.")
+                case .widgets: shelfWidgets
                 case .clipboard: shelfPlaceholder(.clipboard, "Clipboard History comes to the shelf in a later preview.")
                 case nil: shelfPlaceholder(nil, "Every page is off. Turn one on in Settings > Agent Notch > Notch Shelf.")
                 }
@@ -278,6 +304,35 @@ struct AgentNotchView: View {
                     .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
             }.buttonStyle(.plain).accessibilityLabel("Close shelf")
         }
+    }
+
+    /// The Widgets page: live widget tiles in one row, as in the dock but
+    /// sized to the shelf. Controls inside a tile (Now Playing) take their
+    /// own clicks; a click elsewhere on a tile does what it does in the dock.
+    private var shelfWidgets: some View {
+        let layout = Self.shelfWidgetLayout(kinds: preferences.shelfWidgets, width: state.panelWidth) { state.widgetHost($0)?.size ?? .small }
+        return HStack(spacing: Self.shelfWidgetSpacing) {
+            ForEach(layout.items, id: \.kind) { item in
+                Group {
+                    if let host = state.widgetHost(item.kind) {
+                        host.previewView
+                            .environment(\.dockTileSize, layout.tile)
+                            .environment(\.widgetSize, item.size)
+                            .environment(\.dockIconGap, 0)
+                            .contentShape(Rectangle())
+                            .onTapGesture { host.activate() }
+                            .accessibilityElement(children: .contain)
+                            .accessibilityLabel(host.widget.name)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+                .frame(width: layout.tile * CGFloat(item.size.rawValue), height: layout.tile)
+            }
+        }
+        .environment(\.colorScheme, .dark)
+        .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding)
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 
     private func shelfPlaceholder(_ page: NotchShelfPage?, _ message: String) -> some View {
@@ -350,13 +405,27 @@ struct AgentNotchView: View {
                     .foregroundStyle(.white.opacity(0.5)).lineLimit(1)
             }
             Spacer(minLength: 4)
-            NotchAudioBars(paused: !preferences.animate || reduceMotion, color: preferences.accent.color, height: 12)
+            if track.isPlaying {
+                NotchAudioBars(paused: !preferences.animate || reduceMotion, color: preferences.accent.color, height: 12)
+            }
+            if preferences.shelfEnabled, let nowPlaying {
+                Button { nowPlaying.send(.playPause) } label: {
+                    Image(systemName: track.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: preferences.fontSize, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                        .background(.white.opacity(0.08), in: Circle())
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(track.isPlaying ? "Pause" : "Play")
+            }
         }
         .padding(11).frame(maxWidth: .infinity, alignment: .leading)
         .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
         .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.06)) }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Now playing: \(track.title)\(track.artist.map { " by \($0)" } ?? "")")
+        .accessibilityAction(named: track.isPlaying ? "Pause" : "Play") { nowPlaying?.send(.playPause) }
     }
 
     private func sessionCard(_ session: AgentSession) -> some View {
