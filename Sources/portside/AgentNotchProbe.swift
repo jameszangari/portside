@@ -85,29 +85,55 @@ enum AgentNotchProbe {
             let agents = try fixture()
             let folder = URL(fileURLWithPath: directory)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            for name in ["compact", "attached", "expanded", "large-text", "minimal", "shelf-agents", "shelf-widgets"] {
+            // A fake track with generated art: no player is asked.
+            let music = NowPlayingWidget()
+            let art = NSImage(size: NSSize(width: 120, height: 120), flipped: false) { rect in
+                NSGradient(starting: .systemPink, ending: .systemIndigo)?.draw(in: rect, angle: 45)
+                return true
+            }
+            music.preview(NowPlayingWidget.Track(
+                id: "probe", title: "I'm On", artist: "Anderson .Paak, Cordae", artwork: art, artworkURL: nil, isPlaying: true,
+                player: NowPlayingWidget.Player(bundleID: "com.apple.Music", name: "Music", notification: ""),
+                duration: 233, elapsed: 72, elapsedAt: Date()))
+            let shelfVariants = ["shelf-agents", "shelf-widgets", "strip-music", "card-music", "card-vinyl", "card-agents"]
+            for name in ["compact", "attached", "expanded", "large-text", "minimal"] + shelfVariants {
                 let state = AgentNotchPresentation()
                 state.preferences.animate = false
-                state.expanded = name != "compact" && name != "attached"
-                if name == "attached" { state.topAttached = true; state.headerHeight = 32 }
-                if name.hasPrefix("shelf") {
+                state.expanded = name != "compact" && name != "attached" && !name.hasPrefix("strip") && !name.hasPrefix("card")
+                if name == "attached" || shelfVariants.contains(name) { state.topAttached = true; state.headerHeight = 32; state.notchWidth = 180 }
+                if shelfVariants.contains(name) {
                     state.preferences.shelfEnabled = true
-                    state.showPage(name == "shelf-agents" ? .agents : .widgets)
-                    // Not started: no network or player queries, only each widget's empty state.
-                    let hosts = state.preferences.shelfWidgets.compactMap { WidgetCatalog.make($0).map(WidgetHost.init(widget:)) }
+                    state.preferences.shelfHoverDelay = 0
+                    state.preferences.musicStyle = name == "card-vinyl" ? .vinyl : .music
+                    state.preferences.musicTint = name == "card-vinyl"
+                    state.compactWidth = 184 + 180 + 2 * NotchShape.flare
+                    state.strip = name == "card-agents" ? NotchShelfStrip.layout(music: false, agents: true, agentAlert: false)
+                        : NotchShelfStrip.layout(music: true, agents: true, agentAlert: false)
+                    if name.hasPrefix("shelf") { state.showPage(name == "shelf-agents" ? .agents : .widgets) }
+                    // Not started: no network or calendar queries, only each card's empty state.
+                    let hosts = [WeatherWidget.kind, CalendarWidget.kind].compactMap { WidgetCatalog.make($0).map(WidgetHost.init(widget:)) }
                     state.widgetHost = { kind in hosts.first { $0.id == kind } }
+                    if name.hasPrefix("card") {
+                        state.panelWidth = state.preferences.expandedWidth + 2 * NotchShape.flare
+                        state.shelfPointer(.side(.leading))
+                        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+                    }
                 }
                 state.preferences.showUsage = false
                 if name == "large-text" { state.preferences.fontSize = 16; state.preferences.expandedWidth = 340 }
                 if name == "minimal" { state.preferences.compactStyle = .minimal; state.preferences.providerColors = false; state.preferences.showTotal = false }
-                let width = state.expanded ? state.preferences.expandedWidth : state.preferences.compactWidth
+                let shelfWide = state.preferences.shelfEnabled && (state.expanded || state.card != nil)
+                let width = state.preferences.shelfEnabled && state.expanded ? AgentNotch.shelfOpenWidth
+                    : shelfWide ? state.preferences.expandedWidth + 2 * NotchShape.flare
+                    : state.expanded ? state.preferences.expandedWidth
+                    : state.preferences.shelfEnabled ? state.compactWidth : state.preferences.compactWidth
                 state.panelWidth = width
                 let content = state.preferences.shelfEnabled
-                    ? AgentNotchView.shelfHeight(page: state.currentPage, preferences: state.preferences, sessionCount: agents.sessions.count,
-                                                 width: width, natural: { state.widgetHost($0)?.size ?? .small })
+                    ? AgentNotchView.shelfHeight(page: state.currentPage, preferences: state.preferences, sessionCount: agents.sessions.count)
                     : AgentNotchView.dashboardHeight(preferences: state.preferences, sessionCount: agents.sessions.count)
-                let height = state.headerHeight + (state.expanded ? content : 0)
-                let view = AgentNotchView(agents: agents, usage: nil, nowPlaying: nil, state: state).frame(width: width, height: height)
+                let card = state.card.map { AgentNotchView.cardHeight($0, preferences: state.preferences, sessionCount: agents.sessions.count) } ?? 0
+                let height = state.headerHeight + (state.expanded ? content : card)
+                let view = AgentNotchView(agents: agents, usage: nil, nowPlaying: music, state: state).frame(width: width, height: height)
                 // Hosting view bitmaps are more reliable than ImageRenderer for ScrollView.
                 let hosting = NSHostingView(rootView: view)
                 hosting.frame = NSRect(x: 0, y: 0, width: width, height: height)
@@ -121,6 +147,51 @@ enum AgentNotchProbe {
                     throw NSError(domain: "Could not encode notch preview", code: 1)
                 }
                 try data.write(to: folder.appendingPathComponent("notch-\(name).png"))
+            }
+            // Settings picture cards, light and dark.
+            for (name, appearance) in [("settings-cards-light", NSAppearance.Name.aqua), ("settings-cards-dark", .darkAqua)] {
+                let defaults = AgentNotchSettings()
+                func row<Value: Hashable, Picture: View>(_ title: String, _ value: Value, _ choices: [(Value, String)], _ columns: Int,
+                                                         @ViewBuilder _ picture: @escaping (Value) -> Picture) -> some View {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(title).font(.system(size: 12, weight: .semibold))
+                        SettingsChoiceCards(selection: .constant(value), choices: choices, columns: columns, picture: picture)
+                    }
+                }
+                let view = VStack(alignment: .leading, spacing: 10) {
+                    row("Position", defaults.position, AgentNotchPosition.allCases.map { ($0, $0.title) }, 4) { NotchPositionPicture(position: $0) }
+                    row("Displays", defaults.display, AgentNotchDisplay.allCases.map { ($0, $0.title) }, 3) { NotchDisplayPicture(display: $0) }
+                    row("Style", defaults.compactStyle, AgentNotchCompactStyle.allCases.map { ($0, $0.title) }, 3) { NotchCompactStylePicture(style: $0) }
+                    row("Click action", defaults.clickAction, AgentNotchClickAction.allCases.map { ($0, $0.title) }, 2) { NotchClickActionPicture(action: $0) }
+                    row("Agent card shows", defaults.agentCard, NotchAgentCard.allCases.map { ($0, $0.title) }, 2) { NotchAgentCardPicture(card: $0) }
+                    row("Start on", defaults.shelfPages.start, NotchShelfStartPage.allCases.map { ($0, $0.title) }, 5) { NotchStartPagePicture(start: $0) }
+                    row("Left", defaults.shelfLeadingWidget, NotchShelfSlot.allCases.map { ($0, $0.title) }, 4) { NotchSlotPicture(slot: $0) }
+                    row("Music style", defaults.musicStyle, NotchMusicStyle.allCases.map { ($0, $0.title) }, 2) { NotchMusicStylePicture(style: $0) }
+                }
+                .padding(16).frame(width: 520).background(Color(nsColor: .windowBackgroundColor))
+                let hosting = NSHostingView(rootView: view)
+                hosting.appearance = NSAppearance(named: appearance)
+                hosting.frame = NSRect(origin: .zero, size: hosting.fittingSize)
+                hosting.layoutSubtreeIfNeeded()
+                guard let rep = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else { continue }
+                hosting.cacheDisplay(in: hosting.bounds, to: rep)
+                try rep.representation(using: .png, properties: [:])?.write(to: folder.appendingPathComponent("notch-\(name).png"))
+            }
+            // The Settings pane as a first visit sees it: every group folded.
+            for shelf in [false, true] {
+                let model = DockModel()
+                // Saves under CFFIXED_USER_HOME, which the fixture requires to be in /tmp.
+                model.setShowAgentNotch(true)
+                model.updateAgentNotch { $0.shelfEnabled = shelf }
+                let pane = AgentNotchSettingsView(model: model).formStyle(.grouped).frame(width: 560, height: 820)
+                let hosting = NSHostingView(rootView: pane)
+                hosting.appearance = NSAppearance(named: .aqua)
+                hosting.frame = NSRect(x: 0, y: 0, width: 560, height: 820)
+                hosting.layoutSubtreeIfNeeded()
+                RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+                guard let rep = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else { continue }
+                hosting.cacheDisplay(in: hosting.bounds, to: rep)
+                try rep.representation(using: .png, properties: [:])?.write(to: folder.appendingPathComponent("notch-settings-pane\(shelf ? "-shelf" : "").png"))
             }
             print("Rendered notch previews to \(directory)")
             return 0

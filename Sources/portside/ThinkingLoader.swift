@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Compact "thinking" indicators for the Agent Notch and dock Working chip.
+/// Compact "thinking" indicators for the Top Notch and dock Working chip.
 ///
 /// `snakeBoxes` is a 2x3 grid with one empty cell that walks the loop
 /// (Nawsome blue-dragon-70 style). At very small sizes it reads poorly, so
@@ -87,7 +87,7 @@ struct ThinkingLoader: View {
     }
 }
 
-/// Compact bouncing bars for the Agent Notch while Spotify or Music is
+/// Compact bouncing bars for the Top Notch while Spotify or Music is
 /// playing (Bartender-style). Hidden by the caller when nothing is playing.
 struct NotchAudioBars: View {
     var paused = false

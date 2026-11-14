@@ -83,36 +83,29 @@ struct OtherModulesSection: View {
     }
 }
 
-/// General > Work Mac: the restricted-mode switch.
-struct WorkMacSection: View {
+/// General > Work Mac: the restricted-mode switch, as rows for a fold.
+struct WorkMacRows: View {
     @ObservedObject var integrations: IntegrationSettings
 
     var body: some View {
-        Section {
-            Toggle(isOn: Binding(
-                get: { integrations.restricted },
-                set: { integrations.setRestricted($0) }
-            )) {
-                Text("Restricted mode for work Macs")
-                Text("Turns off, and keeps off, optional modules that run scripts, capture the screen, install hooks, use external runtimes, index files or intercept keys. The dock, launching apps and Settings keep working. Turning it off turns nothing back on.")
-                    .helperStyle()
-            }
-        } header: {
-            Text("Work Mac").settingsAnchor("Work Mac")
-        } footer: {
-            Text("Portside never changes macOS security, privacy or managed settings, and never grants or resets Full Disk Access. Existing features (AI Usage, Agent Notch hooks, Weather) keep their own switches in their panes.")
-                .footerStyle()
+        Toggle(isOn: Binding(
+            get: { integrations.restricted },
+            set: { integrations.setRestricted($0) }
+        )) {
+            Text("Restricted mode for work Macs")
+            Text("Turns off, and keeps off, modules that run scripts, capture the screen, install hooks, index files or intercept keys. The dock and Settings keep working. Portside never changes macOS security or managed settings.")
+                .helperStyle()
         }
     }
 }
 
 /// General > Permissions: every permission Portside can use, live, with one
-/// button to set up the next missing one.
-struct PermissionsSection: View {
+/// button to set up the next missing one. Rows for a fold.
+struct PermissionsRows: View {
     @ObservedObject var integrations: IntegrationSettings
 
     var body: some View {
-        Section(header: Text("Permissions").settingsAnchor("Permissions")) {
+        Group {
             PermissionSetupRow(
                 next: integrations.missingPermissions.first,
                 missing: integrations.missingPermissions.count,
@@ -131,7 +124,7 @@ struct PermissionsSection: View {
     private var fullDiskAccessRow: some View {
         VStack(alignment: .leading, spacing: 3) {
             LabeledContent("Full Disk Access", value: "Not required")
-            Text("Optional. It helps with protected files such as the Trash. Only you can turn it on, in System Settings. Portside never asks for it, grants it or resets it, and it does not override Gatekeeper or your employer's security policy.")
+            Text("Optional. Helps with protected files such as the Trash. Only you can turn it on; Portside never asks for it.")
                 .helperStyle()
             Button("Open Full Disk Access") { TrashController.openFullDiskAccessSettings() }
         }

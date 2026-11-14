@@ -148,7 +148,8 @@ final class WidgetStore: ObservableObject {
         self.dockModel = dockModel
         cancellable = dockModel.$widgetKinds.combineLatest(dockModel.$showAgentNotch, dockModel.$agentNotchSettings).sink { [weak self] kinds, notch, settings in
             self?.sync(kinds, notch: notch, usage: settings.showUsage, media: settings.showMedia,
-                       shelf: settings.shelfEnabled && settings.shelfPages.isOn(.widgets) ? settings.shelfWidgets : [])
+                       shelf: settings.shelfEnabled && settings.shelfPages.isOn(.widgets)
+                           ? [settings.shelfLeadingWidget, settings.shelfTrailingWidget].compactMap(\.widgetKind) : [])
         }
     }
 
@@ -161,7 +162,7 @@ final class WidgetStore: ObservableObject {
         activeHosts.first { $0.id == kind }
     }
 
-    /// `shelf`: the Notch Shelf's Widgets page kinds, run while it is on.
+    /// `shelf`: what the Notch Shelf's Widgets page slots read, run while it is on.
     private func sync(_ kinds: [String], notch: Bool, usage: Bool, media: Bool, shelf: [String]) {
         var extras: [String] = []
         if notch {

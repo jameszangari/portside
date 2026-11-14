@@ -25,113 +25,113 @@ final class NotchShelfTests: XCTestCase {
         XCTAssertEqual(region(280, 10, notch: 0), .side(.trailing))
     }
 
-    // MARK: Hover mode
+    // MARK: One hover rule (SHELF-04c)
 
-    func testSideHoverPeeksAfterDelayThenNotchOpens() {
-        var m = NotchShelfMachine(mode: .hover)
-        XCTAssertEqual(m.pointer(.side(.leading)), .peek(.leading))
-        XCTAssertEqual(m.phase, .compact, "nothing changes before the delay")
-        m.fire(.peek(.leading))
-        XCTAssertEqual(m.phase, .peek(.leading))
-        XCTAssertEqual(m.pointer(.notch), .open)
-        m.fire(.open)
-        XCTAssertTrue(m.isOpen)
+    private let musicStrip = NotchShelfStrip.layout(music: true, agents: true, agentAlert: false)
+    private func music(_ side: NotchShelfSide) -> NotchShelfActivity? { musicStrip.activity(side) }
+
+    func testStripLayout() {
+        XCTAssertEqual(musicStrip, NotchShelfStrip(leading: .music, trailing: .music), "music takes both sides from agents")
+        XCTAssertEqual(NotchShelfStrip.layout(music: true, agents: true, agentAlert: true),
+                       NotchShelfStrip(leading: .music, trailing: .agents), "an agent alert borrows the right side")
+        XCTAssertEqual(NotchShelfStrip.layout(music: true, agents: false, agentAlert: true), musicStrip, "no agents: no alert")
+        XCTAssertEqual(NotchShelfStrip.layout(music: false, agents: true, agentAlert: false), NotchShelfStrip(leading: .agents, trailing: .agents))
+        XCTAssertEqual(NotchShelfStrip.layout(music: false, agents: false, agentAlert: true), NotchShelfStrip())
     }
 
-    func testPassingOverSideDoesNotPeek() {
-        var m = NotchShelfMachine(mode: .hover)
-        m.pointer(.side(.leading))
+    func testHoveringAnActivityShowsItsCardAfterTheDelay() {
+        var m = NotchShelfMachine()
+        XCTAssertEqual(m.pointer(.side(.leading), activity: music), .card(.music))
+        XCTAssertEqual(m.phase, .compact, "nothing changes before the delay")
+        m.fire(.card(.music))
+        XCTAssertEqual(m.card, .music)
+        XCTAssertNil(m.pointer(.side(.trailing), activity: music), "the other side shows the same activity: the card stays")
+        XCTAssertNil(m.pointer(.body, activity: music), "moving onto the card keeps it")
+    }
+
+    func testNotchMiddleAlwaysOpens() {
+        var m = NotchShelfMachine()
+        XCTAssertEqual(m.pointer(.notch, activity: music), .open)
+        m.fire(.open)
+        XCTAssertTrue(m.isOpen)
+        var fromCard = NotchShelfMachine()
+        fromCard.pointer(.side(.leading), activity: music); fromCard.fire(.card(.music))
+        XCTAssertEqual(fromCard.pointer(.notch, activity: music), .open, "card to notch opens the shelf")
+    }
+
+    func testNothingRunningOpensTheShelf() {
+        var m = NotchShelfMachine()
+        XCTAssertEqual(m.pointer(.side(.leading)), .open)
+        XCTAssertEqual(m.pointer(.side(.trailing)), .open)
+    }
+
+    func testCardFollowsTheHoveredActivity() {
+        let alert = NotchShelfStrip.layout(music: true, agents: true, agentAlert: true)
+        var m = NotchShelfMachine()
+        m.pointer(.side(.leading)) { alert.activity($0) }; m.fire(.card(.music))
+        XCTAssertEqual(m.pointer(.side(.trailing)) { alert.activity($0) }, .card(.agents))
+        m.fire(.card(.agents))
+        XCTAssertEqual(m.card, .agents)
+    }
+
+    func testPassingOverAnActivityDoesNotShowItsCard() {
+        var m = NotchShelfMachine()
+        m.pointer(.side(.leading), activity: music)
         m.pointer(.outside)
-        m.fire(.peek(.leading))
+        m.fire(.card(.music))
         XCTAssertEqual(m.phase, .compact, "a stale timer is ignored")
     }
 
-    func testEmptySideDoesNotPeek() {
-        var m = NotchShelfMachine(mode: .hover)
-        XCTAssertNil(m.pointer(.side(.trailing)) { $0 == .leading })
-        XCTAssertEqual(m.pointer(.side(.leading)) { $0 == .leading }, .peek(.leading))
-    }
-
-    func testPeekSwitchesSides() {
-        var m = NotchShelfMachine(mode: .hover)
-        m.pointer(.side(.leading)); m.fire(.peek(.leading))
-        XCTAssertNil(m.pointer(.side(.leading)), "same side keeps the card")
-        XCTAssertEqual(m.pointer(.side(.trailing)), .peek(.trailing))
-        m.fire(.peek(.trailing))
-        XCTAssertEqual(m.phase, .peek(.trailing))
-    }
-
-    func testLeavingPeekUsesShortCollapse() {
-        var m = NotchShelfMachine(mode: .hover)
-        m.pointer(.side(.leading)); m.fire(.peek(.leading))
-        XCTAssertNil(m.pointer(.body), "moving onto the card keeps it")
-        XCTAssertEqual(m.pointer(.outside), .collapsePeek)
-        m.fire(.collapsePeek)
+    func testLeavingACardUsesTheShortCollapse() {
+        var m = NotchShelfMachine()
+        m.pointer(.side(.leading), activity: music); m.fire(.card(.music))
+        XCTAssertEqual(m.pointer(.outside), .collapseCard)
+        m.fire(.collapseCard)
         XCTAssertEqual(m.phase, .compact)
     }
 
     func testLeavingOpenShelfCollapsesUnlessReentered() {
-        var m = NotchShelfMachine(mode: .hover)
+        var m = NotchShelfMachine()
         m.open()
         XCTAssertEqual(m.pointer(.outside), .collapse)
         XCTAssertNil(m.pointer(.body), "coming back cancels the collapse")
         m.fire(.collapse)
         XCTAssertTrue(m.isOpen)
+        XCTAssertNil(m.pointer(.side(.leading), activity: music), "the strip never turns an open shelf into a card")
         m.pointer(.outside); m.fire(.collapse)
         XCTAssertEqual(m.phase, .compact)
     }
 
-    func testClickOpensAndASecondClickKeepsItOpen() {
-        var m = NotchShelfMachine(mode: .hover)
+    func testClickOpensAndNeverCloses() {
+        var m = NotchShelfMachine()
+        m.pointer(.side(.leading), activity: music); m.fire(.card(.music))
         m.click()
-        XCTAssertTrue(m.isOpen)
+        XCTAssertTrue(m.isOpen, "a click on a card opens the shelf")
         XCTAssertFalse(m.pinned)
         m.click()
         XCTAssertTrue(m.isOpen, "like Bartender, a second click does not close")
-        XCTAssertEqual(m.pointer(.outside), .collapse)
     }
 
-    // MARK: Click mode
-
-    func testClickModeNotchHoverDoesNotOpen() {
-        var m = NotchShelfMachine(mode: .click)
-        XCTAssertNil(m.pointer(.notch))
-        XCTAssertEqual(m.pointer(.side(.leading)), .peek(.leading), "sides still peek")
-        m.fire(.peek(.leading))
-        XCTAssertNil(m.pointer(.notch), "notch keeps the peek in click mode")
-        XCTAssertEqual(m.phase, .peek(.leading))
-        m.click()
-        XCTAssertTrue(m.isOpen)
-        XCTAssertEqual(m.pointer(.outside), .collapse, "click mode still closes when the pointer leaves")
-    }
-
-    // MARK: Hover opens, click pins
-
-    func testHoverPinMode() {
-        var m = NotchShelfMachine(mode: .hoverPin)
-        m.pointer(.notch); m.fire(.open)
-        XCTAssertFalse(m.pinned)
-        m.click()
-        XCTAssertTrue(m.isOpen)
-        XCTAssertTrue(m.pinned)
-        XCTAssertNil(m.pointer(.outside), "pinned survives the pointer leaving")
-        m.click()
-        XCTAssertTrue(m.pinned, "clicking a pinned shelf keeps it")
-        m.close()
+    func testBannerShowsTheMusicCardThenHides() {
+        var m = NotchShelfMachine()
+        XCTAssertEqual(m.showBanner(), .bannerEnd)
+        XCTAssertEqual(m.card, .music)
+        m.fire(.bannerEnd)
         XCTAssertEqual(m.phase, .compact)
-    }
-
-    func testClickFromCompactPinsInHoverPinMode() {
-        var m = NotchShelfMachine(mode: .hoverPin)
-        m.click()
-        XCTAssertTrue(m.isOpen)
-        XCTAssertTrue(m.pinned)
+        XCTAssertEqual(m.showBanner(), .bannerEnd)
+        XCTAssertNil(m.pointer(.body, activity: music), "the pointer on the banner keeps it")
+        m.fire(.bannerEnd)
+        XCTAssertEqual(m.card, .music, "a stale banner timer is ignored")
+        XCTAssertEqual(m.pointer(.outside), .collapseCard, "then it behaves like a hovered card")
+        m.open()
+        XCTAssertNil(m.showBanner(), "no banner over an open shelf")
     }
 
     func testCloseClearsPinAndPending() {
-        var m = NotchShelfMachine(mode: .hoverPin)
-        m.click()
-        m.pointer(.side(.leading))
+        var m = NotchShelfMachine()
+        m.click(); m.setPinned(true)
+        XCTAssertNil(m.pointer(.outside), "pinned survives the pointer leaving")
+        m.pointer(.side(.leading), activity: music)
         m.close()
         XCTAssertEqual(m.phase, .compact)
         XCTAssertFalse(m.pinned)
@@ -139,7 +139,7 @@ final class NotchShelfTests: XCTestCase {
     }
 
     func testPinOnlyWhileOpen() {
-        var m = NotchShelfMachine(mode: .hover)
+        var m = NotchShelfMachine()
         m.setPinned(true)
         XCTAssertFalse(m.pinned)
         m.open(); m.setPinned(true)
@@ -148,18 +148,27 @@ final class NotchShelfTests: XCTestCase {
 
     // MARK: Settings
 
-    func testSettingsDefaultOffAndRoundTrip() throws {
-        let old = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"expandOnHover":false}"#.utf8))
+    func testSettingsDefaultsAndRoundTrip() throws {
+        let old = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"expandOnHover":false,"shelfOpenMode":"click"}"#.utf8))
         XCTAssertFalse(old.shelfEnabled, "existing files keep the classic island")
-        XCTAssertEqual(old.shelfOpenMode, .hover)
+        XCTAssertEqual(old.shelfHoverDelay, 0.15)
+        XCTAssertEqual(old.shelfCollapseDelay, 0.8)
+        XCTAssertEqual(old.musicStyle, .music)
+        XCTAssertTrue(old.musicSeeking && old.musicHideWhenPaused && old.musicBanner)
+        XCTAssertFalse(old.musicTint || old.shelfHaptics)
+        XCTAssertEqual(old.agentCard, .latest)
         var settings = AgentNotchSettings()
         settings.shelfEnabled = true
-        settings.shelfOpenMode = .hoverPin
-        let back = try JSONDecoder().decode(AgentNotchSettings.self, from: JSONEncoder().encode(settings))
-        XCTAssertTrue(back.shelfEnabled)
-        XCTAssertEqual(back.shelfOpenMode, .hoverPin)
-        let bad = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"shelfOpenMode":"wiggle"}"#.utf8))
-        XCTAssertEqual(bad.shelfOpenMode, .hover, "unknown mode falls back")
+        settings.musicStyle = .vinyl
+        settings.musicTint = true
+        settings.agentCard = .all
+        settings.shelfHoverDelay = 5
+        settings.normalize()
+        XCTAssertEqual(settings.shelfHoverDelay, 1, "bounded")
+        let data = try JSONEncoder().encode(settings)
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("shelfOpenMode"), "the removed setting is not written")
+        let back = try JSONDecoder().decode(AgentNotchSettings.self, from: data)
+        XCTAssertEqual(back, settings)
     }
 
     // MARK: Menu bar coordination (SHELF-02)
@@ -200,23 +209,25 @@ final class NotchShelfTests: XCTestCase {
     func testPagesDefaultsAndOpening() {
         let pages = NotchShelfPages()
         XCTAssertEqual(pages.order, [.widgets, .agents, .clipboard])
-        XCTAssertEqual(pages.start, .lastUsed)
-        XCTAssertEqual(pages.opening(lastUsed: nil, fromPeek: false, available: all), .widgets, "no last page: the first")
-        XCTAssertEqual(pages.opening(lastUsed: .clipboard, fromPeek: false, available: all), .clipboard)
-        XCTAssertEqual(pages.opening(lastUsed: .clipboard, fromPeek: true, available: all), .agents, "a peek opens on the page with its card")
+        XCTAssertEqual(pages.start, .first)
+        XCTAssertEqual(pages.opening(lastUsed: .clipboard, available: all), .widgets, "like Bartender: the first tab")
+        var last = pages
+        last.start = .lastUsed
+        XCTAssertEqual(last.opening(lastUsed: nil, available: all), .widgets, "no last page: the first")
+        XCTAssertEqual(last.opening(lastUsed: .clipboard, available: all), .clipboard)
     }
 
     func testFixedStartAndUnavailablePages() {
         var pages = NotchShelfPages()
         pages.start = .clipboard
-        XCTAssertEqual(pages.opening(lastUsed: .agents, fromPeek: false, available: all), .clipboard)
+        XCTAssertEqual(pages.opening(lastUsed: .agents, available: all), .clipboard)
         let noClipboard: (NotchShelfPage) -> Bool = { $0 != .clipboard }
         XCTAssertEqual(pages.visible(available: noClipboard), [.widgets, .agents])
-        XCTAssertEqual(pages.opening(lastUsed: nil, fromPeek: false, available: noClipboard), .widgets, "start page unavailable: the first")
-        pages.setOn(.agents, false)
-        XCTAssertEqual(pages.opening(lastUsed: nil, fromPeek: true, available: noClipboard), .widgets, "Agents off: a peek opens normally")
+        XCTAssertEqual(pages.opening(lastUsed: nil, available: noClipboard), .widgets, "start page unavailable: the first")
         pages.setOn(.widgets, false)
-        XCTAssertNil(pages.opening(lastUsed: nil, fromPeek: false, available: noClipboard))
+        XCTAssertEqual(pages.opening(lastUsed: nil, available: noClipboard), .agents)
+        pages.setOn(.agents, false)
+        XCTAssertNil(pages.opening(lastUsed: nil, available: noClipboard))
     }
 
     func testPagesMoveWithinBounds() {
@@ -234,37 +245,52 @@ final class NotchShelfTests: XCTestCase {
         let pages = try JSONDecoder().decode(NotchShelfPages.self, from: Data(json.utf8))
         XCTAssertEqual(pages.order, [.agents, .widgets, .clipboard], "unknown and repeated dropped, missing appended")
         XCTAssertFalse(pages.isOn(.clipboard))
-        XCTAssertEqual(pages.start, .lastUsed)
+        XCTAssertEqual(pages.start, .first)
         let back = try JSONDecoder().decode(NotchShelfPages.self, from: JSONEncoder().encode(pages))
         XCTAssertEqual(back, pages)
         let settings = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"shelfEnabled":true}"#.utf8))
         XCTAssertEqual(settings.shelfPages, NotchShelfPages(), "older files get the default pages")
     }
 
-    // MARK: Widgets page (SHELF-04)
+    // MARK: Widgets page (SHELF-04c)
 
-    func testShelfWidgetsNormalize() {
-        XCTAssertEqual(NotchShelfWidgets.normalized(["weather", "bogus", "weather", "clock"]), ["weather", "clock"])
-        XCTAssertEqual(NotchShelfWidgets.normalized([]), NotchShelfWidgets.defaults)
-        XCTAssertEqual(NotchShelfWidgets.normalized(["agents"]), NotchShelfWidgets.defaults, "the agents widget is the Agents page, not a slot")
-        XCTAssertEqual(NotchShelfWidgets.normalized(NotchShelfWidgets.eligible).count, NotchShelfWidgets.maxSlots)
+    func testSlotsDefaultAndMigrateFromTheWidgetList() throws {
+        let fresh = AgentNotchSettings()
+        XCTAssertEqual(fresh.shelfLeadingWidget, .music)
+        XCTAssertEqual(fresh.shelfTrailingWidget, .calendar)
+        let list = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"shelfWidgets":["clock","weather","nowPlaying"]}"#.utf8))
+        XCTAssertEqual(list.shelfLeadingWidget, .weather, "kinds without a slot are skipped")
+        XCTAssertEqual(list.shelfTrailingWidget, .music)
+        XCTAssertEqual(NotchShelfSlot.migrated(["calendar"]).trailing, .music, "one kind: the other default fills in")
+        let saved = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"shelfWidgets":["weather"],"shelfLeadingWidget":"empty"}"#.utf8))
+        XCTAssertEqual(saved.shelfLeadingWidget, .empty, "a saved slot wins over the old list")
+        XCTAssertEqual(NotchShelfSlot.empty.widgetKind, nil)
     }
 
-    func testShelfWidgetsSettingRoundTrip() throws {
-        XCTAssertEqual(AgentNotchSettings().shelfWidgets, ["nowPlaying", "weather"])
-        let saved = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"shelfWidgets":["clock","nope"]}"#.utf8))
-        XCTAssertEqual(saved.shelfWidgets, ["clock"])
+    // MARK: Music card
+
+    func testTrackPositionAdvancesOnlyWhilePlaying() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let player = NowPlayingWidget.Player(bundleID: "x", name: "X", notification: "")
+        var track = NowPlayingWidget.Track(id: "1", title: "T", artist: nil, artwork: nil, artworkURL: nil, isPlaying: true,
+                                           player: player, duration: 100, elapsed: 30, elapsedAt: start)
+        XCTAssertEqual(track.position(at: start.addingTimeInterval(10)), 40)
+        XCTAssertEqual(track.position(at: start.addingTimeInterval(500)), 100, "never past the end")
+        track.isPlaying = false
+        XCTAssertEqual(track.position(at: start.addingTimeInterval(10)), 30)
+        track.elapsed = nil
+        XCTAssertNil(track.position(at: start))
+        XCTAssertEqual(NotchProgressBar.time(72, known: true), "1:12")
+        XCTAssertEqual(NotchProgressBar.time(3725, known: true), "1:02:05")
+        XCTAssertEqual(NotchProgressBar.time(0, known: false), "--:--")
     }
 
-    func testShelfWidgetLayoutSharesOneTileHeight() {
-        let natural: (String) -> WidgetSize = { $0 == "clock" || $0 == "weather" ? .small : .large }
-        // 420 pt shelf, 378 pt of room for 4 units: tiles stop at 76 pt.
-        let two = AgentNotchView.shelfWidgetLayout(kinds: ["nowPlaying", "weather"], width: 420, natural: natural)
-        XCTAssertEqual(two.tile, 76)
-        XCTAssertEqual(two.items.map(\.size), [.large, .small])
-        // Four widgets, 358 pt for 8 units: 44.75 pt after two step-downs.
-        let four = AgentNotchView.shelfWidgetLayout(kinds: ["nowPlaying", "calendar", "usage", "clock"], width: 420, natural: natural)
-        XCTAssertEqual(four.items.map(\.size), [.medium, .medium, .large, .small])
-        XCTAssertEqual(four.tile, 358 / 8)
+    func testMeetingLinks() {
+        let zoom = URL(string: "https://acme.zoom.us/j/123")!
+        XCTAssertEqual(CalendarWidget.meetingLink(url: zoom, texts: []), zoom)
+        XCTAssertNil(CalendarWidget.meetingLink(url: URL(string: "https://example.com")!, texts: ["Room 4"]))
+        XCTAssertEqual(CalendarWidget.meetingLink(url: nil, texts: [nil, "Agenda\nhttps://meet.google.com/abc-defg-hij"]),
+                       URL(string: "https://meet.google.com/abc-defg-hij"))
+        XCTAssertNil(CalendarWidget.meetingLink(url: nil, texts: ["http://zoom.us/j/1"]), "https only")
     }
 }

@@ -232,7 +232,7 @@ protocol MenuBarEmptyAreaProbe: AnyObject {
 
 /// Menu bar regions that belong to the Notch Shelf (SHELF-02): no hover,
 /// scroll or click there reveals hidden items. Screen coordinates, kept by
-/// Agent Notch; empty while the shelf is off.
+/// Top Notch; empty while the shelf is off.
 enum MenuBarShelfExclusion {
     /// Room around the notch and the shelf header, so a pointer resting at
     /// their edge still goes to the shelf.

@@ -776,3 +776,227 @@ struct CommandCenterLauncherPreviewCard: View {
         }
     }
 }
+
+// MARK: - Top Notch
+
+/// A black notch pill on a miniature screen top, at `position`.
+struct NotchPositionPicture: View {
+    let position: AgentNotchPosition
+
+    var body: some View {
+        PreviewMiniBar(notch: true) { size in
+            let notch = size.width * 0.2
+            switch position {
+            case .attached:
+                UnevenRoundedRectangle(bottomLeadingRadius: 4, bottomTrailingRadius: 4)
+                    .fill(Color.black)
+                    .frame(width: notch + 24, height: 13)
+                    .offset(x: (size.width - notch - 24) / 2)
+            case .below:
+                Capsule().fill(Color.black).frame(width: notch + 14, height: 9)
+                    .offset(x: (size.width - notch - 14) / 2, y: 14)
+            case .left, .right:
+                Capsule().fill(Color.black).frame(width: 16, height: 8)
+                    .offset(x: position == .left ? size.width * 0.4 - 19 : size.width * 0.6 + 3, y: 1)
+            }
+        }
+    }
+}
+
+/// Which screens get the notch: a primary external display (left) and
+/// a laptop with a notch (right).
+struct NotchDisplayPicture: View {
+    let display: AgentNotchDisplay
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 5) {
+            screen(notched: false, shows: display != .automatic)
+            screen(notched: true, shows: display != .primary)
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private func screen(notched: Bool, shows: Bool) -> some View {
+        ZStack(alignment: .top) {
+            RoundedRectangle(cornerRadius: 3).fill(Color.primary.opacity(0.08))
+            Rectangle().fill(Color.primary.opacity(0.14)).frame(height: 5)
+            if notched {
+                UnevenRoundedRectangle(bottomLeadingRadius: 2, bottomTrailingRadius: 2).fill(Color.black).frame(width: 9, height: 5)
+            }
+            if shows {
+                UnevenRoundedRectangle(bottomLeadingRadius: 3, bottomTrailingRadius: 3).fill(Color.black)
+                    .frame(width: notched ? 22 : 16, height: notched ? 7 : 5)
+                    .overlay { Circle().fill(Color.accentColor).frame(width: 3, height: 3).offset(x: notched ? -7 : -4) }
+            }
+        }
+        .frame(width: notched ? 40 : 48, height: notched ? 28 : 34)
+        .clipShape(RoundedRectangle(cornerRadius: 3))
+    }
+}
+
+/// The compact pill's content in each style.
+struct NotchCompactStylePicture: View {
+    let style: AgentNotchCompactStyle
+
+    var body: some View {
+        HStack(spacing: 4) {
+            switch style {
+            case .counts:
+                PreviewDots(count: 2, size: 3).padding(.leading, 2)
+                Text("2").font(.system(size: 8, weight: .semibold))
+                Spacer(minLength: 2)
+                Text("3").font(.system(size: 8))
+            case .providers:
+                Circle().fill(Color.orange).frame(width: 5, height: 5)
+                Circle().fill(Color.green).frame(width: 5, height: 5)
+                Circle().fill(Color.blue).frame(width: 5, height: 5)
+                Spacer(minLength: 2)
+                Text("3").font(.system(size: 8))
+            case .minimal:
+                Circle().fill(Color.accentColor).frame(width: 5, height: 5)
+                Spacer(minLength: 2)
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 7)
+        .frame(width: 62, height: 14)
+        .background(Capsule().fill(Color.black))
+    }
+}
+
+/// What a click on the compact classic island does.
+struct NotchClickActionPicture: View {
+    let action: AgentNotchClickAction
+
+    var body: some View {
+        VStack(spacing: 3) {
+            Capsule().fill(Color.black).frame(width: 40, height: 8)
+            if action == .expand {
+                RoundedRectangle(cornerRadius: 4).fill(Color.black).frame(width: 52, height: 22)
+                    .overlay { VStack(spacing: 3) { previewRow; previewRow } }
+            } else {
+                Image(systemName: "macwindow").font(.system(size: 18)).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var previewRow: some View {
+        Capsule().fill(Color.white.opacity(0.3)).frame(width: 38, height: 3)
+    }
+}
+
+/// A black shelf with session rows: one plus "+2", or all three.
+struct NotchAgentCardPicture: View {
+    let card: NotchAgentCard
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(0..<(card == .all ? 3 : 1), id: \.self) { index in
+                HStack(spacing: 3) {
+                    RoundedRectangle(cornerRadius: 1.5).fill(previewAppColors[index]).frame(width: 6, height: 6)
+                    Capsule().fill(Color.white.opacity(0.45)).frame(width: 30, height: 3)
+                }
+            }
+            if card == .latest {
+                Text("+2").font(.system(size: 7, weight: .medium)).foregroundStyle(.white.opacity(0.55))
+            }
+        }
+        .padding(6)
+        .frame(width: 64, height: 40, alignment: .topLeading)
+        .background(UnevenRoundedRectangle(bottomLeadingRadius: 7, bottomTrailingRadius: 7).fill(Color.black))
+    }
+}
+
+/// The shelf's tab row with the page it opens on selected.
+struct NotchStartPagePicture: View {
+    let start: NotchShelfStartPage
+
+    var body: some View {
+        VStack(spacing: 5) {
+            Image(systemName: start == .lastUsed ? "clock.arrow.circlepath" : start.page?.symbol ?? "1.circle")
+                .font(.system(size: 13)).foregroundStyle(.white)
+            HStack(spacing: 3) {
+                ForEach(NotchShelfPage.allCases) { page in
+                    let selected = start.page == page || start == .first && page == NotchShelfPage.allCases.first
+                    Capsule().fill(Color.white.opacity(selected ? 0.8 : 0.2)).frame(width: 12, height: 4)
+                }
+            }
+        }
+        .frame(width: 58, height: 38)
+        .background(UnevenRoundedRectangle(bottomLeadingRadius: 7, bottomTrailingRadius: 7).fill(Color.black))
+    }
+}
+
+/// One Widgets page card in miniature.
+struct NotchSlotPicture: View {
+    let slot: NotchShelfSlot
+
+    var body: some View {
+        Group {
+            switch slot {
+            case .music:
+                HStack(spacing: 4) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(LinearGradient(colors: [.pink, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .frame(width: 16, height: 16)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Capsule().fill(Color.white.opacity(0.7)).frame(width: 18, height: 3)
+                        Image(systemName: "playpause.fill").font(.system(size: 7))
+                    }
+                }
+            case .weather:
+                VStack(spacing: 1) {
+                    Image(systemName: "cloud.sun.fill").symbolRenderingMode(.multicolor).font(.system(size: 11))
+                    Text("42°").font(.system(size: 9, weight: .semibold))
+                }
+            case .calendar:
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("SAT").font(.system(size: 6, weight: .bold)).foregroundStyle(.red)
+                    ForEach([Color.blue, Color.orange], id: \.self) { color in
+                        HStack(spacing: 2) {
+                            Capsule().fill(color).frame(width: 2, height: 7)
+                            Capsule().fill(Color.white.opacity(0.5)).frame(width: 18, height: 3)
+                        }
+                    }
+                }
+            case .empty:
+                RoundedRectangle(cornerRadius: 5)
+                    .strokeBorder(Color.white.opacity(0.35), style: StrokeStyle(lineWidth: 0.75, dash: [2, 2]))
+                    .frame(width: 32, height: 22)
+            }
+        }
+        .foregroundStyle(.white)
+        .frame(width: 50, height: 36)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color.black))
+    }
+}
+
+/// Square album art, or a record with a spindle hole.
+struct NotchMusicStylePicture: View {
+    let style: NotchMusicStyle
+
+    private var art: LinearGradient {
+        LinearGradient(colors: [.pink, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if style == .vinyl {
+                ZStack {
+                    Circle().fill(Color(white: 0.08))
+                    Circle().fill(art).padding(2)
+                    Circle().fill(Color.black).frame(width: 4, height: 4)
+                }
+                .frame(width: 26, height: 26)
+            } else {
+                RoundedRectangle(cornerRadius: 5).fill(art).frame(width: 26, height: 26)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Capsule().fill(Color.white.opacity(0.75)).frame(width: 22, height: 3)
+                Capsule().fill(Color.white.opacity(0.35)).frame(width: 16, height: 3)
+            }
+        }
+        .padding(6)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.black))
+    }
+}

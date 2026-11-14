@@ -211,6 +211,20 @@ Limits: R1 to R13 used synthetic posted events, which Bartender's hover ignores 
 
 Open PR **#73** (`fix/macos26-menu-bar` -> nightly, OPEN, mergeable CLEAN, not merged) changes `MenuBarShelf`, `MenuBarShelfModule`, `MenuBarOverflowPanel`, `MenuBarTriggerLive` and settings panes. Shelf work that touches menu bar coordination must start after it merges or rebase onto it.
 
+## Revised scope (maintainer decisions, 2026-11-14)
+
+A second grilling after the maintainer used SHELF-04 with music playing: hover did something different in each spot, the shelf's music player was a small dock tile, and the peek card showed inconsistently. Goal: Bartender's Top Shelf one to one, with one hover rule. Supersedes the conflicting parts of the 2026-11-11 scope below.
+
+1. **Hover.** Hovering a running activity on the compact strip (album art, the playing animation, the agent indicator) shows that activity's card after the hover delay. Hovering the middle of the notch always opens the full shelf; so does hovering the strip while nothing runs, and a click anywhere on the strip or a card. The Open shelf setting (Hover, Click, Hover opens click pins) is removed.
+2. **Compact strip.** Music playing takes both sides: art left of the notch, the playing animation right. Agents give up the strip while music plays; an agent that finishes or needs input takes the right side for a few seconds, then music returns. Without music, agents use both sides (lamp left, count right, orange when one needs you). Paused music leaves the strip (Hide when paused, on by default).
+3. **Music card.** One large card everywhere music shows (hover card and Widgets slot): 76 pt art, title, artist, the player's icon, a progress bar with elapsed and total time, large previous, play/pause and next. On the black surface, no dock tile.
+4. **Widgets page.** Exactly two slots, left and right (Bartender's `trayLeadingWidget`, `trayTrailingWidget`): Music, Weather, Calendar or Empty; default Music and Calendar. Replaces the 1 to 4 dock tiles.
+5. **Music options**, one set for every music card: Style Music or Vinyl (round art spinning while playing), Seeking (drag the bar; on), Album tint (background from the art's color; off), Hide when paused (on), plus a song-change banner (the music card for a few seconds on a new track; on).
+6. **Starting page.** The shelf opens on its first tab; Settings can change it to Last used or a fixed page.
+7. **Agents.** Strip as Bartender: lamp left, count right. The card shows the latest session (lamp, project, status, provider, time, "+N more"); a setting shows all running sessions instead. A click focuses the session.
+8. **Timing.** One hover delay for cards and the shelf, 0.15 s, adjustable; a card closes 0.2 s after the pointer leaves, the shelf 0.8 s; optional hover haptic (0.35 s cooldown, off).
+9. **Sequence.** SHELF-04c does 1 to 8 and the song banner. Then SHELF-05 Agents page (mostly absorbed), SHELF-06 Clipboard then Files tray and AirDrop, SHELF-07 strip priority with calendar, battery and weather alerts, SHELF-08 displays, non-notch capsule, full screen; later SHELF-09 volume and brightness HUD, SHELF-10 AirPods, SHELF-11 hotkeys. MediaRemote is now in (SHELF-04b, through the vendored adapter).
+
 ## Locked v1 scope (maintainer decisions, 2026-11-11)
 
 Working name "Notch Shelf". Decided in a grilling session; supersedes the earlier proposal.

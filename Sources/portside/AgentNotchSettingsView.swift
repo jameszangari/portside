@@ -13,166 +13,181 @@ struct AgentNotchSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Enable Agent Notch", isOn: Binding(get: { model.showAgentNotch }, set: { model.setShowAgentNotch($0) }))
-                AgentNotchSettingsPreview(preferences: preferences)
-                Text("Preview uses sample activity. Real sessions come from agent hooks in Widgets.").helperStyle()
-                HStack {
-                    Text("Quick styles")
-                    Spacer()
-                    Button("Minimal") { preset("minimal") }
-                    Button("Balanced") { preset("balanced") }
-                    Button("Detailed") { preset("detailed") }
-                }
-            }
-            Section(header: Text("Placement").settingsAnchor("Placement")) {
-                Picker("Position", selection: binding(\.position)) {
-                    ForEach(AgentNotchPosition.allCases) { Text($0.title).tag($0) }
-                }
-                Picker("Displays", selection: binding(\.display)) {
-                    ForEach(AgentNotchDisplay.allCases) { Text($0.title).tag($0) }
-                }
-                if preferences.position != .attached {
-                    slider("Horizontal offset", \.horizontalOffset, -300...300, unit: "pt")
-                    slider("Distance from top", \.verticalOffset, 0...80, unit: "pt")
-                }
-                Text("Attached mode wraps the camera housing and keeps its center clear. On displays without a notch it sits inside the menu bar, centered. Below the notch floats under the menu bar. Left and right positions can overlap menu items.").helperStyle()
-            }
-            Section(header: Text("Compact appearance").settingsAnchor("Compact appearance")) {
-                Picker("Style", selection: binding(\.compactStyle)) {
-                    ForEach(AgentNotchCompactStyle.allCases) { Text($0.title).tag($0) }
-                }
-                Toggle("Show total session count", isOn: binding(\.showTotal))
-                Toggle("Show border", isOn: binding(\.showBorder))
-                slider("Content width", \.compactWidth, 140...280, unit: "pt")
-                slider("Height", \.compactHeight, 24...44, unit: "pt")
-                slider("Corner radius", \.cornerRadius, 8...32, unit: "pt")
-                slider("Background opacity", \.opacity, 0.75...1, percent: true)
-                Toggle("Use provider colors", isOn: binding(\.providerColors))
-                Button {
-                    accentOpen.toggle()
-                } label: {
-                    HStack(spacing: 10) {
-                        Text("Accent color")
-                        Spacer()
-                        ColorChip(color: preferences.accent.color, size: 18)
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .rotationEffect(.degrees(accentOpen ? 90 : 0))
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(accentOpen ? "Hide accent color" : "Show accent color")
-                if accentOpen {
-                    PaletteColorEditor(color: preferences.accent, showsOpacity: false) { color, _ in
-                        model.updateAgentNotch { $0.accent = color }
+                Toggle(isOn: Binding(get: { model.showAgentNotch }, set: { model.setShowAgentNotch($0) })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Top Notch")
+                        Text("A black island around the notch that shows your agents and music.").helperStyle()
                     }
                 }
+                .settingsAnchor("Top Notch")
+                if model.showAgentNotch { AgentNotchSettingsPreview(preferences: preferences) }
             }
-            Section(header: Text("Dashboard").settingsAnchor("Dashboard")) {
-                slider("Expanded width", \.expandedWidth, 340...560, unit: "pt")
-                slider("Text size", \.fontSize, 10...16, unit: "pt")
-                slider("Card spacing", \.rowSpacing, 4...16, unit: "pt")
-                Stepper("Visible sessions: \(preferences.maxSessions)", value: binding(\.maxSessions), in: 2...10)
-                Text("More sessions and usage rows scroll inside the dashboard.").helperStyle()
-                Toggle("Show project names", isOn: binding(\.showProject))
-                Toggle("Show provider names", isOn: binding(\.showProviderNames))
-                Toggle("Show terminal or editor", isOn: binding(\.showHost))
-                Toggle("Show time since activity", isOn: binding(\.showUpdated))
-                Toggle("Show plan usage", isOn: binding(\.showUsage))
-                Text("Usage shares your Widgets provider selections and consent. Gauges show plan usage, not session context.").helperStyle()
-            }
-            Section(header: Text("Media").settingsAnchor("Media")) {
-                Toggle("Show now playing", isOn: binding(\.showMedia))
-                Text("Animated bars in the compact notch while Spotify or Music is playing, same sources as the Now Playing widget. Hidden when paused or stopped. Keeps the notch visible even when no agent sessions match.").helperStyle()
-            }
-            Section(header: Text("Notch Shelf (preview)").settingsAnchor("Notch Shelf")) {
-                Toggle("Use Notch Shelf", isOn: binding(\.shelfEnabled))
-                if preferences.shelfEnabled {
-                    Picker("Open shelf", selection: binding(\.shelfOpenMode)) {
-                        ForEach(NotchShelfOpenMode.allCases) { Text($0.title).tag($0) }
-                    }
-                }
-                Text("Hover either side of the notch to peek at that side's activity. Hover opens the shelf from the notch itself; Click opens it with a click; Hover opens, click pins keeps it open after a click until you click outside or press Escape.").helperStyle()
-            }
-            if preferences.shelfEnabled {
-                Section(header: Text("Shelf pages").settingsAnchor("Shelf pages")) {
-                    Picker("Start on", selection: binding(\.shelfPages.start)) {
-                        ForEach(NotchShelfStartPage.allCases) { Text($0.title).tag($0) }
-                    }
-                    ForEach(Array(preferences.shelfPages.order.enumerated()), id: \.element) { index, page in
-                        shelfPageRow(page, index: index)
-                    }
-                    Text("Tabs appear in this order at the bottom of the open shelf. Opening from a peek shows Agents, which holds the card you peeked at. Clipboard content arrives in a later preview.").helperStyle()
-                }
-                if preferences.shelfPages.isOn(.widgets) {
-                    Section(header: Text("Shelf widgets").settingsAnchor("Shelf widgets")) {
-                        ForEach(Array(preferences.shelfWidgets.enumerated()), id: \.element) { index, kind in
-                            shelfWidgetRow(kind, index: index)
-                        }
-                        if preferences.shelfWidgets.count < NotchShelfWidgets.maxSlots,
-                           let next = NotchShelfWidgets.eligible.first(where: { !preferences.shelfWidgets.contains($0) }) {
-                            Button("Add Widget") { model.updateAgentNotch { $0.shelfWidgets.append(next) } }
-                        }
-                        Text("One row of up to four live widgets, the same ones as in the dock, sized to fit the shelf. Each widget picks its widest size that fits its slot.").helperStyle()
-                    }
-                }
-            }
-            Section(header: Text("Behavior").settingsAnchor("Behavior")) {
-                if !preferences.shelfEnabled { Toggle("Expand on hover", isOn: binding(\.expandOnHover)) }
-                if preferences.expandOnHover || preferences.shelfEnabled {
-                    slider("Hover delay", \.hoverDelay, 0...1, unit: "ms", milliseconds: true)
-                }
-                slider("Collapse delay", \.collapseDelay, 0.1...2, unit: "ms", milliseconds: true)
-                if !preferences.shelfEnabled {
-                    Picker("Click action", selection: binding(\.clickAction)) {
-                        ForEach(AgentNotchClickAction.allCases) { Text($0.title).tag($0) }
-                    }
-                }
-                Toggle("Collapse after opening a session", isOn: binding(\.collapseAfterFocus))
-                Toggle("Animate status and expansion", isOn: binding(\.animate))
-                if preferences.animate { slider("Animation duration", \.animationDuration, 0.1...0.5, unit: "ms", milliseconds: true) }
-                Toggle("Hide when no sessions match", isOn: binding(\.hideWhenEmpty))
-                Text("Pin the dashboard to keep it open. The close button always collapses it; clicking outside closes it when unpinned. Escape works while Portside receives keyboard events. Reduce Motion disables animation. Hide-when-empty still shows the notch while media is playing.").helperStyle()
-            }
-            Section(header: Text("Sessions").settingsAnchor("Sessions")) {
-                Toggle("Claude Code", isOn: binding(\.claude))
-                Toggle("Codex", isOn: binding(\.codex))
-                Toggle("OpenCode", isOn: binding(\.opencode))
-                Toggle("Cursor (in T3)", isOn: binding(\.cursor))
-                Toggle("Copilot", isOn: binding(\.copilot))
-                Picker("Show", selection: binding(\.filter)) {
-                    ForEach(AgentNotchFilter.allCases) { Text($0.title).tag($0) }
-                }
-                Toggle("Include finished sessions", isOn: binding(\.showFinished))
-                Text("T3 Code and OpenCode sessions are read from their local databases (no hooks). Claude Code and Codex CLI sessions still use Agent Hooks under Widgets. Copilot has no session writer yet. Needs attention includes waiting T3 runs and Claude permission prompts. Click a session card to focus its host app; Accessibility may be needed.").helperStyle()
-            }
-            Section {
-                Button("Reset Notch Customization") { model.updateAgentNotch { $0 = AgentNotchSettings() } }
-                Text("Resets this pane's appearance, behavior and filters. The enable switch and Widgets settings are preserved.").helperStyle()
-            }
+            if model.showAgentNotch { details }
         }
     }
 
-    private func shelfWidgetRow(_ kind: String, index: Int) -> some View {
-        let kinds = preferences.shelfWidgets
-        let choices = NotchShelfWidgets.eligible.filter { $0 == kind || !kinds.contains($0) }
-        return HStack(spacing: 8) {
-            Picker("Slot \(index + 1)", selection: Binding(get: { kind }, set: { next in
-                model.updateAgentNotch { $0.shelfWidgets[index] = next }
-            })) {
-                ForEach(choices, id: \.self) { choice in
-                    Text(WidgetCatalog.info(choice)?.name ?? choice).tag(choice)
+    /// Everything past the on switch, shown while Top Notch is on.
+    @ViewBuilder
+    private var details: some View {
+            Section {
+                cards("Position", \.position, AgentNotchPosition.allCases.map { ($0, $0.title) }, columns: 4) { NotchPositionPicture(position: $0) }
+                Toggle(isOn: binding(\.shelfEnabled)) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Notch Shelf")
+                        Text("Hover music or agents to see a card. Hover the notch itself to open the shelf.").helperStyle()
+                    }
+                }
+                .settingsAnchor("Notch Shelf")
+                Toggle(isOn: binding(\.showMedia)) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Show music")
+                        Text(preferences.shelfEnabled ? "Album art and the playing animation while something plays."
+                             : "A playing animation while something plays.").helperStyle()
+                    }
                 }
             }
-            Button { model.updateAgentNotch { $0.shelfWidgets.swapAt(index, index - 1) } } label: { Image(systemName: "chevron.up") }
-                .buttonStyle(.borderless).disabled(index == 0).accessibilityLabel("Move slot \(index + 1) earlier")
-            Button { model.updateAgentNotch { $0.shelfWidgets.swapAt(index, index + 1) } } label: { Image(systemName: "chevron.down") }
-                .buttonStyle(.borderless).disabled(index == kinds.count - 1).accessibilityLabel("Move slot \(index + 1) later")
-            Button { model.updateAgentNotch { $0.shelfWidgets.remove(at: index) } } label: { Image(systemName: "minus.circle") }
-                .buttonStyle(.borderless).disabled(kinds.count == 1).accessibilityLabel("Remove slot \(index + 1)")
-        }
+            Section {
+                SettingsFold("Appearance", symbol: "paintbrush", summary: appearanceSummary) {
+                    HStack {
+                        Text("Quick styles")
+                        Spacer()
+                        Button("Minimal") { preset("minimal") }
+                        Button("Balanced") { preset("balanced") }
+                        Button("Detailed") { preset("detailed") }
+                    }
+                    if !preferences.shelfEnabled {
+                        cards("Style", \.compactStyle, AgentNotchCompactStyle.allCases.map { ($0, $0.title) }, columns: 3) { NotchCompactStylePicture(style: $0) }
+                    }
+                    slider("Width", \.compactWidth, 140...280, unit: "pt")
+                    slider("Height", \.compactHeight, 24...44, unit: "pt")
+                    slider("Corner radius", \.cornerRadius, 8...32, unit: "pt")
+                    slider("Background opacity", \.opacity, 0.75...1, percent: true)
+                    Toggle("Show border", isOn: binding(\.showBorder))
+                    Toggle("Use provider colors", isOn: binding(\.providerColors))
+                    Button {
+                        accentOpen.toggle()
+                    } label: {
+                        HStack(spacing: 10) {
+                            Text("Accent color")
+                            Spacer()
+                            ColorChip(color: preferences.accent.color, size: 18)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .rotationEffect(.degrees(accentOpen ? 90 : 0))
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(accentOpen ? "Hide accent color" : "Show accent color")
+                    if accentOpen {
+                        PaletteColorEditor(color: preferences.accent, showsOpacity: false) { color, _ in
+                            model.updateAgentNotch { $0.accent = color }
+                        }
+                    }
+                }
+                if preferences.shelfEnabled {
+                    SettingsFold("Shelf", symbol: "rectangle.topthird.inset.filled", summary: shelfSummary) {
+                        cards("Widgets page, left", \.shelfLeadingWidget, NotchShelfSlot.allCases.map { ($0, $0.title) }, columns: 4) { NotchSlotPicture(slot: $0) }
+                        cards("Widgets page, right", \.shelfTrailingWidget, NotchShelfSlot.allCases.map { ($0, $0.title) }, columns: 4) { NotchSlotPicture(slot: $0) }
+                        cards("Opens on", \.shelfPages.start, NotchShelfStartPage.allCases.map { ($0, $0.title) }, columns: 5) { NotchStartPagePicture(start: $0) }
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Tabs")
+                            ForEach(Array(preferences.shelfPages.order.enumerated()), id: \.element) { index, page in
+                                shelfPageRow(page, index: index)
+                            }
+                        }
+                        cards("Agent card", \.agentCard, NotchAgentCard.allCases.map { ($0, $0.title) }, columns: 2) { NotchAgentCardPicture(card: $0) }
+                        Toggle("Haptic feedback on hover", isOn: binding(\.shelfHaptics))
+                    }
+                }
+                if preferences.showMedia, preferences.shelfEnabled {
+                    SettingsFold("Music", symbol: "music.note", summary: musicSummary) {
+                        cards("Style", \.musicStyle, NotchMusicStyle.allCases.map { ($0, $0.title) }, columns: 2) { NotchMusicStylePicture(style: $0) }
+                        Toggle("Drag the progress bar to seek", isOn: binding(\.musicSeeking))
+                        Toggle("Tint with album colors", isOn: binding(\.musicTint))
+                        Toggle("Show the song when it changes", isOn: binding(\.musicBanner))
+                        Toggle("Hide when paused", isOn: binding(\.musicHideWhenPaused))
+                    }
+                }
+                SettingsFold("Agents", symbol: "sparkles", summary: agentsSummary) {
+                    Toggle("Claude Code", isOn: binding(\.claude))
+                    Toggle("Codex", isOn: binding(\.codex))
+                    Toggle("OpenCode", isOn: binding(\.opencode))
+                    Toggle("Cursor (in T3)", isOn: binding(\.cursor))
+                    Toggle("Copilot", isOn: binding(\.copilot))
+                    Picker("Show", selection: binding(\.filter)) {
+                        ForEach(AgentNotchFilter.allCases) { Text($0.title).tag($0) }
+                    }
+                    Toggle("Include finished sessions", isOn: binding(\.showFinished))
+                    Stepper("Sessions in the list: \(preferences.maxSessions)", value: binding(\.maxSessions), in: 2...10)
+                    Toggle("Show project names", isOn: binding(\.showProject))
+                    Toggle("Show provider names", isOn: binding(\.showProviderNames))
+                    Toggle("Show terminal or editor", isOn: binding(\.showHost))
+                    Toggle("Show time since activity", isOn: binding(\.showUpdated))
+                    Toggle("Show plan usage", isOn: binding(\.showUsage))
+                    slider("List width", \.expandedWidth, 340...560, unit: "pt")
+                    slider("Text size", \.fontSize, 10...16, unit: "pt")
+                    slider("Card spacing", \.rowSpacing, 4...16, unit: "pt")
+                    Text("Claude Code and Codex need Agent Hooks in Settings > Widgets; T3 Code and OpenCode are read directly.").helperStyle()
+                }
+                SettingsFold("Behavior", symbol: "hand.point.up.left", summary: behaviorSummary) {
+                    if preferences.shelfEnabled {
+                        slider("Hover delay", \.shelfHoverDelay, 0...1, unit: "ms", milliseconds: true)
+                        slider("Collapse delay", \.shelfCollapseDelay, 0.1...2, unit: "ms", milliseconds: true)
+                    } else {
+                        Toggle("Expand on hover", isOn: binding(\.expandOnHover))
+                        if preferences.expandOnHover { slider("Hover delay", \.hoverDelay, 0...1, unit: "ms", milliseconds: true) }
+                        slider("Collapse delay", \.collapseDelay, 0.1...2, unit: "ms", milliseconds: true)
+                        cards("Click action", \.clickAction, AgentNotchClickAction.allCases.map { ($0, $0.title) }, columns: 2) { NotchClickActionPicture(action: $0) }
+                    }
+                    Toggle("Collapse after opening a session", isOn: binding(\.collapseAfterFocus))
+                    Toggle("Hide when nothing is running", isOn: binding(\.hideWhenEmpty))
+                    Toggle("Animate", isOn: binding(\.animate))
+                    if preferences.animate { slider("Animation duration", \.animationDuration, 0.1...0.5, unit: "ms", milliseconds: true) }
+                }
+                SettingsFold("Displays", symbol: "display.2", summary: preferences.display.title) {
+                    cards("Show on", \.display, AgentNotchDisplay.allCases.map { ($0, $0.title) }, columns: 3) { NotchDisplayPicture(display: $0) }
+                    if preferences.position != .attached {
+                        slider("Horizontal offset", \.horizontalOffset, -300...300, unit: "pt")
+                        slider("Distance from top", \.verticalOffset, 0...80, unit: "pt")
+                    }
+                }
+            }
+            Section {
+                Button("Reset Top Notch Settings") { model.updateAgentNotch { $0 = AgentNotchSettings() } }
+            }
+    }
+
+    private var appearanceSummary: String {
+        let size = "\(Int(preferences.compactWidth)) × \(Int(preferences.compactHeight)) pt"
+        return preferences.shelfEnabled ? size : "\(preferences.compactStyle.title), \(size)"
+    }
+
+    private var shelfSummary: String {
+        "\(preferences.shelfLeadingWidget.title) and \(preferences.shelfTrailingWidget.title), opens on \(preferences.shelfPages.start.title.lowercased())"
+    }
+
+    private var musicSummary: String {
+        var parts = [preferences.musicStyle == .vinyl ? "Vinyl" : "Album art"]
+        if preferences.musicSeeking { parts.append("seeking") }
+        if preferences.musicTint { parts.append("album tint") }
+        if preferences.musicBanner { parts.append("song banner") }
+        return parts.joined(separator: ", ")
+    }
+
+    private var agentsSummary: String {
+        let names: [(String, Bool)] = [("Claude", preferences.claude), ("Codex", preferences.codex), ("OpenCode", preferences.opencode),
+                                       ("Cursor", preferences.cursor), ("Copilot", preferences.copilot)]
+        let on = names.filter(\.1).map(\.0)
+        let who = on.count == names.count ? "All agents" : on.isEmpty ? "No agents" : on.joined(separator: ", ")
+        return "\(who), \(preferences.filter.title.lowercased())"
+    }
+
+    private var behaviorSummary: String {
+        let hover = preferences.shelfEnabled ? preferences.shelfHoverDelay : preferences.hoverDelay
+        let collapse = preferences.shelfEnabled ? preferences.shelfCollapseDelay : preferences.collapseDelay
+        return "Hover \(Int((hover * 1000).rounded())) ms, collapse \(Int((collapse * 1000).rounded())) ms"
     }
 
     private func shelfPageRow(_ page: NotchShelfPage, index: Int) -> some View {
@@ -194,6 +209,16 @@ struct AgentNotchSettingsView: View {
                     Button("Clipboard History…", action: openClipboardSettings)
                 }
             }
+        }
+    }
+
+    /// A titled row of picture cards, as in Settings > Menu Bar.
+    private func cards<Value: Hashable, Picture: View>(_ title: String, _ key: WritableKeyPath<AgentNotchSettings, Value>,
+                                                      _ choices: [(Value, String)], columns: Int,
+                                                      @ViewBuilder picture: @escaping (Value) -> Picture) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+            SettingsChoiceCards(selection: binding(key), choices: choices, columns: columns, picture: picture)
         }
     }
 
@@ -247,25 +272,68 @@ struct AgentNotchSettingsView: View {
 struct AgentNotchSettingsPreview: View {
     let preferences: AgentNotchSettings
 
-    /// The open shelf's tab row: pages that are on, in order, the starting
-    /// page (or the first) selected.
-    private var shelfTabs: some View {
-        let pages = preferences.shelfPages.visible { _ in true }
-        let selected = preferences.shelfPages.start.page.flatMap { pages.contains($0) ? $0 : nil } ?? pages.first
-        return HStack(spacing: 6) {
-            ForEach(pages) { page in
-                Label(page.title, systemImage: page.symbol)
-                    .font(.system(size: max(10, preferences.fontSize - 1), weight: .medium))
-                    .foregroundStyle(page == selected ? .white : .white.opacity(0.55))
-                    .padding(.horizontal, 9).frame(height: 24)
-                    .background(.white.opacity(page == selected ? 0.14 : 0), in: Capsule())
-            }
-            Spacer()
-            Image(systemName: "pin").foregroundStyle(.white.opacity(0.55))
-        }
-        .padding(.horizontal, 12)
-    }
     var body: some View {
+        Group {
+            if preferences.shelfEnabled { shelf } else { classic }
+        }
+        .font(.system(size: preferences.fontSize)).foregroundStyle(.white)
+        .padding(16).frame(maxWidth: .infinity)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .ignore).accessibilityLabel("Sample notch preview")
+    }
+
+    /// The shelf with music playing: the strip (art and animation) and the
+    /// music card that hovering it shows.
+    private var shelf: some View {
+        let art = LinearGradient(colors: [.pink, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
+        return VStack(spacing: 10) {
+            HStack {
+                RoundedRectangle(cornerRadius: 4).fill(art).frame(width: 18, height: 18)
+                Spacer()
+                NotchAudioBars(paused: !preferences.animate, color: preferences.accent.color, height: 12)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            Divider().overlay(Color.white.opacity(0.08))
+            HStack(spacing: 12) {
+                Group {
+                    if preferences.musicStyle == .vinyl {
+                        ZStack {
+                            Circle().fill(Color(white: 0.08))
+                            Circle().fill(art).padding(3)
+                            Circle().fill(Color.black).frame(width: 7, height: 7)
+                        }
+                    } else {
+                        RoundedRectangle(cornerRadius: 8).fill(art)
+                    }
+                }
+                .frame(width: 52, height: 52)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Song title").fontWeight(.semibold)
+                    Text("Artist").foregroundStyle(.white.opacity(0.55))
+                    HStack(spacing: 6) {
+                        Capsule().fill(Color.white.opacity(0.8)).frame(width: 60, height: 3)
+                        Capsule().fill(Color.white.opacity(0.15)).frame(height: 3)
+                    }
+                    HStack(spacing: 24) {
+                        Image(systemName: "backward.fill"); Image(systemName: "pause.fill"); Image(systemName: "forward.fill")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .padding(12)
+            .background {
+                if preferences.musicTint {
+                    LinearGradient(colors: [Color.indigo.opacity(0.55), .clear], startPoint: .leading, endPoint: .trailing)
+                }
+            }
+        }
+        .frame(width: min(420, preferences.expandedWidth))
+        .background(UnevenRoundedRectangle(bottomLeadingRadius: preferences.cornerRadius, bottomTrailingRadius: preferences.cornerRadius)
+            .fill(.black.opacity(preferences.opacity)))
+    }
+
+    private var classic: some View {
         VStack(spacing: 12) {
             HStack(spacing: 8) {
                 if preferences.compactStyle == .providers {
@@ -310,13 +378,7 @@ struct AgentNotchSettingsPreview: View {
             }
             .padding(12).background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
             .padding(12)
-            .overlay(alignment: .bottom) { if preferences.shelfEnabled { shelfTabs.offset(y: 34) } }
-            .padding(.bottom, preferences.shelfEnabled ? 40 : 0)
             .background(.black.opacity(preferences.opacity), in: RoundedRectangle(cornerRadius: preferences.cornerRadius))
         }
-        .font(.system(size: preferences.fontSize)).foregroundStyle(.white)
-        .padding(16).frame(maxWidth: .infinity)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
-        .accessibilityElement(children: .ignore).accessibilityLabel("Sample notch preview")
     }
 }

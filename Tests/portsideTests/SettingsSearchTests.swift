@@ -50,7 +50,8 @@ final class SettingsSearchTests: XCTestCase {
         }
         let dynamic: Set<String> = ["Visible", "Hidden", "Always Hidden"]
         for section in Set(SettingsSearch.entries.compactMap(\.section)).subtracting(dynamic) {
-            XCTAssertTrue(text.contains(".settingsAnchor(\"\(section)\")"), section)
+            // Folded groups anchor their own header: `SettingsFold("Name", ...)` or `SettingsFoldRow`.
+            XCTAssertTrue(text.contains(".settingsAnchor(\"\(section)\")") || text.contains("SettingsFold(\"\(section)\",") || text.contains("SettingsFoldRow(\"\(section)\","), section)
         }
     }
 }

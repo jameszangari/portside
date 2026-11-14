@@ -212,7 +212,7 @@ enum MenuBarControlImage {
     }
 }
 
-/// Parts of the menu bar Portside itself occupies (the attached Agent Notch),
+/// Parts of the menu bar Portside itself occupies (the attached Top Notch),
 /// so a shape can stop at their edges. Main thread only.
 enum MenuBarReservedSpans {
     struct Span: Equatable {

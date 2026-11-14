@@ -19,6 +19,10 @@ final class MediaRemoteNowPlaying {
         let artist: String?
         let artwork: NSImage?
         let isPlaying: Bool
+        var duration: TimeInterval? = nil
+        var elapsed: TimeInterval? = nil
+        /// When `elapsed` held (the adapter's `timestamp`).
+        var elapsedAt = Date()
     }
 
     /// MRACommand values from MediaRemoteAdapter.h.
@@ -101,6 +105,16 @@ final class MediaRemoteNowPlaying {
             Self.logger.error("now playing: media remote send failed: \(error.localizedDescription, privacy: .public)")
             return false
         }
+    }
+
+    /// Jumps to `seconds` into the current item.
+    func seek(to seconds: TimeInterval) {
+        guard let library = Self.library else { return }
+        let task = Self.task(library, function: "adapter_seek_env", watch: false,
+                             environment: ["MEDIAREMOTEADAPTER_PARAM_adapter_seek_0_position": "\(Int64(seconds * 1_000_000))"])
+        task.standardInput = FileHandle.nullDevice
+        task.standardOutput = FileHandle.nullDevice
+        try? task.run()
     }
 
     private static func task(_ library: URL, function: String, watch: Bool, environment: [String: String]) -> Process {
@@ -206,7 +220,14 @@ final class MediaRemoteNowPlaying {
         let artist = (state["artist"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         let id = (state["contentItemIdentifier"] ?? state["uniqueIdentifier"]).map { "\($0)" }
             ?? [title, artist ?? ""].joined(separator: "\u{1F}")
+        let seconds = { (key: String) -> TimeInterval? in
+            guard let value = (state[key] as? NSNumber)?.doubleValue, value.isFinite, value >= 0 else { return nil }
+            return value
+        }
+        let stamp = (state["timestamp"] as? String).flatMap { try? Date($0, strategy: .iso8601) }
         return Snapshot(bundleID: bundleID, id: id, title: title, artist: artist,
-                        artwork: artwork, isPlaying: state["playing"] as? Bool ?? false)
+                        artwork: artwork, isPlaying: state["playing"] as? Bool ?? false,
+                        duration: seconds("duration").flatMap { $0 > 0 ? $0 : nil }, elapsed: seconds("elapsedTime"),
+                        elapsedAt: stamp ?? Date())
     }
 }

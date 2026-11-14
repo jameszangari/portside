@@ -19,7 +19,7 @@ struct AgentNotchView: View {
     /// A collapsed pill in a short menu bar cannot take the full radius
     /// (a 24pt bar with 16pt corners would turn it into a lozenge).
     private var bottomRadius: CGFloat {
-        if state.expanded || state.peekSide != nil { return preferences.cornerRadius }
+        if state.expanded || state.card != nil { return preferences.cornerRadius }
         // Attached, the compact pill rounds like the notch it extends
         // (Bartender's Top Shelf: about 12 pt on a 32 pt strip).
         return min(preferences.cornerRadius, state.headerHeight * (state.topAttached ? 0.375 : 0.5))
@@ -31,25 +31,43 @@ struct AgentNotchView: View {
         return min(650, 86 + Double(rows) * (rowHeight + preferences.rowSpacing) + (preferences.showUsage ? 172 : 0))
     }
 
-    /// Shelf peek: one activity card under the header, padded like the
-    /// dashboard's first row so opening does not move it.
-    static func peekHeight(preferences: AgentNotchSettings) -> CGFloat {
-        dashboardTopPadding + preferences.fontSize * 2 + 34 + dashboardBottomPadding
+    /// The shelf's Agents page: the session cards (or the empty note) and
+    /// usage, without the classic dashboard's title row.
+    static func agentsPageHeight(preferences: AgentNotchSettings, sessionCount: Int) -> CGFloat {
+        let rowHeight = preferences.fontSize * 2 + 34
+        let rows = min(preferences.maxSessions, sessionCount)
+        let list = rows == 0 ? 110 : CGFloat(rows) * rowHeight + CGFloat(rows - 1) * preferences.rowSpacing
+        let usage: CGFloat = preferences.showUsage ? 14 + 172 : 0
+        return min(650, dashboardTopPadding + list + usage + dashboardBottomPadding)
+    }
+
+    /// A shelf card's height below the strip.
+    static func cardHeight(_ activity: NotchShelfActivity, preferences: AgentNotchSettings, sessionCount: Int) -> CGFloat {
+        switch activity {
+        case .music: return dashboardTopPadding + NotchShelfCardMetrics.wideHeight + dashboardBottomPadding
+        case .agents:
+            let rowHeight = preferences.fontSize * 2 + 34
+            let rows = preferences.agentCard == .all ? min(preferences.maxSessions, max(1, sessionCount)) : 1
+            let more: CGFloat = preferences.agentCard == .latest && sessionCount > 1 ? 22 : 0
+            return dashboardTopPadding + CGFloat(rows) * rowHeight + CGFloat(rows - 1) * preferences.rowSpacing + more + dashboardBottomPadding
+        }
     }
     static let dashboardTopPadding: CGFloat = 12
     static let dashboardBottomPadding: CGFloat = 16
 
     var body: some View {
         VStack(spacing: 0) {
-            compactHeader
-                .frame(height: state.headerHeight)
+            Group {
+                if preferences.shelfEnabled { shelfStrip } else { compactHeader }
+            }
+            .frame(height: state.headerHeight)
             if state.expanded {
                 Group {
                     if preferences.shelfEnabled { shelfOpen } else { dashboard }
                 }
                 .transition(.opacity)
-            } else if let side = state.peekSide {
-                peekCard(side)
+            } else if let card = state.card {
+                shelfCard(card)
                     .transition(.opacity)
             }
         }
@@ -82,7 +100,7 @@ struct AgentNotchView: View {
             }
         }
         .animation(preferences.animate && !reduceMotion ? .easeInOut(duration: preferences.animationDuration) : nil, value: state.expanded)
-        .animation(preferences.animate && !reduceMotion ? .easeInOut(duration: preferences.animationDuration) : nil, value: state.peekSide)
+        .animation(preferences.animate && !reduceMotion ? .easeInOut(duration: preferences.animationDuration) : nil, value: state.card)
         .animation(preferences.animate && !reduceMotion ? .easeInOut(duration: preferences.animationDuration) : nil, value: state.surfaceSize)
         .background {
             // Keep compact media bars in sync when Now Playing publishes.
@@ -195,8 +213,6 @@ struct AgentNotchView: View {
                     }.frame(maxWidth: .infinity).padding(.vertical, 14)
                 } else {
                     VStack(spacing: preferences.rowSpacing) {
-                        // Opened from the Now Playing peek: keep that card on top.
-                        if leadWithTrack, let track = nowPlaying?.track { trackCard(track) }
                         ForEach(Array(sessions.prefix(preferences.maxSessions).enumerated()), id: \.offset) { _, session in
                             sessionCard(session)
                         }
@@ -219,53 +235,37 @@ struct AgentNotchView: View {
     private var shelfPages: [NotchShelfPage] { preferences.shelfPages.visible(available: state.pageAvailable) }
     private var currentPage: NotchShelfPage? { state.currentPage }
 
-    static let shelfBarHeight: CGFloat = 26 + 12
+    /// The tab row and the gap above it.
+    static let shelfBarHeight: CGFloat = 26 + 10
     static let shelfWidgetSpacing: CGFloat = 10
 
-    /// The open shelf's content height below the header, per page.
-    static func shelfHeight(page: NotchShelfPage?, preferences: AgentNotchSettings, sessionCount: Int, width: CGFloat,
-                            natural: (String) -> WidgetSize) -> CGFloat {
-        switch page {
-        case .agents: dashboardHeight(preferences: preferences, sessionCount: sessionCount)
-        case .widgets:
-            dashboardTopPadding + shelfWidgetLayout(kinds: preferences.shelfWidgets, width: width, natural: natural).tile
-                + dashboardBottomPadding + shelfBarHeight
-        case .clipboard, nil: 150
-        }
+    /// The open shelf's height below the strip, per page: the tab row, then
+    /// the page.
+    static func shelfHeight(page: NotchShelfPage?, preferences: AgentNotchSettings, sessionCount: Int) -> CGFloat {
+        shelfBarHeight + {
+            switch page {
+            case .agents: agentsPageHeight(preferences: preferences, sessionCount: sessionCount)
+            case .widgets: dashboardTopPadding + NotchShelfCardMetrics.slotHeight + dashboardBottomPadding
+            case .clipboard, nil: 150
+            }
+        }()
     }
 
-    /// Widget tiles for the shelf: one tile height for the row, each widget
-    /// at its own design width. When the row would make tiles shorter than
-    /// `minTile`, the widest widget steps down a size until it fits.
-    static func shelfWidgetLayout(kinds: [String], width: CGFloat, natural: (String) -> WidgetSize)
-        -> (tile: CGFloat, items: [(kind: String, size: WidgetSize)]) {
-        let minTile: CGFloat = 44
-        let maxTile: CGFloat = 76
-        let room = width - 32 - shelfWidgetSpacing * CGFloat(max(0, kinds.count - 1))
-        var sizes = kinds.map(natural)
-        func tile() -> CGFloat { min(maxTile, room / CGFloat(max(1, sizes.map(\.rawValue).reduce(0, +)))) }
-        while tile() < minTile, let widest = sizes.indices.max(by: { sizes[$0] < sizes[$1] }), sizes[widest] > .small {
-            sizes[widest] = WidgetSize(rawValue: sizes[widest].rawValue - 1) ?? .small
-        }
-        return (tile(), Array(zip(kinds, sizes)).map { (kind: $0.0, size: $0.1) })
-    }
-
-    /// The open shelf: the page, then a bottom row with the tabs, pin and
-    /// close. The row sits below the content so a peeked card does not move
-    /// when the shelf opens on top of it.
+    /// The open shelf: the tab row with pin and close on top, as in
+    /// Bartender, then the page.
     private var shelfOpen: some View {
         VStack(spacing: 0) {
+            shelfBar
+                .padding(.horizontal, 16).padding(.top, 10)
             Group {
                 switch currentPage {
                 case .agents: dashboard
                 case .widgets: shelfWidgets
                 case .clipboard: shelfPlaceholder(.clipboard, "Clipboard History comes to the shelf in a later preview.")
-                case nil: shelfPlaceholder(nil, "Every page is off. Turn one on in Settings > Agent Notch > Notch Shelf.")
+                case nil: shelfPlaceholder(nil, "Every page is off. Turn one on in Settings > Top Notch > Shelf.")
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            shelfBar
-                .padding(.horizontal, 16).padding(.bottom, 12)
         }
     }
 
@@ -306,34 +306,38 @@ struct AgentNotchView: View {
         }
     }
 
-    /// The Widgets page: live widget tiles in one row, as in the dock but
-    /// sized to the shelf. Controls inside a tile (Now Playing) take their
-    /// own clicks; a click elsewhere on a tile does what it does in the dock.
+    /// The Widgets page: Bartender's two slots, side by side.
     private var shelfWidgets: some View {
-        let layout = Self.shelfWidgetLayout(kinds: preferences.shelfWidgets, width: state.panelWidth) { state.widgetHost($0)?.size ?? .small }
-        return HStack(spacing: Self.shelfWidgetSpacing) {
-            ForEach(layout.items, id: \.kind) { item in
-                Group {
-                    if let host = state.widgetHost(item.kind) {
-                        host.previewView
-                            .environment(\.dockTileSize, layout.tile)
-                            .environment(\.widgetSize, item.size)
-                            .environment(\.dockIconGap, 0)
-                            .contentShape(Rectangle())
-                            .onTapGesture { host.activate() }
-                            .accessibilityElement(children: .contain)
-                            .accessibilityLabel(host.widget.name)
-                    } else {
-                        ProgressView().controlSize(.small)
-                    }
-                }
-                .frame(width: layout.tile * CGFloat(item.size.rawValue), height: layout.tile)
+        HStack(spacing: Self.shelfWidgetSpacing) {
+            shelfSlot(preferences.shelfLeadingWidget)
+            shelfSlot(preferences.shelfTrailingWidget)
+        }
+        .frame(height: NotchShelfCardMetrics.slotHeight)
+        .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding)
+        .frame(maxWidth: .infinity, alignment: .top)
+    }
+
+    @ViewBuilder
+    private func shelfSlot(_ slot: NotchShelfSlot) -> some View {
+        Group {
+            switch slot {
+            case .music:
+                if let nowPlaying { NotchMusicCard(widget: nowPlaying, preferences: preferences, layout: .slot) } else { slotLoading }
+            case .weather:
+                if let weather = state.widgetHost(WeatherWidget.kind)?.widget as? WeatherWidget { NotchWeatherCard(widget: weather) } else { slotLoading }
+            case .calendar:
+                if let calendar = state.widgetHost(CalendarWidget.kind)?.widget as? CalendarWidget { NotchCalendarCard(widget: calendar) } else { slotLoading }
+            case .empty:
+                Color.clear
             }
         }
-        .environment(\.colorScheme, .dark)
-        .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding)
-        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.white.opacity(slot == .empty ? 0 : 0.055), in: RoundedRectangle(cornerRadius: NotchShelfCardMetrics.slotRadius, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: NotchShelfCardMetrics.slotRadius, style: .continuous))
     }
+
+    private var slotLoading: some View { ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity) }
 
     private func shelfPlaceholder(_ page: NotchShelfPage?, _ message: String) -> some View {
         VStack(spacing: 7) {
@@ -345,10 +349,6 @@ struct AgentNotchView: View {
         }
         .frame(maxWidth: .infinity).padding(.horizontal, 16).padding(.top, 24)
         .accessibilityElement(children: .combine)
-    }
-
-    private var leadWithTrack: Bool {
-        preferences.shelfEnabled && state.openedFrom == .trailing && mediaPlaying
     }
 
     private var dashboardTitle: some View {
@@ -376,56 +376,113 @@ struct AgentNotchView: View {
         }
     }
 
+    /// The card below the strip for the hovered activity (or the song
+    /// banner). A click on it opens the shelf, except on its own controls.
     @ViewBuilder
-    private func peekCard(_ side: NotchShelfSide) -> some View {
+    private func shelfCard(_ activity: NotchShelfActivity) -> some View {
         Group {
-            if side == .trailing, mediaPlaying, let track = nowPlaying?.track {
-                trackCard(track)
-            } else if let session = sessions.first {
-                sessionCard(session)
+            switch activity {
+            case .music:
+                if let nowPlaying { NotchMusicCard(widget: nowPlaying, preferences: preferences, layout: .wide) }
+            case .agents:
+                agentCard
             }
         }
         .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding).padding(.bottom, Self.dashboardBottomPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .contentShape(Rectangle())
+        .onTapGesture { state.shelfClick() }
     }
 
-    private func trackCard(_ track: NowPlayingWidget.Track) -> some View {
-        HStack(spacing: 10) {
-            Group {
-                if let artwork = track.artwork { Image(nsImage: artwork).resizable().aspectRatio(contentMode: .fill) }
-                else { Image(systemName: "music.note").foregroundStyle(.white.opacity(0.6)) }
-            }
-            .frame(width: 30, height: 30)
-            .background(.white.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 7))
-            VStack(alignment: .leading, spacing: 5) {
-                Text(track.title).fontWeight(.medium).lineLimit(1)
-                Text(track.artist ?? track.player.name)
-                    .font(.system(size: max(9, preferences.fontSize - 2)))
-                    .foregroundStyle(.white.opacity(0.5)).lineLimit(1)
-            }
-            Spacer(minLength: 4)
-            if track.isPlaying {
-                NotchAudioBars(paused: !preferences.animate || reduceMotion, color: preferences.accent.color, height: 12)
-            }
-            if preferences.shelfEnabled, let nowPlaying {
-                Button { nowPlaying.send(.playPause) } label: {
-                    Image(systemName: track.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: preferences.fontSize, weight: .semibold))
-                        .frame(width: 28, height: 28)
-                        .background(.white.opacity(0.08), in: Circle())
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(track.isPlaying ? "Pause" : "Play")
+    /// Bartender's agent card: the latest session, "+N more" below; or
+    /// every running session when Settings asks for all.
+    private var agentCard: some View {
+        let ordered = sessions.sorted { $0.updated > $1.updated }
+        let shown = preferences.agentCard == .all ? Array(ordered.prefix(preferences.maxSessions)) : Array(ordered.prefix(1))
+        return VStack(alignment: .leading, spacing: preferences.rowSpacing) {
+            ForEach(shown, id: \.id) { sessionCard($0) }
+            if preferences.agentCard == .latest, ordered.count > 1 {
+                Text("+\(ordered.count - 1) more").font(.system(size: max(9, preferences.fontSize - 2), weight: .medium))
+                    .foregroundStyle(.white.opacity(0.5)).padding(.leading, 4)
             }
         }
-        .padding(11).frame(maxWidth: .infinity, alignment: .leading)
-        .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.06)) }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Now playing: \(track.title)\(track.artist.map { " by \($0)" } ?? "")")
-        .accessibilityAction(named: track.isPlaying ? "Pause" : "Play") { nowPlaying?.send(.playPause) }
+    }
+
+    // MARK: Compact strip (SHELF-04c)
+
+    /// The shelf's compact strip: what `state.strip` says on each side of
+    /// the notch. A click anywhere opens the shelf.
+    private var shelfStrip: some View {
+        HStack(spacing: 0) {
+            stripSide(.leading)
+            Color.clear.frame(width: state.notchWidth > 0 ? state.notchWidth : state.compactWidth / 3)
+            stripSide(.trailing)
+        }
+        // Compact, the strip hugs the notch; with a card or the shelf open
+        // it spans the surface, so the side icons move out with it.
+        .frame(maxWidth: state.expanded || state.card != nil ? .infinity : state.compactWidth)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture { state.shelfClick() }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(stripLabel)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { state.shelfClick() }
+    }
+
+    private var stripLabel: String {
+        var parts: [String] = []
+        if state.strip.leading == .music || state.strip.trailing == .music, let track = nowPlaying?.track {
+            parts.append("Now playing \(track.title)")
+        }
+        if state.strip.leading == .agents || state.strip.trailing == .agents {
+            parts.append("\(sessions.count) agent sessions\(attention > 0 ? ", \(attention) need you" : "")")
+        }
+        return (parts.isEmpty ? "Notch shelf" : parts.joined(separator: ", ")) + ". Open shelf"
+    }
+
+    @ViewBuilder
+    private func stripSide(_ side: NotchShelfSide) -> some View {
+        let paused = !preferences.animate || reduceMotion
+        Group {
+            switch (state.strip.activity(side), side) {
+            case (.music?, .leading):
+                let size = max(14, state.headerHeight - 12)
+                Group {
+                    if let artwork = nowPlaying?.track?.artwork {
+                        Image(nsImage: artwork).resizable().interpolation(.high).scaledToFill()
+                    } else {
+                        Image(systemName: "music.note").font(.system(size: size * 0.55)).foregroundStyle(.white.opacity(0.6))
+                    }
+                }
+                .frame(width: size, height: size)
+                .background(.white.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+            case (.music?, .trailing):
+                NotchAudioBars(paused: paused || nowPlaying?.track?.isPlaying != true, color: preferences.accent.color,
+                               height: min(14, max(9, state.headerHeight * 0.4)))
+            case (.agents?, .leading):
+                if attention > 0 {
+                    Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
+                } else if working > 0 {
+                    let loaderSize = min(16, max(10, state.headerHeight * 0.48))
+                    ThinkingLoader(style: ThinkingLoader.preferredStyle(for: loaderSize), paused: paused, size: loaderSize, color: preferences.accent.color)
+                } else {
+                    Image(systemName: "sparkles").foregroundStyle(preferences.accent.color)
+                }
+            case (.agents?, .trailing):
+                HStack(spacing: 4) {
+                    if attention > 0 { Circle().fill(.orange).frame(width: 5, height: 5) }
+                    Text("\(attention > 0 ? attention : sessions.count)").monospacedDigit().fontWeight(.semibold)
+                        .foregroundStyle(attention > 0 ? .orange : .white)
+                }
+            case (nil, _):
+                Color.clear
+            }
+        }
+        // Open, line up with the cards' 16 pt margin.
+        .padding(.horizontal, state.expanded || state.card != nil ? 16 : 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: side == .leading ? .leading : .trailing)
     }
 
     private func sessionCard(_ session: AgentSession) -> some View {
@@ -434,9 +491,16 @@ struct AgentNotchView: View {
             if preferences.collapseAfterFocus { state.setExpanded(false) }
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: session.needsAttention ? "hand.raised.fill" : session.state == .running ? "sparkles" : session.state == .done ? "checkmark" : "moon")
-                    .font(.system(size: preferences.fontSize + 1, weight: .medium))
-                    .foregroundStyle(session.needsAttention ? .orange : tint(session.provider))
+                Group {
+                    if preferences.shelfEnabled, session.state == .running, !session.needsAttention {
+                        // Bartender's agent lamp: the working loader.
+                        ThinkingLoader(style: .snakeBoxes, paused: !preferences.animate || reduceMotion, size: 14, color: tint(session.provider))
+                    } else {
+                        Image(systemName: session.needsAttention ? "hand.raised.fill" : session.state == .running ? "sparkles" : session.state == .done ? "checkmark" : "moon")
+                            .font(.system(size: preferences.fontSize + 1, weight: .medium))
+                            .foregroundStyle(session.needsAttention ? .orange : tint(session.provider))
+                    }
+                }
                     .frame(width: 30, height: 30)
                     .background(tint(session.provider).opacity(0.13), in: RoundedRectangle(cornerRadius: 9))
                 VStack(alignment: .leading, spacing: 5) {

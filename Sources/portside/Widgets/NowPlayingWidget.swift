@@ -33,6 +33,18 @@ final class NowPlayingWidget: DockWidget {
         let artworkURL: URL?
         var isPlaying: Bool
         let player: Player
+        /// Length and position in seconds, when the player reports them.
+        var duration: TimeInterval? = nil
+        var elapsed: TimeInterval? = nil
+        /// When `elapsed` was read; playback moves on from there.
+        var elapsedAt = Date()
+
+        /// The playback position at `date`, inside the track.
+        func position(at date: Date) -> TimeInterval? {
+            guard let elapsed else { return nil }
+            let now = elapsed + (isPlaying ? max(0, date.timeIntervalSince(elapsedAt)) : 0)
+            return duration.map { min($0, now) } ?? now
+        }
     }
 
     struct Player: Equatable {
@@ -128,7 +140,11 @@ final class NowPlayingWidget: DockWidget {
         guard let track else { return }
         if command == .playPause {
             // Show the new state now; the player's notification confirms.
-            tracks[track.player.bundleID]?.isPlaying.toggle()
+            // Freeze or restart the clock at the current position.
+            let id = track.player.bundleID
+            tracks[id]?.elapsed = track.position(at: Date())
+            tracks[id]?.elapsedAt = Date()
+            tracks[id]?.isPlaying.toggle()
         }
         guard Self.players.contains(track.player) else {
             let sent: MediaRemoteNowPlaying.Command = switch command {
@@ -144,6 +160,26 @@ final class NowPlayingWidget: DockWidget {
                 Self.postMediaKey(command.mediaKey)
                 logger.info("now playing: \(command.rawValue, privacy: .public) via media key")
             }
+        }
+    }
+
+    #if DEBUG
+    /// Render probe only: shows `track` without asking any player.
+    func preview(_ track: Track) { set(track, for: track.player.bundleID) }
+    #endif
+
+    /// Jumps to `seconds` into the current track.
+    func seek(to seconds: TimeInterval) {
+        guard let track else { return }
+        let target = max(0, track.duration.map { min($0, seconds) } ?? seconds)
+        tracks[track.player.bundleID]?.elapsed = target
+        tracks[track.player.bundleID]?.elapsedAt = Date()
+        guard Self.players.contains(track.player) else {
+            system.seek(to: target)
+            return
+        }
+        scriptQueue.async {
+            PlayerScript.run("tell application \"\(track.player.name)\" to set player position to \(target)", player: track.player)
         }
     }
 
@@ -202,7 +238,8 @@ final class NowPlayingWidget: DockWidget {
         let name = NSRunningApplication.runningApplications(withBundleIdentifier: next.bundleID).first?.localizedName
         let player = Player(bundleID: next.bundleID, name: name ?? next.bundleID, notification: "")
         set(Track(id: next.id, title: next.title, artist: next.artist, artwork: next.artwork, artworkURL: nil,
-                  isPlaying: next.isPlaying, player: player), for: next.bundleID)
+                  isPlaying: next.isPlaying, player: player, duration: next.duration, elapsed: next.elapsed,
+                  elapsedAt: next.elapsedAt), for: next.bundleID)
     }
 
     private func set(_ track: Track?, for bundleID: String) {
@@ -261,9 +298,11 @@ private enum PlayerScript {
     /// Each script checks `is running` first, so it never launches a
     /// player that quit in the meantime.
     static func read(_ player: NowPlayingWidget.Player, previous: NowPlayingWidget.Track?) -> Result {
+        // Spotify counts duration in milliseconds, Music in seconds; both
+        // report the position in seconds.
         let fields = player.bundleID == "com.spotify.client"
-            ? "artist of t, id of t, artwork url of t"
-            : "artist of t, persistent ID of t"
+            ? "artist of t, id of t, artwork url of t, (duration of t) / 1000, player position"
+            : "artist of t, persistent ID of t, \"\", duration of t, player position"
         let source = """
         if application "\(player.name)" is running then
             tell application "\(player.name)"
@@ -280,14 +319,19 @@ private enum PlayerScript {
         guard items.count >= 4, items[0] != "stopped", let title = items[1], !title.isEmpty else { return .stopped }
         let id = items[3] ?? title
         var artwork = previous?.id == id ? previous?.artwork : nil
-        let artworkURL = items.count > 4 ? items[4].flatMap(URL.init(string:)) : nil
+        let artworkURL = items.count > 4 ? items[4].flatMap { $0.isEmpty ? nil : URL(string: $0) } : nil
         if artwork == nil, player.bundleID == "com.apple.Music" {
             artwork = musicArtwork(player)
+        }
+        let number = { (index: Int) -> TimeInterval? in
+            guard index <= list.numberOfItems, let value = list.atIndex(index)?.doubleValue, value.isFinite, value >= 0 else { return nil }
+            return value
         }
         return .track(NowPlayingWidget.Track(
             id: id, title: title, artist: items[2].flatMap { $0.isEmpty ? nil : $0 },
             artwork: artwork, artworkURL: artworkURL,
-            isPlaying: items[0] == "playing", player: player))
+            isPlaying: items[0] == "playing", player: player,
+            duration: number(6).flatMap { $0 > 0 ? $0 : nil }, elapsed: number(7)))
     }
 
     /// Music returns the art itself (JPEG or PNG bytes).

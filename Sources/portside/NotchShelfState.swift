@@ -1,25 +1,34 @@
 import CoreGraphics
 
-/// How the notch shelf opens. Hovering a side of the notch always peeks at
-/// that side's activity; the mode decides what opens the full shelf.
-enum NotchShelfOpenMode: String, Codable, CaseIterable, Identifiable {
-    case hover, click, hoverPin
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .hover: "Hover"
-        case .click: "Click"
-        case .hoverPin: "Hover opens, click pins"
-        }
-    }
-}
-
 enum NotchShelfSide: Equatable { case leading, trailing }
+
+/// Something running that the compact strip shows and that has a card.
+enum NotchShelfActivity: Equatable { case music, agents }
 
 enum NotchShelfPhase: Equatable {
     case compact
-    case peek(NotchShelfSide)
+    /// One activity's card below the strip (hover, or the song banner).
+    case card(NotchShelfActivity)
     case open
+}
+
+/// What the compact strip shows on each side of the notch (SHELF-04c).
+/// Music playing takes both sides (art left, animation right); agents give
+/// up the strip to it, except for a short alert on the right. Without
+/// music, agents take both sides. Nil: that side shows nothing.
+struct NotchShelfStrip: Equatable {
+    var leading: NotchShelfActivity?
+    var trailing: NotchShelfActivity?
+
+    static func layout(music: Bool, agents: Bool, agentAlert: Bool) -> NotchShelfStrip {
+        if music { return NotchShelfStrip(leading: .music, trailing: agents && agentAlert ? .agents : .music) }
+        if agents { return NotchShelfStrip(leading: .agents, trailing: .agents) }
+        return NotchShelfStrip()
+    }
+
+    func activity(_ side: NotchShelfSide) -> NotchShelfActivity? {
+        side == .leading ? leading : trailing
+    }
 }
 
 /// Where the pointer is relative to the shelf panel.
@@ -28,7 +37,7 @@ enum NotchShelfRegion: Equatable {
     case side(NotchShelfSide)
     /// The camera housing, or the middle of the pill on a display without one.
     case notch
-    /// Peek card or open shelf content below the header.
+    /// A card or open shelf content below the header.
     case body
 
     /// Maps a point in the panel (origin top left) to a region. The header is
@@ -52,47 +61,53 @@ enum NotchShelfRegion: Equatable {
 
 /// A delay the presentation should run, then report back with `fire(_:)`.
 enum NotchShelfTimer: Equatable {
-    case peek(NotchShelfSide)
+    case card(NotchShelfActivity)
     case open
     /// Pointer left the open shelf.
     case collapse
-    /// Pointer left a peek card. Shorter than `collapse`, as a peek is a glance.
-    case collapsePeek
+    /// Pointer left a card. Shorter than `collapse`, as a card is a glance.
+    case collapseCard
+    /// The song banner ran its time without the pointer on it.
+    case bannerEnd
 }
 
 /// The shelf's open/close rules, free of AppKit so they can be tested.
-/// Each input returns the timer to start (replacing any earlier one); nil
-/// means cancel whatever was pending.
+/// One rule everywhere (SHELF-04c): hovering a running activity on the
+/// strip shows its card; the notch itself, a side with nothing running,
+/// or a click opens the full shelf. Each input returns the timer to start
+/// (replacing any earlier one); nil means cancel whatever was pending.
 struct NotchShelfMachine: Equatable {
-    var mode: NotchShelfOpenMode
     private(set) var phase = NotchShelfPhase.compact
     /// Stays open when the pointer leaves. Click outside and Esc still close.
     private(set) var pinned = false
     private(set) var pending: NotchShelfTimer?
+    /// The card is a song banner the pointer has not touched yet.
+    private(set) var banner = false
 
-    init(mode: NotchShelfOpenMode = .hover) { self.mode = mode }
+    init() {}
 
     var isOpen: Bool { phase == .open }
-    var peekSide: NotchShelfSide? {
-        if case .peek(let side) = phase { return side }
+    var card: NotchShelfActivity? {
+        if case .card(let activity) = phase { return activity }
         return nil
     }
 
-    /// `canPeek` says whether a side has anything to show; an empty side
-    /// does not peek.
+    /// `activity` says what the strip shows on a side, nil for nothing.
     @discardableResult
-    mutating func pointer(_ region: NotchShelfRegion, canPeek: (NotchShelfSide) -> Bool = { _ in true }) -> NotchShelfTimer? {
+    mutating func pointer(_ region: NotchShelfRegion,
+                          activity: (NotchShelfSide) -> NotchShelfActivity? = { _ in nil }) -> NotchShelfTimer? {
+        if region != .outside { banner = false }
         let next: NotchShelfTimer?
         switch (region, phase) {
         case (.outside, .compact): next = nil
-        case (.outside, .peek): next = .collapsePeek
+        case (.outside, .card): next = .collapseCard
         case (.outside, .open): next = pinned ? nil : .collapse
         case (.body, _): next = nil
-        case (.side(let side), .compact): next = canPeek(side) ? .peek(side) : nil
-        case (.side(let side), .peek(let current)): next = side == current || !canPeek(side) ? nil : .peek(side)
-        case (.side, .open): next = nil
-        case (.notch, .open): next = nil
-        case (.notch, _): next = mode == .click ? nil : .open
+        case (_, .open): next = nil
+        case (.notch, _): next = .open
+        case (.side(let side), .compact): next = activity(side).map { .card($0) } ?? .open
+        case (.side(let side), .card(let current)):
+            if let shown = activity(side) { next = shown == current ? nil : .card(shown) } else { next = .open }
         }
         pending = next
         return next
@@ -103,28 +118,38 @@ struct NotchShelfMachine: Equatable {
         guard timer == pending else { return }
         pending = nil
         switch timer {
-        case .peek(let side): if phase != .open { phase = .peek(side) }
+        case .card(let activity): if phase != .open { phase = .card(activity) }
         case .open: phase = .open
-        case .collapse, .collapsePeek: close()
+        case .collapse, .collapseCard: close()
+        case .bannerEnd: if banner { close() }
         }
     }
 
-    /// A click on the header (a side or the notch). Like Bartender, a click
-    /// never closes an open shelf (the pointer is still on the notch, so a
-    /// close would only reopen on the next hover); in Hover opens, click
-    /// pins it pins. Leaving, a click outside or the close button close it.
+    /// The song banner: shows the music card while the strip is idle and
+    /// returns the timer that hides it. Nil when something else shows.
+    mutating func showBanner() -> NotchShelfTimer? {
+        guard phase == .compact else { return nil }
+        phase = .card(.music)
+        banner = true
+        pending = .bannerEnd
+        return .bannerEnd
+    }
+
+    /// A click on the strip or a card opens the shelf. Like Bartender, a
+    /// click never closes an open shelf (the pointer is still on the notch,
+    /// so a close would only reopen on the next hover). Leaving, a click
+    /// outside or the close button close it.
     mutating func click() {
         pending = nil
-        if phase == .open {
-            if mode == .hoverPin { pinned = true }
-        } else {
-            phase = .open
-            pinned = mode == .hoverPin
-        }
+        banner = false
+        guard phase != .open else { return }
+        phase = .open
+        pinned = false
     }
 
     mutating func open() {
         pending = nil
+        banner = false
         phase = .open
     }
 
@@ -135,6 +160,7 @@ struct NotchShelfMachine: Equatable {
     /// Click outside, Esc, or any explicit close.
     mutating func close() {
         pending = nil
+        banner = false
         phase = .compact
         pinned = false
     }
@@ -160,11 +186,18 @@ enum NotchShelfPage: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-/// Which page the shelf opens on: the last one shown, or a fixed page.
+/// Which page the shelf opens on: the first tab (Bartender), the last one
+/// shown, or a fixed page.
 enum NotchShelfStartPage: String, Codable, CaseIterable, Identifiable {
-    case lastUsed, widgets, agents, clipboard
+    case first, lastUsed, widgets, agents, clipboard
     var id: String { rawValue }
-    var title: String { self == .lastUsed ? "Last used" : page?.title ?? rawValue }
+    var title: String {
+        switch self {
+        case .first: "First tab"
+        case .lastUsed: "Last used"
+        default: page?.title ?? rawValue
+        }
+    }
     var page: NotchShelfPage? { NotchShelfPage(rawValue: rawValue) }
 }
 
@@ -174,11 +207,11 @@ enum NotchShelfStartPage: String, Codable, CaseIterable, Identifiable {
 struct NotchShelfPages: Codable, Equatable {
     private(set) var order: [NotchShelfPage] = NotchShelfPage.allCases
     private(set) var hidden: Set<NotchShelfPage> = []
-    var start = NotchShelfStartPage.lastUsed
+    var start = NotchShelfStartPage.first
 
     init() {}
 
-    init(order: [NotchShelfPage], hidden: Set<NotchShelfPage> = [], start: NotchShelfStartPage = .lastUsed) {
+    init(order: [NotchShelfPage], hidden: Set<NotchShelfPage> = [], start: NotchShelfStartPage = .first) {
         self.order = Self.complete(order)
         self.hidden = hidden
         self.start = start
@@ -192,7 +225,7 @@ struct NotchShelfPages: Codable, Equatable {
         order = Self.complete((names ?? []).compactMap(NotchShelfPage.init(rawValue:)))
         let off = (try? c.decodeIfPresent([String].self, forKey: .hidden)) ?? nil
         hidden = Set((off ?? []).compactMap(NotchShelfPage.init(rawValue:)))
-        start = c.value(.start, or: .lastUsed)
+        start = c.value(.start, or: .first)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -227,29 +260,58 @@ struct NotchShelfPages: Codable, Equatable {
         order.filter { isOn($0) && available($0) }
     }
 
-    /// The page an opening shelf shows. A peek opens on the page that holds
-    /// the peeked card, so the card stays put; otherwise the starting page,
-    /// falling back to the first visible page. Nil when no page is visible.
-    func opening(lastUsed: NotchShelfPage?, fromPeek: Bool, available: (NotchShelfPage) -> Bool) -> NotchShelfPage? {
+    /// The page an opening shelf shows: the starting page, falling back to
+    /// the first visible page. Nil when no page is visible.
+    func opening(lastUsed: NotchShelfPage?, available: (NotchShelfPage) -> Bool) -> NotchShelfPage? {
         let pages = visible(available: available)
-        if fromPeek, pages.contains(.agents) { return .agents }
         let wanted = start == .lastUsed ? lastUsed : start.page
         if let wanted, pages.contains(wanted) { return wanted }
         return pages.first
     }
 }
 
-/// The Widgets page's slots (SHELF-04): widget kinds in order, 1 to 4.
-/// Saved inside `agentNotchSettings` as `shelfWidgets`.
-enum NotchShelfWidgets {
-    static let eligible = ["nowPlaying", "calendar", "weather", "usage", "systemStats", "cpu", "memory", "battery", "clock"]
-    static let defaults = ["nowPlaying", "weather"]
-    static let maxSlots = 4
-
-    /// Eligible, each once, at most `maxSlots`; nothing left gives the defaults.
-    static func normalized(_ kinds: [String]) -> [String] {
-        var seen = Set<String>()
-        let kept = kinds.filter { eligible.contains($0) && seen.insert($0).inserted }
-        return kept.isEmpty ? defaults : Array(kept.prefix(maxSlots))
+/// A slot on the Widgets page (SHELF-04c): Bartender's two tray widgets,
+/// left and right. Saved inside `agentNotchSettings` as
+/// `shelfLeadingWidget` and `shelfTrailingWidget`.
+enum NotchShelfSlot: String, Codable, CaseIterable, Identifiable {
+    case music, weather, calendar, empty
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .music: "Music"
+        case .weather: "Weather"
+        case .calendar: "Calendar"
+        case .empty: "Empty"
+        }
     }
+    /// The widget that feeds it, run while the slot shows.
+    var widgetKind: String? {
+        switch self {
+        case .music: "nowPlaying"
+        case .weather: "weather"
+        case .calendar: "calendar"
+        case .empty: nil
+        }
+    }
+
+    /// The two slots from SHELF-04's `shelfWidgets` list: its first two
+    /// kinds that have a slot, else the defaults.
+    static func migrated(_ kinds: [String]) -> (leading: NotchShelfSlot, trailing: NotchShelfSlot) {
+        let slots = kinds.compactMap { kind in allCases.first { $0.widgetKind == kind } }
+        return (slots.first ?? .music, slots.dropFirst().first ?? (slots.first == .calendar ? .music : .calendar))
+    }
+}
+
+/// How music cards look, everywhere they show (SHELF-04c).
+enum NotchMusicStyle: String, Codable, CaseIterable, Identifiable {
+    case music, vinyl
+    var id: String { rawValue }
+    var title: String { self == .music ? "Album art" : "Vinyl" }
+}
+
+/// What the agent card lists: the latest session, or every running one.
+enum NotchAgentCard: String, Codable, CaseIterable, Identifiable {
+    case latest, all
+    var id: String { rawValue }
+    var title: String { self == .latest ? "Latest session" : "All running sessions" }
 }

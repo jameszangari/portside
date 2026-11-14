@@ -310,7 +310,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .commandCenter: "Command Center"
         case .switcher: "App Switcher"
         case .menuBar: "Menu Bar"
-        case .notch: "Agent Notch"
+        case .notch: "Top Notch"
         case .general: "General"
         }
     }
@@ -791,7 +791,7 @@ private struct DockSettings: View {
 
     var body: some View {
         Form {
-            Section(header: Text("Layout").settingsAnchor("Layout")) {
+            Section {
                 Picker("Position", selection: Binding(
                     get: { dockModel.edge },
                     set: { dockModel.setEdge($0) }
@@ -799,6 +799,7 @@ private struct DockSettings: View {
                     ForEach(DockEdge.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                .settingsAnchor("Layout")
 
                 DockPlacementPreviewCard(
                     edge: dockModel.edge,
@@ -807,40 +808,17 @@ private struct DockSettings: View {
                     showTrash: dockModel.showTrash
                 )
 
-                Toggle("Show Trash in dock", isOn: Binding(
-                    get: { dockModel.showTrash },
-                    set: { dockModel.setShowTrash($0) }
-                ))
-                if let notice = trash.notice {
-                    Text(notice).helperStyle()
-                }
-                if trash.accessDenied && !dockModel.trashAccessHintDismissed {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Portside needs Full Disk Access (or Finder Automation) to show whether the Trash is full").helperStyle()
-                        HStack {
-                            Button("Open Full Disk Access") {
-                                dockModel.dismissTrashAccessHint()
-                                TrashController.openFullDiskAccessSettings()
-                            }
-                            Button("Dismiss") { dockModel.dismissTrashAccessHint() }
-                        }
-                    }
-                }
-            }
-
-            Section {
                 Toggle(isOn: Binding(
                     get: { dockModel.autoHide },
                     set: { dockModel.setAutoHide($0) }
                 )) {
                     Text("Hide dock automatically")
                     Text(dockModel.autoHide
-                         ? "The dock slides away until the pointer touches the screen edge."
-                         : dockModel.reserveSpace
-                            ? "The dock stays visible."
-                            : "The dock stays visible, so windows can extend under it.")
+                         ? "Slides away until the pointer touches the screen edge. Paused while Settings is open."
+                         : "The dock stays visible.")
                         .helperStyle()
                 }
+                .settingsAnchor("Auto-hide")
 
                 if !dockModel.autoHide {
                     Toggle(isOn: Binding(
@@ -853,12 +831,11 @@ private struct DockSettings: View {
                         }
                     )) {
                         Text("Keep windows clear of the dock")
-                        Text("Maximized and tiled windows stop at the dock, like they do at the macOS Dock.")
-                            .helperStyle()
+                        Text("Maximized windows stop at the dock, like the macOS Dock.").helperStyle()
                     }
                     if dockModel.reserveSpace && !accessibility.isTrusted {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Portside needs Accessibility access to resize other apps' windows. Until then, windows can extend under the dock. If Portside already looks enabled after an update, use Grant Access to reset the stale permission, then quit and reopen Portside.").helperStyle()
+                            Text("Needs Accessibility access to resize other apps' windows. After an update, use Grant Access to reset a stale permission, then reopen Portside.").helperStyle()
                             HStack {
                                 Button("Grant Access…") {
                                     accessibility.requestAccess(forFeature: "keeping windows clear of the dock")
@@ -869,98 +846,118 @@ private struct DockSettings: View {
                     }
                 }
 
-                if dockModel.autoHide {
-                    SettingsSlider(
-                        title: "Reveal delay",
-                        value: dockModel.revealDelay,
-                        range: DockModel.revealDelayRange,
-                        snap: 0.01,
-                        format: milliseconds,
-                        set: { dockModel.setRevealDelay($0, persist: $1) }
-                    )
-                    SettingsSlider(
-                        title: "Hide delay",
-                        value: dockModel.hideDelay,
-                        range: DockModel.hideDelayRange,
-                        snap: 0.01,
-                        format: milliseconds,
-                        set: { dockModel.setHideDelay($0, persist: $1) }
-                    )
-                }
-            } header: {
-                Text("Auto-hide").settingsAnchor("Auto-hide")
-            } footer: {
-                if dockModel.autoHide {
-                    Text("Auto-hide is paused while Settings is open so you can preview the dock.")
-                        .footerStyle()
-                }
-            }
-
-            Section(header: Text("Motion").settingsAnchor("Motion")) {
-                SettingsSlider(
-                    title: "Animation duration",
-                    value: dockModel.animationDuration,
-                    range: DockModel.animationDurationRange,
-                    snap: 0.01,
-                    format: { $0 == 0 ? "Instant" : milliseconds($0) },
-                    set: { dockModel.setAnimationDuration($0, persist: $1) }
-                )
-
-                Toggle("Animate opening applications", isOn: Binding(
-                    get: { dockModel.animateOpeningApplications },
-                    set: { dockModel.setAnimateOpeningApplications($0) }
+                Toggle("Show Trash", isOn: Binding(
+                    get: { dockModel.showTrash },
+                    set: { dockModel.setShowTrash($0) }
                 ))
-            }
-
-            Section(header: Text("Apps").settingsAnchor("Apps")) {
-                Toggle("Show indicators for open applications", isOn: Binding(
-                    get: { dockModel.showIndicators },
-                    set: { dockModel.setShowIndicators($0) }
-                ))
-
-                Toggle(isOn: Binding(
-                    get: { dockModel.showRecents },
-                    set: { dockModel.setShowRecents($0) }
-                )) {
-                    Text("Show suggested and recent apps in Dock")
-                    Text("Up to \(DockModel.recentAppsLimit) apps you quit recently that are not in the dock, after the running apps.").helperStyle()
+                if let notice = trash.notice {
+                    Text(notice).helperStyle()
                 }
-
-                Toggle(isOn: Binding(
-                    get: { dockModel.dimHiddenApps },
-                    set: { dockModel.setDimHiddenApps($0) }
-                )) {
-                    Text("Make hidden apps translucent")
-                    Text("Apps hidden with ⌘H show a faded icon, like the macOS Dock's hidden option.").helperStyle()
-                }
-            }
-
-            Section {
-                activityToggle(\.camera, "Camera", "Green, like the macOS camera dot. Shown on apps using the microphone while a camera is on.")
-                activityToggle(\.microphone, "Microphone", "Orange, like the macOS microphone dot.")
-                activityToggle(\.audio, "Audio activity", "Shows an animated speaker while an app is outputting audio. Spotify and Music clear the icon as soon as they pause or stop. Turn on Measure actual playback below to clear silent streams in other apps.")
-                if dockModel.activityIcons.audio {
-                    activityToggle(\.measureAudioPlayback, "Measure actual playback", "Requires System Audio Recording permission. Measures app audio levels in memory; audio is never recorded, saved, or sent anywhere. Clears the icon when levels stay silent, including apps that keep an output stream open after pause. The permission prompt appears when an app has an active output stream.")
-                    if let notice = activity.audioMeasurementNotice {
-                        Text(notice).helperStyle()
-                    }
-                    Button("Open System Audio Recording Settings") {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-                            NSWorkspace.shared.open(url)
+                if trash.accessDenied && !dockModel.trashAccessHintDismissed {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Full Disk Access (or Finder Automation) lets the Trash show when it is full.").helperStyle()
+                        HStack {
+                            Button("Open Full Disk Access") {
+                                dockModel.dismissTrashAccessHint()
+                                TrashController.openFullDiskAccessSettings()
+                            }
+                            Button("Dismiss") { dockModel.dismissTrashAccessHint() }
                         }
                     }
                 }
-                activityToggle(\.working, "Working", "Pulsing dots while the app and its child processes are busy. Turn it on per app with Show Working Icon in the app's right-click menu.")
-            } header: {
-                Text("Activity Icons").settingsAnchor("Activity Icons")
             }
 
             Section {
-                Button("Reset Timing to Defaults") { dockModel.resetTimingToDefaults() }
-            } footer: {
-                Text("Resets reveal delay, hide delay and animation duration.").footerStyle()
+                SettingsFold("Motion", symbol: "timer", summary: timingSummary) {
+                    if dockModel.autoHide {
+                        SettingsSlider(
+                            title: "Reveal delay",
+                            value: dockModel.revealDelay,
+                            range: DockModel.revealDelayRange,
+                            snap: 0.01,
+                            format: milliseconds,
+                            set: { dockModel.setRevealDelay($0, persist: $1) }
+                        )
+                        SettingsSlider(
+                            title: "Hide delay",
+                            value: dockModel.hideDelay,
+                            range: DockModel.hideDelayRange,
+                            snap: 0.01,
+                            format: milliseconds,
+                            set: { dockModel.setHideDelay($0, persist: $1) }
+                        )
+                    }
+                    SettingsSlider(
+                        title: "Animation duration",
+                        value: dockModel.animationDuration,
+                        range: DockModel.animationDurationRange,
+                        snap: 0.01,
+                        format: { $0 == 0 ? "Instant" : milliseconds($0) },
+                        set: { dockModel.setAnimationDuration($0, persist: $1) }
+                    )
+                    Toggle("Animate opening applications", isOn: Binding(
+                        get: { dockModel.animateOpeningApplications },
+                        set: { dockModel.setAnimateOpeningApplications($0) }
+                    ))
+                    Button("Reset Timing to Defaults") { dockModel.resetTimingToDefaults() }
+                }
+
+                SettingsFold("Apps", symbol: "app.badge", summary: appsSummary) {
+                    Toggle("Show indicators for open applications", isOn: Binding(
+                        get: { dockModel.showIndicators },
+                        set: { dockModel.setShowIndicators($0) }
+                    ))
+                    Toggle(isOn: Binding(
+                        get: { dockModel.showRecents },
+                        set: { dockModel.setShowRecents($0) }
+                    )) {
+                        Text("Show suggested and recent apps")
+                        Text("Up to \(DockModel.recentAppsLimit) apps you quit recently, after the running apps.").helperStyle()
+                    }
+                    Toggle(isOn: Binding(
+                        get: { dockModel.dimHiddenApps },
+                        set: { dockModel.setDimHiddenApps($0) }
+                    )) {
+                        Text("Make hidden apps translucent")
+                        Text("Apps hidden with ⌘H show a faded icon.").helperStyle()
+                    }
+                }
+
+                SettingsFold("Activity Icons", symbol: "record.circle", summary: activitySummary) {
+                    activityToggle(\.camera, "Camera", "A green dot while a camera is on.")
+                    activityToggle(\.microphone, "Microphone", "An orange dot while the microphone is on.")
+                    activityToggle(\.audio, "Audio", "A speaker while an app plays sound.")
+                    if dockModel.activityIcons.audio {
+                        activityToggle(\.measureAudioPlayback, "Measure actual playback", "Clears the speaker when an app goes silent but keeps its stream open. Needs System Audio Recording; audio is measured in memory, never recorded.")
+                        if let notice = activity.audioMeasurementNotice {
+                            Text(notice).helperStyle()
+                        }
+                        Button("Open System Audio Recording Settings") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                    }
+                    activityToggle(\.working, "Working", "Pulsing dots while an app is busy. Turn it on per app from its right-click menu.")
+                }
             }
         }
+    }
+
+    private var timingSummary: String {
+        let animation = "animation \(settingsMilliseconds(dockModel.animationDuration).lowercased())"
+        guard dockModel.autoHide else { return animation.prefix(1).uppercased() + animation.dropFirst() }
+        return "Reveal \(settingsMilliseconds(dockModel.revealDelay).lowercased()), hide \(settingsMilliseconds(dockModel.hideDelay).lowercased()), \(animation)"
+    }
+
+    private var appsSummary: String {
+        settingsList([("Indicators", dockModel.showIndicators), ("Recent apps", dockModel.showRecents),
+                      ("Translucent hidden apps", dockModel.dimHiddenApps)])
+    }
+
+    private var activitySummary: String {
+        let icons = dockModel.activityIcons
+        return settingsList([("Camera", icons.camera), ("Microphone", icons.microphone), ("Audio", icons.audio), ("Working", icons.working)])
     }
 
     private func activityToggle(_ key: WritableKeyPath<ActivityIconSettings, Bool>, _ title: String, _ help: String) -> some View {
@@ -1057,45 +1054,9 @@ private struct GeneralSettings: View {
 
     var body: some View {
         Form {
-            Section(header: Text("Startup").settingsAnchor("Startup")) {
-                LaunchAtLoginRow(launchAtLogin: launchAtLogin)
-                Toggle("Open Settings when Portside launches", isOn: Binding(
-                    get: { dockModel.openSettingsOnLaunch },
-                    set: { dockModel.setOpenSettingsOnLaunch($0) }
-                ))
-            }
-
             Section {
-                HotkeyRecorderButton(
-                    title: "Open Settings",
-                    chord: dockModel.settingsHotkey,
-                    defaultChord: .settingsDefault,
-                    onChange: { dockModel.setSettingsHotkey($0) }
-                )
-            } header: {
-                Text("Keyboard").settingsAnchor("Keyboard")
-            } footer: {
-                Text("Open Settings works from any app. Default ⌘⇧D. The menu bar Settings… item always uses ⌘,. Command Center and App Switcher shortcuts are in their own panes.")
-                    .footerStyle()
-            }
-
-            Section(header: Text("Automatic updates").settingsAnchor("Automatic updates")) {
-                Toggle("Check for updates automatically", isOn: Binding(
-                    get: { dockModel.automaticUpdateChecks },
-                    set: { dockModel.setAutomaticUpdateChecks($0) }
-                ))
-                Text("Checks at launch and every 24 hours. Portside notifies you when an update is available; choose Install and Relaunch to apply it.").helperStyle()
-            }
-
-            PermissionsSection(integrations: integrations)
-
-            WorkMacSection(integrations: integrations)
-
-            OtherModulesSection(integrations: integrations)
-
-            UpdatesAuthSection(otherCopies: $otherCopies)
-
-            Section(header: Text("macOS Dock").settingsAnchor("macOS Dock")) {
+                LaunchAtLoginRow(launchAtLogin: launchAtLogin)
+                    .settingsAnchor("Startup")
                 Toggle(isOn: Binding(
                     get: { dockModel.hideNativeDock },
                     // Async: hiding may open a modal alert, which should not
@@ -1104,26 +1065,57 @@ private struct GeneralSettings: View {
                     set: { hidden in DispatchQueue.main.async { nativeDock.setHidden(hidden) } }
                 )) {
                     Text("Hide the macOS Dock")
-                    Text("Its settings are saved first and restored when you turn this off or quit.").helperStyle()
-                    Text("⌥⌘D can interfere. Turn it off in Keyboard Shortcuts > Launchpad & Dock.").helperStyle()
+                    Text("Its settings are saved and restored when you turn this off or quit.").helperStyle()
+                }
+                .settingsAnchor("macOS Dock")
+                Toggle("Check for updates automatically", isOn: Binding(
+                    get: { dockModel.automaticUpdateChecks },
+                    set: { dockModel.setAutomaticUpdateChecks($0) }
+                ))
+                .settingsAnchor("Automatic updates")
+                HotkeyRecorderButton(
+                    title: "Open Settings shortcut",
+                    chord: dockModel.settingsHotkey,
+                    defaultChord: .settingsDefault,
+                    onChange: { dockModel.setSettingsHotkey($0) }
+                )
+                .settingsAnchor("Keyboard")
+            }
+
+            Section {
+                SettingsFold("Permissions", symbol: "lock.shield", summary: permissionsSummary) {
+                    PermissionsRows(integrations: integrations)
+                }
+                SettingsFold("Import", symbol: "square.and.arrow.down", summary: "Bring apps over from the macOS Dock") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Button("Import from macOS Dock...") {
+                                importStatus = nil
+                                importRequest = ImportRequest(NativeDockImport.readSnapshot())
+                            }
+                            if canUndoImport {
+                                Button("Undo last import") { undoImport() }
+                            }
+                        }
+                        Text(importStatus ?? "Apps, position and icon size. Nothing in the macOS Dock changes.")
+                            .helperStyle()
+                    }
+                }
+                SettingsFold("Work Mac", symbol: "building.2", summary: integrations.restricted ? "Restricted mode on" : "Off") {
+                    WorkMacRows(integrations: integrations)
+                }
+                SettingsFold("More", symbol: "ellipsis.circle", summary: dockModel.openSettingsOnLaunch ? "Opens Settings at launch" : "") {
+                    Toggle("Open Settings when Portside launches", isOn: Binding(
+                        get: { dockModel.openSettingsOnLaunch },
+                        set: { dockModel.setOpenSettingsOnLaunch($0) }
+                    ))
+                    Text("⌥⌘D can interfere with hiding the macOS Dock. Turn it off in Keyboard Shortcuts > Launchpad & Dock.").helperStyle()
                 }
             }
 
-            Section(header: Text("Import").settingsAnchor("Import")) {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Button("Import from macOS Dock...") {
-                            importStatus = nil
-                            importRequest = ImportRequest(NativeDockImport.readSnapshot())
-                        }
-                        if canUndoImport {
-                            Button("Undo last import") { undoImport() }
-                        }
-                    }
-                    Text(importStatus ?? "Bring apps, position, and icon size over from the macOS Dock. Nothing in the macOS Dock changes.")
-                        .helperStyle()
-                }
-            }
+            OtherModulesSection(integrations: integrations)
+
+            UpdatesAuthSection(otherCopies: $otherCopies)
         }
         .sheet(item: $importRequest) { request in
             ImportSheet(
@@ -1141,6 +1133,11 @@ private struct GeneralSettings: View {
             otherCopies = UpdatesAuthSection.currentCopies()
         }
         .keepsIntegrationsCurrent(integrations)
+    }
+
+    private var permissionsSummary: String {
+        let missing = integrations.missingPermissions.count
+        return missing == 0 ? "All set" : "\(missing) of \(integrations.permissions.count) not granted"
     }
 
     private func runImport(_ snapshot: NativeDockSnapshot, replace: Bool, applyLook: Bool) {
@@ -1355,11 +1352,11 @@ private struct AppearanceSettings: View {
         max(layout.fitTileSize, DockModel.iconSizeRange.lowerBound + 1)
     }
 
+    @State private var backgroundOpen = false
+
     var body: some View {
         Form {
-            // How big things are. Magnified size only appears once
-            // magnification is on, so nothing here is ever greyed out.
-            Section(header: Text("Size").settingsAnchor("Size")) {
+            Section {
                 SettingsSlider(
                     title: "Icon size",
                     value: min(Double(dockModel.iconSize), Double(maxIconSize)),
@@ -1368,37 +1365,16 @@ private struct AppearanceSettings: View {
                     format: { "\(Int($0)) pt" },
                     set: { dockModel.setIconSize(min(CGFloat($0), maxIconSize), persist: $1) }
                 )
-
-                SettingsSlider(
-                    title: "Icon gap",
-                    value: Double(dockModel.iconGap),
-                    range: Double(DockModel.iconGapRange.lowerBound)...Double(DockModel.iconGapRange.upperBound),
-                    snap: 1,
-                    format: { "\(Int($0)) pt" },
-                    set: { dockModel.setIconGap(CGFloat($0), persist: $1) }
-                )
+                .settingsAnchor("Size")
 
                 Toggle(isOn: Binding(
                     get: { dockModel.magnificationEnabled },
                     set: { dockModel.setMagnificationEnabled($0) }
                 )) {
                     Text("Magnification")
-                    Text("Hold Control-Shift over the dock to flip it for a moment.").helperStyle()
+                    Text("Icons grow under the pointer. Hold Control-Shift to flip it for a moment.").helperStyle()
                 }
 
-                if dockModel.magnificationEnabled {
-                    SettingsSlider(
-                        title: "Magnified size",
-                        value: Double(dockModel.magnifiedSize),
-                        range: Double(DockModel.magnifiedSizeRange.lowerBound)...Double(DockModel.magnifiedSizeRange.upperBound),
-                        snap: 1,
-                        format: { "\(Int($0)) pt" },
-                        set: { dockModel.setMagnifiedSize(CGFloat($0), persist: $1) }
-                    )
-                }
-            }
-
-            Section {
                 Picker("Icon style", selection: Binding(
                     get: { dockModel.iconStyle },
                     set: { dockModel.setIconStyle($0) }
@@ -1406,93 +1382,109 @@ private struct AppearanceSettings: View {
                     ForEach(IconStyle.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
-            } header: {
-                Text("Icons").settingsAnchor("Icons")
-            } footer: {
+                .settingsAnchor("Icons")
                 Text(dockModel.iconStyle == .matchSystem
-                     ? "Uses the icon style from System Settings > Appearance (Default, Dark, Clear, or Tinted), like the macOS Dock, and updates when you change it."
-                     : "Shows each app's own icon artwork and ignores the system icon style.")
-                    .footerStyle()
+                     ? "Follows System Settings > Appearance (Default, Dark, Clear or Tinted)."
+                     : "Each app's own icon artwork.")
+                    .helperStyle()
             }
 
-            DockBackgroundEditor(
-                background: dockModel.background,
-                update: { persist, change in dockModel.updateBackground(persist: persist, change) },
-                extra: {
+            Section {
+                SettingsFold("More sizes", symbol: "arrow.left.and.right", summary: sizesSummary) {
                     SettingsSlider(
-                        title: "Corner radius",
-                        value: Double(dockModel.cornerRadius),
-                        range: Double(DockModel.cornerRadiusRange.lowerBound)...Double(DockModel.cornerRadiusRange.upperBound),
+                        title: "Icon gap",
+                        value: Double(dockModel.iconGap),
+                        range: Double(DockModel.iconGapRange.lowerBound)...Double(DockModel.iconGapRange.upperBound),
                         snap: 1,
                         format: { "\(Int($0)) pt" },
-                        set: { dockModel.setCornerRadius(CGFloat($0), persist: $1) }
+                        set: { dockModel.setIconGap(CGFloat($0), persist: $1) }
                     )
-                },
-                header: {
-                    HStack {
-                        Text("Background").settingsAnchor("Background")
-                        Spacer()
-                        Button("Reset \(dockModel.background.style.title)") { dockModel.resetBackgroundStyleToDefaults() }
-                            .buttonStyle(.link)
-                            .font(.system(size: 12))
-                            .help("Resets this style and the corner radius. Other styles keep their settings.")
+                    if dockModel.magnificationEnabled {
+                        SettingsSlider(
+                            title: "Magnified size",
+                            value: Double(dockModel.magnifiedSize),
+                            range: Double(DockModel.magnifiedSizeRange.lowerBound)...Double(DockModel.magnifiedSizeRange.upperBound),
+                            snap: 1,
+                            format: { "\(Int($0)) pt" },
+                            set: { dockModel.setMagnifiedSize(CGFloat($0), persist: $1) }
+                        )
                     }
                 }
-            )
-
-            // Show/hide and color live together so badges are one decision.
-            Section {
-                Toggle(isOn: Binding(
-                    get: { dockModel.showBadges },
-                    set: { dockModel.setShowBadges($0) }
-                )) {
-                    Text("Show notification badges")
-                    if badges.isAvailable {
-                        Text("The same badges the macOS Dock shows. An app whose badges are off in Notifications settings may still show one here.").helperStyle()
-                    } else {
-                        Text("Not available on this version of macOS.").helperStyle()
+                SettingsFold("Badges", symbol: "app.badge", summary: badgesSummary) {
+                    Toggle(isOn: Binding(
+                        get: { dockModel.showBadges },
+                        set: { dockModel.setShowBadges($0) }
+                    )) {
+                        Text("Show notification badges")
+                        Text(badges.isAvailable ? "The same badges the macOS Dock shows." : "Not available on this version of macOS.").helperStyle()
                     }
-                }
-                .disabled(!badges.isAvailable)
+                    .disabled(!badges.isAvailable)
 
-                if badges.isAvailable && dockModel.showBadges {
-                    HStack(spacing: 12) {
-                        Picker("Badge color", selection: Binding(
-                            get: { dockModel.badgeColor },
-                            set: { dockModel.setBadgeColor($0) }
-                        )) {
-                            ForEach(BadgeColor.allCases) { choice in
-                                if choice == .custom { Divider() }
-                                Text(choice.title).tag(choice)
+                    if badges.isAvailable && dockModel.showBadges {
+                        HStack(spacing: 12) {
+                            Picker("Badge color", selection: Binding(
+                                get: { dockModel.badgeColor },
+                                set: { dockModel.setBadgeColor($0) }
+                            )) {
+                                ForEach(BadgeColor.allCases) { choice in
+                                    if choice == .custom { Divider() }
+                                    Text(choice.title).tag(choice)
+                                }
                             }
+                            DockBadgeLabel(text: "3", iconSize: 48, style: dockModel.badgeStyle)
+                            DockBadgeLabel(text: "128", iconSize: 48, style: dockModel.badgeStyle)
                         }
-                        DockBadgeLabel(text: "3", iconSize: 48, style: dockModel.badgeStyle)
-                        DockBadgeLabel(text: "128", iconSize: 48, style: dockModel.badgeStyle)
+                    }
+                    if dockModel.badgeColor == .custom {
+                        // Badges are always opaque, so no Opacity slider.
+                        PaletteColorEditor(color: dockModel.badgeCustomColor, showsOpacity: false) { value, persist in
+                            dockModel.setBadgeCustomColor(value, persist: persist)
+                        }
                     }
                 }
-                if dockModel.badgeColor == .custom {
-                    // Badges are always opaque, so no Opacity slider.
-                    PaletteColorEditor(color: dockModel.badgeCustomColor, showsOpacity: false) { value, persist in
-                        dockModel.setBadgeCustomColor(value, persist: persist)
-                    }
-                }
-            } header: {
-                Text("Badges").settingsAnchor("Badges")
-            } footer: {
-                if badges.isAvailable && dockModel.showBadges {
-                    Text(dockModel.badgeColor == .macOS
-                         ? "The same red as the macOS Dock."
-                         : "Text turns black on light colors so counts stay readable.")
-                        .footerStyle()
-                }
+                SettingsFoldRow("Background", symbol: "square.fill.on.square.fill", summary: backgroundSummary, open: $backgroundOpen)
             }
 
-            Section {
-                Button("Reset Appearance to Defaults") { dockModel.resetAppearanceToDefaults() }
-            } footer: {
-                Text("Resets icon style, background and corner radius. Sizes and badges are not changed.").footerStyle()
+            if backgroundOpen {
+                DockBackgroundEditor(
+                    background: dockModel.background,
+                    update: { persist, change in dockModel.updateBackground(persist: persist, change) },
+                    extra: {
+                        SettingsSlider(
+                            title: "Corner radius",
+                            value: Double(dockModel.cornerRadius),
+                            range: Double(DockModel.cornerRadiusRange.lowerBound)...Double(DockModel.cornerRadiusRange.upperBound),
+                            snap: 1,
+                            format: { "\(Int($0)) pt" },
+                            set: { dockModel.setCornerRadius(CGFloat($0), persist: $1) }
+                        )
+                        HStack {
+                            Button("Reset \(dockModel.background.style.title)") { dockModel.resetBackgroundStyleToDefaults() }
+                                .help("Resets this style and the corner radius. Other styles keep their settings.")
+                            Button("Reset Appearance") { dockModel.resetAppearanceToDefaults() }
+                                .help("Resets icon style, background and corner radius. Sizes and badges are not changed.")
+                        }
+                    },
+                    header: { Text("Background") }
+                )
             }
         }
+    }
+
+    private var sizesSummary: String {
+        let gap = "Gap \(Int(dockModel.iconGap)) pt"
+        return dockModel.magnificationEnabled ? "\(gap), magnified \(Int(dockModel.magnifiedSize)) pt" : gap
+    }
+
+    private var badgesSummary: String {
+        guard badges.isAvailable else { return "Not available" }
+        return dockModel.showBadges ? dockModel.badgeColor.title : "Off"
+    }
+
+    private var backgroundSummary: String {
+        let background = dockModel.background
+        let detail = background.style == .glass ? background.glass.variant.title : background.solid.fill.title
+        return "\(background.style.title), \(detail.lowercased()), \(Int(dockModel.cornerRadius)) pt corners"
     }
 }
 
@@ -1538,9 +1530,9 @@ struct DockBackgroundEditor<Extra: View, Header: View>: View {
     private var backgroundHelp: String {
         switch background.style {
         case .glass: background.glass.variant == .regular
-            ? "The macOS Dock's glass. Its blur follows the Liquid Glass slider in System Settings > Appearance."
-            : "Starts from the macOS Dock's values. Reset returns to them."
-        case .solid: "Your own color or gradient. Each color keeps its own opacity, and Opacity scales the whole fill. Blur softens whatever sits behind the \(surface) (like CSS backdrop-filter)."
+            ? "The macOS Dock's glass."
+            : "Starts from the macOS Dock's glass. Reset returns to it."
+        case .solid: "A color or gradient. Blur softens what sits behind the \(surface)."
         }
     }
 
@@ -1746,7 +1738,7 @@ private struct WidgetSettings: View {
                     Text(group.title)
                 } footer: {
                     if index == WidgetCatalog.groups.count - 1 {
-                        Text("Drag widgets in the dock to reorder them. Sizes apply to the bottom dock; side docks always show Small widgets.").footerStyle()
+                        Text("Drag widgets in the dock to reorder them. Side docks show Small widgets.").footerStyle()
                     }
                 }
             }
@@ -1757,28 +1749,32 @@ private struct WidgetSettings: View {
 
             if dockModel.widgetKinds.contains(UsageWidget.kind) || dockModel.showAgentNotch {
                 Section {
-                    ForEach(AgentProvider.all) { provider in
-                        Toggle(isOn: Binding(
-                            get: { UsageConsent.isShown(provider.id, in: dockModel) },
-                            set: { UsageConsent.setShown(provider.id, $0, in: dockModel) }
-                        )) {
-                            Text("\(provider.name) by \(provider.vendor)")
-                            Text(provider.usageDetail).helperStyle()
+                    SettingsFold("AI Usage Providers", symbol: "gauge.with.dots.needle.33percent", summary: usageSummary) {
+                        ForEach(AgentProvider.all) { provider in
+                            Toggle(isOn: Binding(
+                                get: { UsageConsent.isShown(provider.id, in: dockModel) },
+                                set: { UsageConsent.setShown(provider.id, $0, in: dockModel) }
+                            )) {
+                                Text("\(provider.name) by \(provider.vendor)")
+                                Text(provider.usageDetail).helperStyle()
+                            }
+                            .toggleStyle(.switch)
                         }
-                        .toggleStyle(.switch)
+                        Toggle(isOn: Binding(
+                            get: { dockModel.usageCopilotCLIEnabled },
+                            set: { dockModel.setUsageCopilotCLIEnabled($0) }
+                        )) {
+                            Text("Allow Copilot CLI quota checks")
+                            Text("Off uses GitHub CLI sign-in instead. Some managed Macs block the Copilot CLI.").helperStyle()
+                        }
                     }
-                    Toggle("Allow Copilot CLI quota checks", isOn: Binding(
-                        get: { dockModel.usageCopilotCLIEnabled },
-                        set: { dockModel.setUsageCopilotCLIEnabled($0) }
-                    ))
-                    Text("Off by default. Some managed Macs block the Copilot CLI. Leave this off to use GitHub CLI sign-in over HTTPS, and ask IT about proxy or security blocks.").helperStyle()
-                } header: {
-                    Text("AI Usage Providers").settingsAnchor("AI Usage Providers")
-                } footer: {
-                    Text("Refreshes every 5 minutes. Every provider you pick shows on the tile; hover for percentages.").footerStyle()
                 }
             }
         }
+    }
+
+    private var usageSummary: String {
+        settingsList(AgentProvider.all.map { ($0.name, UsageConsent.isShown($0.id, in: dockModel)) }, none: "None")
     }
 }
 
@@ -1892,7 +1888,7 @@ private struct AgentHooksSection: View {
         let names = found.map(\.name).joined(separator: " and ")
         return installed
             ? "\(names) report to the Agents widget. Restart open sessions to pick up changes."
-            : "Lets \(names) report working and done to the Agents widget. Adds tagged entries to their settings (backed up first); other hooks are kept."
+            : "Lets \(names) report to the Agents widget. Their settings are backed up first."
     }
 
     private func reload() {
@@ -1923,26 +1919,26 @@ private struct GroupSettings: View {
                     set: { dockModel.setOpenGroupsOnHover($0) }
                 ))
                 if dockModel.openGroupsOnHover {
-                    SettingsSlider(
-                        title: "Open delay",
-                        value: dockModel.groupHoverDelay,
-                        range: DockModel.groupHoverDelayRange,
-                        snap: 0.01,
-                        format: milliseconds,
-                        set: { dockModel.setGroupHoverDelay($0, persist: $1) }
-                    )
-                    SettingsSlider(
-                        title: "Close grace",
-                        value: dockModel.groupHoverCloseGrace,
-                        range: DockModel.groupHoverCloseGraceRange,
-                        snap: 0.01,
-                        format: milliseconds,
-                        set: { dockModel.setGroupHoverCloseGrace($0, persist: $1) }
-                    )
-                }
-            } footer: {
-                if dockModel.openGroupsOnHover {
-                    Text("Close grace keeps the grid open while you cross the gap from the tile.").footerStyle()
+                    SettingsFold("Hover timing", symbol: "timer",
+                                 summary: "Open \(settingsMilliseconds(dockModel.groupHoverDelay).lowercased()), close grace \(settingsMilliseconds(dockModel.groupHoverCloseGrace).lowercased())") {
+                        SettingsSlider(
+                            title: "Open delay",
+                            value: dockModel.groupHoverDelay,
+                            range: DockModel.groupHoverDelayRange,
+                            snap: 0.01,
+                            format: milliseconds,
+                            set: { dockModel.setGroupHoverDelay($0, persist: $1) }
+                        )
+                        SettingsSlider(
+                            title: "Close grace",
+                            value: dockModel.groupHoverCloseGrace,
+                            range: DockModel.groupHoverCloseGraceRange,
+                            snap: 0.01,
+                            format: milliseconds,
+                            set: { dockModel.setGroupHoverCloseGrace($0, persist: $1) }
+                        )
+                        Text("Close grace keeps the grid open while you cross the gap from the tile.").helperStyle()
+                    }
                 }
             }
 

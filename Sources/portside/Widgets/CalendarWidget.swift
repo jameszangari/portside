@@ -29,12 +29,17 @@ final class CalendarWidget: DockWidget {
         var start: Date
         var isAllDay: Bool
         var color: Color
+        var end: Date? = nil
+        /// A video meeting link from the event's URL, location or notes.
+        var meeting: URL? = nil
     }
 
     enum Access { case unknown, granted, denied }
 
     @Published private(set) var today = Date()
     @Published private(set) var next: NextEvent?
+    /// The next three events, `next` first (Notch Shelf card).
+    @Published private(set) var upcoming: [NextEvent] = []
     @Published private(set) var access: Access = .unknown
 
     private var requestingAccess = false
@@ -59,6 +64,7 @@ final class CalendarWidget: DockWidget {
         today = Date()
         guard access == .granted, let store else {
             next = nil
+            upcoming = []
             return
         }
         let now = Date()
@@ -70,11 +76,34 @@ final class CalendarWidget: DockWidget {
                 if lhs.isAllDay != rhs.isAllDay { return !lhs.isAllDay }
                 return lhs.startDate < rhs.startDate
             }
-        next = upcoming.first.map {
+        self.upcoming = upcoming.prefix(3).map {
             NextEvent(title: $0.title ?? "Untitled", start: $0.startDate, isAllDay: $0.isAllDay,
-                      color: Color(nsColor: $0.calendar?.color ?? .systemRed))
+                      color: Color(nsColor: $0.calendar?.color ?? .systemRed), end: $0.endDate,
+                      meeting: Self.meetingLink(url: $0.url, texts: [$0.location, $0.notes]))
         }
+        next = self.upcoming.first
     }
+
+    private static let meetingHosts = ["zoom.us", "meet.google.com", "teams.microsoft.com", "teams.live.com", "webex.com", "facetime.apple.com", "whereby.com", "around.co"]
+
+    /// The event's own URL if it is a meeting, else the first meeting link
+    /// in its location or notes.
+    static func meetingLink(url: URL?, texts: [String?]) -> URL? {
+        func isMeeting(_ url: URL) -> Bool {
+            guard url.scheme == "https", let host = url.host?.lowercased() else { return false }
+            return meetingHosts.contains { host == $0 || host.hasSuffix("." + $0) }
+        }
+        if let url, isMeeting(url) { return url }
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return nil }
+        for text in texts.compactMap({ $0 }) {
+            let range = NSRange(text.startIndex..., in: text)
+            if let link = detector.matches(in: text, range: range).compactMap(\.url).first(where: isMeeting) { return link }
+        }
+        return nil
+    }
+
+    /// Opens the calendar app, or asks for access first (same as a click).
+    func openCalendar() { activate() }
 
     func activate() {
         guard !requestingAccess else { return }
