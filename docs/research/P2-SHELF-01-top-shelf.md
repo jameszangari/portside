@@ -249,7 +249,7 @@ Working name "Notch Shelf". Decided in a grilling session; supersedes the earlie
 ### Menu bar hiding
 
 - While the shelf is on, the Menu Bar module's "Show hidden items" is locked to **In the Portside Bar**, with a note in Settings explaining that the notch belongs to the shelf. Hovering the notch always goes to the shelf, never to hidden item reveal. Menu bar triggers exclude the notch rect plus a margin.
-- Depends on PR #73 (open). SHELF-02 starts after it merges.
+- Depended on PR #73, merged before SHELF-02 started.
 
 ### Out of v1
 

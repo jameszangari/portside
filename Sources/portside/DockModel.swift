@@ -779,6 +779,12 @@ final class DockModel: Codable, ObservableObject {
     @Published private(set) var showAgentNotch = false
     @Published private(set) var automaticUpdateChecks = true
 
+    /// The Notch Shelf is on and owns the notch (SHELF-02).
+    var notchShelfActive: Bool { showAgentNotch && agentNotchSettings.shelfEnabled }
+
+    /// Where hidden menu bar items open, after the Notch Shelf's lock.
+    var menuBarPresentation: MenuBarPresentation { menuBarTriggers.presentation(notchShelf: notchShelfActive) }
+
     func setShowAgentNotch(_ enabled: Bool) {
         showAgentNotch = enabled
         persist()

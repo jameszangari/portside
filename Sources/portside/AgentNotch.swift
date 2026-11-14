@@ -211,7 +211,7 @@ final class AgentNotch {
             let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             panel.isReleasedWhenClosed = false
             panel.level = .statusBar
-            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
             panel.isOpaque = false
             panel.backgroundColor = .clear
             panel.hasShadow = preferences.showBorder
@@ -260,7 +260,9 @@ final class AgentNotch {
             state.topAttached = attached || inMenuBar
             state.headerHeight = attached ? max(screen.safeAreaInsets.top, preferences.compactHeight)
                 : inMenuBar ? Self.menuBarHeight(on: screen) : preferences.compactHeight
-            state.compactWidth = min(screen.frame.width - 24, preferences.compactWidth + state.notchWidth)
+            // Attached, the flared top corners sit inside the frame; widen it so the body keeps its width.
+            state.compactWidth = min(screen.frame.width - 24, preferences.compactWidth + state.notchWidth
+                                     + (state.topAttached ? 2 * NotchShape.flare : 0))
             let peeking = state.peekSide != nil && !state.expanded
             let width = state.expanded ? min(screen.frame.width - 24, max(preferences.expandedWidth, state.compactWidth))
                 // Peek at the open width, so opening from a peek only grows downward.
@@ -287,7 +289,8 @@ final class AgentNotch {
             }
             let animate = preferences.animate && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && surface.panel.isVisible
             if preferences.shelfEnabled {
-                settleShelf(surface, to: frame, animate: animate)
+                let openWidth = min(screen.frame.width - 24, max(preferences.expandedWidth, state.compactWidth))
+                settleShelf(surface, to: frame, panelWidth: openWidth, animate: animate)
             } else {
                 if state.surfaceSize != nil { state.surfaceSize = nil }
                 if surface.panel.frame != frame { NSAnimationContext.runAnimationGroup { context in
@@ -306,21 +309,25 @@ final class AgentNotch {
     /// the origin and size separately, so the top edge dips and bounces.
     /// The panel grows to cover both the old and new size at once, the view
     /// animates its shape from the top, then the panel shrinks to fit.
-    private func settleShelf(_ surface: Surface, to frame: NSRect, animate: Bool) {
+    /// The panel keeps one width, the open width, in every state: if it
+    /// changed width under the animating shape, the shape's centering offset
+    /// would not animate and it would grow from one side.
+    private func settleShelf(_ surface: Surface, to shape: NSRect, panelWidth: CGFloat, animate: Bool) {
+        let width = max(panelWidth, shape.width)
+        let frame = NSRect(x: shape.midX - width / 2, y: shape.minY, width: width, height: shape.height)
         let state = surface.state
         let panel = surface.panel
         state.settleTask?.cancel()
         state.settleTask = nil
-        let size = CGSize(width: frame.width, height: frame.height)
+        let size = shape.size
         guard animate, state.surfaceSize != nil else {
             state.surfaceSize = size
             if panel.frame != frame { panel.setFrame(frame, display: true) }
             return
         }
         let current = panel.frame
-        let width = max(current.width, frame.width)
         let height = max(current.height, frame.height)
-        let cover = NSRect(x: frame.midX - width / 2, y: frame.maxY - height, width: width, height: height)
+        let cover = NSRect(x: frame.minX, y: frame.maxY - height, width: width, height: height)
         if current != cover { panel.setFrame(cover, display: true) }
         state.surfaceSize = size
         guard cover != frame else { return }
@@ -337,6 +344,19 @@ final class AgentNotch {
     /// Where an attached notch sits in the menu bar. Always the compact width:
     /// expanding draws over the bar without changing what it should go around.
     private func publishBarSpans() {
+        // The shelf owns the notch and its header whether or not the panel
+        // shows, so no menu bar trigger reveals hidden items there.
+        MenuBarShelfExclusion.update(preferences.shelfEnabled ? surfaces.compactMap { surface in
+            let screen = surface.screen.frame
+            let height = max(Self.menuBarHeight(on: surface.screen), surface.screen.safeAreaInsets.top)
+            let band = CGRect(x: screen.minX, y: screen.maxY - height, width: screen.width, height: height)
+            var notch: ClosedRange<CGFloat>?
+            if surface.screen.safeAreaInsets.top > 0, let left = surface.screen.auxiliaryTopLeftArea, let right = surface.screen.auxiliaryTopRightArea,
+               left.maxX < right.minX { notch = left.maxX...right.minX }
+            let width = surface.state.compactWidth
+            let header = surface.state.topAttached ? (screen.midX - width / 2)...(screen.midX + width / 2) : nil
+            return MenuBarShelfExclusion.rect(band: band, notch: notch, header: header)
+        } : [])
         MenuBarReservedSpans.update(surfaces.filter { $0.state.topAttached && $0.panel.isVisible }.map { surface in
             let width = surface.state.compactWidth
             // Window positions land on whole points, rounding down.

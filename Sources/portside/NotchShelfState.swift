@@ -109,11 +109,14 @@ struct NotchShelfMachine: Equatable {
         }
     }
 
-    /// A click on the header (a side or the notch).
+    /// A click on the header (a side or the notch). Like Bartender, a click
+    /// never closes an open shelf (the pointer is still on the notch, so a
+    /// close would only reopen on the next hover); in Hover opens, click
+    /// pins it pins. Leaving, a click outside or the close button close it.
     mutating func click() {
         pending = nil
         if phase == .open {
-            if mode == .hoverPin && !pinned { pinned = true } else { close() }
+            if mode == .hoverPin { pinned = true }
         } else {
             phase = .open
             pinned = mode == .hoverPin

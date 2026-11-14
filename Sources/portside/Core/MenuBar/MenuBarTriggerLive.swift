@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import ApplicationServices
 import Carbon.HIToolbox
 
@@ -150,24 +151,41 @@ enum MenuBarFrontMenus {
 /// never reveals.
 @MainActor
 final class LiveMenuBarEmptyAreaProbe: MenuBarEmptyAreaProbe {
-    func isEmptyBar(_ point: CGPoint) -> Bool { isEmpty(point, notchCounts: false) }
-    func isClickableBar(_ point: CGPoint) -> Bool { isEmpty(point, notchCounts: true) }
+    func isEmptyBar(_ point: CGPoint) -> Bool { blocker(point, notchCounts: false) == nil }
 
-    private func isEmpty(_ point: CGPoint, notchCounts: Bool) -> Bool {
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }) else { return false }
+    /// One verdict per click: the trigger service and an open Portside Bar
+    /// both ask about the same mouse down, and two Accessibility reads of a
+    /// bar that is changing can disagree (the bar closed, then reopened).
+    func isClickableBar(_ point: CGPoint) -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        if let last = Self.lastClick, last.point == point, now - last.at < 0.3 { return last.clickable }
+        let reason = blocker(point, notchCounts: true)
+        Self.lastClick = (point, now, reason == nil)
+        Self.log.notice("bar click at \(Int(point.x)),\(Int(point.y)): \(reason ?? "empty", privacy: .public)")
+        return reason == nil
+    }
+
+    private static var lastClick: (point: CGPoint, at: TimeInterval, clickable: Bool)?
+    private static let log = Logger(subsystem: "com.james.portside", category: "menubar-probe")
+
+    /// Why `point` is not empty bar, or nil when it is.
+    private func blocker(_ point: CGPoint, notchCounts: Bool) -> String? {
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }) else { return "no display" }
         let thickness = max(NSStatusBar.system.thickness, screen.safeAreaInsets.top)
         let band = CGRect(x: screen.frame.minX, y: screen.frame.maxY - thickness, width: screen.frame.width, height: thickness)
-        guard band.contains(point) else { return false }
+        guard band.contains(point) else { return "below the bar" }
+        if MenuBarShelfExclusion.contains(point) { return "Notch Shelf" }
         var notch: CGRect?
         if !notchCounts, screen.safeAreaInsets.top > 0, let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
             notch = CGRect(x: left.maxX, y: band.minY, width: right.minX - left.maxX, height: band.height)
         }
-        guard let menusEnd = MenuBarFrontMenus.end(pid: NSWorkspace.shared.frontmostApplication?.processIdentifier), let items = statusItemRects(screen: screen, band: band) else { return false }
+        guard let menusEnd = MenuBarFrontMenus.end(pid: NSWorkspace.shared.frontmostApplication?.processIdentifier) else { return "app menus unreadable" }
+        guard let items = statusItemRects(screen: screen, band: band) else { return "status items unreadable" }
         // App menus are only drawn on the active display's bar.
         let menusHere = menusEnd > screen.frame.minX && menusEnd <= screen.frame.maxX
         let menus = CGRect(x: screen.frame.minX, y: band.minY, width: menusHere ? menusEnd - screen.frame.minX : 0, height: band.height)
-        guard MenuBarBarGeometry.isEmpty(point: point, band: band, notch: notch, occupied: [menus] + items) else { return false }
-        return !foreignElement(at: point)
+        guard MenuBarBarGeometry.isEmpty(point: point, band: band, notch: notch, occupied: [menus] + items) else { return "menu or item" }
+        return foreignElement(at: point) ? "other app's element" : nil
     }
 
     /// Every drawn item on this display, from MenuBarAgent's own windows.

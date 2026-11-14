@@ -19,7 +19,10 @@ struct AgentNotchView: View {
     /// A collapsed pill in a short menu bar cannot take the full radius
     /// (a 24pt bar with 16pt corners would turn it into a lozenge).
     private var bottomRadius: CGFloat {
-        state.expanded || state.peekSide != nil ? preferences.cornerRadius : min(preferences.cornerRadius, state.headerHeight / 2)
+        if state.expanded || state.peekSide != nil { return preferences.cornerRadius }
+        // Attached, the compact pill rounds like the notch it extends
+        // (Bartender's Top Shelf: about 12 pt on a 32 pt strip).
+        return min(preferences.cornerRadius, state.headerHeight * (state.topAttached ? 0.375 : 0.5))
     }
 
     static func dashboardHeight(preferences: AgentNotchSettings, sessionCount: Int) -> CGFloat {
@@ -52,10 +55,9 @@ struct AgentNotchView: View {
         // Shelf: draw at the target size, top centered, while the panel holds still.
         .frame(width: state.surfaceSize?.width, height: state.surfaceSize?.height, alignment: .top)
         .background(.black.opacity(preferences.opacity))
-        .clipShape(UnevenRoundedRectangle(topLeadingRadius: state.topAttached ? 6 : preferences.cornerRadius,
-                                         bottomLeadingRadius: bottomRadius,
-                                         bottomTrailingRadius: bottomRadius,
-                                         topTrailingRadius: state.topAttached ? 6 : preferences.cornerRadius))
+        .clipShape(NotchShape(topFlare: state.topAttached ? NotchShape.flare : 0,
+                              topRadius: state.topAttached ? 0 : preferences.cornerRadius,
+                              bottomRadius: bottomRadius))
         .overlay {
             if preferences.showBorder, !state.topAttached {
                 RoundedRectangle(cornerRadius: preferences.cornerRadius)
@@ -389,4 +391,49 @@ private struct NotchUsageDetails: View {
         .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
     }
 
+}
+
+/// The island's outline. Attached to the top edge, its top corners flare
+/// outward into the screen edge like the hardware notch (and Bartender's
+/// Top Shelf) instead of rounding inward, so no wallpaper shows at the
+/// top. Floating, it is a rounded rectangle. The flare sits inside the
+/// frame, so the body is `2 * topFlare` narrower than the frame.
+struct NotchShape: Shape {
+    static let flare: CGFloat = 5
+
+    var topFlare: CGFloat
+    var topRadius: CGFloat
+    var bottomRadius: CGFloat
+
+    var animatableData: AnimatablePair<CGFloat, AnimatablePair<CGFloat, CGFloat>> {
+        get { AnimatablePair(topFlare, AnimatablePair(topRadius, bottomRadius)) }
+        set { topFlare = newValue.first; topRadius = newValue.second.first; bottomRadius = newValue.second.second }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let flare = max(0, min(topFlare, rect.width / 4, rect.height / 2))
+        let left = rect.minX + flare
+        let right = rect.maxX - flare
+        let bottom = max(0, min(bottomRadius, (right - left) / 2, rect.height - flare))
+        let top = flare > 0 ? 0 : max(0, min(topRadius, (right - left) / 2, rect.height / 2))
+        var path = Path()
+        if flare > 0 {
+            path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+            path.addArc(tangent1End: CGPoint(x: left, y: rect.minY), tangent2End: CGPoint(x: left, y: rect.maxY), radius: flare)
+        } else {
+            path.move(to: CGPoint(x: left, y: rect.minY + top))
+        }
+        path.addArc(tangent1End: CGPoint(x: left, y: rect.maxY), tangent2End: CGPoint(x: right, y: rect.maxY), radius: bottom)
+        path.addArc(tangent1End: CGPoint(x: right, y: rect.maxY), tangent2End: CGPoint(x: right, y: rect.minY), radius: bottom)
+        if flare > 0 {
+            path.addLine(to: CGPoint(x: right, y: rect.minY + flare))
+            path.addArc(tangent1End: CGPoint(x: right, y: rect.minY), tangent2End: CGPoint(x: rect.maxX, y: rect.minY), radius: flare)
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        } else {
+            path.addArc(tangent1End: CGPoint(x: right, y: rect.minY), tangent2End: CGPoint(x: left, y: rect.minY), radius: top)
+            path.addArc(tangent1End: CGPoint(x: left, y: rect.minY), tangent2End: CGPoint(x: left, y: rect.maxY), radius: top)
+        }
+        path.closeSubpath()
+        return path
+    }
 }

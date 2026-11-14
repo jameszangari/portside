@@ -175,7 +175,7 @@ struct MenuBarSettings: View {
         Form {
             ModuleRowsSection(integrations: integrations, ids: [MenuBarShelfModule.moduleID])
             if layoutRunning, let layout = integrations.menuLayout {
-                Section { MenuBarLivePreviewCard(settings: dockModel.menuBarTriggers, dock: dockModel.look) }
+                Section { MenuBarLivePreviewCard(settings: { var shown = dockModel.menuBarTriggers; shown.presentation = dockModel.menuBarPresentation; return shown }(), dock: dockModel.look) }
                 MenuBarLayoutSection(service: layout)
             } else {
                 MenuBarLayoutSetup(integrations: integrations)
@@ -298,10 +298,14 @@ struct MenuBarTriggersSection: View {
     var body: some View {
         do {
             Section {
-                SettingsChoiceCards(selection: binding(\.presentation), choices: MenuBarPresentation.allCases.map { ($0, $0.title) }, columns: 3) {
+                SettingsChoiceCards(selection: Binding(get: { dockModel.menuBarPresentation }, set: { binding(\.presentation).wrappedValue = $0 }), choices: MenuBarPresentation.allCases.map { ($0, $0.title) }, columns: 3) {
                     MenuBarPresentationPicture(presentation: $0)
                 }
-                if settings.presentation != .menuBar {
+                .disabled(dockModel.notchShelfActive)
+                if dockModel.notchShelfActive {
+                    Text("The notch belongs to the Notch Shelf, so hidden items open in the Portside Bar. Turn the shelf off in Agent Notch to choose again.").helperStyle()
+                }
+                if dockModel.menuBarPresentation != .menuBar {
                     SettingsChoiceCards(selection: binding(\.barLocation), choices: MenuBarBarLocation.allCases.map { ($0, $0.title) }, columns: 5) {
                         MenuBarLocationPicture(location: $0)
                     }

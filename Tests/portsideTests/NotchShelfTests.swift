@@ -81,13 +81,14 @@ final class NotchShelfTests: XCTestCase {
         XCTAssertEqual(m.phase, .compact)
     }
 
-    func testClickTogglesInHoverMode() {
+    func testClickOpensAndASecondClickKeepsItOpen() {
         var m = NotchShelfMachine(mode: .hover)
         m.click()
         XCTAssertTrue(m.isOpen)
         XCTAssertFalse(m.pinned)
         m.click()
-        XCTAssertEqual(m.phase, .compact, "a second click closes (Bartender does not)")
+        XCTAssertTrue(m.isOpen, "like Bartender, a second click does not close")
+        XCTAssertEqual(m.pointer(.outside), .collapse)
     }
 
     // MARK: Click mode
@@ -115,7 +116,9 @@ final class NotchShelfTests: XCTestCase {
         XCTAssertTrue(m.pinned)
         XCTAssertNil(m.pointer(.outside), "pinned survives the pointer leaving")
         m.click()
-        XCTAssertEqual(m.phase, .compact, "clicking a pinned shelf closes it")
+        XCTAssertTrue(m.pinned, "clicking a pinned shelf keeps it")
+        m.close()
+        XCTAssertEqual(m.phase, .compact)
     }
 
     func testClickFromCompactPinsInHoverPinMode() {
@@ -157,5 +160,36 @@ final class NotchShelfTests: XCTestCase {
         XCTAssertEqual(back.shelfOpenMode, .hoverPin)
         let bad = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"shelfOpenMode":"wiggle"}"#.utf8))
         XCTAssertEqual(bad.shelfOpenMode, .hover, "unknown mode falls back")
+    }
+
+    // MARK: Menu bar coordination (SHELF-02)
+
+    func testExclusionJoinsNotchAndHeaderWithMargin() throws {
+        let band = CGRect(x: 0, y: 1080, width: 1728, height: 38)
+        let m = MenuBarShelfExclusion.margin
+        let joined = try XCTUnwrap(MenuBarShelfExclusion.rect(band: band, notch: 800...928, header: 770...958))
+        XCTAssertEqual(joined, CGRect(x: 770 - m, y: 1080, width: 188 + 2 * m, height: 38))
+        let notchOnly = try XCTUnwrap(MenuBarShelfExclusion.rect(band: band, notch: 800...928, header: nil))
+        XCTAssertEqual(notchOnly.minX, 800 - m)
+        XCTAssertEqual(notchOnly.maxX, 928 + m)
+        XCTAssertNil(MenuBarShelfExclusion.rect(band: band, notch: nil, header: nil), "below the bar without a notch: nothing to exclude")
+    }
+
+    func testExclusionContainsOnlyItsRects() {
+        defer { MenuBarShelfExclusion.update([]) }
+        MenuBarShelfExclusion.update([CGRect(x: 100, y: 0, width: 50, height: 30)])
+        XCTAssertTrue(MenuBarShelfExclusion.contains(CGPoint(x: 120, y: 10)))
+        XCTAssertFalse(MenuBarShelfExclusion.contains(CGPoint(x: 200, y: 10)))
+        MenuBarShelfExclusion.update([])
+        XCTAssertFalse(MenuBarShelfExclusion.contains(CGPoint(x: 120, y: 10)))
+    }
+
+    func testShelfLocksPresentationWithoutChangingTheSavedChoice() {
+        var settings = MenuBarTriggerSettings()
+        for saved in MenuBarPresentation.allCases {
+            settings.presentation = saved
+            XCTAssertEqual(settings.presentation(notchShelf: true), .portsideBar)
+            XCTAssertEqual(settings.presentation(notchShelf: false), saved)
+        }
     }
 }

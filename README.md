@@ -48,7 +48,7 @@ Full detail: [docs/FEATURES.md](docs/FEATURES.md).
 
 The proposed [Portside 2.0 roadmap](docs/ROADMAP_2_0.md) extends the Command Center with further optional tools, extends the App Switcher with an optional ⌘Tab replacement and Dock hover previews, and adds the rest of the developer server manager (project association, exit events and bounded visible refresh), smart workspaces, studio companion and agent supervisor, with optional local-only AI. Menu bar management still needs reliable hiding across launch locations, saved-order restore, arbitrary groups, profiles and per-item overflow access. The macOS 27 prototype uses a guarded private assertion; full parity is not shipped. See the [incremental tickets and first PRs](docs/IMPLEMENTATION_PLAN_2_0.md) for implementation order. These capabilities are planned, not shipped.
 
-Notch Shelf ([research and v1 scope](docs/research/P2-SHELF-01-top-shelf.md)): Widgets, Agents and Clipboard pages with reorder, hide and starting page; compact strip priority with meeting and battery alerts; display and full-screen options; Menu Bar coordination. The open/peek surface is in the preview.
+Notch Shelf ([research and v1 scope](docs/research/P2-SHELF-01-top-shelf.md)): Widgets, Agents and Clipboard pages with reorder, hide and starting page; compact strip priority with meeting and battery alerts; display and full-screen options. The open/peek surface and Menu Bar coordination (the notch never reveals hidden items, which open in the Portside Bar) are in the preview.
 
 Existing [docs/CHECKLIST.md](docs/CHECKLIST.md) backlog remains:
 
