@@ -156,6 +156,8 @@ enum SettingsSearch {
         .init(.notch, "Notch Shelf", "Notch Shelf", "top shelf peek dynamic island"),
         .init(.notch, "Notch Shelf", "Use Notch Shelf", "top shelf"),
         .init(.notch, "Notch Shelf", "Open shelf", "hover click pin"),
+        .init(.notch, "Shelf pages", "Shelf pages", "tabs order widgets agents clipboard"),
+        .init(.notch, "Shelf pages", "Start on", "starting page last used default"),
         .init(.notch, "Behavior", "Behavior", ""),
         .init(.notch, "Behavior", "Expand on hover", "open"),
         .init(.notch, "Behavior", "Click action", ""),

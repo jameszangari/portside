@@ -85,11 +85,15 @@ enum AgentNotchProbe {
             let agents = try fixture()
             let folder = URL(fileURLWithPath: directory)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            for name in ["compact", "attached", "expanded", "large-text", "minimal"] {
+            for name in ["compact", "attached", "expanded", "large-text", "minimal", "shelf-agents", "shelf-widgets"] {
                 let state = AgentNotchPresentation()
                 state.preferences.animate = false
                 state.expanded = name != "compact" && name != "attached"
                 if name == "attached" { state.topAttached = true; state.headerHeight = 32 }
+                if name.hasPrefix("shelf") {
+                    state.preferences.shelfEnabled = true
+                    state.showPage(name == "shelf-agents" ? .agents : .widgets)
+                }
                 state.preferences.showUsage = false
                 if name == "large-text" { state.preferences.fontSize = 16; state.preferences.expandedWidth = 340 }
                 if name == "minimal" { state.preferences.compactStyle = .minimal; state.preferences.providerColors = false; state.preferences.showTotal = false }

@@ -2,6 +2,8 @@ import SwiftUI
 
 struct AgentNotchSettingsView: View {
     @ObservedObject var model: DockModel
+    /// Shows the Clipboard History settings, which the Clipboard page needs.
+    var openClipboardSettings: () -> Void = {}
     /// Form's DisclosureGroup often fails to collapse; match Appearance's
     /// chevron row that toggles the editor under it.
     @State private var accentOpen = false
@@ -92,7 +94,18 @@ struct AgentNotchSettingsView: View {
                         ForEach(NotchShelfOpenMode.allCases) { Text($0.title).tag($0) }
                     }
                 }
-                Text("Hover either side of the notch to peek at that side's activity. Hover opens the shelf from the notch itself; Click opens it with a click; Hover opens, click pins keeps it open after a click until you click outside or press Escape. Pages come in later previews.").helperStyle()
+                Text("Hover either side of the notch to peek at that side's activity. Hover opens the shelf from the notch itself; Click opens it with a click; Hover opens, click pins keeps it open after a click until you click outside or press Escape.").helperStyle()
+            }
+            if preferences.shelfEnabled {
+                Section(header: Text("Shelf pages").settingsAnchor("Shelf pages")) {
+                    Picker("Start on", selection: binding(\.shelfPages.start)) {
+                        ForEach(NotchShelfStartPage.allCases) { Text($0.title).tag($0) }
+                    }
+                    ForEach(Array(preferences.shelfPages.order.enumerated()), id: \.element) { index, page in
+                        shelfPageRow(page, index: index)
+                    }
+                    Text("Tabs appear in this order at the bottom of the open shelf. Opening from a peek shows Agents, which holds the card you peeked at. Widgets and Clipboard content arrive in later previews.").helperStyle()
+                }
             }
             Section(header: Text("Behavior").settingsAnchor("Behavior")) {
                 if !preferences.shelfEnabled { Toggle("Expand on hover", isOn: binding(\.expandOnHover)) }
@@ -126,6 +139,28 @@ struct AgentNotchSettingsView: View {
             Section {
                 Button("Reset Notch Customization") { model.updateAgentNotch { $0 = AgentNotchSettings() } }
                 Text("Resets this pane's appearance, behavior and filters. The enable switch and Widgets settings are preserved.").helperStyle()
+            }
+        }
+    }
+
+    private func shelfPageRow(_ page: NotchShelfPage, index: Int) -> some View {
+        let pages = preferences.shelfPages
+        let needsClipboard = page == .clipboard && !model.clipboardHistoryOn
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Image(systemName: page.symbol).frame(width: 18).foregroundStyle(.secondary)
+                Toggle(page.title, isOn: Binding(get: { pages.isOn(page) }, set: { on in model.updateAgentNotch { $0.shelfPages.setOn(page, on) } }))
+                Button { model.updateAgentNotch { $0.shelfPages.move(page, by: -1) } } label: { Image(systemName: "chevron.up") }
+                    .buttonStyle(.borderless).disabled(index == 0).accessibilityLabel("Move \(page.title) earlier")
+                Button { model.updateAgentNotch { $0.shelfPages.move(page, by: 1) } } label: { Image(systemName: "chevron.down") }
+                    .buttonStyle(.borderless).disabled(index == pages.order.count - 1).accessibilityLabel("Move \(page.title) later")
+            }
+            if needsClipboard {
+                HStack {
+                    Text("Shows Clipboard History, which is off. The tab stays hidden until it is on.").helperStyle()
+                    Spacer()
+                    Button("Clipboard History…", action: openClipboardSettings)
+                }
             }
         }
     }
@@ -179,6 +214,25 @@ struct AgentNotchSettingsView: View {
 
 struct AgentNotchSettingsPreview: View {
     let preferences: AgentNotchSettings
+
+    /// The open shelf's tab row: pages that are on, in order, the starting
+    /// page (or the first) selected.
+    private var shelfTabs: some View {
+        let pages = preferences.shelfPages.visible { _ in true }
+        let selected = preferences.shelfPages.start.page.flatMap { pages.contains($0) ? $0 : nil } ?? pages.first
+        return HStack(spacing: 6) {
+            ForEach(pages) { page in
+                Label(page.title, systemImage: page.symbol)
+                    .font(.system(size: max(10, preferences.fontSize - 1), weight: .medium))
+                    .foregroundStyle(page == selected ? .white : .white.opacity(0.55))
+                    .padding(.horizontal, 9).frame(height: 24)
+                    .background(.white.opacity(page == selected ? 0.14 : 0), in: Capsule())
+            }
+            Spacer()
+            Image(systemName: "pin").foregroundStyle(.white.opacity(0.55))
+        }
+        .padding(.horizontal, 12)
+    }
     var body: some View {
         VStack(spacing: 12) {
             HStack(spacing: 8) {
@@ -223,7 +277,10 @@ struct AgentNotchSettingsPreview: View {
                     .padding(7).background(.white.opacity(0.06), in: Capsule())
             }
             .padding(12).background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-            .padding(12).background(.black.opacity(preferences.opacity), in: RoundedRectangle(cornerRadius: preferences.cornerRadius))
+            .padding(12)
+            .overlay(alignment: .bottom) { if preferences.shelfEnabled { shelfTabs.offset(y: 34) } }
+            .padding(.bottom, preferences.shelfEnabled ? 40 : 0)
+            .background(.black.opacity(preferences.opacity), in: RoundedRectangle(cornerRadius: preferences.cornerRadius))
         }
         .font(.system(size: preferences.fontSize)).foregroundStyle(.white)
         .padding(16).frame(maxWidth: .infinity)

@@ -67,6 +67,7 @@ struct AgentNotchSettings: Codable, Equatable {
     /// decides what opens the full shelf. Off keeps the classic island.
     var shelfEnabled = false
     var shelfOpenMode = NotchShelfOpenMode.hover
+    var shelfPages = NotchShelfPages()
     var collapseAfterFocus = true
     var showProject = true
     var showHost = true
@@ -101,7 +102,7 @@ struct AgentNotchSettings: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case position, display, compactStyle, clickAction, filter, hideWhenEmpty, animate, showTotal, showUsage, showMedia
-        case expandOnHover, shelfEnabled, shelfOpenMode, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
+        case expandOnHover, shelfEnabled, shelfOpenMode, shelfPages, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
         case showFinished, claude, codex, copilot, opencode, cursor, showBorder, compactWidth, compactHeight, expandedWidth, cornerRadius, opacity, fontSize
         case rowSpacing, maxSessions, hoverDelay, collapseDelay, animationDuration, horizontalOffset, verticalOffset, accent
     }
@@ -121,6 +122,7 @@ struct AgentNotchSettings: Codable, Equatable {
         expandOnHover = values.value(.expandOnHover, or: true)
         shelfEnabled = values.value(.shelfEnabled, or: false)
         shelfOpenMode = values.value(.shelfOpenMode, or: .hover)
+        shelfPages = values.value(.shelfPages, or: NotchShelfPages())
         collapseAfterFocus = values.value(.collapseAfterFocus, or: true)
         showProject = values.value(.showProject, or: true)
         showHost = values.value(.showHost, or: true)

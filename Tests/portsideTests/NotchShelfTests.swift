@@ -192,4 +192,52 @@ final class NotchShelfTests: XCTestCase {
             XCTAssertEqual(settings.presentation(notchShelf: false), saved)
         }
     }
+
+    // MARK: Pages (SHELF-03)
+
+    private let all: (NotchShelfPage) -> Bool = { _ in true }
+
+    func testPagesDefaultsAndOpening() {
+        let pages = NotchShelfPages()
+        XCTAssertEqual(pages.order, [.widgets, .agents, .clipboard])
+        XCTAssertEqual(pages.start, .lastUsed)
+        XCTAssertEqual(pages.opening(lastUsed: nil, fromPeek: false, available: all), .widgets, "no last page: the first")
+        XCTAssertEqual(pages.opening(lastUsed: .clipboard, fromPeek: false, available: all), .clipboard)
+        XCTAssertEqual(pages.opening(lastUsed: .clipboard, fromPeek: true, available: all), .agents, "a peek opens on the page with its card")
+    }
+
+    func testFixedStartAndUnavailablePages() {
+        var pages = NotchShelfPages()
+        pages.start = .clipboard
+        XCTAssertEqual(pages.opening(lastUsed: .agents, fromPeek: false, available: all), .clipboard)
+        let noClipboard: (NotchShelfPage) -> Bool = { $0 != .clipboard }
+        XCTAssertEqual(pages.visible(available: noClipboard), [.widgets, .agents])
+        XCTAssertEqual(pages.opening(lastUsed: nil, fromPeek: false, available: noClipboard), .widgets, "start page unavailable: the first")
+        pages.setOn(.agents, false)
+        XCTAssertEqual(pages.opening(lastUsed: nil, fromPeek: true, available: noClipboard), .widgets, "Agents off: a peek opens normally")
+        pages.setOn(.widgets, false)
+        XCTAssertNil(pages.opening(lastUsed: nil, fromPeek: false, available: noClipboard))
+    }
+
+    func testPagesMoveWithinBounds() {
+        var pages = NotchShelfPages()
+        pages.move(.clipboard, by: -1)
+        XCTAssertEqual(pages.order, [.widgets, .clipboard, .agents])
+        pages.move(.widgets, by: -1)
+        XCTAssertEqual(pages.order, [.widgets, .clipboard, .agents], "first stays first")
+        pages.move(.agents, by: 1)
+        XCTAssertEqual(pages.order, [.widgets, .clipboard, .agents])
+    }
+
+    func testPagesDecodeRepairsOrder() throws {
+        let json = #"{"order":["agents","bogus","agents"],"hidden":["clipboard","nope"],"start":"weird"}"#
+        let pages = try JSONDecoder().decode(NotchShelfPages.self, from: Data(json.utf8))
+        XCTAssertEqual(pages.order, [.agents, .widgets, .clipboard], "unknown and repeated dropped, missing appended")
+        XCTAssertFalse(pages.isOn(.clipboard))
+        XCTAssertEqual(pages.start, .lastUsed)
+        let back = try JSONDecoder().decode(NotchShelfPages.self, from: JSONEncoder().encode(pages))
+        XCTAssertEqual(back, pages)
+        let settings = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"shelfEnabled":true}"#.utf8))
+        XCTAssertEqual(settings.shelfPages, NotchShelfPages(), "older files get the default pages")
+    }
 }

@@ -44,8 +44,10 @@ struct AgentNotchView: View {
             compactHeader
                 .frame(height: state.headerHeight)
             if state.expanded {
-                dashboard
-                    .transition(.opacity)
+                Group {
+                    if preferences.shelfEnabled { shelfOpen } else { dashboard }
+                }
+                .transition(.opacity)
             } else if let side = state.peekSide {
                 peekCard(side)
                     .transition(.opacity)
@@ -203,7 +205,6 @@ struct AgentNotchView: View {
                 if preferences.showUsage, let usage {
                     NotchUsageDetails(usage: usage, preferences: preferences)
                 }
-                if preferences.shelfEnabled { dashboardTitle }
             }
             .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding).padding(.bottom, Self.dashboardBottomPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -211,6 +212,84 @@ struct AgentNotchView: View {
         }
         .scrollIndicators(.hidden)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    // MARK: Shelf pages (SHELF-03)
+
+    private var shelfPages: [NotchShelfPage] { preferences.shelfPages.visible(available: state.pageAvailable) }
+
+    /// The chosen page while it is still on, else the first one that is.
+    private var currentPage: NotchShelfPage? {
+        let pages = shelfPages
+        return state.page.flatMap { pages.contains($0) ? $0 : nil } ?? pages.first
+    }
+
+    /// The open shelf: the page, then a bottom row with the tabs, pin and
+    /// close. The row sits below the content so a peeked card does not move
+    /// when the shelf opens on top of it.
+    private var shelfOpen: some View {
+        VStack(spacing: 0) {
+            Group {
+                switch currentPage {
+                case .agents: dashboard
+                case .widgets: shelfPlaceholder(.widgets, "Widgets come to the shelf in a later preview.")
+                case .clipboard: shelfPlaceholder(.clipboard, "Clipboard History comes to the shelf in a later preview.")
+                case nil: shelfPlaceholder(nil, "Every page is off. Turn one on in Settings > Agent Notch > Notch Shelf.")
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            shelfBar
+                .padding(.horizontal, 16).padding(.bottom, 12)
+        }
+    }
+
+    private var shelfBar: some View {
+        HStack(spacing: 6) {
+            let current = currentPage
+            ForEach(shelfPages) { page in
+                Button { state.showPage(page) } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: page.symbol).font(.system(size: max(9, preferences.fontSize - 2), weight: .semibold))
+                        Text(page.title)
+                    }
+                    .font(.system(size: max(10, preferences.fontSize - 1), weight: .medium))
+                    .foregroundStyle(page == current ? .white : .white.opacity(0.55))
+                    .padding(.horizontal, 9).frame(height: 26)
+                    .background(.white.opacity(page == current ? 0.14 : 0.0001), in: Capsule())
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(page.title)
+                .accessibilityAddTraits(page == current ? [.isButton, .isSelected] : .isButton)
+            }
+            Spacer(minLength: 4)
+            Button {
+                state.setPinned(!state.pinned)
+            } label: {
+                Image(systemName: state.pinned ? "pin.fill" : "pin")
+                    .foregroundStyle(state.pinned ? preferences.accent.color : .white.opacity(0.55))
+                    .frame(width: 26, height: 26)
+                    .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+            }.buttonStyle(.plain).help(state.pinned ? "Unpin shelf" : "Keep shelf open")
+                .accessibilityLabel(state.pinned ? "Unpin shelf" : "Pin shelf")
+            Button { state.setExpanded(false) } label: {
+                Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
+                    .frame(width: 26, height: 26)
+                    .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+            }.buttonStyle(.plain).accessibilityLabel("Close shelf")
+        }
+    }
+
+    private func shelfPlaceholder(_ page: NotchShelfPage?, _ message: String) -> some View {
+        VStack(spacing: 7) {
+            Image(systemName: page?.symbol ?? "rectangle.slash").font(.title2).foregroundStyle(preferences.accent.color)
+            if let page { Text(page.title).fontWeight(.medium) }
+            Text(message)
+                .font(.system(size: preferences.fontSize - 1)).foregroundStyle(.white.opacity(0.55))
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity).padding(.horizontal, 16).padding(.top, 24)
+        .accessibilityElement(children: .combine)
     }
 
     private var leadWithTrack: Bool {

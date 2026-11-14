@@ -26,6 +26,14 @@ final class AgentNotchPresentation: ObservableObject {
     /// Shelf only: shrinks the panel to `surfaceSize` once the view has
     /// animated down to it.
     var settleTask: DispatchWorkItem?
+    /// Shelf only: the open shelf's page. Nil while closed, or when every
+    /// page is off or unavailable.
+    @Published private(set) var page: NotchShelfPage?
+    /// Shelf only: the page shown last, for the "Last used" starting page.
+    /// Kept for this run only.
+    private var lastUsedPage: NotchShelfPage?
+    /// Shelf only: whether a page can show now (Clipboard needs its module).
+    var pageAvailable: (NotchShelfPage) -> Bool = { $0 != .clipboard }
     /// Shelf only: whether a side has an activity card to peek at.
     var canPeek: (NotchShelfSide) -> Bool = { _ in false }
     var onExpansion: (() -> Void)?
@@ -88,9 +96,21 @@ final class AgentNotchPresentation: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
     }
 
+    /// Shelf only: a tab was picked.
+    func showPage(_ next: NotchShelfPage) {
+        page = next
+        lastUsedPage = next
+    }
+
     private func syncShelf() {
         let changed = expanded != machine.isOpen || peekSide != machine.peekSide
-        if machine.isOpen { if !expanded { openedFrom = peekSide } } else { openedFrom = nil }
+        if machine.isOpen {
+            if !expanded {
+                openedFrom = peekSide
+                page = preferences.shelfPages.opening(lastUsed: lastUsedPage, fromPeek: peekSide != nil, available: pageAvailable)
+                lastUsedPage = page ?? lastUsedPage
+            }
+        } else { openedFrom = nil }
         expanded = machine.isOpen
         peekSide = machine.peekSide
         if pinned != machine.pinned { pinned = machine.pinned }
@@ -119,6 +139,7 @@ final class AgentNotch {
         let screen: NSScreen
     }
     private let widgets: WidgetStore
+    private weak var model: DockModel?
     private var surfaces: [Surface] = []
     private var subscription: AnyCancellable?
     private var sessionsSubscription: AnyCancellable?
@@ -134,6 +155,7 @@ final class AgentNotch {
 
     init(model: DockModel, widgets: WidgetStore) {
         self.widgets = widgets
+        self.model = model
         subscription = widgets.$hosts.combineLatest(model.$showAgentNotch, model.$agentNotchSettings)
             .receive(on: DispatchQueue.main).sink { [weak self] _, enabled, preferences in
                 guard let self else { return }
@@ -218,6 +240,9 @@ final class AgentNotch {
             panel.hidesOnDeactivate = false
             state.onExpansion = { [weak self] in self?.layoutPanels() }
             state.canPeek = { [weak self] side in self?.hasPeekCard(side) ?? false }
+            state.pageAvailable = { [weak self] page in
+                page != .clipboard || MainActor.assumeIsolated { self?.model?.clipboardHistoryOn == true }
+            }
             panel.contentView = NSHostingView(rootView: AgentNotchView(agents: agents, usage: usage, nowPlaying: nowPlaying, state: state))
             surfaces.append(Surface(panel: panel, state: state, screen: screen))
         }

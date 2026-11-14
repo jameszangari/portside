@@ -406,7 +406,9 @@ struct SettingsView: View {
                     case .commandCenter: CommandCenterSettings(dockModel: dockModel, integrations: integrations)
                     case .switcher: AppSwitcherSettings(dockModel: dockModel, integrations: integrations)
                     case .menuBar: MenuBarSettings(dockModel: dockModel, integrations: integrations)
-                    case .notch: AgentNotchSettingsView(model: dockModel)
+                    case .notch: AgentNotchSettingsView(model: dockModel) {
+                        navigation.open(SettingsSearchEntry(.commandCenter, "Clipboard History", "Clipboard History", ""))
+                    }
                     case .general: GeneralSettings(dockModel: dockModel, layout: layout, nativeDock: nativeDock, launchAtLogin: launchAtLogin, integrations: integrations)
                     }
                 }

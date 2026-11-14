@@ -779,6 +779,14 @@ final class DockModel: Codable, ObservableObject {
     @Published private(set) var showAgentNotch = false
     @Published private(set) var automaticUpdateChecks = true
 
+    /// Clipboard History is running (its module and Command Center are on,
+    /// and restricted mode is not holding sensitive modules off).
+    @MainActor var clipboardHistoryOn: Bool {
+        let clipboard = modules.isEnabled(ClipboardModule.moduleID, required: false)
+        let commandCenter = modules.isEnabled(CommandCenterModule.moduleID, required: false)
+        return !restrictedMode && clipboard && commandCenter
+    }
+
     /// The Notch Shelf is on and owns the notch (SHELF-02).
     var notchShelfActive: Bool { showAgentNotch && agentNotchSettings.shelfEnabled }
 
