@@ -329,4 +329,20 @@ final class NotchShelfTests: XCTestCase {
         XCTAssertGreaterThan(AgentNotchView.agentsPageHeight(preferences: AgentNotchSettings(), sessionCount: 2, chips: true, usageRows: 2),
                              AgentNotchView.agentsPageHeight(preferences: AgentNotchSettings(), sessionCount: 2))
     }
+
+    // MARK: Clipboard page (SHELF-06)
+
+    func testClipboardPageShowsNewestSixAndSizesToRows() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let entries = (0..<8).map { ClipboardEntry(text: "clip \($0)", date: base.addingTimeInterval(TimeInterval($0))) }
+        let shown = NotchClipboardPage.shown(entries)
+        XCTAssertEqual(shown.count, 6)
+        XCTAssertEqual(shown.first?.text, "clip 7", "newest first")
+        let one = NotchClipboardPage.height(count: 2, paused: false)
+        let two = NotchClipboardPage.height(count: 8, paused: false)
+        XCTAssertEqual(one, NotchClipboardPage.cardHeight)
+        XCTAssertEqual(two, 2 * NotchClipboardPage.cardHeight + NotchClipboardPage.spacing, "never more than two rows")
+        XCTAssertGreaterThan(NotchClipboardPage.height(count: 2, paused: true), one, "the paused note adds a row")
+        XCTAssertGreaterThan(NotchClipboardPage.height(count: 0, paused: false), 0, "empty state has room")
+    }
 }

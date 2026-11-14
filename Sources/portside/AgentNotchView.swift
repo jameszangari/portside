@@ -262,12 +262,14 @@ struct AgentNotchView: View {
     /// The open shelf's height below the strip, per page: the tab row, then
     /// the page.
     static func shelfHeight(page: NotchShelfPage?, preferences: AgentNotchSettings, sessionCount: Int,
-                            chips: Bool = false, usageRows: Int = 0) -> CGFloat {
+                            chips: Bool = false, usageRows: Int = 0, clipboard: (count: Int, paused: Bool) = (0, false)) -> CGFloat {
         shelfBarHeight + {
             switch page {
             case .agents: agentsPageHeight(preferences: preferences, sessionCount: sessionCount, chips: chips, usageRows: usageRows)
             case .widgets: dashboardTopPadding + NotchShelfCardMetrics.slotHeight + dashboardBottomPadding
-            case .clipboard, nil: 150
+            case .clipboard:
+                dashboardTopPadding + NotchClipboardPage.height(count: clipboard.count, paused: clipboard.paused) + dashboardBottomPadding
+            case nil: 150
             }
         }()
     }
@@ -282,7 +284,9 @@ struct AgentNotchView: View {
                 switch currentPage {
                 case .agents: agentsPage
                 case .widgets: shelfWidgets
-                case .clipboard: shelfPlaceholder(.clipboard, "Clipboard History comes to the shelf in a later preview.")
+                case .clipboard:
+                    NotchClipboardPage(service: ClipboardService.shared, preferences: preferences)
+                        .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding)
                 case nil: shelfPlaceholder(nil, "Every page is off. Turn one on in Settings > Top Notch > Shelf.")
                 }
             }

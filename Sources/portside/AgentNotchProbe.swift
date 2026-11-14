@@ -95,7 +95,7 @@ enum AgentNotchProbe {
                 id: "probe", title: "I'm On", artist: "Anderson .Paak, Cordae", artwork: art, artworkURL: nil, isPlaying: true,
                 player: NowPlayingWidget.Player(bundleID: "com.apple.Music", name: "Music", notification: ""),
                 duration: 233, elapsed: 72, elapsedAt: Date()))
-            let shelfVariants = ["shelf-agents", "shelf-widgets", "strip-music", "card-music", "card-vinyl", "card-agents"]
+            let shelfVariants = ["shelf-agents", "shelf-widgets", "shelf-clipboard", "strip-music", "card-music", "card-vinyl", "card-agents"]
             for name in ["compact", "attached", "expanded", "large-text", "minimal"] + shelfVariants {
                 let state = AgentNotchPresentation()
                 state.preferences.animate = false
@@ -109,7 +109,17 @@ enum AgentNotchProbe {
                     state.compactWidth = 184 + 180 + 2 * NotchShape.flare
                     state.strip = name == "card-agents" ? NotchShelfStrip.layout(music: false, agents: true, agentAlert: false)
                         : NotchShelfStrip.layout(music: true, agents: true, agentAlert: false)
-                    if name.hasPrefix("shelf") { state.showPage(name == "shelf-agents" ? .agents : .widgets) }
+                    if name.hasPrefix("shelf") {
+                        state.pageAvailable = { _ in true }
+                        state.showPage(name == "shelf-agents" ? .agents : name == "shelf-clipboard" ? .clipboard : .widgets)
+                        if name == "shelf-clipboard" {
+                            ClipboardService.shared.preview(["https://github.com/jameszangari/portside/pull/74", "swift build && swift test",
+                                                             "Meeting moved to 3 pm, same room", "let width = min(screen.frame.width - 24, 600)",
+                                                             "me@example.com"].enumerated().map {
+                                ClipboardEntry(text: $1, date: Date().addingTimeInterval(-Double($0) * 300))
+                            })
+                        }
+                    }
                     // Not started: no network or calendar queries, only each card's empty state.
                     let hosts = [WeatherWidget.kind, CalendarWidget.kind].compactMap { WidgetCatalog.make($0).map(WidgetHost.init(widget:)) }
                     state.widgetHost = { kind in hosts.first { $0.id == kind } }
@@ -130,7 +140,8 @@ enum AgentNotchProbe {
                 state.panelWidth = width
                 let content = state.preferences.shelfEnabled
                     ? AgentNotchView.shelfHeight(page: state.currentPage, preferences: state.preferences, sessionCount: agents.sessions.count,
-                                                 chips: AgentNotchView.providerChips(agents.sessions).count > 1)
+                                                 chips: AgentNotchView.providerChips(agents.sessions).count > 1,
+                                                 clipboard: (ClipboardService.shared.entries.count, false))
                     : AgentNotchView.dashboardHeight(preferences: state.preferences, sessionCount: agents.sessions.count)
                 let card = state.card.map { AgentNotchView.cardHeight($0, preferences: state.preferences, sessionCount: agents.sessions.count) } ?? 0
                 let height = state.headerHeight + (state.expanded ? content : card)

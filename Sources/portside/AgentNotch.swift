@@ -180,6 +180,7 @@ final class AgentNotch {
     private weak var usage: UsageWidget?
     private weak var nowPlaying: NowPlayingWidget?
     private var mediaSubscription: AnyCancellable?
+    private var clipboardSubscription: AnyCancellable?
 
     init(model: DockModel, widgets: WidgetStore) {
         self.widgets = widgets
@@ -283,6 +284,10 @@ final class AgentNotch {
             self?.layoutPanels()
         }
         builtAt = Date()
+        // The Clipboard page's height follows its entries and pause state.
+        clipboardSubscription = preferences.shelfEnabled ? MainActor.assumeIsolated {
+            ClipboardService.shared.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.layoutPanels() }
+        } : nil
         bannerTrack = nowPlaying?.track?.id
         if let nowPlaying {
             mediaSubscription = nowPlaying.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in
@@ -360,6 +365,7 @@ final class AgentNotch {
         guard let agents else { return }
         let sessions = preferences.sessions(from: agents.sessions)
         scheduleDismiss(sessions)
+        let clipboard = MainActor.assumeIsolated { (ClipboardService.shared.entries.count, ClipboardService.shared.prefs.paused) }
         let playing = musicShowing
         for surface in surfaces {
             let screen = surface.screen
@@ -396,7 +402,8 @@ final class AgentNotch {
                 ? AgentNotchView.shelfHeight(page: state.currentPage, preferences: preferences,
                                              sessionCount: AgentNotchView.providerFiltered(sessions, state.agentProvider).count,
                                              chips: AgentNotchView.providerChips(sessions).count > 1,
-                                             usageRows: preferences.showUsage ? usage?.usage.count ?? 0 : 0)
+                                             usageRows: preferences.showUsage ? usage?.usage.count ?? 0 : 0,
+                                             clipboard: clipboard)
                 : AgentNotchView.dashboardHeight(preferences: preferences, sessionCount: sessions.count)
             let height = min(screen.visibleFrame.height - 16, state.headerHeight
                              + (state.expanded ? contentHeight : state.card.map {
