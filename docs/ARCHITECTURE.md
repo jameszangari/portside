@@ -15,7 +15,7 @@ How Portside is put together. See also [PLAN.md](PLAN.md) for the original miles
 
 - The separator's resize cursor needs a private SkyLight call, because macOS ignores cursor changes from a background app. `BackgroundCursor.swift` loads it with `dlopen`/`dlsym`. If the framework or symbols are missing, the cursor feature is disabled and nothing crashes.
 - Notification badges read each app's badge from LaunchServices (`_LSASNCreateWithPid`, `_LSCopyApplicationInformationItem`), the store the Dock itself draws from. `LaunchServicesBadges.swift` loads them with `dlopen`/`dlsym`; if they are missing, badges turn off and Settings says so.
-- Now Playing does not use MediaRemote: on macOS 27 `MRMediaRemoteGetNowPlayingInfo` returns an empty dictionary to Portside (non-Apple clients are refused since macOS 15.4). It reads Spotify and Music over AppleScript instead, triggered by their distributed notifications. `AEDeterminePermissionToAutomateTarget` is avoided there because it can block with no timeout while consent is undecided.
+- Now Playing reads Spotify and Music over AppleScript, triggered by their distributed notifications. `AEDeterminePermissionToAutomateTarget` is avoided there because it can block with no timeout while consent is undecided. Every other player comes from MediaRemote (private), which Portside cannot call itself: on macOS 27 `MRMediaRemoteGetNowPlayingInfo` returns an empty dictionary to Portside (non-Apple clients are refused since macOS 15.4). `MediaRemoteNowPlaying.swift` runs the vendored MediaRemoteAdapter (`Sources/MediaRemoteAdapter`, BSD 3-Clause, built as `libMediaRemoteAdapter.dylib` and never linked) inside `/usr/bin/perl`, which MediaRemote still answers, the way Bartender does. It streams JSON lines over a pipe and sends play/pause/skip the same way. A forked watcher ends the stream when Portside's end of stdin closes, so a crash leaves nothing running. No dylib or a failed launch: Spotify and Music only.
 - AI Usage reads Claude limits from `https://api.anthropic.com/api/oauth/usage` (`anthropic-beta: oauth-2025-04-20`), an undocumented endpoint Claude Code itself uses, with the OAuth token Claude Code keeps in the login keychain (`Claude Code-credentials`, read through `/usr/bin/security` so no keychain prompt). The token is never logged and never refreshed by Portside. Any failure shows a note instead of meters.
 - The see-through lens in Liquid Glass sets the private `_variant` of `NSGlassEffectView` to 19, the see-through lens (no blur, refraction at the rim). The public `.clear` glass still blurs heavily on macOS 27. `SeeThroughGlass.swift` checks the selectors at runtime and reads the value back; if anything is off, glass falls back to the public version. Variant numbers were measured on macOS 27.0.1 and may change in an OS update (worst case is a wrong look, not a crash). The lens bends its rim through chromatic aberration only, which fringes dark edges behind it with color, so `removeDispersion` moves those values to the plain refraction keys of its private `glassForeground` filter. It checks `inputKeys` first and runs after each layout, since the lens rewrites the filter when resized; if the keys change, the fringe returns. Match macOS also uses private APIs, see below.
 - Match macOS rebuilds the native Dock's glass in `NativeDockGlass.swift`, because the Dock's `GlassMaterialProvider.Configuration.dock` (private DesignLibrary) is out of reach and no `NSGlassEffectView` variant matches it. It stacks a private `CABackdropLayer` with `CAFilter` blur and color filters, the see-through lens, a fixed gray, and a rim, all fitted to captures of the real Dock in dark mode on macOS 27.0.1. The classes are looked up at runtime; if any are missing, Match macOS and Custom fall back to the public glass. Match macOS also does in light mode. The blur follows the global `NSGlassTintAmount`, read through KVO.
@@ -114,7 +114,7 @@ Sources/portside/
   Core/MenuBar/MenuBarAssertionSurface.swift  `AssertionShelfSurface` (a `MenuBarShelfSurface` that hides by assertion), `MenuBarAssertionController` (latest intent wins, confirmed assertion handoff, timeout, generation-checked own-icon verification), `MenuBarAssertionPlan` (pure allow-list), `MenuBarDrawnOwners` (read-only Accessibility read of the bar)
   Core/MenuBar/MenuBarOverflowPanel.swift  Portside Bar: rows of hidden items per group in a panel under the menu bar, and `MenuBarBarPlacement` (pure position rule)
   Core/MenuBar/MenuBarItemMenu.swift  Opens hidden items from the Portside Bar: `MenuBarMenuReader` (closed menu through Accessibility), `MenuBarMirrorMenu` (native `NSMenu`), `MenuBarWindowOpener` (window items moved under the icon)
-  Core/MenuBar/MenuBarLook.swift  Saved look (`MenuBarLook`, control icon, bar style, shape), `MenuBarControlImage` (uploaded icon file), `MenuBarReservedSpans` (bar space the attached Agent Notch takes), `MenuBarStylePlan` (pure outline geometry), `MenuBarStyleOverlay` (click-through window under the status items)
+  Core/MenuBar/MenuBarLook.swift  Saved look (`MenuBarLook`, control icon, bar style, shape), `MenuBarControlImage` (uploaded icon file), `MenuBarReservedSpans` (bar space the attached Top Notch takes), `MenuBarStylePlan` (pure outline geometry), `MenuBarStyleOverlay` (click-through window under the status items)
   Core/MenuBar/MenuBarLiveActivities.swift  iPhone Live Activities switch: the only code that writes `com.apple.controlcenter`, one key, with a backup
   Core/MenuBar/MenuBarArrangement.swift  Groups, profiles and their store, `MenuBarOrderPlanner` (pure), `MenuBarPositionTable` (order table with backup), `MenuBarNativeHider` (Control Center list with journal), display set key
   Core/MenuBar/MenuBarSystemFiles.swift  `MenuBarFileGrant`: open panel and security-scoped bookmark for the two system files
@@ -178,7 +178,7 @@ Sources/portside/
   NativeDockMenu.swift      Window list, recents and app actions read from the native Dock's tile menu over Accessibility
   NativeDockImport.swift    Reads the native Dock (apps, position, size) and the import sheet
   LaunchAtLogin.swift       "Open Portside at login" via SMAppService.mainApp
-  SettingsWindow.swift      Settings window: sidebar and panes (grouped Desktop: Dock, Appearance, Widgets, Groups; Tools: Command Center, App Switcher, Menu Bar, Agent Notch; Portside: General)
+  SettingsWindow.swift      Settings window: sidebar and panes (grouped Desktop: Dock, Appearance, Widgets, Groups; Tools: Command Center, App Switcher, Menu Bar, Top Notch; Portside: General)
   DockAppearance.swift      Icon style and dock background options, background modifier, icon style observer
   SeeThroughGlass.swift     Guarded private glass variant, the see-through lens in Liquid Glass
   NativeDockGlass.swift     Guarded rebuild of the native Dock glass, measured against the real Dock
@@ -189,13 +189,16 @@ Sources/portside/
   AppInfo.swift             App name, author, version line, and repo URL
   BuildInfo.swift           Generated by scripts/gen-version.sh: version, git hash, dirty flag
   AgentNotch.swift          Non-activating notch panel lifecycle, multi-display surfaces and layout
-  AgentNotchPreferences.swift Agent notch settings model, filters and value bounds
+  AgentNotchPreferences.swift Top notch settings model, filters and value bounds
   AgentNotchView.swift      Compact header, expandable session dashboard and usage bars
+  NotchShelfState.swift     Notch Shelf strip layout, hover regions, the compact / card / open state machine, pages and Widgets slots (no AppKit)
+  NotchShelfCards.swift     Notch Shelf music card (art or vinyl, progress and seek, controls, album tint), weather and calendar cards
   SettingsPanes.swift       Settings > Command Center, App Switcher and Menu Bar panes (split out of General and Integrations)
-  SettingsPreviews.swift    Reusable Settings preview card (Simulation badge, enlarge popover) and the Dock, App Switcher, Menu Bar sections and reveal and hide, and Command Center illustrations; pure drawings, no system state
+  SettingsPreviews.swift    Reusable Settings preview card (Simulation badge, enlarge popover) and the Dock, App Switcher, Menu Bar sections and reveal and hide, Command Center, and Top Notch choice-card illustrations; pure drawings, no system state
+  SettingsFold.swift        Folded settings group (`SettingsFold`, `SettingsFoldRow`): a header row with the current values, opened on click or by search
   SettingsSearch.swift      Settings search: hand-kept index, ranking, and `.settingsAnchor` for scrolling to a section
   SettingsTextField.swift   The one boxed text input and text area for Settings, with a hint that says what to enter
-  AgentNotchSettingsView.swift Settings > Agent Notch pane, presets and live preview
+  AgentNotchSettingsView.swift Settings > Top Notch pane, presets and live preview
   IntegrationsSettingsView.swift Module switch rows, permissions list and restricted mode, shown in the tool panes and General (there is no Integrations pane)
   AgentNotchProbe.swift     Debug only: `--check-notch` and `--render-notch-previews`
   WindowRegistryProbe.swift Debug only: `--check-windows`, runs the live registry for up to 3s and prints counts (no names or titles)
@@ -209,11 +212,13 @@ Sources/portside/
     CalendarWidget.swift    Date and next event
     WeatherWidget.swift     Temperature and conditions (Open-Meteo)
     SystemStatsWidget.swift Combined concentric rings and separate CPU / Memory gauges
-    NowPlayingWidget.swift  Spotify / Music art, song, artist, controls (notifications + AppleScript)
+    NowPlayingWidget.swift  Art, song, artist, controls: Spotify / Music (notifications + AppleScript), other players via MediaRemoteNowPlaying
+    MediaRemoteNowPlaying.swift  System Now Playing stream and commands through the vendored adapter in /usr/bin/perl (private MediaRemote)
     AgentStatusWidget.swift Coding agent provider, count, working/done (hook files + T3/OpenCode discovery)
     UsageWidget.swift       Claude / Codex 5-hour and weekly, Copilot monthly usage meters
   Support/                  Bundled resources: AppIcon-<px>.png (actool's flat render of AppIcon.icon) and MenuBarIcon-<px>.png
 Sources/AppLoginItemList/   C helper: read session Open at Login list (LSSharedFileList)
+Sources/MediaRemoteAdapter/ Vendored ungive/mediaremote-adapter (BSD 3-Clause), a dynamic library loaded by /usr/bin/perl, not linked (README.md there)
 Tests/portsideTests/        XCTest target (`@testable import portside`); run with CFFIXED_USER_HOME, see docs/BASELINE_2_0.md
   CommandCenterTests.swift  Command Center transitions, keys and IME, stale search results, focus restore rule, hotkey lifecycle, conflicts, `commandCenterHotkey` decoding
   CommandCenterSearchTests.swift  CMD-02 ranking tiers and tie-breaks, result IDs, searcher cancellation, quicklink URL allowlist and decoding, history, providers, app scan, execution through the registry
@@ -248,7 +253,7 @@ design/                    Approved Portside sail icon, wordmarks, menu bar asse
 
 ## Feedback follow-up lifecycle
 
-`WidgetStore` shares agent, usage and Now Playing hosts between the dock and notch, running each host while either surface needs it. `AgentNotch` rebuilds its non-activating panel after screen changes. The panel uses public safe-area and auxiliary top-area geometry. It runs existing widget refresh intervals outside the reveal path; usage honors provider consent. Compact media bars use the same Spotify/Music notifications as the Now Playing widget. The notch never adds tiles to the dock or duplicates usage requests.
+`WidgetStore` shares agent, usage and Now Playing hosts between the dock and notch, running each host while either surface needs it. `AgentNotch` rebuilds its non-activating panel after screen changes. The panel uses public safe-area and auxiliary top-area geometry. It runs existing widget refresh intervals outside the reveal path; usage honors provider consent. Compact media bars use the same Now Playing widget state. The notch never adds tiles to the dock or duplicates usage requests.
 
 `UpdateMonitor` checks at app launch and every 24 hours, with timer tolerance. Disabling cancels the task and timer; a generation guard prevents an old task clearing a new task. Notifications are attempted only in app bundles and only after a newer release is found. Notification denial leaves an update mark and menu item. The shared installer refuses overlapping installs and keeps its existing team, version, bundle ID and HTTPS checks. No new private APIs.
 

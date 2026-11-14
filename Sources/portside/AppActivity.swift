@@ -79,7 +79,7 @@ struct ActivityIconSettings: Codable, Equatable {
 /// agent CLI, a build it started), sampled every 2s and only while a watched
 /// app is running. That timer is outside the reveal/hide path. Agent hosts
 /// (T3 Code, Claude, Codex) use the Agents widget's sessions instead while it
-/// runs, so their tiles match the Agent Notch rather than idle CPU spikes.
+/// runs, so their tiles match the Top Notch rather than idle CPU spikes.
 ///
 /// React analogy: a store fed by event subscriptions; tiles read
 /// `activity(for:)` and re-render when `byKey` changes.

@@ -63,6 +63,26 @@ struct AgentNotchSettings: Codable, Equatable {
     /// the Now Playing widget). Hidden when paused or nothing is playing.
     var showMedia = true
     var expandOnHover = true
+    /// Notch Shelf preview (P2-SHELF): hovering a running activity shows
+    /// its card, the notch opens the full shelf. Off keeps the classic island.
+    var shelfEnabled = false
+    var shelfPages = NotchShelfPages()
+    /// The Widgets page's two slots.
+    var shelfLeadingWidget = NotchShelfSlot.music
+    var shelfTrailingWidget = NotchShelfSlot.calendar
+    /// Shelf hover delay for cards and the full shelf; the classic island
+    /// keeps `hoverDelay`.
+    var shelfHoverDelay: Double = 0.15
+    /// Pointer left the open shelf. A card closes after a fixed 0.2 s.
+    var shelfCollapseDelay: Double = 0.8
+    var shelfHaptics = false
+    var musicStyle = NotchMusicStyle.music
+    var musicSeeking = true
+    var musicTint = false
+    var musicHideWhenPaused = true
+    /// The music card shows for a few seconds when the track changes.
+    var musicBanner = true
+    var agentCard = NotchAgentCard.latest
     var collapseAfterFocus = true
     var showProject = true
     var showHost = true
@@ -97,10 +117,14 @@ struct AgentNotchSettings: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case position, display, compactStyle, clickAction, filter, hideWhenEmpty, animate, showTotal, showUsage, showMedia
-        case expandOnHover, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
+        case expandOnHover, shelfEnabled, shelfPages, shelfLeadingWidget, shelfTrailingWidget, shelfHoverDelay, shelfCollapseDelay
+        case shelfHaptics, musicStyle, musicSeeking, musicTint, musicHideWhenPaused, musicBanner, agentCard, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
         case showFinished, claude, codex, copilot, opencode, cursor, showBorder, compactWidth, compactHeight, expandedWidth, cornerRadius, opacity, fontSize
         case rowSpacing, maxSessions, hoverDelay, collapseDelay, animationDuration, horizontalOffset, verticalOffset, accent
     }
+
+    /// Read once to migrate, never written.
+    private enum LegacyKeys: String, CodingKey { case shelfWidgets }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -115,6 +139,21 @@ struct AgentNotchSettings: Codable, Equatable {
         showUsage = values.value(.showUsage, or: true)
         showMedia = values.value(.showMedia, or: true)
         expandOnHover = values.value(.expandOnHover, or: true)
+        shelfEnabled = values.value(.shelfEnabled, or: false)
+        shelfPages = values.value(.shelfPages, or: NotchShelfPages())
+        let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+        let migrated = NotchShelfSlot.migrated((try? legacy.decodeIfPresent([String].self, forKey: .shelfWidgets)) ?? [])
+        shelfLeadingWidget = values.value(.shelfLeadingWidget, or: migrated.leading)
+        shelfTrailingWidget = values.value(.shelfTrailingWidget, or: migrated.trailing)
+        shelfHoverDelay = values.value(.shelfHoverDelay, or: 0.15)
+        shelfCollapseDelay = values.value(.shelfCollapseDelay, or: 0.8)
+        shelfHaptics = values.value(.shelfHaptics, or: false)
+        musicStyle = values.value(.musicStyle, or: .music)
+        musicSeeking = values.value(.musicSeeking, or: true)
+        musicTint = values.value(.musicTint, or: false)
+        musicHideWhenPaused = values.value(.musicHideWhenPaused, or: true)
+        musicBanner = values.value(.musicBanner, or: true)
+        agentCard = values.value(.agentCard, or: .latest)
         collapseAfterFocus = values.value(.collapseAfterFocus, or: true)
         showProject = values.value(.showProject, or: true)
         showHost = values.value(.showHost, or: true)
@@ -159,6 +198,8 @@ struct AgentNotchSettings: Codable, Equatable {
         maxSessions = min(10, max(2, maxSessions))
         hoverDelay = bounded(hoverDelay, 0...1, 0.25)
         collapseDelay = bounded(collapseDelay, 0.1...2, 0.6)
+        shelfHoverDelay = bounded(shelfHoverDelay, 0...1, 0.15)
+        shelfCollapseDelay = bounded(shelfCollapseDelay, 0.1...2, 0.8)
         animationDuration = bounded(animationDuration, 0.1...0.5, 0.22)
         horizontalOffset = bounded(horizontalOffset, -300...300, 0)
         verticalOffset = bounded(verticalOffset, 0...80, 0)

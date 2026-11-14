@@ -90,6 +90,12 @@ struct MenuBarTriggerSettings: Codable, Equatable {
     /// Whether another app becoming frontmost hides the shelf.
     var rehidesOnAppChange: Bool { strategy != .timed || rehideOnAppChange }
 
+    /// While the Notch Shelf owns the notch, hidden items always open in the
+    /// Portside Bar; the saved choice comes back when the shelf is off.
+    func presentation(notchShelf: Bool) -> MenuBarPresentation {
+        notchShelf ? .portsideBar : presentation
+    }
+
     init() {}
 
     private enum CodingKeys: String, CodingKey {
@@ -222,6 +228,26 @@ protocol MenuBarEmptyAreaProbe: AnyObject {
     func isClickableBar(_ point: CGPoint) -> Bool
     /// Clicks, scrolls and dwell ends must read the bar as it is now.
     func discardCache()
+}
+
+/// Menu bar regions that belong to the Notch Shelf (SHELF-02): no hover,
+/// scroll or click there reveals hidden items. Screen coordinates, kept by
+/// Top Notch; empty while the shelf is off.
+enum MenuBarShelfExclusion {
+    /// Room around the notch and the shelf header, so a pointer resting at
+    /// their edge still goes to the shelf.
+    static let margin: CGFloat = 12
+    private(set) static var rects: [CGRect] = []
+
+    static func update(_ next: [CGRect]) { rects = next }
+    static func contains(_ point: CGPoint) -> Bool { rects.contains { $0.contains(point) } }
+
+    /// The notch and the shelf header joined across the bar band, widened by
+    /// `margin`. Nil when neither is in the bar. Pure.
+    static func rect(band: CGRect, notch: ClosedRange<CGFloat>?, header: ClosedRange<CGFloat>?) -> CGRect? {
+        guard let span = MenuBarStylePlan.blocked(notch: notch, reserved: header) else { return nil }
+        return CGRect(x: span.lowerBound - margin, y: band.minY, width: span.upperBound - span.lowerBound + 2 * margin, height: band.height)
+    }
 }
 
 extension MenuBarEmptyAreaProbe {

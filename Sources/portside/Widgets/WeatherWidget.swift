@@ -19,6 +19,10 @@ final class WeatherWidget: DockWidget {
     @Published private(set) var temperature: Double?
     @Published private(set) var symbol = "cloud"
     @Published private(set) var place: String?
+    /// Today's high and low, and the conditions in words (Notch Shelf card).
+    @Published private(set) var high: Double?
+    @Published private(set) var low: Double?
+    @Published private(set) var condition: String?
 
     private var coordinate: (lat: Double, lon: Double)?
     private var inFlight = false
@@ -57,7 +61,9 @@ final class WeatherWidget: DockWidget {
 
     private struct ForecastResponse: Decodable {
         struct Current: Decodable { let temperature_2m: Double; let weather_code: Int; let is_day: Int }
+        struct Daily: Decodable { let temperature_2m_max: [Double]; let temperature_2m_min: [Double] }
         let current: Current
+        let daily: Daily?
     }
 
     /// Runs on the main actor; only the two fetches suspend off it.
@@ -75,9 +81,12 @@ final class WeatherWidget: DockWidget {
             }
             guard let coordinate else { return }
             let current = try await WeatherWidget.current(lat: coordinate.lat, lon: coordinate.lon, fahrenheit: fahrenheit)
-            temperature = current.temperature_2m
-            symbol = WeatherWidget.symbol(code: current.weather_code, isDay: current.is_day == 1)
-            logger.info("weather: \(current.temperature_2m, format: .fixed(precision: 1))deg code \(current.weather_code)")
+            temperature = current.current.temperature_2m
+            symbol = WeatherWidget.symbol(code: current.current.weather_code, isDay: current.current.is_day == 1)
+            condition = WeatherWidget.condition(code: current.current.weather_code)
+            high = current.daily?.temperature_2m_max.first
+            low = current.daily?.temperature_2m_min.first
+            logger.info("weather: \(current.current.temperature_2m, format: .fixed(precision: 1))deg code \(current.current.weather_code)")
         } catch {
             logger.error("weather: \(error.localizedDescription, privacy: .public)")
         }
@@ -90,16 +99,36 @@ final class WeatherWidget: DockWidget {
         return try JSONDecoder().decode(GeocodeResponse.self, from: data).results?.first
     }
 
-    private static func current(lat: Double, lon: Double, fahrenheit: Bool) async throws -> ForecastResponse.Current {
+    private static func current(lat: Double, lon: Double, fahrenheit: Bool) async throws -> ForecastResponse {
         var forecast = URLComponents(string: "https://api.open-meteo.com/v1/forecast")!
         forecast.queryItems = [
             .init(name: "latitude", value: String(lat)),
             .init(name: "longitude", value: String(lon)),
             .init(name: "current", value: "temperature_2m,weather_code,is_day"),
+            .init(name: "daily", value: "temperature_2m_max,temperature_2m_min"),
+            .init(name: "forecast_days", value: "1"),
+            .init(name: "timezone", value: "auto"),
             .init(name: "temperature_unit", value: fahrenheit ? "fahrenheit" : "celsius"),
         ]
         let (data, _) = try await URLSession.shared.data(from: forecast.url!)
-        return try JSONDecoder().decode(ForecastResponse.self, from: data).current
+        return try JSONDecoder().decode(ForecastResponse.self, from: data)
+    }
+
+    /// WMO weather codes in words.
+    private static func condition(code: Int) -> String {
+        switch code {
+        case 0: "Clear"
+        case 1: "Mostly Clear"
+        case 2: "Partly Cloudy"
+        case 3: "Cloudy"
+        case 45, 48: "Fog"
+        case 51...57: "Drizzle"
+        case 61...67: "Rain"
+        case 71...77, 85, 86: "Snow"
+        case 80...82: "Showers"
+        case 95...99: "Thunderstorms"
+        default: "Cloudy"
+        }
     }
 
     /// WMO weather codes -> SF Symbols.

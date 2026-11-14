@@ -430,7 +430,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 triggers.beforeReveal = { [weak self, weak layout] in
                     MainActor.assumeIsolated {
                         // The Portside Bar never puts the items back on the real bar.
-                        guard self?.dockModel.menuBarTriggers.presentation != .portsideBar else { return }
+                        guard self?.dockModel.menuBarPresentation != .portsideBar else { return }
                         layout?.restoreOrderBeforeReveal()
                     }
                 }
@@ -472,7 +472,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 assign: { [weak self] bundle, section in MainActor.assumeIsolated { self?.menuBarLayout?.assignBundle(bundle, to: section) } },
                 newItemsSection: { [weak self] in MainActor.assumeIsolated { self?.dockModel.menuBarTriggers.newItemsSection ?? .visible } },
                 overflowAllowed: { [weak self] in MainActor.assumeIsolated { !(self?.menuBarLayout?.isEditing ?? false) } },
-                presentation: { [weak self] in MainActor.assumeIsolated { self?.dockModel.menuBarTriggers.presentation ?? .menuBar } },
+                presentation: { [weak self] in MainActor.assumeIsolated { self?.dockModel.menuBarPresentation ?? .menuBar } },
                 barLocation: { [weak self] in MainActor.assumeIsolated { self?.dockModel.menuBarTriggers.barLocation ?? .dynamic } },
                 barLook: { [weak self] in
                     MainActor.assumeIsolated {

@@ -28,7 +28,7 @@ final class OverlayPanel {
     /// Transparent margin (a shadow) that does not count as the panel.
     private var hitInsets = NSEdgeInsetsZero
 
-    init() {
+    init(level: NSWindow.Level = OverlayPanel.windowLevel) {
         hostingView = OverlayHostingView(rootView: AnyView(EmptyView()))
         hostingView.sizingOptions = [.intrinsicContentSize]
         container = OverlayContentView(frame: .zero)
@@ -44,7 +44,7 @@ final class OverlayPanel {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false
-        panel.level = OverlayPanel.windowLevel
+        panel.level = level
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle, .stationary]
         panel.isReleasedWhenClosed = false
         panel.animationBehavior = .none

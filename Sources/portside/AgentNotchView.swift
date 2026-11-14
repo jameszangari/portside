@@ -19,7 +19,10 @@ struct AgentNotchView: View {
     /// A collapsed pill in a short menu bar cannot take the full radius
     /// (a 24pt bar with 16pt corners would turn it into a lozenge).
     private var bottomRadius: CGFloat {
-        state.expanded ? preferences.cornerRadius : min(preferences.cornerRadius, state.headerHeight / 2)
+        if state.expanded || state.card != nil { return preferences.cornerRadius }
+        // Attached, the compact pill rounds like the notch it extends
+        // (Bartender's Top Shelf: about 12 pt on a 32 pt strip).
+        return min(preferences.cornerRadius, state.headerHeight * (state.topAttached ? 0.375 : 0.5))
     }
 
     static func dashboardHeight(preferences: AgentNotchSettings, sessionCount: Int) -> CGFloat {
@@ -28,21 +31,53 @@ struct AgentNotchView: View {
         return min(650, 86 + Double(rows) * (rowHeight + preferences.rowSpacing) + (preferences.showUsage ? 172 : 0))
     }
 
+    /// The shelf's Agents page: the session cards (or the empty note) and
+    /// usage, without the classic dashboard's title row.
+    static func agentsPageHeight(preferences: AgentNotchSettings, sessionCount: Int) -> CGFloat {
+        let rowHeight = preferences.fontSize * 2 + 34
+        let rows = min(preferences.maxSessions, sessionCount)
+        let list = rows == 0 ? 110 : CGFloat(rows) * rowHeight + CGFloat(rows - 1) * preferences.rowSpacing
+        let usage: CGFloat = preferences.showUsage ? 14 + 172 : 0
+        return min(650, dashboardTopPadding + list + usage + dashboardBottomPadding)
+    }
+
+    /// A shelf card's height below the strip.
+    static func cardHeight(_ activity: NotchShelfActivity, preferences: AgentNotchSettings, sessionCount: Int) -> CGFloat {
+        switch activity {
+        case .music: return dashboardTopPadding + NotchShelfCardMetrics.wideHeight + dashboardBottomPadding
+        case .agents:
+            let rowHeight = preferences.fontSize * 2 + 34
+            let rows = preferences.agentCard == .all ? min(preferences.maxSessions, max(1, sessionCount)) : 1
+            let more: CGFloat = preferences.agentCard == .latest && sessionCount > 1 ? 22 : 0
+            return dashboardTopPadding + CGFloat(rows) * rowHeight + CGFloat(rows - 1) * preferences.rowSpacing + more + dashboardBottomPadding
+        }
+    }
+    static let dashboardTopPadding: CGFloat = 12
+    static let dashboardBottomPadding: CGFloat = 16
+
     var body: some View {
         VStack(spacing: 0) {
-            compactHeader
-                .frame(height: state.headerHeight)
+            Group {
+                if preferences.shelfEnabled { shelfStrip } else { compactHeader }
+            }
+            .frame(height: state.headerHeight)
             if state.expanded {
-                dashboard
+                Group {
+                    if preferences.shelfEnabled { shelfOpen } else { dashboard }
+                }
+                .transition(.opacity)
+            } else if let card = state.card {
+                shelfCard(card)
                     .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // Shelf: draw at the target size, top centered, while the panel holds still.
+        .frame(width: state.surfaceSize?.width, height: state.surfaceSize?.height, alignment: .top)
         .background(.black.opacity(preferences.opacity))
-        .clipShape(UnevenRoundedRectangle(topLeadingRadius: state.topAttached ? 6 : preferences.cornerRadius,
-                                         bottomLeadingRadius: bottomRadius,
-                                         bottomTrailingRadius: bottomRadius,
-                                         topTrailingRadius: state.topAttached ? 6 : preferences.cornerRadius))
+        .clipShape(NotchShape(topFlare: state.topAttached ? NotchShape.flare : 0,
+                              topRadius: state.topAttached ? 0 : preferences.cornerRadius,
+                              bottomRadius: bottomRadius))
         .overlay {
             if preferences.showBorder, !state.topAttached {
                 RoundedRectangle(cornerRadius: preferences.cornerRadius)
@@ -54,11 +89,24 @@ struct AgentNotchView: View {
         .font(.system(size: preferences.fontSize))
         .environment(\.colorScheme, .dark)
         .onHover { state.hover($0) }
+        .onContinuousHover(coordinateSpace: .local) { phase in
+            guard preferences.shelfEnabled else { return }
+            switch phase {
+            case .active(let point):
+                state.shelfPointer(.at(point, panelWidth: state.panelWidth, compactWidth: state.compactWidth,
+                                       notchWidth: state.notchWidth, headerHeight: state.headerHeight))
+            case .ended:
+                state.shelfPointer(.outside)
+            }
+        }
         .animation(preferences.animate && !reduceMotion ? .easeInOut(duration: preferences.animationDuration) : nil, value: state.expanded)
+        .animation(preferences.animate && !reduceMotion ? .easeInOut(duration: preferences.animationDuration) : nil, value: state.card)
+        .animation(preferences.animate && !reduceMotion ? .easeInOut(duration: preferences.animationDuration) : nil, value: state.surfaceSize)
         .background {
             // Keep compact media bars in sync when Now Playing publishes.
             if let nowPlaying { NotchNowPlayingObserver(widget: nowPlaying) }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private var compactHeader: some View {
@@ -96,7 +144,19 @@ struct AgentNotchView: View {
                     }
                 }
             }
-            if state.notchWidth > 0 { Color.clear.frame(width: state.notchWidth).allowsHitTesting(false) }
+            if state.notchWidth > 0 {
+                if preferences.shelfEnabled {
+                    // The housing itself opens the shelf on click.
+                    Color.clear.frame(width: state.notchWidth).contentShape(Rectangle())
+                        .onTapGesture { state.shelfClick() }
+                        .accessibilityElement()
+                        .accessibilityLabel(state.expanded ? "Close shelf" : "Open shelf")
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityAction { state.shelfClick() }
+                } else {
+                    Color.clear.frame(width: state.notchWidth).allowsHitTesting(false)
+                }
+            }
             compactButton {
                 HStack(spacing: 5) {
                     if mediaPlaying, working > 0 || attention > 0 {
@@ -124,7 +184,8 @@ struct AgentNotchView: View {
 
     private func compactButton<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         Button {
-            if state.expanded { state.setExpanded(false) }
+            if preferences.shelfEnabled { state.shelfClick() }
+            else if state.expanded { state.setExpanded(false) }
             else if preferences.clickAction == .focus, let session = sessions.first {
                 AgentFocus.focus(session: session)
             } else { state.setExpanded(true) }
@@ -141,28 +202,7 @@ struct AgentNotchView: View {
         // height; ScrollView alone often draws empty in bitmap captures.
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Your agents").font(.system(size: preferences.fontSize + 3, weight: .semibold))
-                        Text(attention > 0 ? "\(attention) waiting for you" : working > 0 ? "\(working) working · stay in flow" : "All caught up")
-                            .font(.system(size: preferences.fontSize - 1)).foregroundStyle(.white.opacity(0.55))
-                    }
-                    Spacer()
-                    Button {
-                        state.pinned.toggle()
-                    } label: {
-                        Image(systemName: state.pinned ? "pin.fill" : "pin")
-                            .foregroundStyle(state.pinned ? preferences.accent.color : .white.opacity(0.55))
-                            .frame(width: 28, height: 28)
-                            .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
-                    }.buttonStyle(.plain).help(state.pinned ? "Unpin dashboard" : "Keep dashboard open")
-                        .accessibilityLabel(state.pinned ? "Unpin dashboard" : "Pin dashboard")
-                    Button { state.setExpanded(false) } label: {
-                        Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
-                            .frame(width: 28, height: 28)
-                            .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
-                    }.buttonStyle(.plain).accessibilityLabel("Collapse dashboard")
-                }
+                if !preferences.shelfEnabled { dashboardTitle }
                 if sessions.isEmpty {
                     VStack(spacing: 7) {
                         Image(systemName: "sparkles").font(.title2).foregroundStyle(preferences.accent.color)
@@ -182,12 +222,267 @@ struct AgentNotchView: View {
                     NotchUsageDetails(usage: usage, preferences: preferences)
                 }
             }
-            .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 16)
+            .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding).padding(.bottom, Self.dashboardBottomPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
         }
         .scrollIndicators(.hidden)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    // MARK: Shelf pages (SHELF-03)
+
+    private var shelfPages: [NotchShelfPage] { preferences.shelfPages.visible(available: state.pageAvailable) }
+    private var currentPage: NotchShelfPage? { state.currentPage }
+
+    /// The tab row and the gap above it.
+    static let shelfBarHeight: CGFloat = 26 + 10
+    static let shelfWidgetSpacing: CGFloat = 10
+
+    /// The open shelf's height below the strip, per page: the tab row, then
+    /// the page.
+    static func shelfHeight(page: NotchShelfPage?, preferences: AgentNotchSettings, sessionCount: Int) -> CGFloat {
+        shelfBarHeight + {
+            switch page {
+            case .agents: agentsPageHeight(preferences: preferences, sessionCount: sessionCount)
+            case .widgets: dashboardTopPadding + NotchShelfCardMetrics.slotHeight + dashboardBottomPadding
+            case .clipboard, nil: 150
+            }
+        }()
+    }
+
+    /// The open shelf: the tab row with pin and close on top, as in
+    /// Bartender, then the page.
+    private var shelfOpen: some View {
+        VStack(spacing: 0) {
+            shelfBar
+                .padding(.horizontal, 16).padding(.top, 10)
+            Group {
+                switch currentPage {
+                case .agents: dashboard
+                case .widgets: shelfWidgets
+                case .clipboard: shelfPlaceholder(.clipboard, "Clipboard History comes to the shelf in a later preview.")
+                case nil: shelfPlaceholder(nil, "Every page is off. Turn one on in Settings > Top Notch > Shelf.")
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+    }
+
+    private var shelfBar: some View {
+        HStack(spacing: 6) {
+            let current = currentPage
+            ForEach(shelfPages) { page in
+                Button { state.showPage(page) } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: page.symbol).font(.system(size: max(9, preferences.fontSize - 2), weight: .semibold))
+                        Text(page.title)
+                    }
+                    .font(.system(size: max(10, preferences.fontSize - 1), weight: .medium))
+                    .foregroundStyle(page == current ? .white : .white.opacity(0.55))
+                    .padding(.horizontal, 9).frame(height: 26)
+                    .background(.white.opacity(page == current ? 0.14 : 0.0001), in: Capsule())
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(page.title)
+                .accessibilityAddTraits(page == current ? [.isButton, .isSelected] : .isButton)
+            }
+            Spacer(minLength: 4)
+            Button {
+                state.setPinned(!state.pinned)
+            } label: {
+                Image(systemName: state.pinned ? "pin.fill" : "pin")
+                    .foregroundStyle(state.pinned ? preferences.accent.color : .white.opacity(0.55))
+                    .frame(width: 26, height: 26)
+                    .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+            }.buttonStyle(.plain).help(state.pinned ? "Unpin shelf" : "Keep shelf open")
+                .accessibilityLabel(state.pinned ? "Unpin shelf" : "Pin shelf")
+            Button { state.setExpanded(false) } label: {
+                Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
+                    .frame(width: 26, height: 26)
+                    .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+            }.buttonStyle(.plain).accessibilityLabel("Close shelf")
+        }
+    }
+
+    /// The Widgets page: Bartender's two slots, side by side.
+    private var shelfWidgets: some View {
+        HStack(spacing: Self.shelfWidgetSpacing) {
+            shelfSlot(preferences.shelfLeadingWidget)
+            shelfSlot(preferences.shelfTrailingWidget)
+        }
+        .frame(height: NotchShelfCardMetrics.slotHeight)
+        .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding)
+        .frame(maxWidth: .infinity, alignment: .top)
+    }
+
+    @ViewBuilder
+    private func shelfSlot(_ slot: NotchShelfSlot) -> some View {
+        Group {
+            switch slot {
+            case .music:
+                if let nowPlaying { NotchMusicCard(widget: nowPlaying, preferences: preferences, layout: .slot) } else { slotLoading }
+            case .weather:
+                if let weather = state.widgetHost(WeatherWidget.kind)?.widget as? WeatherWidget { NotchWeatherCard(widget: weather) } else { slotLoading }
+            case .calendar:
+                if let calendar = state.widgetHost(CalendarWidget.kind)?.widget as? CalendarWidget { NotchCalendarCard(widget: calendar) } else { slotLoading }
+            case .empty:
+                Color.clear
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.white.opacity(slot == .empty ? 0 : 0.055), in: RoundedRectangle(cornerRadius: NotchShelfCardMetrics.slotRadius, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: NotchShelfCardMetrics.slotRadius, style: .continuous))
+    }
+
+    private var slotLoading: some View { ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity) }
+
+    private func shelfPlaceholder(_ page: NotchShelfPage?, _ message: String) -> some View {
+        VStack(spacing: 7) {
+            Image(systemName: page?.symbol ?? "rectangle.slash").font(.title2).foregroundStyle(preferences.accent.color)
+            if let page { Text(page.title).fontWeight(.medium) }
+            Text(message)
+                .font(.system(size: preferences.fontSize - 1)).foregroundStyle(.white.opacity(0.55))
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity).padding(.horizontal, 16).padding(.top, 24)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var dashboardTitle: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Your agents").font(.system(size: preferences.fontSize + 3, weight: .semibold))
+                Text(attention > 0 ? "\(attention) waiting for you" : working > 0 ? "\(working) working · stay in flow" : "All caught up")
+                    .font(.system(size: preferences.fontSize - 1)).foregroundStyle(.white.opacity(0.55))
+            }
+            Spacer()
+            Button {
+                state.setPinned(!state.pinned)
+            } label: {
+                Image(systemName: state.pinned ? "pin.fill" : "pin")
+                    .foregroundStyle(state.pinned ? preferences.accent.color : .white.opacity(0.55))
+                    .frame(width: 28, height: 28)
+                    .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+            }.buttonStyle(.plain).help(state.pinned ? "Unpin dashboard" : "Keep dashboard open")
+                .accessibilityLabel(state.pinned ? "Unpin dashboard" : "Pin dashboard")
+            Button { state.setExpanded(false) } label: {
+                Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
+                    .frame(width: 28, height: 28)
+                    .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+            }.buttonStyle(.plain).accessibilityLabel("Collapse dashboard")
+        }
+    }
+
+    /// The card below the strip for the hovered activity (or the song
+    /// banner). A click on it opens the shelf, except on its own controls.
+    @ViewBuilder
+    private func shelfCard(_ activity: NotchShelfActivity) -> some View {
+        Group {
+            switch activity {
+            case .music:
+                if let nowPlaying { NotchMusicCard(widget: nowPlaying, preferences: preferences, layout: .wide) }
+            case .agents:
+                agentCard
+            }
+        }
+        .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding).padding(.bottom, Self.dashboardBottomPadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .contentShape(Rectangle())
+        .onTapGesture { state.shelfClick() }
+    }
+
+    /// Bartender's agent card: the latest session, "+N more" below; or
+    /// every running session when Settings asks for all.
+    private var agentCard: some View {
+        let ordered = sessions.sorted { $0.updated > $1.updated }
+        let shown = preferences.agentCard == .all ? Array(ordered.prefix(preferences.maxSessions)) : Array(ordered.prefix(1))
+        return VStack(alignment: .leading, spacing: preferences.rowSpacing) {
+            ForEach(shown, id: \.id) { sessionCard($0) }
+            if preferences.agentCard == .latest, ordered.count > 1 {
+                Text("+\(ordered.count - 1) more").font(.system(size: max(9, preferences.fontSize - 2), weight: .medium))
+                    .foregroundStyle(.white.opacity(0.5)).padding(.leading, 4)
+            }
+        }
+    }
+
+    // MARK: Compact strip (SHELF-04c)
+
+    /// The shelf's compact strip: what `state.strip` says on each side of
+    /// the notch. A click anywhere opens the shelf.
+    private var shelfStrip: some View {
+        HStack(spacing: 0) {
+            stripSide(.leading)
+            Color.clear.frame(width: state.notchWidth > 0 ? state.notchWidth : state.compactWidth / 3)
+            stripSide(.trailing)
+        }
+        // Compact, the strip hugs the notch; with a card or the shelf open
+        // it spans the surface, so the side icons move out with it.
+        .frame(maxWidth: state.expanded || state.card != nil ? .infinity : state.compactWidth)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture { state.shelfClick() }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(stripLabel)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { state.shelfClick() }
+    }
+
+    private var stripLabel: String {
+        var parts: [String] = []
+        if state.strip.leading == .music || state.strip.trailing == .music, let track = nowPlaying?.track {
+            parts.append("Now playing \(track.title)")
+        }
+        if state.strip.leading == .agents || state.strip.trailing == .agents {
+            parts.append("\(sessions.count) agent sessions\(attention > 0 ? ", \(attention) need you" : "")")
+        }
+        return (parts.isEmpty ? "Notch shelf" : parts.joined(separator: ", ")) + ". Open shelf"
+    }
+
+    @ViewBuilder
+    private func stripSide(_ side: NotchShelfSide) -> some View {
+        let paused = !preferences.animate || reduceMotion
+        Group {
+            switch (state.strip.activity(side), side) {
+            case (.music?, .leading):
+                let size = max(14, state.headerHeight - 12)
+                Group {
+                    if let artwork = nowPlaying?.track?.artwork {
+                        Image(nsImage: artwork).resizable().interpolation(.high).scaledToFill()
+                    } else {
+                        Image(systemName: "music.note").font(.system(size: size * 0.55)).foregroundStyle(.white.opacity(0.6))
+                    }
+                }
+                .frame(width: size, height: size)
+                .background(.white.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+            case (.music?, .trailing):
+                NotchAudioBars(paused: paused || nowPlaying?.track?.isPlaying != true, color: preferences.accent.color,
+                               height: min(14, max(9, state.headerHeight * 0.4)))
+            case (.agents?, .leading):
+                if attention > 0 {
+                    Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
+                } else if working > 0 {
+                    let loaderSize = min(16, max(10, state.headerHeight * 0.48))
+                    ThinkingLoader(style: ThinkingLoader.preferredStyle(for: loaderSize), paused: paused, size: loaderSize, color: preferences.accent.color)
+                } else {
+                    Image(systemName: "sparkles").foregroundStyle(preferences.accent.color)
+                }
+            case (.agents?, .trailing):
+                HStack(spacing: 4) {
+                    if attention > 0 { Circle().fill(.orange).frame(width: 5, height: 5) }
+                    Text("\(attention > 0 ? attention : sessions.count)").monospacedDigit().fontWeight(.semibold)
+                        .foregroundStyle(attention > 0 ? .orange : .white)
+                }
+            case (nil, _):
+                Color.clear
+            }
+        }
+        // Open, line up with the cards' 16 pt margin.
+        .padding(.horizontal, state.expanded || state.card != nil ? 16 : 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: side == .leading ? .leading : .trailing)
     }
 
     private func sessionCard(_ session: AgentSession) -> some View {
@@ -196,9 +491,16 @@ struct AgentNotchView: View {
             if preferences.collapseAfterFocus { state.setExpanded(false) }
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: session.needsAttention ? "hand.raised.fill" : session.state == .running ? "sparkles" : session.state == .done ? "checkmark" : "moon")
-                    .font(.system(size: preferences.fontSize + 1, weight: .medium))
-                    .foregroundStyle(session.needsAttention ? .orange : tint(session.provider))
+                Group {
+                    if preferences.shelfEnabled, session.state == .running, !session.needsAttention {
+                        // Bartender's agent lamp: the working loader.
+                        ThinkingLoader(style: .snakeBoxes, paused: !preferences.animate || reduceMotion, size: 14, color: tint(session.provider))
+                    } else {
+                        Image(systemName: session.needsAttention ? "hand.raised.fill" : session.state == .running ? "sparkles" : session.state == .done ? "checkmark" : "moon")
+                            .font(.system(size: preferences.fontSize + 1, weight: .medium))
+                            .foregroundStyle(session.needsAttention ? .orange : tint(session.provider))
+                    }
+                }
                     .frame(width: 30, height: 30)
                     .background(tint(session.provider).opacity(0.13), in: RoundedRectangle(cornerRadius: 9))
                 VStack(alignment: .leading, spacing: 5) {
@@ -301,4 +603,49 @@ private struct NotchUsageDetails: View {
         .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
     }
 
+}
+
+/// The island's outline. Attached to the top edge, its top corners flare
+/// outward into the screen edge like the hardware notch (and Bartender's
+/// Top Shelf) instead of rounding inward, so no wallpaper shows at the
+/// top. Floating, it is a rounded rectangle. The flare sits inside the
+/// frame, so the body is `2 * topFlare` narrower than the frame.
+struct NotchShape: Shape {
+    static let flare: CGFloat = 5
+
+    var topFlare: CGFloat
+    var topRadius: CGFloat
+    var bottomRadius: CGFloat
+
+    var animatableData: AnimatablePair<CGFloat, AnimatablePair<CGFloat, CGFloat>> {
+        get { AnimatablePair(topFlare, AnimatablePair(topRadius, bottomRadius)) }
+        set { topFlare = newValue.first; topRadius = newValue.second.first; bottomRadius = newValue.second.second }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let flare = max(0, min(topFlare, rect.width / 4, rect.height / 2))
+        let left = rect.minX + flare
+        let right = rect.maxX - flare
+        let bottom = max(0, min(bottomRadius, (right - left) / 2, rect.height - flare))
+        let top = flare > 0 ? 0 : max(0, min(topRadius, (right - left) / 2, rect.height / 2))
+        var path = Path()
+        if flare > 0 {
+            path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+            path.addArc(tangent1End: CGPoint(x: left, y: rect.minY), tangent2End: CGPoint(x: left, y: rect.maxY), radius: flare)
+        } else {
+            path.move(to: CGPoint(x: left, y: rect.minY + top))
+        }
+        path.addArc(tangent1End: CGPoint(x: left, y: rect.maxY), tangent2End: CGPoint(x: right, y: rect.maxY), radius: bottom)
+        path.addArc(tangent1End: CGPoint(x: right, y: rect.maxY), tangent2End: CGPoint(x: right, y: rect.minY), radius: bottom)
+        if flare > 0 {
+            path.addLine(to: CGPoint(x: right, y: rect.minY + flare))
+            path.addArc(tangent1End: CGPoint(x: right, y: rect.minY), tangent2End: CGPoint(x: rect.maxX, y: rect.minY), radius: flare)
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        } else {
+            path.addArc(tangent1End: CGPoint(x: right, y: rect.minY), tangent2End: CGPoint(x: left, y: rect.minY), radius: top)
+            path.addArc(tangent1End: CGPoint(x: left, y: rect.minY), tangent2End: CGPoint(x: left, y: rect.maxY), radius: top)
+        }
+        path.closeSubpath()
+        return path
+    }
 }

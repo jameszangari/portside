@@ -52,27 +52,61 @@ struct CommandCenterSettings: View {
             } header: {
                 Text("Launcher").settingsAnchor("Launcher")
             } footer: {
-                Text("Searches apps, Portside's commands, Settings panes and quicklinks. Default ⌥Space; while it is on it is also in the menu bar menu.")
-                    .footerStyle()
+                Text("Searches apps, commands, Settings and quicklinks.").footerStyle()
             }
 
-            ModuleRowsSection(
-                integrations: integrations,
-                ids: [FilesModule.moduleID, ClipboardModule.moduleID, ShortcutsModule.moduleID, MenuBarModule.moduleID, LocalServersModule.moduleID],
-                title: "Search sources",
-                footer: "Each source is off until you turn it on. All of them need Command Center."
-            )
+            Section {
+                SettingsFoldRow("Search sources", symbol: "magnifyingglass", summary: sourcesSummary, open: $sourcesOpen)
+            }
+            if sourcesOpen {
+                ModuleRowsSection(integrations: integrations, ids: Self.sources,
+                                  footer: "Each source is off until you turn it on.")
+            }
 
-            CommandCenterSettingsSection(dockModel: dockModel, history: CommandCenterHistory.shared, snippets: SnippetStore.shared, files: FileIndexService.shared)
+            Section {
+                SettingsFoldRow("Quicklinks, snippets and history", symbol: "link", summary: "Quicklinks, snippets, searchable folders, history",
+                                anchors: ["Command Center"], open: $libraryOpen)
+            }
+            if libraryOpen {
+                CommandCenterSettingsSection(dockModel: dockModel, history: CommandCenterHistory.shared, snippets: SnippetStore.shared, files: FileIndexService.shared)
+            }
 
-            ClipboardSettingsSection(service: ClipboardService.shared)
+            Section {
+                SettingsFoldRow("Clipboard", symbol: "doc.on.clipboard", summary: rowState(ClipboardModule.moduleID),
+                                anchors: ["Clipboard History"], open: $clipboardOpen)
+            }
+            if clipboardOpen {
+                ClipboardSettingsSection(service: ClipboardService.shared)
+            }
 
             if let router = integrations.intelligence {
-                ModuleRowsSection(integrations: integrations, ids: [IntelligenceModule.moduleID], title: "Local Intelligence")
-                IntelligenceSettingsSection(router: router)
+                Section {
+                    SettingsFoldRow("Local AI", symbol: "cpu", summary: rowState(IntelligenceModule.moduleID),
+                                    anchors: ["Local Intelligence"], open: $intelligenceOpen)
+                }
+                if intelligenceOpen {
+                    ModuleRowsSection(integrations: integrations, ids: [IntelligenceModule.moduleID])
+                    IntelligenceSettingsSection(router: router)
+                }
             }
         }
         .keepsIntegrationsCurrent(integrations)
+    }
+
+    static let sources = [FilesModule.moduleID, ClipboardModule.moduleID, ShortcutsModule.moduleID, MenuBarModule.moduleID, LocalServersModule.moduleID]
+
+    @State private var sourcesOpen = false
+    @State private var libraryOpen = false
+    @State private var clipboardOpen = false
+    @State private var intelligenceOpen = false
+
+    private var sourcesSummary: String {
+        let on = integrations.modules.filter { Self.sources.contains($0.id) && $0.isEnabled }.map(\.title)
+        return on.isEmpty ? "None on" : on.joined(separator: ", ")
+    }
+
+    private func rowState(_ id: ModuleID) -> String {
+        integrations.modules.first { $0.id == id }?.isEnabled == true ? "On" : "Off"
     }
 }
 
@@ -97,6 +131,10 @@ struct AppSwitcherSettings: View {
             ?? (status.isEnabled ? status.hotkeyFailure : nil)
     }
 
+    private var switcherMoreSummary: String {
+        settingsList([("Window previews", dockModel.switcherPreviews), ("title search", dockModel.switcherTitleSearch)])
+    }
+
     var body: some View {
         Form {
             ModuleRowsSection(integrations: integrations, ids: [SwitcherModule.moduleID])
@@ -111,25 +149,6 @@ struct AppSwitcherSettings: View {
                     Text("Windows").tag(SwitcherMode.windows)
                 }
                 .pickerStyle(.segmented)
-                Toggle(isOn: Binding(
-                    get: { dockModel.switcherPreviews },
-                    set: { dockModel.setSwitcherPreviews($0) }
-                )) {
-                    Text("Show window previews")
-                    Text("Window rows show a picture of the window instead of the app icon. Needs Screen Recording, which you allow in General > Permissions. Portside takes one still picture of each visible row while the switcher is open, never video, and keeps nothing after it closes. Minimized windows, windows on other Spaces and anything macOS withholds keep the icon.").helperStyle()
-                }
-                Toggle(isOn: Binding(
-                    get: { dockModel.switcherTitleSearch },
-                    set: { dockModel.setSwitcherTitleSearch($0) }
-                )) {
-                    Text("Search window titles with /")
-                    Text("While the switcher is open, / starts a search that stays open after you let go. Type to filter, Return switches, Esc cancels.").helperStyle()
-                }
-            } header: {
-                Text("Switcher").settingsAnchor("Switcher")
-            }
-
-            Section {
                 HotkeyRecorderButton(
                     title: "Shortcut",
                     chord: dockModel.switcherHotkey,
@@ -147,10 +166,29 @@ struct AppSwitcherSettings: View {
                     }
                 }
             } header: {
-                Text("Keyboard").settingsAnchor("Keyboard")
+                Text("Switcher").settingsAnchor("Switcher")
             } footer: {
-                Text("Default ⌥Tab: tap it for the previous app (or window), or hold ⌥ and press Tab (Shift-Tab or the arrow keys to go back), then let go. With apps, ↓ chooses one of the selected app's windows. Esc cancels. Windows and their titles need Accessibility; without it the switcher shows apps. Windows on other Spaces may not be listed, and choosing a full screen window goes to its Space. ⌘Tab stays macOS's.")
-                    .footerStyle()
+                Text("Hold ⌥ and press Tab, then let go. Esc cancels. ⌘Tab stays macOS's.").footerStyle()
+            }
+
+            Section {
+                SettingsFold("More", symbol: "slider.horizontal.3", summary: switcherMoreSummary, anchors: ["Keyboard"]) {
+                    Toggle(isOn: Binding(
+                        get: { dockModel.switcherPreviews },
+                        set: { dockModel.setSwitcherPreviews($0) }
+                    )) {
+                        Text("Show window previews")
+                        Text("A still picture of each window instead of the app icon. Needs Screen Recording (General > Permissions); nothing is kept.").helperStyle()
+                    }
+                    Toggle(isOn: Binding(
+                        get: { dockModel.switcherTitleSearch },
+                        set: { dockModel.setSwitcherTitleSearch($0) }
+                    )) {
+                        Text("Search window titles with /")
+                        Text("Press / while the switcher is open, type to filter, Return switches.").helperStyle()
+                    }
+                    Text("With apps, ↓ picks one of the app's windows. Windows need Accessibility; windows on other Spaces may not be listed.").helperStyle()
+                }
             }
         }
         .keepsIntegrationsCurrent(integrations)
@@ -171,29 +209,74 @@ struct MenuBarSettings: View {
         integrations.modules.first { $0.id == MenuBarLayoutModule.moduleID }?.state == .running
     }
 
+    @State private var openWithOpen = false
+    @State private var hideAgainOpen = false
+    @State private var lookOpen = false
+    @State private var profilesOpen = false
+    @State private var liveOpen = false
+    @State private var advancedOpen = false
+
     var body: some View {
         Form {
             ModuleRowsSection(integrations: integrations, ids: [MenuBarShelfModule.moduleID])
             if layoutRunning, let layout = integrations.menuLayout {
-                Section { MenuBarLivePreviewCard(settings: dockModel.menuBarTriggers, dock: dockModel.look) }
+                Section { MenuBarLivePreviewCard(settings: { var shown = dockModel.menuBarTriggers; shown.presentation = dockModel.menuBarPresentation; return shown }(), dock: dockModel.look) }
                 MenuBarLayoutSection(service: layout)
             } else {
                 MenuBarLayoutSetup(integrations: integrations)
             }
             if let triggers = integrations.menuTriggers, triggers.isRunning || layoutRunning {
                 let hidesByMembership = integrations.menuLayout?.hidesByMembership ?? false
-                MenuBarTriggersSection(dockModel: dockModel, service: triggers, hidesByMembership: hidesByMembership)
-                MenuBarLookSection(dockModel: dockModel, supportsPortsideBar: true)
-                if layoutRunning, let layout = integrations.menuLayout {
-                    MenuBarProfilesSection(service: layout)
+                MenuBarTriggersSection(dockModel: dockModel, service: triggers, hidesByMembership: hidesByMembership, parts: [.presentation])
+                fold("Open with", "cursorarrow.click", openWithSummary, open: $openWithOpen)
+                if openWithOpen {
+                    MenuBarTriggersSection(dockModel: dockModel, service: triggers, hidesByMembership: hidesByMembership, parts: [.openWith])
                 }
-                MenuBarLiveActivitiesSection(dockModel: dockModel, appList: integrations.menuFiles?.appList)
+                fold("Hide again", "eye.slash", hideAgainSummary, open: $hideAgainOpen)
+                if hideAgainOpen {
+                    MenuBarTriggersSection(dockModel: dockModel, service: triggers, hidesByMembership: hidesByMembership, parts: [.hideAgain])
+                }
+                fold("Look", "paintbrush", "Icon, Portside Bar style, menu bar shape and color", open: $lookOpen,
+                     anchors: ["Icons", "Portside Bar style", "Menu bar shape", "Menu bar background", "Glass", "Border"])
+                if lookOpen {
+                    MenuBarLookSection(dockModel: dockModel, supportsPortsideBar: true)
+                }
+                if layoutRunning, let layout = integrations.menuLayout {
+                    fold("Profiles", "rectangle.stack", "Save and switch layouts per display", open: $profilesOpen, anchors: ["Groups"])
+                    if profilesOpen {
+                        MenuBarProfilesSection(service: layout)
+                    }
+                }
+                fold("Live Activities", "iphone", "iPhone activities in the menu bar", open: $liveOpen)
+                if liveOpen {
+                    MenuBarLiveActivitiesSection(dockModel: dockModel, appList: integrations.menuFiles?.appList)
+                }
                 if hidesByMembership {
-                    MenuBarAdvancedSection(dockModel: dockModel, service: triggers, files: integrations.menuFiles)
+                    fold("Advanced", "gearshape.2", "Hiding method and file access", open: $advancedOpen)
+                    if advancedOpen {
+                        MenuBarAdvancedSection(dockModel: dockModel, service: triggers, files: integrations.menuFiles)
+                    }
                 }
             }
         }
         .keepsIntegrationsCurrent(integrations)
+    }
+
+    /// A fold row on its own; its sections follow it while open.
+    private func fold(_ title: String, _ symbol: String, _ summary: String, open: Binding<Bool>, anchors: [String] = []) -> some View {
+        Section { SettingsFoldRow(title, symbol: symbol, summary: summary, anchors: anchors, open: open) }
+    }
+
+    private var openWithSummary: String {
+        let settings = dockModel.menuBarTriggers
+        return settingsList([("Click", settings.emptyClick), ("Scroll", settings.scroll), ("Hover", settings.hover),
+                             ("Shortcut", settings.hotkey != nil)], none: "Only the menu bar control")
+    }
+
+    private var hideAgainSummary: String {
+        let settings = dockModel.menuBarTriggers
+        let after = settings.rehideSeconds == 0 ? "never" : "after \(settings.rehideSeconds) s"
+        return "\(settings.strategy.title), \(after)"
     }
 }
 
@@ -247,6 +330,10 @@ struct MenuBarTriggersSection: View {
     @ObservedObject var dockModel: DockModel
     @ObservedObject var service: MenuBarTriggerService
     let hidesByMembership: Bool
+    /// Which of its sections to show, so the pane can fold some away.
+    var parts: Set<Part> = [.presentation, .openWith, .hideAgain]
+
+    enum Part { case presentation, openWith, hideAgain }
 
     private var settings: MenuBarTriggerSettings { dockModel.menuBarTriggers }
     private let pointerAvailable = true
@@ -296,22 +383,33 @@ struct MenuBarTriggersSection: View {
     }
 
     var body: some View {
-        do {
-            Section {
-                SettingsChoiceCards(selection: binding(\.presentation), choices: MenuBarPresentation.allCases.map { ($0, $0.title) }, columns: 3) {
-                    MenuBarPresentationPicture(presentation: $0)
-                }
-                if settings.presentation != .menuBar {
-                    SettingsChoiceCards(selection: binding(\.barLocation), choices: MenuBarBarLocation.allCases.map { ($0, $0.title) }, columns: 5) {
-                        MenuBarLocationPicture(location: $0)
-                    }
-                }
-            } header: {
-                Text("Show hidden items").settingsAnchor("Show hidden items")
-            } footer: {
-                Text("The Portside Bar is a panel under the menu bar. Hidden items stay out of the menu bar and open from the panel.").footerStyle()
+        if parts.contains(.presentation) { presentation }
+        if parts.contains(.openWith) { openWith }
+        if parts.contains(.hideAgain) { hideAgain }
+    }
+
+    private var presentation: some View {
+        Section {
+            SettingsChoiceCards(selection: Binding(get: { dockModel.menuBarPresentation }, set: { binding(\.presentation).wrappedValue = $0 }), choices: MenuBarPresentation.allCases.map { ($0, $0.title) }, columns: 3) {
+                MenuBarPresentationPicture(presentation: $0)
             }
+            .disabled(dockModel.notchShelfActive)
+            if dockModel.notchShelfActive {
+                Text("The notch belongs to the Notch Shelf, so hidden items open in the Portside Bar. Turn the shelf off in Top Notch to choose again.").helperStyle()
+            }
+            if dockModel.menuBarPresentation != .menuBar {
+                SettingsChoiceCards(selection: binding(\.barLocation), choices: MenuBarBarLocation.allCases.map { ($0, $0.title) }, columns: 5) {
+                    MenuBarLocationPicture(location: $0)
+                }
+            }
+        } header: {
+            Text("Show hidden items").settingsAnchor("Show hidden items")
+        } footer: {
+            Text("The Portside Bar is a panel under the menu bar. Hidden items open there.").footerStyle()
         }
+    }
+
+    private var openWith: some View {
         Section {
             gesture(.click, \.emptyClick, title: "Click anywhere on the menu bar", detail: "Any empty spot, including the notch. Double-click also shows Always Hidden.")
             gesture(.scroll, \.scroll, title: "Scroll on the menu bar", detail: "Scroll up shows, scroll down hides.")
@@ -345,8 +443,11 @@ struct MenuBarTriggersSection: View {
         } header: {
             Text("Open with").settingsAnchor("Open with")
         } footer: {
-            Text("Clicks on an app's menu or a status icon still go to them, and nothing acts over an open menu. Scroll and hover also skip the notch.").footerStyle()
+            Text("Clicks on menus and status icons still go to them.").footerStyle()
         }
+    }
+
+    private var hideAgain: some View {
         Section {
             SettingsChoiceCards(selection: binding(\.strategy), choices: MenuBarRehideStrategy.allCases.map { ($0, $0.title) }, columns: 3) {
                 MenuBarRehidePicture(strategy: $0)

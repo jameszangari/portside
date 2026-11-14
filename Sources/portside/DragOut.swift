@@ -49,7 +49,9 @@ final class DragOutController {
     private var monitor: Any?
     private var pendingDismiss: DispatchWorkItem?
 
-    private let overlay = OverlayPanel()
+    /// Above other overlays, so the dragged icon stays over a group grid or
+    /// stack that opens under it mid-drag.
+    private let overlay = OverlayPanel(level: NSWindow.Level(rawValue: OverlayPanel.windowLevel.rawValue + 1))
     private let state = DragOutState()
     /// A removal is waiting on a confirmation; the overlay is still up.
     private var isDeferred = false
@@ -103,7 +105,11 @@ final class DragOutController {
         guard !isCanceled(token) else { return false }
         let point = NSEvent.mouseLocation
         let region = source == .strip ? stripRegion?() : gridRegion?()
-        let outside = removable && (region.map { !$0.insetBy(dx: -Self.threshold, dy: -Self.threshold).contains(point) } ?? false)
+        // A strip drag over an open group grid is aiming into the group, not
+        // off the dock: no "Remove" label, and a release does not remove.
+        let overGrid = source == .strip && gridRegion?()?.contains(point) == true
+        let outside = removable && !overGrid
+            && (region.map { !$0.insetBy(dx: -Self.threshold, dy: -Self.threshold).contains(point) } ?? false)
         if outside != isOutside {
             isOutside = outside
             state.phase = outside ? .outside : .inside

@@ -17,6 +17,7 @@ identity="$(security find-identity -v -p codesigning | grep 'Developer ID Applic
 "$root/scripts/build-app.sh"
 staged="$(mktemp -d)/Portside.app"
 ditto "$root/build/Portside.app" "$staged"
+codesign --force --options runtime --timestamp=none --sign "$identity" "$staged/Contents/Frameworks/"*.dylib
 codesign --force --options runtime --timestamp=none --sign "$identity" --entitlements "$root/Portside.entitlements" "$staged"
 codesign --verify --deep --strict "$staged"
 

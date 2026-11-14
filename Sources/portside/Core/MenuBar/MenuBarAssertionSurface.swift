@@ -272,7 +272,10 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
     private var legacyHideTask: Task<Void, Never>?
     private let legacySlots: () async -> [MenuBarSlot]?
     var hasHiddenAssignments: Bool {
-        MenuBarAssertionPlan.locationProblem(bundlePath: bundlePath) == nil
+        // Only the assertion needs /Applications; Native edits Control
+        // Center's list and hides from anywhere (see `refresh`).
+        let native = method() == .native && nativeHider?.isAvailable == true
+        return (native || MenuBarAssertionPlan.locationProblem(bundlePath: bundlePath) == nil)
             && !MenuBarAssertionPlan.hiddenBundles(assignments: assignments(), sections: [.hidden, .alwaysHidden]).isEmpty
     }
 

@@ -8,7 +8,6 @@ import Combine
 final class MenuBarShelfModule: PortsideModule {
     static let moduleID = ModuleID("menuBarShelf")!
     static let toggleCommand = CommandID("menuBarShelf.toggle")!
-    nonisolated static let collapseDelay: Duration = .seconds(1)
 
     let id = MenuBarShelfModule.moduleID
     let title = "Menu Bar Shelf"
@@ -100,14 +99,10 @@ final class MenuBarShelfModule: PortsideModule {
             MainActor.assumeIsolated { triggers.spaceChanged() }
         }
         context.onStop { workspace.removeObserver(space) }
-        // The bar starts collapsed. Shortly after launch, so the saved choices
-        // are applied and login items have had a moment to appear.
-        let collapse = Task { [triggers] in
-            try? await Task.sleep(for: Self.collapseDelay)
-            guard !Task.isCancelled else { return }
-            triggers.startCollapsed()
-        }
-        context.onStop { collapse.cancel() }
+        // The bar starts collapsed, right away: the saved choices were applied
+        // by the sink above, and items that appear later (login items) are
+        // caught by the surface's launch and bar watchers.
+        triggers.startCollapsed()
         context.onStop { [shelf, triggers] in
             MainActor.assumeIsolated {
                 triggers.stop()

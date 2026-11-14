@@ -13,7 +13,28 @@ let package = Package(
         // String form: .v26 needs PackageDescription 6.2; tools-version stays 5.10.
         .macOS("26.0")
     ],
+    products: [
+        .executable(name: "portside", targets: ["portside"]),
+        // Loaded into /usr/bin/perl at run time, never linked; see
+        // Sources/MediaRemoteAdapter/README.md.
+        .library(name: "MediaRemoteAdapter", type: .dynamic, targets: ["MediaRemoteAdapter"])
+    ],
     targets: [
+        .target(
+            name: "MediaRemoteAdapter",
+            path: "Sources/MediaRemoteAdapter",
+            exclude: ["LICENSE", "README.md"],
+            sources: ["src"],
+            publicHeadersPath: "include",
+            cSettings: [
+                .headerSearchPath("src")
+            ],
+            linkerSettings: [
+                .linkedFramework("Foundation"),
+                .linkedFramework("AppKit"),
+                .linkedFramework("UniformTypeIdentifiers")
+            ]
+        ),
         .target(
             name: "AppLoginItemList",
             path: "Sources/AppLoginItemList",

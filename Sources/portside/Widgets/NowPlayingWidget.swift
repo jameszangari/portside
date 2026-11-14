@@ -2,14 +2,16 @@ import AppKit
 import SwiftUI
 import os.log
 
-/// The track playing in Spotify or Music: album art, song, artist, and
-/// previous / play-pause / next.
+/// The track playing: album art, song, artist, and previous / play-pause /
+/// next.
 ///
-/// Event-driven: each player posts a public distributed notification on
-/// every play, pause, or track change. Portside then asks that player for
+/// Event-driven: Spotify and Music post a public distributed notification
+/// on every play, pause, or track change. Portside then asks that player for
 /// the full track over AppleScript (needs Automation permission, asked once
 /// per player), which also gives the art. Without permission it shows what
 /// the notification carries: song and artist, with the player's icon.
+/// Every other player comes from the system's Now Playing stream
+/// (`MediaRemoteNowPlaying`), which is also how its controls are sent.
 final class NowPlayingWidget: DockWidget {
     static let kind = "nowPlaying"
     let name = "Now Playing"
@@ -31,6 +33,18 @@ final class NowPlayingWidget: DockWidget {
         let artworkURL: URL?
         var isPlaying: Bool
         let player: Player
+        /// Length and position in seconds, when the player reports them.
+        var duration: TimeInterval? = nil
+        var elapsed: TimeInterval? = nil
+        /// When `elapsed` was read; playback moves on from there.
+        var elapsedAt = Date()
+
+        /// The playback position at `date`, inside the track.
+        func position(at date: Date) -> TimeInterval? {
+            guard let elapsed else { return nil }
+            let now = elapsed + (isPlaying ? max(0, date.timeIntervalSince(elapsedAt)) : 0)
+            return duration.map { min($0, now) } ?? now
+        }
     }
 
     struct Player: Equatable {
@@ -77,6 +91,9 @@ final class NowPlayingWidget: DockWidget {
     private var lastNote: [String: [AnyHashable: Any]] = [:]
 
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
+    private let system = MediaRemoteNowPlaying()
+    /// The player the system stream last reported, if not Spotify or Music.
+    private var systemBundle: String?
     /// AppleScript runs here, off the main thread: an Apple event can wait
     /// on a busy player, and the first one waits on the permission prompt.
     private let scriptQueue = DispatchQueue(label: "com.james.portside.nowplaying")
@@ -99,11 +116,13 @@ final class NowPlayingWidget: DockWidget {
             }
         }
         observers.append((workspace, token))
+        system.start { [weak self] in self?.applySystem($0) }
     }
 
     func stop() {
         observers.forEach { $0.0.removeObserver($0.1) }
         observers = []
+        system.stop()
     }
 
     /// Once at start: pick up a track that was already playing.
@@ -121,13 +140,46 @@ final class NowPlayingWidget: DockWidget {
         guard let track else { return }
         if command == .playPause {
             // Show the new state now; the player's notification confirms.
-            tracks[track.player.bundleID]?.isPlaying.toggle()
+            // Freeze or restart the clock at the current position.
+            let id = track.player.bundleID
+            tracks[id]?.elapsed = track.position(at: Date())
+            tracks[id]?.elapsedAt = Date()
+            tracks[id]?.isPlaying.toggle()
+        }
+        guard Self.players.contains(track.player) else {
+            let sent: MediaRemoteNowPlaying.Command = switch command {
+            case .previous: .previous
+            case .playPause: .togglePlayPause
+            case .next: .next
+            }
+            if !system.send(sent) { Self.postMediaKey(command.mediaKey) }
+            return
         }
         scriptQueue.async { [logger] in
             if PlayerScript.run("tell application \"\(track.player.name)\" to \(command.rawValue)", player: track.player) == nil {
                 Self.postMediaKey(command.mediaKey)
                 logger.info("now playing: \(command.rawValue, privacy: .public) via media key")
             }
+        }
+    }
+
+    #if DEBUG
+    /// Render probe only: shows `track` without asking any player.
+    func preview(_ track: Track) { set(track, for: track.player.bundleID) }
+    #endif
+
+    /// Jumps to `seconds` into the current track.
+    func seek(to seconds: TimeInterval) {
+        guard let track else { return }
+        let target = max(0, track.duration.map { min($0, seconds) } ?? seconds)
+        tracks[track.player.bundleID]?.elapsed = target
+        tracks[track.player.bundleID]?.elapsedAt = Date()
+        guard Self.players.contains(track.player) else {
+            system.seek(to: target)
+            return
+        }
+        scriptQueue.async {
+            PlayerScript.run("tell application \"\(track.player.name)\" to set player position to \(target)", player: track.player)
         }
     }
 
@@ -171,6 +223,23 @@ final class NowPlayingWidget: DockWidget {
             set(Track(id: id, title: title, artist: note["Artist"] as? String, artwork: nil, artworkURL: nil,
                       isPlaying: state == "Playing", player: player), for: player.bundleID)
         }
+    }
+
+    /// Spotify and Music stay on AppleScript, which also gives their art
+    /// and works without the stream; a report for one of them only clears
+    /// the other player the stream had.
+    private func applySystem(_ snapshot: MediaRemoteNowPlaying.Snapshot?) {
+        let next = snapshot.flatMap { snapshot in
+            Self.players.contains { $0.bundleID == snapshot.bundleID } ? nil : snapshot
+        }
+        if let previous = systemBundle, previous != next?.bundleID { set(nil, for: previous) }
+        systemBundle = next?.bundleID
+        guard let next else { return }
+        let name = NSRunningApplication.runningApplications(withBundleIdentifier: next.bundleID).first?.localizedName
+        let player = Player(bundleID: next.bundleID, name: name ?? next.bundleID, notification: "")
+        set(Track(id: next.id, title: next.title, artist: next.artist, artwork: next.artwork, artworkURL: nil,
+                  isPlaying: next.isPlaying, player: player, duration: next.duration, elapsed: next.elapsed,
+                  elapsedAt: next.elapsedAt), for: next.bundleID)
     }
 
     private func set(_ track: Track?, for bundleID: String) {
@@ -229,9 +298,11 @@ private enum PlayerScript {
     /// Each script checks `is running` first, so it never launches a
     /// player that quit in the meantime.
     static func read(_ player: NowPlayingWidget.Player, previous: NowPlayingWidget.Track?) -> Result {
+        // Spotify counts duration in milliseconds, Music in seconds; both
+        // report the position in seconds.
         let fields = player.bundleID == "com.spotify.client"
-            ? "artist of t, id of t, artwork url of t"
-            : "artist of t, persistent ID of t"
+            ? "artist of t, id of t, artwork url of t, (duration of t) / 1000, player position"
+            : "artist of t, persistent ID of t, \"\", duration of t, player position"
         let source = """
         if application "\(player.name)" is running then
             tell application "\(player.name)"
@@ -248,14 +319,19 @@ private enum PlayerScript {
         guard items.count >= 4, items[0] != "stopped", let title = items[1], !title.isEmpty else { return .stopped }
         let id = items[3] ?? title
         var artwork = previous?.id == id ? previous?.artwork : nil
-        let artworkURL = items.count > 4 ? items[4].flatMap(URL.init(string:)) : nil
+        let artworkURL = items.count > 4 ? items[4].flatMap { $0.isEmpty ? nil : URL(string: $0) } : nil
         if artwork == nil, player.bundleID == "com.apple.Music" {
             artwork = musicArtwork(player)
+        }
+        let number = { (index: Int) -> TimeInterval? in
+            guard index <= list.numberOfItems, let value = list.atIndex(index)?.doubleValue, value.isFinite, value >= 0 else { return nil }
+            return value
         }
         return .track(NowPlayingWidget.Track(
             id: id, title: title, artist: items[2].flatMap { $0.isEmpty ? nil : $0 },
             artwork: artwork, artworkURL: artworkURL,
-            isPlaying: items[0] == "playing", player: player))
+            isPlaying: items[0] == "playing", player: player,
+            duration: number(6).flatMap { $0 > 0 ? $0 : nil }, elapsed: number(7)))
     }
 
     /// Music returns the art itself (JPEG or PNG bytes).
