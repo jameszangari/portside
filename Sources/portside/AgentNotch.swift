@@ -19,6 +19,11 @@ final class AgentNotchPresentation: ObservableObject {
     /// Shelf only: an agent just finished or needs you; it takes the
     /// strip's right side from music for a few seconds.
     @Published var agentAlert = false
+    /// Shelf only: the Agents page's provider chip, nil for all. Kept for
+    /// this run only.
+    @Published var agentProvider: String?
+    /// Redraws once a finished session's dismiss time passes.
+    @Published var dismissTick = 0
     /// Current panel width, for mapping hover points to shelf regions.
     var panelWidth: CGFloat = 0
     /// Shelf only: the size the view draws, top centered in the panel. The
@@ -226,6 +231,8 @@ final class AgentNotch {
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         outsideMonitor = nil
         localMonitor = nil
+        dismissTask?.cancel()
+        dismissTask = nil
         enabled = false
         rebuildPanels()
     }
@@ -332,9 +339,27 @@ final class AgentNotch {
     /// Bartender's open Top Shelf is about 605 pt wide on a 14-inch MacBook Pro.
     static let shelfOpenWidth: CGFloat = 600
 
+    private var dismissTask: DispatchWorkItem?
+
+    /// One timer for the next finished session to leave the list, so the
+    /// list and the notch drop it on time without polling.
+    private func scheduleDismiss(_ sessions: [AgentSession]) {
+        dismissTask?.cancel()
+        dismissTask = nil
+        let now = Date()
+        guard let next = sessions.compactMap(preferences.dismissDate).filter({ $0 > now }).min() else { return }
+        let task = DispatchWorkItem { [weak self] in
+            self?.surfaces.forEach { $0.state.dismissTick += 1 }
+            self?.layoutPanels()
+        }
+        dismissTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + next.timeIntervalSince(now) + 0.05, execute: task)
+    }
+
     private func layoutPanels() {
         guard let agents else { return }
         let sessions = preferences.sessions(from: agents.sessions)
+        scheduleDismiss(sessions)
         let playing = musicShowing
         for surface in surfaces {
             let screen = surface.screen
@@ -368,7 +393,10 @@ final class AgentNotch {
             let width = state.expanded ? (preferences.shelfEnabled ? shelfWidth : cardWidth)
                 : peeking ? cardWidth : state.compactWidth
             let contentHeight = preferences.shelfEnabled
-                ? AgentNotchView.shelfHeight(page: state.currentPage, preferences: preferences, sessionCount: sessions.count)
+                ? AgentNotchView.shelfHeight(page: state.currentPage, preferences: preferences,
+                                             sessionCount: AgentNotchView.providerFiltered(sessions, state.agentProvider).count,
+                                             chips: AgentNotchView.providerChips(sessions).count > 1,
+                                             usageRows: preferences.showUsage ? usage?.usage.count ?? 0 : 0)
                 : AgentNotchView.dashboardHeight(preferences: preferences, sessionCount: sessions.count)
             let height = min(screen.visibleFrame.height - 16, state.headerHeight
                              + (state.expanded ? contentHeight : state.card.map {

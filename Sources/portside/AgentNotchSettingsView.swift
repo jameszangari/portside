@@ -120,6 +120,13 @@ struct AgentNotchSettingsView: View {
                         ForEach(AgentNotchFilter.allCases) { Text($0.title).tag($0) }
                     }
                     Toggle("Include finished sessions", isOn: binding(\.showFinished))
+                    if preferences.showFinished {
+                        Picker("Hide finished after", selection: binding(\.finishedDismissMinutes)) {
+                            ForEach(AgentNotchSettings.finishedDismissChoices, id: \.self) { minutes in
+                                Text(minutes == 0 ? "Never" : minutes == 60 ? "1 hour" : "\(minutes) min").tag(minutes)
+                            }
+                        }
+                    }
                     Stepper("Sessions in the list: \(preferences.maxSessions)", value: binding(\.maxSessions), in: 2...10)
                     Toggle("Show project names", isOn: binding(\.showProject))
                     Toggle("Show provider names", isOn: binding(\.showProviderNames))

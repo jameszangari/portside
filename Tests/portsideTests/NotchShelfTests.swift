@@ -293,4 +293,40 @@ final class NotchShelfTests: XCTestCase {
                        URL(string: "https://meet.google.com/abc-defg-hij"))
         XCTAssertNil(CalendarWidget.meetingLink(url: nil, texts: ["http://zoom.us/j/1"]), "https only")
     }
+
+    // MARK: Agents page (SHELF-05)
+
+    private func session(_ id: String, _ provider: String, _ state: AgentState, ago: TimeInterval, now: Date) -> AgentSession {
+        AgentSession(id: id, provider: AgentProvider.named(provider), pid: 0, state: state, needsAttention: false, ended: false,
+                     updated: now.addingTimeInterval(-ago), project: id, host: nil)
+    }
+
+    func testFinishedSessionsLeaveAfterTheDismissTime() throws {
+        let now = Date(timeIntervalSince1970: 10_000)
+        let all = [session("a", "claude", .done, ago: 4 * 60, now: now), session("b", "codex", .done, ago: 6 * 60, now: now),
+                   session("c", "codex", .running, ago: 3600, now: now)]
+        var settings = AgentNotchSettings()
+        XCTAssertEqual(settings.finishedDismissMinutes, 5)
+        XCTAssertEqual(settings.sessions(from: all, now: now).map(\.id), ["a", "c"], "running sessions never leave")
+        XCTAssertEqual(settings.dismissDate(all[0]), all[0].updated.addingTimeInterval(300))
+        XCTAssertNil(settings.dismissDate(all[2]))
+        settings.finishedDismissMinutes = 0
+        XCTAssertEqual(settings.sessions(from: all, now: now).count, 3, "Never keeps them")
+        let bad = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"finishedDismissMinutes":7}"#.utf8))
+        XCTAssertEqual(bad.finishedDismissMinutes, 5, "only the offered choices")
+    }
+
+    func testProviderChipsAndFilter() {
+        let now = Date()
+        let all = [session("a", "codex", .running, ago: 0, now: now), session("b", "claude", .running, ago: 0, now: now),
+                   session("c", "codex", .done, ago: 0, now: now)]
+        let chips = AgentNotchView.providerChips(all)
+        XCTAssertEqual(chips.map(\.provider.id), ["claude", "codex"])
+        XCTAssertEqual(chips.map(\.count), [1, 2])
+        XCTAssertEqual(AgentNotchView.providerFiltered(all, "codex").map(\.id), ["a", "c"])
+        XCTAssertEqual(AgentNotchView.providerFiltered(all, nil).count, 3)
+        XCTAssertEqual(AgentNotchView.providerFiltered(all, "copilot").count, 3, "a provider with nothing left shows all")
+        XCTAssertGreaterThan(AgentNotchView.agentsPageHeight(preferences: AgentNotchSettings(), sessionCount: 2, chips: true, usageRows: 2),
+                             AgentNotchView.agentsPageHeight(preferences: AgentNotchSettings(), sessionCount: 2))
+    }
 }

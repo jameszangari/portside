@@ -83,6 +83,10 @@ struct AgentNotchSettings: Codable, Equatable {
     /// The music card shows for a few seconds when the track changes.
     var musicBanner = true
     var agentCard = NotchAgentCard.latest
+    /// Finished sessions leave the list this many minutes after they
+    /// finish (Bartender's completed-task dismiss); 0 keeps them.
+    var finishedDismissMinutes = 5
+    static let finishedDismissChoices = [0, 1, 5, 15, 60]
     var collapseAfterFocus = true
     var showProject = true
     var showHost = true
@@ -118,7 +122,7 @@ struct AgentNotchSettings: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case position, display, compactStyle, clickAction, filter, hideWhenEmpty, animate, showTotal, showUsage, showMedia
         case expandOnHover, shelfEnabled, shelfPages, shelfLeadingWidget, shelfTrailingWidget, shelfHoverDelay, shelfCollapseDelay
-        case shelfHaptics, musicStyle, musicSeeking, musicTint, musicHideWhenPaused, musicBanner, agentCard, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
+        case shelfHaptics, musicStyle, musicSeeking, musicTint, musicHideWhenPaused, musicBanner, agentCard, finishedDismissMinutes, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
         case showFinished, claude, codex, copilot, opencode, cursor, showBorder, compactWidth, compactHeight, expandedWidth, cornerRadius, opacity, fontSize
         case rowSpacing, maxSessions, hoverDelay, collapseDelay, animationDuration, horizontalOffset, verticalOffset, accent
     }
@@ -154,6 +158,7 @@ struct AgentNotchSettings: Codable, Equatable {
         musicHideWhenPaused = values.value(.musicHideWhenPaused, or: true)
         musicBanner = values.value(.musicBanner, or: true)
         agentCard = values.value(.agentCard, or: .latest)
+        finishedDismissMinutes = values.value(.finishedDismissMinutes, or: 5)
         collapseAfterFocus = values.value(.collapseAfterFocus, or: true)
         showProject = values.value(.showProject, or: true)
         showHost = values.value(.showHost, or: true)
@@ -196,6 +201,7 @@ struct AgentNotchSettings: Codable, Equatable {
         fontSize = bounded(fontSize, 10...16, 12)
         rowSpacing = bounded(rowSpacing, 4...16, 8)
         maxSessions = min(10, max(2, maxSessions))
+        if !Self.finishedDismissChoices.contains(finishedDismissMinutes) { finishedDismissMinutes = 5 }
         hoverDelay = bounded(hoverDelay, 0...1, 0.25)
         collapseDelay = bounded(collapseDelay, 0.1...2, 0.6)
         shelfHoverDelay = bounded(shelfHoverDelay, 0...1, 0.15)
@@ -205,16 +211,30 @@ struct AgentNotchSettings: Codable, Equatable {
         verticalOffset = bounded(verticalOffset, 0...80, 0)
     }
 
-    func sessions(from all: [AgentSession]) -> [AgentSession] {
+    func sessions(from all: [AgentSession], now: Date = Date()) -> [AgentSession] {
         all.filter { session in
             guard providerEnabled(session.provider.id),
-                  showFinished || session.state != .done else { return false }
+                  showFinished || session.state != .done,
+                  !isDismissed(session, now: now) else { return false }
             switch filter {
             case .all: return true
             case .working: return session.state == .running && !session.needsAttention
             case .attention: return session.needsAttention || session.state == .done
             }
         }
+    }
+
+    /// A finished session past the dismiss time.
+    func isDismissed(_ session: AgentSession, now: Date) -> Bool {
+        guard let dismissAt = dismissDate(session) else { return false }
+        return now >= dismissAt
+    }
+
+    /// When a finished session leaves the list; nil while it is not
+    /// finished or finished sessions are kept.
+    func dismissDate(_ session: AgentSession) -> Date? {
+        guard session.state == .done, finishedDismissMinutes > 0 else { return nil }
+        return session.updated.addingTimeInterval(TimeInterval(finishedDismissMinutes * 60))
     }
 
     private func providerEnabled(_ id: String) -> Bool {

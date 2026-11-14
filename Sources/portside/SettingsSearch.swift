@@ -143,6 +143,7 @@ enum SettingsSearch {
         .init(.notch, "Appearance", "Appearance", "compact style size width height corner radius opacity border accent provider colors quick styles"),
         .init(.notch, "Shelf", "Shelf", "widgets page left right slots opens on first tab last used tabs order agent card haptics"),
         .init(.notch, "Music", "Music", "vinyl seek tint album colors paused song banner"),
+        .init(.notch, "Agents", "Hide finished after", "dismiss done completed sessions minutes"),
         .init(.notch, "Agents", "Agents", "claude codex opencode cursor copilot filter finished sessions project provider terminal time plan usage text size"),
         .init(.notch, "Behavior", "Behavior", "hover delay collapse delay click action expand animate hide when empty"),
         .init(.notch, "Displays", "Displays", "primary all displays offset distance from top"),

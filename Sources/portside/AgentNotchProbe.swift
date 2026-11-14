@@ -129,7 +129,8 @@ enum AgentNotchProbe {
                     : state.preferences.shelfEnabled ? state.compactWidth : state.preferences.compactWidth
                 state.panelWidth = width
                 let content = state.preferences.shelfEnabled
-                    ? AgentNotchView.shelfHeight(page: state.currentPage, preferences: state.preferences, sessionCount: agents.sessions.count)
+                    ? AgentNotchView.shelfHeight(page: state.currentPage, preferences: state.preferences, sessionCount: agents.sessions.count,
+                                                 chips: AgentNotchView.providerChips(agents.sessions).count > 1)
                     : AgentNotchView.dashboardHeight(preferences: state.preferences, sessionCount: agents.sessions.count)
                 let card = state.card.map { AgentNotchView.cardHeight($0, preferences: state.preferences, sessionCount: agents.sessions.count) } ?? 0
                 let height = state.headerHeight + (state.expanded ? content : card)
