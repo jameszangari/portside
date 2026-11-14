@@ -404,4 +404,15 @@ final class NotchShelfTests: XCTestCase {
         on.alertBattery = false; on.alertWeather = false; on.meetingMinutes = 0
         XCTAssertFalse(WidgetStore.shelfKinds(on).contains("battery"))
     }
+
+    // MARK: Displays and full screen (SHELF-08)
+
+    func testDisplayAndFullScreenSettings() throws {
+        let fresh = AgentNotchSettings()
+        XCTAssertFalse(fresh.showInFullScreen, "the shelf hides in full-screen Spaces by default")
+        let focused = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"display":"focused","showInFullScreen":true}"#.utf8))
+        XCTAssertEqual(focused.display, .focused)
+        XCTAssertTrue(focused.showInFullScreen)
+        XCTAssertEqual(AgentNotchDisplay.focused.title, "Display you're using")
+    }
 }

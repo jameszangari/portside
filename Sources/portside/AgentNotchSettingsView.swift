@@ -186,8 +186,14 @@ struct AgentNotchSettingsView: View {
                     Toggle("Animate", isOn: binding(\.animate))
                     if preferences.animate { slider("Animation duration", \.animationDuration, 0.1...0.5, unit: "ms", milliseconds: true) }
                 }
-                SettingsFold("Displays", symbol: "display.2", summary: preferences.display.title) {
-                    cards("Show on", \.display, AgentNotchDisplay.allCases.map { ($0, $0.title) }, columns: 3) { NotchDisplayPicture(display: $0) }
+                SettingsFold("Displays", symbol: "display.2", summary: preferences.display.title + (preferences.shelfEnabled && preferences.showInFullScreen ? ", also in full screen" : "")) {
+                    cards("Show on", \.display, AgentNotchDisplay.allCases.map { ($0, $0.title) }, columns: 4) { NotchDisplayPicture(display: $0) }
+                    if preferences.shelfEnabled {
+                        Toggle(isOn: binding(\.showInFullScreen)) {
+                            Text("Show in full screen")
+                            Text("Off hides the shelf while an app is full screen.").helperStyle()
+                        }
+                    }
                     if preferences.position != .attached {
                         slider("Horizontal offset", \.horizontalOffset, -300...300, unit: "pt")
                         slider("Distance from top", \.verticalOffset, 0...80, unit: "pt")

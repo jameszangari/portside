@@ -183,6 +183,9 @@ final class AgentNotch {
     private weak var nowPlaying: NowPlayingWidget?
     private var mediaSubscription: AnyCancellable?
     private var clipboardSubscription: AnyCancellable?
+    private var focusObservers: [NSObjectProtocol] = []
+    /// The screen "Display you're using" shows on, by its display ID.
+    private var focusedDisplay: CGDirectDisplayID?
 
     init(model: DockModel, widgets: WidgetStore) {
         self.widgets = widgets
@@ -197,6 +200,8 @@ final class AgentNotch {
                 let changed = self.enabled != enabled || self.agents !== nextAgents || self.usage !== nextUsage
                     || self.nowPlaying !== nextMedia
                     || self.preferences.display != preferences.display
+                    || self.preferences.showInFullScreen != preferences.showInFullScreen
+                    || self.preferences.shelfEnabled != preferences.shelfEnabled
                 self.preferences = preferences
                 self.enabled = enabled
                 self.agents = nextAgents
@@ -212,6 +217,12 @@ final class AgentNotch {
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in self?.rebuildPanels() }
+        // "Display you're using": follow the frontmost app's window when the
+        // active app or Space changes. Event-driven; nothing polls.
+        let workspace = NSWorkspace.shared.notificationCenter
+        focusObservers = [NSWorkspace.didActivateApplicationNotification, NSWorkspace.activeSpaceDidChangeNotification].map { name in
+            workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.followFocus() }
+        }
         outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             self?.collapseUnpinned()
         }
@@ -231,6 +242,8 @@ final class AgentNotch {
         subscription = nil
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         screenObserver = nil
+        focusObservers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
+        focusObservers = []
         if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         outsideMonitor = nil
@@ -262,6 +275,9 @@ final class AgentNotch {
         let screens: [NSScreen]
         switch preferences.display {
         case .automatic: screens = (NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.screens.first).map { [$0] } ?? []
+        case .focused:
+            screens = [NSScreen.screens.first { $0.displayID == focusedDisplay } ?? Self.focusedScreen() ?? NSScreen.screens.first].compactMap { $0 }
+            focusedDisplay = screens.first?.displayID
         case .primary: screens = Array(NSScreen.screens.prefix(1))
         case .all: screens = NSScreen.screens
         }
@@ -271,7 +287,12 @@ final class AgentNotch {
             let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             panel.isReleasedWhenClosed = false
             panel.level = .statusBar
-            panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+            // Without fullScreenAuxiliary the panel stays out of full-screen
+            // Spaces, which is the default (SHELF-08).
+            var behavior: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+            // The classic island keeps showing there, as it always has.
+            if preferences.showInFullScreen || !preferences.shelfEnabled { behavior.insert(.fullScreenAuxiliary) }
+            panel.collectionBehavior = behavior
             panel.isOpaque = false
             panel.backgroundColor = .clear
             panel.hasShadow = preferences.showBorder
@@ -418,8 +439,35 @@ final class AgentNotch {
         return track.isPlaying || preferences.shelfEnabled && !preferences.musicHideWhenPaused
     }
 
+    static let idleCapsuleWidth: CGFloat = 96
+
     /// Bartender's open Top Shelf is about 605 pt wide on a 14-inch MacBook Pro.
     static let shelfOpenWidth: CGFloat = 600
+
+    /// Moves the notch to the focused app's display when that changed.
+    private func followFocus() {
+        guard enabled, preferences.display == .focused, let screen = Self.focusedScreen(),
+              screen.displayID != focusedDisplay else { return }
+        focusedDisplay = screen.displayID
+        rebuildPanels()
+    }
+
+    /// The screen holding the frontmost app's frontmost normal window
+    /// (public window list; titles are not read), else the one under the
+    /// pointer.
+    static func focusedScreen() -> NSScreen? {
+        let pointer = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+              let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]],
+              let window = windows.first(where: { ($0[kCGWindowOwnerPID as String] as? pid_t) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }),
+              let bounds = window[kCGWindowBounds as String] as? [String: CGFloat],
+              let primary = NSScreen.screens.first else { return pointer }
+        // Window bounds are top-left based on the primary display.
+        let rect = CGRect(x: bounds["X"] ?? 0, y: primary.frame.maxY - (bounds["Y"] ?? 0) - (bounds["Height"] ?? 0),
+                          width: bounds["Width"] ?? 0, height: bounds["Height"] ?? 0)
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        return NSScreen.screens.first { $0.frame.contains(center) } ?? pointer
+    }
 
     private var dismissTask: DispatchWorkItem?
 
@@ -490,6 +538,11 @@ final class AgentNotch {
             }
             let strip = NotchShelfStrip.layout(active: active, alert: state.alert?.activity)
             if state.strip != strip { state.strip = strip }
+            // Without a notch, the shelf's capsule shrinks while nothing runs
+            // (Bartender's smaller idle capsule), so the menu bar keeps its room.
+            if preferences.shelfEnabled, !notched, strip == NotchShelfStrip() {
+                state.compactWidth = min(state.compactWidth, Self.idleCapsuleWidth)
+            }
             if let card = state.card, strip.leading != card, strip.trailing != card, !state.expanded {
                 // Music stopped or the agents went away under the card.
                 DispatchQueue.main.async { state.setExpanded(false) }
@@ -613,5 +666,12 @@ final class AgentNotch {
     private static func menuBarHeight(on screen: NSScreen) -> CGFloat {
         let bar = screen.frame.maxY - screen.visibleFrame.maxY
         return bar > 0 ? bar : NSStatusBar.system.thickness
+    }
+}
+
+private extension NSScreen {
+    /// The display ID, stable while the display stays connected.
+    var displayID: CGDirectDisplayID? {
+        (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber).map { CGDirectDisplayID($0.uint32Value) }
     }
 }

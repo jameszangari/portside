@@ -14,11 +14,12 @@ enum AgentNotchPosition: String, Codable, CaseIterable, Identifiable {
 }
 
 enum AgentNotchDisplay: String, Codable, CaseIterable, Identifiable {
-    case automatic, primary, all
+    case automatic, focused, primary, all
     var id: String { rawValue }
     var title: String {
         switch self {
         case .automatic: "Notched display, otherwise primary"
+        case .focused: "Display you're using"
         case .primary: "Primary display"
         case .all: "All displays"
         }
@@ -96,6 +97,8 @@ struct AgentNotchSettings: Codable, Equatable {
     var batteryLowPercent = 20
     static let batteryLowChoices = [10, 20, 30]
     var alertWeather = true
+    /// Shows over full-screen apps (SHELF-08); off hides it in full-screen Spaces.
+    var showInFullScreen = false
     var collapseAfterFocus = true
     var showProject = true
     var showHost = true
@@ -132,7 +135,7 @@ struct AgentNotchSettings: Codable, Equatable {
         case position, display, compactStyle, clickAction, filter, hideWhenEmpty, animate, showTotal, showUsage, showMedia
         case expandOnHover, shelfEnabled, shelfPages, shelfLeadingWidget, shelfTrailingWidget, shelfHoverDelay, shelfCollapseDelay
         case shelfHaptics, musicStyle, musicSeeking, musicTint, musicHideWhenPaused, musicBanner, agentCard, finishedDismissMinutes, stripOrder, meetingMinutes
-        case alertAgents, alertBattery, batteryLowPercent, alertWeather, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
+        case alertAgents, alertBattery, batteryLowPercent, alertWeather, showInFullScreen, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
         case showFinished, claude, codex, copilot, opencode, cursor, showBorder, compactWidth, compactHeight, expandedWidth, cornerRadius, opacity, fontSize
         case rowSpacing, maxSessions, hoverDelay, collapseDelay, animationDuration, horizontalOffset, verticalOffset, accent
     }
@@ -176,6 +179,7 @@ struct AgentNotchSettings: Codable, Equatable {
         alertBattery = values.value(.alertBattery, or: true)
         batteryLowPercent = values.value(.batteryLowPercent, or: 20)
         alertWeather = values.value(.alertWeather, or: true)
+        showInFullScreen = values.value(.showInFullScreen, or: false)
         collapseAfterFocus = values.value(.collapseAfterFocus, or: true)
         showProject = values.value(.showProject, or: true)
         showHost = values.value(.showHost, or: true)
