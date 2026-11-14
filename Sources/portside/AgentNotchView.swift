@@ -9,7 +9,11 @@ struct AgentNotchView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var preferences: AgentNotchSettings { state.preferences }
-    private var sessions: [AgentSession] { preferences.sessions(from: agents.sessions) }
+    private var sessions: [AgentSession] {
+        // Read so a finished session's dismiss time redraws the list.
+        _ = state.dismissTick
+        return preferences.sessions(from: agents.sessions)
+    }
     private var working: Int { sessions.filter { $0.state == .running && !$0.needsAttention }.count }
     private var attention: Int { sessions.filter(\.needsAttention).count }
     private var mediaPlaying: Bool {
@@ -33,12 +37,28 @@ struct AgentNotchView: View {
 
     /// The shelf's Agents page: the session cards (or the empty note) and
     /// usage, without the classic dashboard's title row.
-    static func agentsPageHeight(preferences: AgentNotchSettings, sessionCount: Int) -> CGFloat {
+    static func agentsPageHeight(preferences: AgentNotchSettings, sessionCount: Int, chips: Bool = false, usageRows: Int = 0) -> CGFloat {
         let rowHeight = preferences.fontSize * 2 + 34
         let rows = min(preferences.maxSessions, sessionCount)
         let list = rows == 0 ? 110 : CGFloat(rows) * rowHeight + CGFloat(rows - 1) * preferences.rowSpacing
-        let usage: CGFloat = preferences.showUsage ? 14 + 172 : 0
-        return min(650, dashboardTopPadding + list + usage + dashboardBottomPadding)
+        let chipRow: CGFloat = chips ? chipHeight + preferences.rowSpacing : 0
+        let usage: CGFloat = usageRows > 0 ? preferences.rowSpacing + NotchUsageSummary.height(rows: usageRows) : 0
+        return min(650, dashboardTopPadding + chipRow + list + usage + dashboardBottomPadding)
+    }
+
+    static let chipHeight: CGFloat = 24
+
+    /// Providers with sessions, for the Agents page's chips: name order.
+    static func providerChips(_ sessions: [AgentSession]) -> [(provider: AgentProvider, count: Int)] {
+        Dictionary(grouping: sessions, by: \.provider.id).values
+            .compactMap { group in group.first.map { (provider: $0.provider, count: group.count) } }
+            .sorted { $0.provider.name < $1.provider.name }
+    }
+
+    /// The sessions a chip shows; a provider with no sessions left shows all.
+    static func providerFiltered(_ sessions: [AgentSession], _ provider: String?) -> [AgentSession] {
+        guard let provider, sessions.contains(where: { $0.provider.id == provider }) else { return sessions }
+        return sessions.filter { $0.provider.id == provider }
     }
 
     /// A shelf card's height below the strip.
@@ -50,6 +70,8 @@ struct AgentNotchView: View {
             let rows = preferences.agentCard == .all ? min(preferences.maxSessions, max(1, sessionCount)) : 1
             let more: CGFloat = preferences.agentCard == .latest && sessionCount > 1 ? 22 : 0
             return dashboardTopPadding + CGFloat(rows) * rowHeight + CGFloat(rows - 1) * preferences.rowSpacing + more + dashboardBottomPadding
+        case .meeting: return dashboardTopPadding + 52 + dashboardBottomPadding
+        case .battery, .weather: return dashboardTopPadding + 44 + dashboardBottomPadding
         }
     }
     static let dashboardTopPadding: CGFloat = 12
@@ -241,12 +263,15 @@ struct AgentNotchView: View {
 
     /// The open shelf's height below the strip, per page: the tab row, then
     /// the page.
-    static func shelfHeight(page: NotchShelfPage?, preferences: AgentNotchSettings, sessionCount: Int) -> CGFloat {
+    static func shelfHeight(page: NotchShelfPage?, preferences: AgentNotchSettings, sessionCount: Int,
+                            chips: Bool = false, usageRows: Int = 0, clipboard: (count: Int, paused: Bool) = (0, false)) -> CGFloat {
         shelfBarHeight + {
             switch page {
-            case .agents: agentsPageHeight(preferences: preferences, sessionCount: sessionCount)
+            case .agents: agentsPageHeight(preferences: preferences, sessionCount: sessionCount, chips: chips, usageRows: usageRows)
             case .widgets: dashboardTopPadding + NotchShelfCardMetrics.slotHeight + dashboardBottomPadding
-            case .clipboard, nil: 150
+            case .clipboard:
+                dashboardTopPadding + NotchClipboardPage.height(count: clipboard.count, paused: clipboard.paused) + dashboardBottomPadding
+            case nil: 150
             }
         }()
     }
@@ -259,9 +284,11 @@ struct AgentNotchView: View {
                 .padding(.horizontal, 16).padding(.top, 10)
             Group {
                 switch currentPage {
-                case .agents: dashboard
+                case .agents: agentsPage
                 case .widgets: shelfWidgets
-                case .clipboard: shelfPlaceholder(.clipboard, "Clipboard History comes to the shelf in a later preview.")
+                case .clipboard:
+                    NotchClipboardPage(service: ClipboardService.shared, preferences: preferences)
+                        .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding)
                 case nil: shelfPlaceholder(nil, "Every page is off. Turn one on in Settings > Top Notch > Shelf.")
                 }
             }
@@ -386,12 +413,31 @@ struct AgentNotchView: View {
                 if let nowPlaying { NotchMusicCard(widget: nowPlaying, preferences: preferences, layout: .wide) }
             case .agents:
                 agentCard
+            case .meeting:
+                if let meeting = state.meeting { NotchMeetingCard(event: meeting) }
+            case .battery, .weather:
+                if let alert = state.alert { alertCard(alert) }
             }
         }
         .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding).padding(.bottom, Self.dashboardBottomPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .contentShape(Rectangle())
         .onTapGesture { state.shelfClick() }
+    }
+
+    /// A battery or weather alert's card: its symbol, what happened, detail.
+    private func alertCard(_ alert: NotchShelfAlert) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: alert.symbol).symbolRenderingMode(alert.activity == .weather ? .multicolor : .palette).font(.system(size: 26)).frame(width: 40)
+                .foregroundStyle(alert.isWarning ? Color.red : .white, alert.isWarning ? Color.red : .white)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(alert.title).fontWeight(.semibold)
+                Text(alert.detail).font(.system(size: max(9, preferences.fontSize - 1))).foregroundStyle(.white.opacity(0.55))
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(height: 44)
+        .accessibilityElement(children: .combine)
     }
 
     /// Bartender's agent card: the latest session, "+N more" below; or
@@ -406,6 +452,73 @@ struct AgentNotchView: View {
                     .foregroundStyle(.white.opacity(0.5)).padding(.leading, 4)
             }
         }
+    }
+
+    // MARK: Agents page (SHELF-05)
+
+    /// The shelf's Agents page: provider chips when more than one provider
+    /// has sessions, the session cards, and a one-line-per-provider usage
+    /// summary.
+    private var agentsPage: some View {
+        let all = sessions
+        let chips = Self.providerChips(all)
+        let shown = Self.providerFiltered(all, state.agentProvider)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: preferences.rowSpacing) {
+                if chips.count > 1 {
+                    HStack(spacing: 6) {
+                        chip("All", count: all.count, selected: state.agentProvider == nil || shown.count == all.count, tint: preferences.accent.color) {
+                            state.agentProvider = nil
+                        }
+                        ForEach(chips, id: \.provider.id) { item in
+                            chip(item.provider.name, count: item.count, selected: state.agentProvider == item.provider.id && shown.count != all.count,
+                                 tint: tint(item.provider)) {
+                                state.agentProvider = item.provider.id
+                            }
+                        }
+                    }
+                    .frame(height: Self.chipHeight)
+                }
+                if shown.isEmpty {
+                    VStack(spacing: 7) {
+                        Image(systemName: "sparkles").font(.title2).foregroundStyle(preferences.accent.color)
+                        Text("No agents running").fontWeight(.medium)
+                        Text("Claude Code and Codex need Agent Hooks (Settings > Widgets).")
+                            .font(.system(size: preferences.fontSize - 1)).foregroundStyle(.white.opacity(0.55))
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity).padding(.vertical, 14)
+                } else {
+                    ForEach(Array(shown.prefix(preferences.maxSessions).enumerated()), id: \.offset) { _, session in
+                        sessionCard(session)
+                    }
+                }
+                if preferences.showUsage, let usage, !usage.usage.isEmpty {
+                    NotchUsageSummary(usage: usage, preferences: preferences)
+                }
+            }
+            .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding).padding(.bottom, Self.dashboardBottomPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollIndicators(.hidden)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func chip(_ title: String, count: Int, selected: Bool, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Text(title)
+                Text("\(count)").monospacedDigit().foregroundStyle(selected ? tint : .white.opacity(0.45))
+            }
+            .font(.system(size: max(10, preferences.fontSize - 1), weight: .medium))
+            .foregroundStyle(selected ? .white : .white.opacity(0.6))
+            .padding(.horizontal, 10).frame(height: Self.chipHeight)
+            .background(.white.opacity(selected ? 0.14 : 0.05), in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title), \(count) sessions")
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
     // MARK: Compact strip (SHELF-04c)
@@ -438,6 +551,10 @@ struct AgentNotchView: View {
         if state.strip.leading == .agents || state.strip.trailing == .agents {
             parts.append("\(sessions.count) agent sessions\(attention > 0 ? ", \(attention) need you" : "")")
         }
+        if state.strip.leading == .meeting, let meeting = state.meeting {
+            parts.insert("\(meeting.title) \(NotchMeetingCard.countdown(to: meeting.start, now: Date()))", at: 0)
+        }
+        if let alert = state.alert { parts.append(alert.title) }
         return (parts.isEmpty ? "Notch shelf" : parts.joined(separator: ", ")) + ". Open shelf"
     }
 
@@ -475,6 +592,23 @@ struct AgentNotchView: View {
                     if attention > 0 { Circle().fill(.orange).frame(width: 5, height: 5) }
                     Text("\(attention > 0 ? attention : sessions.count)").monospacedDigit().fontWeight(.semibold)
                         .foregroundStyle(attention > 0 ? .orange : .white)
+                }
+            case (.meeting?, .leading):
+                Image(systemName: "calendar").foregroundStyle(state.meeting?.color ?? .red)
+            case (.meeting?, .trailing):
+                if let meeting = state.meeting {
+                    TimelineView(.periodic(from: .now, by: 15)) { context in
+                        Text(NotchMeetingCard.countdown(to: meeting.start, now: context.date)).monospacedDigit().fontWeight(.semibold)
+                    }
+                }
+            case (.battery?, _), (.weather?, _):
+                if let alert = state.alert {
+                    HStack(spacing: 4) {
+                        Image(systemName: alert.symbol).symbolRenderingMode(alert.activity == .weather ? .multicolor : .palette)
+                            .foregroundStyle(alert.isWarning ? Color.red : .white, alert.isWarning ? Color.red : .white)
+                        if !alert.short.isEmpty { Text(alert.short).monospacedDigit().fontWeight(.semibold) }
+                    }
+                    .foregroundStyle(alert.isWarning ? .red : .white)
                 }
             case (nil, _):
                 Color.clear
@@ -541,6 +675,55 @@ struct AgentNotchView: View {
 private struct NotchNowPlayingObserver: View {
     @ObservedObject var widget: NowPlayingWidget
     var body: some View { Color.clear.accessibilityHidden(true) }
+}
+
+/// The Agents page's usage: one row per provider with each window's bar
+/// and percentage. The classic dashboard keeps `NotchUsageDetails`.
+struct NotchUsageSummary: View {
+    @ObservedObject var usage: UsageWidget
+    let preferences: AgentNotchSettings
+
+    static let rowHeight: CGFloat = 18
+    static let rowSpacing: CGFloat = 8
+    static func height(rows: Int) -> CGFloat {
+        24 + CGFloat(rows) * rowHeight + CGFloat(max(0, rows - 1)) * rowSpacing
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Self.rowSpacing) {
+            ForEach(usage.usage, id: \.provider.id) { item in
+                HStack(spacing: 10) {
+                    Circle().fill(preferences.providerColors ? item.provider.color : preferences.accent.color).frame(width: 6, height: 6)
+                    Text(item.provider.name).font(.system(size: 11, weight: .medium)).frame(width: 64, alignment: .leading)
+                    if item.windows.isEmpty {
+                        Text(item.note ?? "No usage available").font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
+                            .lineLimit(1)
+                    }
+                    ForEach(Array(item.windows.enumerated()), id: \.offset) { _, window in
+                        HStack(spacing: 6) {
+                            Text(window.label).foregroundStyle(.white.opacity(0.5))
+                            GeometryReader { geometry in
+                                Capsule().fill(.white.opacity(0.09))
+                                    .overlay(alignment: .leading) {
+                                        Capsule().fill(window.percent >= 90 ? .orange : preferences.providerColors ? item.provider.color : preferences.accent.color)
+                                            .frame(width: geometry.size.width * min(1, window.percent / 100))
+                                    }
+                            }
+                            .frame(height: 4)
+                            Text("\(Int(window.percent.rounded()))%").monospacedDigit().frame(width: 32, alignment: .trailing)
+                        }
+                        .font(.system(size: 10))
+                        .help(window.resetsAt.map { "Resets \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Reset time unavailable")
+                    }
+                }
+                .frame(height: Self.rowHeight)
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
+    }
 }
 
 private struct NotchUsageDetails: View {

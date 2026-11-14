@@ -16,9 +16,16 @@ final class AgentNotchPresentation: ObservableObject {
     @Published private(set) var card: NotchShelfActivity?
     /// Shelf only: what the compact strip shows on each side.
     @Published var strip = NotchShelfStrip()
-    /// Shelf only: an agent just finished or needs you; it takes the
-    /// strip's right side from music for a few seconds.
-    @Published var agentAlert = false
+    /// Shelf only: a short alert (an agent finished or needs you, battery,
+    /// weather) on the strip's right side for a few seconds.
+    @Published var alert: NotchShelfAlert?
+    /// Shelf only: the meeting the strip is counting down to.
+    @Published var meeting: CalendarWidget.NextEvent?
+    /// Shelf only: the Agents page's provider chip, nil for all. Kept for
+    /// this run only.
+    @Published var agentProvider: String?
+    /// Redraws once a finished session's dismiss time passes.
+    @Published var dismissTick = 0
     /// Current panel width, for mapping hover points to shelf regions.
     var panelWidth: CGFloat = 0
     /// Shelf only: the size the view draws, top centered in the panel. The
@@ -175,6 +182,10 @@ final class AgentNotch {
     private weak var usage: UsageWidget?
     private weak var nowPlaying: NowPlayingWidget?
     private var mediaSubscription: AnyCancellable?
+    private var clipboardSubscription: AnyCancellable?
+    private var focusObservers: [NSObjectProtocol] = []
+    /// The screen "Display you're using" shows on, by its display ID.
+    private var focusedDisplay: CGDirectDisplayID?
 
     init(model: DockModel, widgets: WidgetStore) {
         self.widgets = widgets
@@ -189,11 +200,14 @@ final class AgentNotch {
                 let changed = self.enabled != enabled || self.agents !== nextAgents || self.usage !== nextUsage
                     || self.nowPlaying !== nextMedia
                     || self.preferences.display != preferences.display
+                    || self.preferences.showInFullScreen != preferences.showInFullScreen
+                    || self.preferences.shelfEnabled != preferences.shelfEnabled
                 self.preferences = preferences
                 self.enabled = enabled
                 self.agents = nextAgents
                 self.usage = nextUsage
                 self.nowPlaying = nextMedia
+                self.bindAlertSources(widgets)
                 if changed { self.rebuildPanels() }
                 else {
                     self.surfaces.forEach { $0.state.preferences = preferences }
@@ -203,6 +217,12 @@ final class AgentNotch {
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in self?.rebuildPanels() }
+        // "Display you're using": follow the frontmost app's window when the
+        // active app or Space changes. Event-driven; nothing polls.
+        let workspace = NSWorkspace.shared.notificationCenter
+        focusObservers = [NSWorkspace.didActivateApplicationNotification, NSWorkspace.activeSpaceDidChangeNotification].map { name in
+            workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.followFocus() }
+        }
         outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             self?.collapseUnpinned()
         }
@@ -222,10 +242,17 @@ final class AgentNotch {
         subscription = nil
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         screenObserver = nil
+        focusObservers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
+        focusObservers = []
         if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         outsideMonitor = nil
         localMonitor = nil
+        dismissTask?.cancel()
+        dismissTask = nil
+        meetingTask?.cancel()
+        meetingTask = nil
+        alertSubscriptions = []
         enabled = false
         rebuildPanels()
     }
@@ -248,6 +275,9 @@ final class AgentNotch {
         let screens: [NSScreen]
         switch preferences.display {
         case .automatic: screens = (NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.screens.first).map { [$0] } ?? []
+        case .focused:
+            screens = [NSScreen.screens.first { $0.displayID == focusedDisplay } ?? Self.focusedScreen() ?? NSScreen.screens.first].compactMap { $0 }
+            focusedDisplay = screens.first?.displayID
         case .primary: screens = Array(NSScreen.screens.prefix(1))
         case .all: screens = NSScreen.screens
         }
@@ -257,7 +287,12 @@ final class AgentNotch {
             let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             panel.isReleasedWhenClosed = false
             panel.level = .statusBar
-            panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+            // Without fullScreenAuxiliary the panel stays out of full-screen
+            // Spaces, which is the default (SHELF-08).
+            var behavior: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+            // The classic island keeps showing there, as it always has.
+            if preferences.showInFullScreen || !preferences.shelfEnabled { behavior.insert(.fullScreenAuxiliary) }
+            panel.collectionBehavior = behavior
             panel.isOpaque = false
             panel.backgroundColor = .clear
             panel.hasShadow = preferences.showBorder
@@ -276,6 +311,10 @@ final class AgentNotch {
             self?.layoutPanels()
         }
         builtAt = Date()
+        // The Clipboard page's height follows its entries and pause state.
+        clipboardSubscription = preferences.shelfEnabled ? MainActor.assumeIsolated {
+            ClipboardService.shared.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.layoutPanels() }
+        } : nil
         bannerTrack = nowPlaying?.track?.id
         if let nowPlaying {
             mediaSubscription = nowPlaying.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in
@@ -283,6 +322,80 @@ final class AgentNotch {
                 self?.bannerOnNewTrack()
             }
         }
+        layoutPanels()
+    }
+
+    private weak var battery: BatteryWidget?
+    private weak var weather: WeatherWidget?
+    private weak var calendar: CalendarWidget?
+    private var alertSubscriptions: [AnyCancellable] = []
+    private var lastBattery: (percent: Int, onAC: Bool)?
+    private var weatherAlerted: Set<String> = []
+    private var meetingTask: DispatchWorkItem?
+
+    /// Battery, weather and calendar feed the strip while the shelf is on
+    /// (the widget store runs them for it). Rebound when their hosts change.
+    private func bindAlertSources(_ widgets: WidgetStore) {
+        let shelf = preferences.shelfEnabled
+        let nextBattery = shelf && preferences.alertBattery ? widgets.widget(BatteryWidget.kind) as? BatteryWidget : nil
+        let nextWeather = shelf && preferences.alertWeather ? widgets.widget(WeatherWidget.kind) as? WeatherWidget : nil
+        let nextCalendar = shelf && preferences.meetingMinutes > 0 ? widgets.widget(CalendarWidget.kind) as? CalendarWidget : nil
+        guard nextBattery !== battery || nextWeather !== weather || nextCalendar !== calendar else { return }
+        battery = nextBattery
+        weather = nextWeather
+        calendar = nextCalendar
+        lastBattery = nil
+        alertSubscriptions = []
+        if let nextBattery {
+            alertSubscriptions.append(nextBattery.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.checkBattery() })
+            checkBattery()
+        }
+        if let nextWeather {
+            alertSubscriptions.append(nextWeather.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.checkWeather() })
+        }
+        if let nextCalendar {
+            alertSubscriptions.append(nextCalendar.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.layoutPanels() })
+        }
+    }
+
+    private func checkBattery() {
+        guard let battery, let percent = battery.percent else { return }
+        let current = (percent: percent, onAC: battery.onAC)
+        defer { lastBattery = current }
+        switch NotchBatteryAlert.detect(previous: lastBattery, current: current, low: preferences.batteryLowPercent) {
+        case .pluggedIn?:
+            showAlert(NotchShelfAlert(activity: .battery, symbol: "battery.100percent.bolt", short: "\(percent)%",
+                                      title: "Charging", detail: "Battery at \(percent)%"))
+        case .low?:
+            showAlert(NotchShelfAlert(activity: .battery, symbol: "battery.25percent", short: "\(percent)%",
+                                      title: "Low battery", detail: "\(percent)% left. Plug in soon.", isWarning: true))
+        case nil: break
+        }
+    }
+
+    private func checkWeather() {
+        guard let weather, let found = NotchWeatherAlert.detect(now: weather.code, hours: weather.hourly, at: Date()) else { return }
+        let key = "\(found.kind.rawValue)-\(Int(found.date.timeIntervalSince1970))"
+        guard weatherAlerted.insert(key).inserted else { return }
+        let minutes = max(0, Int(found.date.timeIntervalSinceNow / 60))
+        let word = found.kind == .rain ? "Rain" : found.kind == .snow ? "Snow" : "Storms"
+        let symbol = found.kind == .rain ? "cloud.rain.fill" : found.kind == .snow ? "cloud.snow.fill" : "cloud.bolt.rain.fill"
+        showAlert(NotchShelfAlert(activity: .weather, symbol: symbol, short: "",
+                                  title: minutes < 5 ? "\(word) starting" : "\(word) in about \(minutes) min",
+                                  detail: weather.place.map { "Forecast for \($0)" } ?? "From the forecast"))
+    }
+
+    /// Shows `alert` on the strip's right side for 4 s.
+    private func showAlert(_ alert: NotchShelfAlert) {
+        guard preferences.shelfEnabled else { return }
+        surfaces.forEach { $0.state.alert = alert }
+        alertTask?.cancel()
+        let task = DispatchWorkItem { [weak self] in
+            self?.surfaces.forEach { $0.state.alert = nil }
+            self?.layoutPanels()
+        }
+        alertTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: task)
         layoutPanels()
     }
 
@@ -300,16 +413,13 @@ final class AgentNotch {
         guard let agents else { return }
         let now = Set(preferences.sessions(from: agents.sessions).filter(Self.alerting).map(\.id))
         let fresh = !now.subtracting(alerted).isEmpty
+        let before = alerted
         alerted = now
-        guard fresh, preferences.shelfEnabled else { return }
-        surfaces.forEach { $0.state.agentAlert = true }
-        alertTask?.cancel()
-        let task = DispatchWorkItem { [weak self] in
-            self?.surfaces.forEach { $0.state.agentAlert = false }
-            self?.layoutPanels()
-        }
-        alertTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: task)
+        guard fresh, preferences.alertAgents, let session = preferences.sessions(from: agents.sessions)
+            .filter({ Self.alerting($0) && !before.contains($0.id) }).first else { return }
+        showAlert(NotchShelfAlert(activity: .agents, symbol: session.needsAttention ? "hand.raised.fill" : "checkmark.circle.fill",
+                                  short: "", title: session.needsAttention ? "Needs you" : "Finished",
+                                  detail: session.project ?? session.provider.name))
     }
 
     /// The song banner: a new track while music shows on the strip. Not for
@@ -329,12 +439,75 @@ final class AgentNotch {
         return track.isPlaying || preferences.shelfEnabled && !preferences.musicHideWhenPaused
     }
 
+    static let idleCapsuleWidth: CGFloat = 96
+
     /// Bartender's open Top Shelf is about 605 pt wide on a 14-inch MacBook Pro.
     static let shelfOpenWidth: CGFloat = 600
+
+    /// Moves the notch to the focused app's display when that changed.
+    private func followFocus() {
+        guard enabled, preferences.display == .focused, let screen = Self.focusedScreen(),
+              screen.displayID != focusedDisplay else { return }
+        focusedDisplay = screen.displayID
+        rebuildPanels()
+    }
+
+    /// The screen holding the frontmost app's frontmost normal window
+    /// (public window list; titles are not read), else the one under the
+    /// pointer.
+    static func focusedScreen() -> NSScreen? {
+        let pointer = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+              let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]],
+              let window = windows.first(where: { ($0[kCGWindowOwnerPID as String] as? pid_t) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }),
+              let bounds = window[kCGWindowBounds as String] as? [String: CGFloat],
+              let primary = NSScreen.screens.first else { return pointer }
+        // Window bounds are top-left based on the primary display.
+        let rect = CGRect(x: bounds["X"] ?? 0, y: primary.frame.maxY - (bounds["Y"] ?? 0) - (bounds["Height"] ?? 0),
+                          width: bounds["Width"] ?? 0, height: bounds["Height"] ?? 0)
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        return NSScreen.screens.first { $0.frame.contains(center) } ?? pointer
+    }
+
+    private var dismissTask: DispatchWorkItem?
+
+    /// The meeting the strip counts down to, and one timer for the next
+    /// time that can change (no polling).
+    private func currentMeeting() -> CalendarWidget.NextEvent? {
+        meetingTask?.cancel()
+        meetingTask = nil
+        guard preferences.shelfEnabled, let events = calendar?.upcoming, !events.isEmpty else { return nil }
+        let starts = events.map { (start: $0.start, allDay: $0.isAllDay) }
+        let now = Date()
+        if let next = NotchMeetingSoon.nextChange(starts, now: now, minutes: preferences.meetingMinutes) {
+            let task = DispatchWorkItem { [weak self] in self?.layoutPanels() }
+            meetingTask = task
+            DispatchQueue.main.asyncAfter(deadline: .now() + next.timeIntervalSince(now) + 0.05, execute: task)
+        }
+        return NotchMeetingSoon.current(starts, now: now, minutes: preferences.meetingMinutes).map { events[$0] }
+    }
+
+    /// One timer for the next finished session to leave the list, so the
+    /// list and the notch drop it on time without polling.
+    private func scheduleDismiss(_ sessions: [AgentSession]) {
+        dismissTask?.cancel()
+        dismissTask = nil
+        let now = Date()
+        guard let next = sessions.compactMap(preferences.dismissDate).filter({ $0 > now }).min() else { return }
+        let task = DispatchWorkItem { [weak self] in
+            self?.surfaces.forEach { $0.state.dismissTick += 1 }
+            self?.layoutPanels()
+        }
+        dismissTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + next.timeIntervalSince(now) + 0.05, execute: task)
+    }
 
     private func layoutPanels() {
         guard let agents else { return }
         let sessions = preferences.sessions(from: agents.sessions)
+        scheduleDismiss(sessions)
+        let clipboard = MainActor.assumeIsolated { (ClipboardService.shared.entries.count, ClipboardService.shared.prefs.paused) }
+        let meeting = currentMeeting()
         let playing = musicShowing
         for surface in surfaces {
             let screen = surface.screen
@@ -354,8 +527,22 @@ final class AgentNotch {
             // Attached, the flared top corners sit inside the frame; widen it so the body keeps its width.
             state.compactWidth = min(screen.frame.width - 24, preferences.compactWidth + state.notchWidth
                                      + (state.topAttached ? 2 * NotchShape.flare : 0))
-            let strip = NotchShelfStrip.layout(music: playing, agents: !sessions.isEmpty, agentAlert: state.agentAlert)
+            if state.meeting != meeting { state.meeting = meeting }
+            let active = preferences.stripOrder.filter { activity in
+                switch activity {
+                case .meeting: meeting != nil
+                case .music: playing
+                case .agents: !sessions.isEmpty
+                case .battery, .weather: false
+                }
+            }
+            let strip = NotchShelfStrip.layout(active: active, alert: state.alert?.activity)
             if state.strip != strip { state.strip = strip }
+            // Without a notch, the shelf's capsule shrinks while nothing runs
+            // (Bartender's smaller idle capsule), so the menu bar keeps its room.
+            if preferences.shelfEnabled, !notched, strip == NotchShelfStrip() {
+                state.compactWidth = min(state.compactWidth, Self.idleCapsuleWidth)
+            }
             if let card = state.card, strip.leading != card, strip.trailing != card, !state.expanded {
                 // Music stopped or the agents went away under the card.
                 DispatchQueue.main.async { state.setExpanded(false) }
@@ -368,7 +555,11 @@ final class AgentNotch {
             let width = state.expanded ? (preferences.shelfEnabled ? shelfWidth : cardWidth)
                 : peeking ? cardWidth : state.compactWidth
             let contentHeight = preferences.shelfEnabled
-                ? AgentNotchView.shelfHeight(page: state.currentPage, preferences: preferences, sessionCount: sessions.count)
+                ? AgentNotchView.shelfHeight(page: state.currentPage, preferences: preferences,
+                                             sessionCount: AgentNotchView.providerFiltered(sessions, state.agentProvider).count,
+                                             chips: AgentNotchView.providerChips(sessions).count > 1,
+                                             usageRows: preferences.showUsage ? usage?.usage.count ?? 0 : 0,
+                                             clipboard: clipboard)
                 : AgentNotchView.dashboardHeight(preferences: preferences, sessionCount: sessions.count)
             let height = min(screen.visibleFrame.height - 16, state.headerHeight
                              + (state.expanded ? contentHeight : state.card.map {
@@ -402,7 +593,8 @@ final class AgentNotch {
                     else { surface.panel.setFrame(frame, display: true) }
                 } }
             }
-            if preferences.hideWhenEmpty && sessions.isEmpty && !playing && !state.expanded && !peeking { surface.panel.orderOut(nil) }
+            if preferences.hideWhenEmpty && sessions.isEmpty && !playing && meeting == nil && state.alert == nil
+                && !state.expanded && !peeking { surface.panel.orderOut(nil) }
             else if !surface.panel.isVisible { surface.panel.orderFrontRegardless() }
         }
         publishBarSpans()
@@ -474,5 +666,12 @@ final class AgentNotch {
     private static func menuBarHeight(on screen: NSScreen) -> CGFloat {
         let bar = screen.frame.maxY - screen.visibleFrame.maxY
         return bar > 0 ? bar : NSStatusBar.system.thickness
+    }
+}
+
+private extension NSScreen {
+    /// The display ID, stable while the display stays connected.
+    var displayID: CGDirectDisplayID? {
+        (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber).map { CGDirectDisplayID($0.uint32Value) }
     }
 }

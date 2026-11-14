@@ -14,11 +14,12 @@ enum AgentNotchPosition: String, Codable, CaseIterable, Identifiable {
 }
 
 enum AgentNotchDisplay: String, Codable, CaseIterable, Identifiable {
-    case automatic, primary, all
+    case automatic, focused, primary, all
     var id: String { rawValue }
     var title: String {
         switch self {
         case .automatic: "Notched display, otherwise primary"
+        case .focused: "Display you're using"
         case .primary: "Primary display"
         case .all: "All displays"
         }
@@ -83,6 +84,21 @@ struct AgentNotchSettings: Codable, Equatable {
     /// The music card shows for a few seconds when the track changes.
     var musicBanner = true
     var agentCard = NotchAgentCard.latest
+    /// Finished sessions leave the list this many minutes after they
+    /// finish (Bartender's completed-task dismiss); 0 keeps them.
+    var finishedDismissMinutes = 5
+    static let finishedDismissChoices = [0, 1, 5, 15, 60]
+    /// Which lasting activity owns the strip when several are on (SHELF-07).
+    var stripOrder = NotchShelfOrder.defaults
+    /// Minutes before a meeting that the strip shows it; 0 turns it off.
+    var meetingMinutes = 5
+    var alertAgents = true
+    var alertBattery = true
+    var batteryLowPercent = 20
+    static let batteryLowChoices = [10, 20, 30]
+    var alertWeather = true
+    /// Shows over full-screen apps (SHELF-08); off hides it in full-screen Spaces.
+    var showInFullScreen = false
     var collapseAfterFocus = true
     var showProject = true
     var showHost = true
@@ -118,7 +134,8 @@ struct AgentNotchSettings: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case position, display, compactStyle, clickAction, filter, hideWhenEmpty, animate, showTotal, showUsage, showMedia
         case expandOnHover, shelfEnabled, shelfPages, shelfLeadingWidget, shelfTrailingWidget, shelfHoverDelay, shelfCollapseDelay
-        case shelfHaptics, musicStyle, musicSeeking, musicTint, musicHideWhenPaused, musicBanner, agentCard, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
+        case shelfHaptics, musicStyle, musicSeeking, musicTint, musicHideWhenPaused, musicBanner, agentCard, finishedDismissMinutes, stripOrder, meetingMinutes
+        case alertAgents, alertBattery, batteryLowPercent, alertWeather, showInFullScreen, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
         case showFinished, claude, codex, copilot, opencode, cursor, showBorder, compactWidth, compactHeight, expandedWidth, cornerRadius, opacity, fontSize
         case rowSpacing, maxSessions, hoverDelay, collapseDelay, animationDuration, horizontalOffset, verticalOffset, accent
     }
@@ -154,6 +171,15 @@ struct AgentNotchSettings: Codable, Equatable {
         musicHideWhenPaused = values.value(.musicHideWhenPaused, or: true)
         musicBanner = values.value(.musicBanner, or: true)
         agentCard = values.value(.agentCard, or: .latest)
+        finishedDismissMinutes = values.value(.finishedDismissMinutes, or: 5)
+        let order = ((try? values.decodeIfPresent([String].self, forKey: .stripOrder)) ?? nil)?.compactMap(NotchShelfActivity.init(rawValue:))
+        stripOrder = order ?? NotchShelfOrder.defaults
+        meetingMinutes = values.value(.meetingMinutes, or: 5)
+        alertAgents = values.value(.alertAgents, or: true)
+        alertBattery = values.value(.alertBattery, or: true)
+        batteryLowPercent = values.value(.batteryLowPercent, or: 20)
+        alertWeather = values.value(.alertWeather, or: true)
+        showInFullScreen = values.value(.showInFullScreen, or: false)
         collapseAfterFocus = values.value(.collapseAfterFocus, or: true)
         showProject = values.value(.showProject, or: true)
         showHost = values.value(.showHost, or: true)
@@ -196,6 +222,10 @@ struct AgentNotchSettings: Codable, Equatable {
         fontSize = bounded(fontSize, 10...16, 12)
         rowSpacing = bounded(rowSpacing, 4...16, 8)
         maxSessions = min(10, max(2, maxSessions))
+        if !Self.finishedDismissChoices.contains(finishedDismissMinutes) { finishedDismissMinutes = 5 }
+        stripOrder = NotchShelfOrder.normalized(stripOrder)
+        if !NotchMeetingSoon.choices.contains(meetingMinutes) { meetingMinutes = 5 }
+        if !Self.batteryLowChoices.contains(batteryLowPercent) { batteryLowPercent = 20 }
         hoverDelay = bounded(hoverDelay, 0...1, 0.25)
         collapseDelay = bounded(collapseDelay, 0.1...2, 0.6)
         shelfHoverDelay = bounded(shelfHoverDelay, 0...1, 0.15)
@@ -205,16 +235,30 @@ struct AgentNotchSettings: Codable, Equatable {
         verticalOffset = bounded(verticalOffset, 0...80, 0)
     }
 
-    func sessions(from all: [AgentSession]) -> [AgentSession] {
+    func sessions(from all: [AgentSession], now: Date = Date()) -> [AgentSession] {
         all.filter { session in
             guard providerEnabled(session.provider.id),
-                  showFinished || session.state != .done else { return false }
+                  showFinished || session.state != .done,
+                  !isDismissed(session, now: now) else { return false }
             switch filter {
             case .all: return true
             case .working: return session.state == .running && !session.needsAttention
             case .attention: return session.needsAttention || session.state == .done
             }
         }
+    }
+
+    /// A finished session past the dismiss time.
+    func isDismissed(_ session: AgentSession, now: Date) -> Bool {
+        guard let dismissAt = dismissDate(session) else { return false }
+        return now >= dismissAt
+    }
+
+    /// When a finished session leaves the list; nil while it is not
+    /// finished or finished sessions are kept.
+    func dismissDate(_ session: AgentSession) -> Date? {
+        guard session.state == .done, finishedDismissMinutes > 0 else { return nil }
+        return session.updated.addingTimeInterval(TimeInterval(finishedDismissMinutes * 60))
     }
 
     private func providerEnabled(_ id: String) -> Bool {

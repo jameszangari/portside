@@ -23,6 +23,9 @@ final class WeatherWidget: DockWidget {
     @Published private(set) var high: Double?
     @Published private(set) var low: Double?
     @Published private(set) var condition: String?
+    /// WMO code now and for the next hours, for the shelf's weather alert.
+    @Published private(set) var code: Int?
+    @Published private(set) var hourly: [(date: Date, code: Int)] = []
 
     private var coordinate: (lat: Double, lon: Double)?
     private var inFlight = false
@@ -62,8 +65,10 @@ final class WeatherWidget: DockWidget {
     private struct ForecastResponse: Decodable {
         struct Current: Decodable { let temperature_2m: Double; let weather_code: Int; let is_day: Int }
         struct Daily: Decodable { let temperature_2m_max: [Double]; let temperature_2m_min: [Double] }
+        struct Hourly: Decodable { let time: [Double]; let weather_code: [Int] }
         let current: Current
         let daily: Daily?
+        let hourly: Hourly?
     }
 
     /// Runs on the main actor; only the two fetches suspend off it.
@@ -86,6 +91,10 @@ final class WeatherWidget: DockWidget {
             condition = WeatherWidget.condition(code: current.current.weather_code)
             high = current.daily?.temperature_2m_max.first
             low = current.daily?.temperature_2m_min.first
+            code = current.current.weather_code
+            hourly = current.hourly.map { hours in
+                zip(hours.time, hours.weather_code).map { (date: Date(timeIntervalSince1970: $0.0), code: $0.1) }
+            } ?? []
             logger.info("weather: \(current.current.temperature_2m, format: .fixed(precision: 1))deg code \(current.current.weather_code)")
         } catch {
             logger.error("weather: \(error.localizedDescription, privacy: .public)")
@@ -107,6 +116,9 @@ final class WeatherWidget: DockWidget {
             .init(name: "current", value: "temperature_2m,weather_code,is_day"),
             .init(name: "daily", value: "temperature_2m_max,temperature_2m_min"),
             .init(name: "forecast_days", value: "1"),
+            .init(name: "hourly", value: "weather_code"),
+            .init(name: "forecast_hours", value: "3"),
+            .init(name: "timeformat", value: "unixtime"),
             .init(name: "timezone", value: "auto"),
             .init(name: "temperature_unit", value: fahrenheit ? "fahrenheit" : "celsius"),
         ]

@@ -344,3 +344,167 @@ struct NotchCalendarCard: View {
         .accessibilityElement(children: .combine)
     }
 }
+
+/// The shelf's Clipboard page (SHELF-06): the latest copied texts from
+/// Clipboard History as cards. A click copies one back to the pasteboard
+/// (nothing is pasted), a drag carries its text out, and hovering shows a
+/// delete button. Paused history says so, with Resume.
+struct NotchClipboardPage: View {
+    @ObservedObject var service: ClipboardService
+    let preferences: AgentNotchSettings
+    @State private var copied: UUID?
+    @State private var hovered: UUID?
+    @State private var failure: String?
+
+    static let columns = 3
+    static let maxRows = 2
+    static let cardHeight: CGFloat = 64
+    static let spacing: CGFloat = 8
+
+    /// Cards shown: the newest first, up to two rows.
+    static func shown(_ entries: [ClipboardEntry]) -> [ClipboardEntry] {
+        Array(entries.sorted { $0.date > $1.date }.prefix(columns * maxRows))
+    }
+
+    /// Content height for `count` entries, the paused note included.
+    static func height(count: Int, paused: Bool) -> CGFloat {
+        let note: CGFloat = paused ? 30 : 0
+        guard count > 0 else { return note + 96 }
+        let rows = CGFloat(min(maxRows, (min(count, columns * maxRows) + columns - 1) / columns))
+        return note + rows * cardHeight + (rows - 1) * spacing
+    }
+
+    var body: some View {
+        let entries = Self.shown(service.entries)
+        VStack(alignment: .leading, spacing: Self.spacing) {
+            if service.prefs.paused {
+                HStack(spacing: 8) {
+                    Image(systemName: "pause.circle.fill").foregroundStyle(.orange)
+                    Text("Clipboard History is paused").font(.system(size: 12, weight: .medium))
+                    Spacer()
+                    Button("Resume") { service.setPaused(false) }
+                        .buttonStyle(.plain).font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(.white.opacity(0.12), in: Capsule())
+                }
+                .frame(height: 22)
+            }
+            if entries.isEmpty {
+                VStack(spacing: 6) {
+                    Image(systemName: "doc.on.clipboard").font(.title2).foregroundStyle(preferences.accent.color)
+                    Text("Nothing copied yet").fontWeight(.medium)
+                    Text("Text you copy shows up here.").font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
+                }
+                .frame(maxWidth: .infinity).frame(height: 96)
+            } else {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Self.spacing), count: Self.columns), spacing: Self.spacing) {
+                    ForEach(entries) { card($0) }
+                }
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let failure {
+                Text(failure).font(.system(size: 11)).padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(.red.opacity(0.85), in: Capsule())
+            }
+        }
+    }
+
+    private func card(_ entry: ClipboardEntry) -> some View {
+        let isCopied = copied == entry.id
+        return Button { copy(entry) } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(entry.text.trimmingCharacters(in: .whitespacesAndNewlines))
+                    .font(.system(size: 11)).lineLimit(2).multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                Spacer(minLength: 0)
+                HStack(spacing: 4) {
+                    if isCopied {
+                        Image(systemName: "checkmark").foregroundStyle(.green)
+                        Text("Copied").foregroundStyle(.green)
+                    } else {
+                        Text(entry.date.formatted(.relative(presentation: .named, unitsStyle: .abbreviated)))
+                            .foregroundStyle(.white.opacity(0.45))
+                    }
+                }
+                .font(.system(size: 9.5, weight: .medium)).lineLimit(1)
+            }
+            .padding(9)
+            .frame(height: Self.cardHeight)
+            .background(.white.opacity(hovered == entry.id ? 0.1 : 0.055), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .topTrailing) {
+            if hovered == entry.id {
+                Button { delete(entry) } label: {
+                    Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                        .frame(width: 16, height: 16).background(.black.opacity(0.7), in: Circle())
+                }
+                .buttonStyle(.plain).padding(4)
+                .accessibilityLabel("Delete")
+            }
+        }
+        .onHover { hovered = $0 ? entry.id : (hovered == entry.id ? nil : hovered) }
+        .onDrag { NSItemProvider(object: entry.text as NSString) }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(entry.title)
+        .accessibilityHint("Copies it to the clipboard")
+        .accessibilityAction(named: "Delete") { delete(entry) }
+    }
+
+    private func copy(_ entry: ClipboardEntry) {
+        switch service.copy(entry.id) {
+        case .success:
+            copied = entry.id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { if copied == entry.id { copied = nil } }
+        case .failure(let error): show(error.reason)
+        }
+    }
+
+    private func delete(_ entry: ClipboardEntry) {
+        if case .failure(let error) = service.delete(entry.id) { show(error.reason) }
+    }
+
+    private func show(_ message: String) {
+        failure = message
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { if failure == message { failure = nil } }
+    }
+}
+
+/// The meeting card (SHELF-07): its calendar color, title, time and a
+/// countdown, with Join when the event has a meeting link.
+struct NotchMeetingCard: View {
+    let event: CalendarWidget.NextEvent
+
+    /// "in 4 min", "in 1 min", "now".
+    static func countdown(to start: Date, now: Date) -> String {
+        let minutes = Int((start.timeIntervalSince(now) / 60).rounded(.up))
+        return minutes <= 0 ? "now" : "in \(minutes) min"
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Capsule().fill(event.color).frame(width: 4, height: 40)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(event.title).fontWeight(.semibold).lineLimit(1)
+                TimelineView(.periodic(from: .now, by: 15)) { context in
+                    Text("\(event.start.formatted(.dateTime.hour().minute()))  ·  \(Self.countdown(to: event.start, now: context.date))")
+                        .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55)).monospacedDigit()
+                }
+            }
+            Spacer(minLength: 4)
+            if let meeting = event.meeting {
+                Button("Join") { NSWorkspace.shared.open(meeting) }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .padding(.horizontal, 14).padding(.vertical, 6)
+                    .background(.green.opacity(0.85), in: Capsule())
+                    .accessibilityLabel("Join \(event.title)")
+            }
+        }
+        .frame(height: 52)
+        .accessibilityElement(children: .combine)
+    }
+}

@@ -804,14 +804,20 @@ struct NotchPositionPicture: View {
 }
 
 /// Which screens get the notch: a primary external display (left) and
-/// a laptop with a notch (right).
+/// a laptop with a notch (right). "Display you're using" marks the
+/// external one with a window, as if that is where you work.
 struct NotchDisplayPicture: View {
     let display: AgentNotchDisplay
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 5) {
             screen(notched: false, shows: display != .automatic)
-            screen(notched: true, shows: display != .primary)
+                .overlay(alignment: .bottomTrailing) {
+                    if display == .focused {
+                        Image(systemName: "macwindow").font(.system(size: 10)).foregroundStyle(Color.accentColor).padding(3)
+                    }
+                }
+            screen(notched: true, shows: display == .automatic || display == .all)
         }
         .padding(.horizontal, 4)
     }

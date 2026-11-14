@@ -484,6 +484,11 @@ final class ClipboardService: ObservableObject {
 
     // MARK: Actions
 
+    #if DEBUG
+    /// Render probe only: shows `entries` without reading the pasteboard or the file.
+    func preview(_ entries: [ClipboardEntry]) { self.entries = entries }
+    #endif
+
     func entry(_ id: UUID) -> ClipboardEntry? { entries.first { $0.id == id } }
 
     /// Puts an entry's text on the pasteboard. Nothing is pasted.

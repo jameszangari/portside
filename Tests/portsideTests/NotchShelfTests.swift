@@ -293,4 +293,126 @@ final class NotchShelfTests: XCTestCase {
                        URL(string: "https://meet.google.com/abc-defg-hij"))
         XCTAssertNil(CalendarWidget.meetingLink(url: nil, texts: ["http://zoom.us/j/1"]), "https only")
     }
+
+    // MARK: Agents page (SHELF-05)
+
+    private func session(_ id: String, _ provider: String, _ state: AgentState, ago: TimeInterval, now: Date) -> AgentSession {
+        AgentSession(id: id, provider: AgentProvider.named(provider), pid: 0, state: state, needsAttention: false, ended: false,
+                     updated: now.addingTimeInterval(-ago), project: id, host: nil)
+    }
+
+    func testFinishedSessionsLeaveAfterTheDismissTime() throws {
+        let now = Date(timeIntervalSince1970: 10_000)
+        let all = [session("a", "claude", .done, ago: 4 * 60, now: now), session("b", "codex", .done, ago: 6 * 60, now: now),
+                   session("c", "codex", .running, ago: 3600, now: now)]
+        var settings = AgentNotchSettings()
+        XCTAssertEqual(settings.finishedDismissMinutes, 5)
+        XCTAssertEqual(settings.sessions(from: all, now: now).map(\.id), ["a", "c"], "running sessions never leave")
+        XCTAssertEqual(settings.dismissDate(all[0]), all[0].updated.addingTimeInterval(300))
+        XCTAssertNil(settings.dismissDate(all[2]))
+        settings.finishedDismissMinutes = 0
+        XCTAssertEqual(settings.sessions(from: all, now: now).count, 3, "Never keeps them")
+        let bad = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"finishedDismissMinutes":7}"#.utf8))
+        XCTAssertEqual(bad.finishedDismissMinutes, 5, "only the offered choices")
+    }
+
+    func testProviderChipsAndFilter() {
+        let now = Date()
+        let all = [session("a", "codex", .running, ago: 0, now: now), session("b", "claude", .running, ago: 0, now: now),
+                   session("c", "codex", .done, ago: 0, now: now)]
+        let chips = AgentNotchView.providerChips(all)
+        XCTAssertEqual(chips.map(\.provider.id), ["claude", "codex"])
+        XCTAssertEqual(chips.map(\.count), [1, 2])
+        XCTAssertEqual(AgentNotchView.providerFiltered(all, "codex").map(\.id), ["a", "c"])
+        XCTAssertEqual(AgentNotchView.providerFiltered(all, nil).count, 3)
+        XCTAssertEqual(AgentNotchView.providerFiltered(all, "copilot").count, 3, "a provider with nothing left shows all")
+        XCTAssertGreaterThan(AgentNotchView.agentsPageHeight(preferences: AgentNotchSettings(), sessionCount: 2, chips: true, usageRows: 2),
+                             AgentNotchView.agentsPageHeight(preferences: AgentNotchSettings(), sessionCount: 2))
+    }
+
+    // MARK: Clipboard page (SHELF-06)
+
+    func testClipboardPageShowsNewestSixAndSizesToRows() {
+        let base = Date(timeIntervalSince1970: 1_000)
+        let entries = (0..<8).map { ClipboardEntry(text: "clip \($0)", date: base.addingTimeInterval(TimeInterval($0))) }
+        let shown = NotchClipboardPage.shown(entries)
+        XCTAssertEqual(shown.count, 6)
+        XCTAssertEqual(shown.first?.text, "clip 7", "newest first")
+        let one = NotchClipboardPage.height(count: 2, paused: false)
+        let two = NotchClipboardPage.height(count: 8, paused: false)
+        XCTAssertEqual(one, NotchClipboardPage.cardHeight)
+        XCTAssertEqual(two, 2 * NotchClipboardPage.cardHeight + NotchClipboardPage.spacing, "never more than two rows")
+        XCTAssertGreaterThan(NotchClipboardPage.height(count: 2, paused: true), one, "the paused note adds a row")
+        XCTAssertGreaterThan(NotchClipboardPage.height(count: 0, paused: false), 0, "empty state has room")
+    }
+
+    // MARK: Strip priority and alerts (SHELF-07)
+
+    func testStripFollowsTheOrderAndAlertsBorrowTheRight() {
+        XCTAssertEqual(NotchShelfStrip.layout(active: [.meeting, .music], alert: nil), NotchShelfStrip(leading: .meeting, trailing: .meeting))
+        XCTAssertEqual(NotchShelfStrip.layout(active: [.music], alert: .battery), NotchShelfStrip(leading: .music, trailing: .battery))
+        XCTAssertEqual(NotchShelfStrip.layout(active: [], alert: .weather), NotchShelfStrip(leading: nil, trailing: .weather))
+        XCTAssertEqual(NotchShelfOrder.normalized([.agents, .battery, .agents]), [.agents, .meeting, .music],
+                       "alerts never own the strip; repeats dropped, missing appended")
+        XCTAssertEqual(AgentNotchSettings().stripOrder, [.meeting, .music, .agents])
+    }
+
+    func testMeetingWindowAndNextChange() {
+        let now = Date(timeIntervalSince1970: 100_000)
+        let starts = [(start: now.addingTimeInterval(600), allDay: false), (start: now.addingTimeInterval(120), allDay: true),
+                      (start: now.addingTimeInterval(240), allDay: false)]
+        XCTAssertEqual(NotchMeetingSoon.current(starts, now: now, minutes: 5), 2, "4 min away, all-day skipped")
+        XCTAssertNil(NotchMeetingSoon.current(starts, now: now, minutes: 1))
+        XCTAssertNil(NotchMeetingSoon.current(starts, now: now, minutes: 0), "off")
+        XCTAssertEqual(NotchMeetingSoon.nextChange(starts, now: now, minutes: 5), now.addingTimeInterval(300), "the 10 min meeting enters")
+        XCTAssertEqual(NotchMeetingSoon.current(starts, now: now.addingTimeInterval(290), minutes: 5), 2, "until a minute after start")
+        XCTAssertEqual(NotchMeetingCard.countdown(to: now.addingTimeInterval(61), now: now), "in 2 min")
+        XCTAssertEqual(NotchMeetingCard.countdown(to: now.addingTimeInterval(-10), now: now), "now")
+    }
+
+    func testBatteryAlerts() {
+        XCTAssertNil(NotchBatteryAlert.detect(previous: nil, current: (15, false), low: 20), "no alert for the first reading")
+        XCTAssertEqual(NotchBatteryAlert.detect(previous: (21, false), current: (20, false), low: 20), .low)
+        XCTAssertNil(NotchBatteryAlert.detect(previous: (19, false), current: (18, false), low: 20), "only when crossing")
+        XCTAssertEqual(NotchBatteryAlert.detect(previous: (40, false), current: (40, true), low: 20), .pluggedIn)
+        XCTAssertNil(NotchBatteryAlert.detect(previous: (40, true), current: (41, true), low: 20))
+    }
+
+    func testWeatherAlerts() {
+        let now = Date(timeIntervalSince1970: 200_000)
+        let hours = [(date: now.addingTimeInterval(-600), code: 3), (date: now.addingTimeInterval(3000), code: 61)]
+        let found = NotchWeatherAlert.detect(now: 3, hours: hours, at: now)
+        XCTAssertEqual(found?.kind, .rain)
+        XCTAssertEqual(found?.date, now.addingTimeInterval(3000))
+        XCTAssertNil(NotchWeatherAlert.detect(now: 63, hours: hours, at: now), "already raining")
+        XCTAssertNil(NotchWeatherAlert.detect(now: 0, hours: [(date: now.addingTimeInterval(9000), code: 71)], at: now), "too far out")
+        XCTAssertEqual(NotchWeatherAlert.kind(96), .storm)
+    }
+
+    func testAlertSettingsDefaultsAndBounds() throws {
+        let fresh = AgentNotchSettings()
+        XCTAssertEqual(fresh.meetingMinutes, 5)
+        XCTAssertTrue(fresh.alertAgents && fresh.alertBattery && fresh.alertWeather)
+        XCTAssertEqual(fresh.batteryLowPercent, 20)
+        let bad = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"meetingMinutes":7,"batteryLowPercent":3,"stripOrder":["agents","bogus"]}"#.utf8))
+        XCTAssertEqual(bad.meetingMinutes, 5)
+        XCTAssertEqual(bad.batteryLowPercent, 20)
+        XCTAssertEqual(bad.stripOrder, [.agents, .meeting, .music])
+        var on = AgentNotchSettings()
+        on.shelfEnabled = true
+        XCTAssertTrue(Set(WidgetStore.shelfKinds(on)).isSuperset(of: ["battery", "weather", "calendar"]))
+        on.alertBattery = false; on.alertWeather = false; on.meetingMinutes = 0
+        XCTAssertFalse(WidgetStore.shelfKinds(on).contains("battery"))
+    }
+
+    // MARK: Displays and full screen (SHELF-08)
+
+    func testDisplayAndFullScreenSettings() throws {
+        let fresh = AgentNotchSettings()
+        XCTAssertFalse(fresh.showInFullScreen, "the shelf hides in full-screen Spaces by default")
+        let focused = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"display":"focused","showInFullScreen":true}"#.utf8))
+        XCTAssertEqual(focused.display, .focused)
+        XCTAssertTrue(focused.showInFullScreen)
+        XCTAssertEqual(AgentNotchDisplay.focused.title, "Display you're using")
+    }
 }
