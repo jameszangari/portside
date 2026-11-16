@@ -140,20 +140,23 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             launchAtLogin: launchAtLogin, trash: trash, badges: badges, widgets: widgets,
             integrations: integrations, navigation: navigation
         ))
-        // Fixed size, like System Settings: panes scroll instead of growing
-        // the window. The toolbar carries the pane title.
+        // The window sets the size (resizable within SettingsLayout's
+        // bounds); panes scroll instead of growing it. The toolbar carries
+        // the pane title.
         hosting.sizingOptions = []
         // Title only: the window owns its toolbar, so SwiftUI adds no sidebar
         // toggle and panes get the system scroll edge under the title.
         hosting.sceneBridgingOptions = [.title]
         let window = SettingsNSWindow(
             contentRect: NSRect(origin: .zero, size: SettingsLayout.windowSize),
-            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.contentViewController = hosting
-        window.setContentSize(SettingsLayout.windowSize)
+        window.contentMinSize = SettingsLayout.minSize
+        window.contentMaxSize = SettingsLayout.maxSize
+        window.setContentSize(SettingsLayout.openSize)
         window.title = "Portside Settings"
         window.toolbar = NSToolbar(identifier: "PortsideSettings")
         window.toolbarStyle = .unifiedCompact
@@ -169,16 +172,18 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     /// Dead center of the primary display's visible area (menu bar and a
-    /// pinned Portside excluded, like the native Dock). Uses the fixed Settings size, not the live frame, so a
+    /// pinned Portside excluded, like the native Dock). Uses the saved Settings size, not the live frame, so a
     /// stray resize cannot shift the next open. NSWindow.center() sits
     /// higher than center on purpose, so it is not used.
     private func placeCentered(_ window: NSWindow, size: NSSize? = nil) {
         guard let screen = NSScreen.screens.first else { return }
-        let size = size ?? {
-            window.setContentSize(SettingsLayout.windowSize)
+        let wanted = size ?? {
+            window.setContentSize(SettingsLayout.openSize)
             return window.frame.size
         }()
         let area = usableFrame?(screen) ?? screen.visibleFrame
+        // A size saved on a bigger display still fits this one.
+        let size = NSSize(width: min(wanted.width, area.width), height: min(wanted.height, area.height))
         let frame = NSRect(
             x: (area.midX - size.width / 2).rounded(),
             y: (area.midY - size.height / 2).rounded(),
@@ -212,6 +217,21 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// Focused means key and on the active Space. DockEngine ignores repeats.
     private func reportFocus(closing: Bool = false) {
         onKeyFocusChanged?(!closing && window?.isKeyWindow == true && window?.isOnActiveSpace == true)
+    }
+
+    /// Every resize stays within the bounds. `contentMinSize` alone did not
+    /// hold (maintainer report: dragged narrower than the content, the
+    /// sidebar was clipped out of view), so the delegate clamps too.
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        let content = sender.contentRect(forFrameRect: NSRect(origin: .zero, size: frameSize)).size
+        let clamped = SettingsLayout.clamped(content)
+        return sender.frameRect(forContentRect: NSRect(origin: .zero, size: clamped)).size
+    }
+
+    /// A resize the user made is kept for the next open, this run and later.
+    func windowDidEndLiveResize(_ notification: Notification) {
+        guard let window else { return }
+        SettingsLayout.savedSize = window.contentRect(forFrameRect: window.frame).size
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -262,11 +282,45 @@ enum SettingsLayout {
         #if DEBUG
         // Debug builds: taller window for full-pane screenshots.
         if let height = ProcessInfo.processInfo.environment["PORTSIDE_SETTINGS_HEIGHT"].flatMap(Double.init) {
-            return NSSize(width: 830, height: height)
+            return NSSize(width: 900, height: height)
         }
         #endif
-        return NSSize(width: 830, height: 560)
+        return NSSize(width: 900, height: 620)
     }()
+    /// Resizable between these (content size). The smallest keeps a pane's
+    /// slider rows and Top Notch's preview whole; the largest stops panes
+    /// from turning into long, empty lines.
+    static let minSize = NSSize(width: 760, height: 460)
+    static let maxSize = NSSize(width: 1240, height: 1100)
+
+    /// The size Settings opens at: the user's last size, within the bounds,
+    /// else `windowSize`. Saved in Portside's `UserDefaults` as
+    /// `settingsWindowSize`.
+    static var openSize: NSSize {
+        guard let saved = savedSize else { return windowSize }
+        return clamped(saved)
+    }
+
+    static func clamped(_ size: NSSize) -> NSSize {
+        NSSize(width: min(maxSize.width, max(minSize.width, size.width)),
+               height: min(maxSize.height, max(minSize.height, size.height)))
+    }
+
+    static var savedSize: NSSize? {
+        get {
+            #if DEBUG
+            // Screenshot runs pin the size.
+            if ProcessInfo.processInfo.environment["PORTSIDE_SETTINGS_HEIGHT"] != nil { return nil }
+            #endif
+            guard let text = UserDefaults.standard.string(forKey: savedSizeKey) else { return nil }
+            let size = NSSizeFromString(text)
+            return size.width > 0 && size.height > 0 ? size : nil
+        }
+        set { UserDefaults.standard.set(newValue.map { NSStringFromSize(clamped($0)) }, forKey: savedSizeKey) }
+    }
+
+    private static let savedSizeKey = "settingsWindowSize"
+
     static let sidebarWidth: CGFloat = 215
     /// Label column for slider rows.
     static let labelWidth: CGFloat = 136
@@ -425,7 +479,7 @@ struct SettingsView: View {
                     }
             }
         }
-        .frame(width: SettingsLayout.windowSize.width, height: SettingsLayout.windowSize.height)
+        .frame(minWidth: SettingsLayout.minSize.width, maxWidth: .infinity, minHeight: SettingsLayout.minSize.height, maxHeight: .infinity)
     }
 }
 
