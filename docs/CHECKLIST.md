@@ -244,6 +244,8 @@ Status of the milestones in `docs/PLAN.md`, what still needs a hand check, and t
 
 ## Needs a hand check
 
+- [ ] Folder drop on an app inside a group (2026-11-15, maintainer report: dragging a Finder folder onto an app opens it there, as in the native Dock, except when the app is in a group). A folder-only drag is pin-folders mode, which only showed the pin gap: it never targeted an app tile or opened a group's grid, and the grid only targeted members for other files. Now a folder over an app tile that can open it (`FileDropSession.canOpen`) highlights it and opens there, with spring-load; over a group tile the grid opens and a member that can open it takes the drop; elsewhere it pins as before. Hand test: drag a folder onto VS Code or Terminal in the strip and inside a group grid (opens there); onto an app that cannot open folders (no highlight); onto empty strip (pins as a stack); onto the group tile itself and release (nothing happens).
+
 These were built and tested with synthetic input; a person should confirm them on a real machine:
 
 - Issue #36: Settings sidebar app title aligns with the Dock pane's Layout heading; confirm the spacing in the signed app and other panes.

@@ -1256,11 +1256,26 @@ private struct FileDropDelegate: DropDelegate {
             setEntryInsert(appInsertIndex(info))
             return DropProposal(operation: .copy)
         case .pinFolders, .pinLinks:
-            setTarget(nil)
             setEntryInsert(nil)
-            appSpringLoad.cancel()
-            interactions.onDragOverGroupTile?(nil)
             interactions.onDragOverStackTile?(nil)
+            // Folders on an app that can open them open there, as in the
+            // native Dock; on a group tile its grid opens so a member can
+            // take them. Elsewhere they pin.
+            if session.mode == .pinFolders, let id = folderAppTarget(info) {
+                setStackInsert(nil)
+                interactions.onDragOverGroupTile?(nil)
+                setTarget(id)
+                updateAppSpringLoad(id)
+                return DropProposal(operation: .copy)
+            }
+            setTarget(nil)
+            appSpringLoad.cancel()
+            if session.mode == .pinFolders, let groupID = groupUnderCursor(info) {
+                setStackInsert(nil)
+                interactions.onDragOverGroupTile?(groupID)
+                return DropProposal(operation: .copy)
+            }
+            interactions.onDragOverGroupTile?(nil)
             setStackInsert(folderInsertIndex(info))
             return DropProposal(operation: .copy)
         case .open:
@@ -1316,6 +1331,14 @@ private struct FileDropDelegate: DropDelegate {
                 pinApps(at: entryAt ?? dockModel.entries.count)
             }
         case .pinFolders:
+            if let id = folderAppTarget(info), let entry = apps[id] {
+                open(session.urls, with: entry.app, isPinned: entry.isPinned)
+                return true
+            }
+            if dropGroupID != nil {
+                stripLogger.info("folder drop on a group tile: drop on a member in its grid")
+                return false
+            }
             var pinTx = Transaction()
             pinTx.disablesAnimations = true
             return withTransaction(pinTx) {
@@ -1358,6 +1381,12 @@ private struct FileDropDelegate: DropDelegate {
     private func folderStackID(_ hoverID: String) -> String? {
         let id = String(hoverID.dropFirst("stack:".count))
         return dockModel.stacks.contains { $0.id == id && !$0.isLink } ? id : nil
+    }
+
+    /// The app tile under the cursor when it can open every dragged folder.
+    private func folderAppTarget(_ info: DropInfo) -> String? {
+        guard let id = tileUnderCursor(info), let entry = apps[id], session.canOpen(with: entry.app) else { return nil }
+        return id
     }
 
     private func groupUnderCursor(_ info: DropInfo) -> String? {

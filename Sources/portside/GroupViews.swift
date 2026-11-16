@@ -601,7 +601,8 @@ private struct GroupCellContentFramesKey: PreferenceKey {
 }
 
 /// File drops on an open group grid. `.app` drags show an insertion gap and
-/// add at that slot; other files open with a member that can handle them.
+/// add at that slot; other files and folders open with a member that can
+/// handle them.
 private struct GroupFileDropDelegate: DropDelegate {
     let session: FileDropSession
     @Binding var targetID: String?
@@ -696,7 +697,7 @@ private struct GroupFileDropDelegate: DropDelegate {
 
     @discardableResult
     private func updateTarget(_ info: DropInfo) -> String? {
-        guard session.mode == .open else {
+        guard session.mode == .open || session.mode == .pinFolders else {
             setTarget(nil)
             return nil
         }
