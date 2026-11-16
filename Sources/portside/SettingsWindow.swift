@@ -489,6 +489,8 @@ struct SettingsView: View {
 private struct SettingsSidebar: View {
     @Binding var selection: SettingsTab
     let onOpen: (SettingsSearchEntry) -> Void
+    /// Redraws the identity icon when the app icon changes.
+    @ObservedObject private var icons = IconCache.shared
     @State private var query = ""
     @FocusState private var searchFocused: Bool
     @State private var status: String?
@@ -1087,6 +1089,47 @@ private struct UpdatesAuthSection: View {
 
 // MARK: - General
 
+/// Portside's own icon: four thumbnails, the chosen one ringed in the accent.
+private struct AppIconPicker: View {
+    let choice: AppIconChoice
+    let set: (AppIconChoice) -> Void
+    /// Read so the System thumbnail redraws when light or dark mode changes.
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("App icon")
+            HStack(spacing: 14) {
+                ForEach(AppIconChoice.allCases) { option in
+                    Button { set(option) } label: {
+                        VStack(spacing: 4) {
+                            Image(nsImage: AppIcon.image(for: option, points: 48))
+                                .resizable()
+                                .interpolation(.high)
+                                .frame(width: 48, height: 48)
+                                .padding(3)
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                        .strokeBorder(Color.accentColor, lineWidth: option == choice ? 2.5 : 0)
+                                }
+                            Text(option.title)
+                                .font(.caption)
+                                .foregroundStyle(option == choice ? .primary : .secondary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(option.title) app icon")
+                    .accessibilityAddTraits(option == choice ? [.isButton, .isSelected] : .isButton)
+                }
+            }
+            Text((choice == .system ? "Light in light mode, Dark in dark mode. " : "")
+                 + "Shown on Portside's tile, in Settings and alerts, the App Switcher, and the Dock while Settings is open. Finder keeps the original icon.")
+                .helperStyle()
+        }
+    }
+}
+
 /// App-level settings: startup, the Settings shortcut, hiding the macOS
 /// Dock, and importing from it.
 private struct GeneralSettings: View {
@@ -1111,6 +1154,8 @@ private struct GeneralSettings: View {
             Section {
                 LaunchAtLoginRow(launchAtLogin: launchAtLogin)
                     .settingsAnchor("Startup")
+                AppIconPicker(choice: dockModel.appIcon) { dockModel.setAppIcon($0) }
+                    .settingsAnchor("App icon")
                 Toggle(isOn: Binding(
                     get: { dockModel.hideNativeDock },
                     // Async: hiding may open a modal alert, which should not

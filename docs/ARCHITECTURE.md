@@ -226,7 +226,7 @@ Sources/portside/
     MediaRemoteNowPlaying.swift  System Now Playing stream and commands through the vendored adapter in /usr/bin/perl (private MediaRemote)
     AgentStatusWidget.swift Coding agent provider, count, working/done (hook files + T3/OpenCode discovery)
     UsageWidget.swift       Claude / Codex 5-hour and weekly, Copilot monthly usage meters
-  Support/                  Bundled resources: AppIcon-<px>.png (actool's flat render of AppIcon.icon) and MenuBarIcon-<px>.png
+  Support/                  Bundled resources: AppIcon-<px>.png (actool's flat render of AppIcon.icon), AppIconSail.svg and AppIconSail-Light.svg (the sail layer for the Dark and Light app icons) and MenuBarIcon-<px>.png
 Sources/AppLoginItemList/   C helper: read session Open at Login list (LSSharedFileList)
 Sources/MediaRemoteAdapter/ Vendored ungive/mediaremote-adapter (BSD 3-Clause), a dynamic library loaded by /usr/bin/perl, not linked (README.md there)
 Tests/portsideTests/        XCTest target (`@testable import portside`); run with CFFIXED_USER_HOME, see docs/BASELINE_2_0.md

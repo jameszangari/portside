@@ -264,6 +264,8 @@ struct StackPopoverView: View {
     @State private var appeared = false
     @State private var insertIndex: Int?
     @State private var cellFrames: [String: CGRect] = [:]
+    /// The Columns and Rows controls are showing under the title.
+    @State private var showsGridShape = false
 
     static let iconSize: CGFloat = 52
     private static let cellWidth: CGFloat = 76
@@ -338,9 +340,12 @@ struct StackPopoverView: View {
         let positioned = stack.sort == .manual
         let gapAt = positioned ? insertIndex : nil
         let slotCount = items.count + (gapAt != nil ? 1 : 0)
-        let columns = GroupPopoverView.columns(for: max(slotCount, 1))
+        let columns = stack.grid.columns(for: max(slotCount, 1))
         return VStack(spacing: 10) {
-            header(stack)
+            header(stack, layout: layout)
+            if layout == .grid, showsGridShape {
+                GridShapeControls(shape: stack.grid) { shape in dockModel.updateStack(id: stack.id) { $0.grid = shape } }
+            }
             if items.isEmpty && insertIndex == nil {
                 Text("Empty folder")
                     .font(.system(size: 12))
@@ -348,7 +353,8 @@ struct StackPopoverView: View {
                     .frame(minWidth: 160, minHeight: 48)
             } else {
                 switch layout {
-                case .grid: gridBody(items: items, gapAt: gapAt, columns: columns)
+                case .grid: gridBody(items: items, gapAt: gapAt, columns: columns,
+                                     maxHeight: stack.grid.maxHeight(rowHeight: Self.iconSize + 28, spacing: 6) ?? Self.maxGridHeight)
                 case .list, .fan: listBody(items: items, gapAt: gapAt, sort: stack.sort)
                 }
             }
@@ -360,11 +366,13 @@ struct StackPopoverView: View {
                     .strokeBorder(Color.accentColor.opacity(0.8), lineWidth: 2)
             }
         }
+        .dockTextScrim(dockModel.look)
         .dockBackground(dockModel.look, shadow: true)
     }
 
-    private func header(_ stack: FolderStack) -> some View {
+    private func header(_ stack: FolderStack, layout: StackViewMode) -> some View {
         HStack(spacing: 6) {
+            if layout == .grid { GridShapeButton(isOn: $showsGridShape) }
             Text(stack.displayName)
                 .font(.system(size: 13, weight: .semibold))
                 .lineLimit(1)
@@ -381,7 +389,7 @@ struct StackPopoverView: View {
         }
     }
 
-    private func gridBody(items: [StackItem], gapAt: Int?, columns: Int) -> some View {
+    private func gridBody(items: [StackItem], gapAt: Int?, columns: Int, maxHeight: CGFloat) -> some View {
         ScrollView {
             let slots = gridSlots(items: items, insertAt: gapAt)
             let rows = stride(from: 0, to: slots.count, by: columns).map {
@@ -402,8 +410,10 @@ struct StackPopoverView: View {
                     }
                 }
             }
+            // Centered under a wider header (the Columns and Rows controls).
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxHeight: Self.maxGridHeight)
+        .frame(maxHeight: maxHeight)
     }
 
     private func listBody(items: [StackItem], gapAt: Int?, sort: StackSortMode) -> some View {

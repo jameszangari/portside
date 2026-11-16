@@ -67,6 +67,15 @@ final class IconCache: ObservableObject {
         themeObserver = IconThemeObserver { [weak self] in self?.dropAll(reason: "system icon style changed") }
     }
 
+    /// Portside's own icon everywhere: its tile, Settings, alerts, the Dock tile.
+    func setAppIcon(_ choice: AppIconChoice) {
+        guard choice != AppIcon.choice else { return }
+        AppIcon.choice = choice
+        AppIcon.applyToDockTile()
+        itemLogger.info("app icon \(choice.rawValue, privacy: .public)")
+        generation += 1
+    }
+
     func setStyle(_ newStyle: IconStyle) {
         guard newStyle != style else { return }
         style = newStyle
@@ -76,7 +85,8 @@ final class IconCache: ObservableObject {
     private func dropAll(reason: String) {
         itemLogger.info("\(reason, privacy: .public), dropping \(self.cache.count) icons")
         cache.removeAll()
-        AppIcon.invalidateSystemIcon()
+        // System's icon follows light and dark mode.
+        AppIcon.applyToDockTile()
         generation += 1
     }
 
@@ -232,7 +242,7 @@ struct PortsideTileView: View {
     }
 
     private var icon: some View {
-        Image(nsImage: AppIcon.image(points: size, matchSystem: icons.style == .matchSystem))
+        Image(nsImage: AppIcon.image(points: size))
             .resizable()
             .interpolation(.high)
             .frame(width: size, height: size)

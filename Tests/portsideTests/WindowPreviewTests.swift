@@ -230,16 +230,30 @@ final class WindowPreviewServiceTests: XCTestCase {
         XCTAssertLessThanOrEqual(capturer.peakConcurrency, WindowPreviewService.maxConcurrent)
     }
 
-    func testLastSurfaceLeavingCancelsAndForgetsEverything() async {
+    func testLastSurfaceLeavingKeepsPicturesAndRetakesThemOnTheNextOpen() async {
         armed()
         service.attach(surface: "dock")
         service.request(spot(1))
         await wait("picture") { ready(spot(1)) }
         service.detach(surface: "dock")
-        XCTAssertEqual(service.storedImageCount, 1, "another surface is still showing")
+        XCTAssertEqual(service.staleImageCount, 0, "another surface is still showing")
         service.detach(surface: "switcher")
-        XCTAssertEqual(service.storedImageCount, 0)
+        XCTAssertEqual(service.storedImageCount, 1, "kept for the next open")
+        XCTAssertEqual(service.staleImageCount, 1)
         XCTAssertEqual(service.blocker, .noSurface)
+
+        service.attach(surface: "switcher")
+        XCTAssertTrue(ready(spot(1)), "shown at once on the next open")
+        capturer.hold = true
+        service.request(spot(1))
+        await wait("retaken") { capturer.imageCalls.count == 2 }
+        XCTAssertTrue(ready(spot(1)), "the kept picture shows until the new one arrives")
+        capturer.hold = false
+        await wait("done") { service.inFlightCount == 0 }
+        XCTAssertEqual(service.staleImageCount, 0)
+        service.request(spot(1))
+        await settle()
+        XCTAssertEqual(capturer.imageCalls, [1, 1], "taken once per open")
     }
 
     func testClosingWhileAPictureIsInFlightDropsItsResult() async {
@@ -252,6 +266,18 @@ final class WindowPreviewServiceTests: XCTestCase {
         await settle()
         XCTAssertEqual(service.storedImageCount, 0)
         XCTAssertEqual(service.inFlightCount, 0)
+    }
+
+    func testAKeptPictureOfAWindowThatIsGoneFallsBack() async {
+        armed()
+        service.request(spot(1))
+        await wait("picture") { ready(spot(1)) }
+        service.detach(surface: "switcher")
+        capturer.windowList = []
+        service.attach(surface: "switcher")
+        service.request(spot(1))
+        await wait("not found") { if case .fallback(.notFound) = service.state(for: spot(1)) { return true } else { return false } }
+        XCTAssertEqual(service.storedImageCount, 0)
     }
 
     func testTurningTheOptInOffStopsAndClears() async {

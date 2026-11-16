@@ -232,20 +232,21 @@ extension RunningAppRecord {
 extension WindowRegistry {
     /// The production registry, fed by `RunningApps` workspace events (no
     /// observers of its own for app lifecycle), Accessibility trust changes
-    /// (observed, never requested) and display changes.
+    /// (observed, never requested) and display changes. Portside itself is
+    /// listed while it is a regular app (Settings open), as in ⌘Tab; its
+    /// panels are not standard windows, so only Settings is read.
     static func live(runningApps: RunningApps) -> WindowRegistry {
-        let selfPID = ProcessInfo.processInfo.processIdentifier
         let registry = WindowRegistry(
             source: AXWindowSource(),
             isAccessGranted: { AccessibilityPermissionAdapter().currentState() == .granted },
             currentApps: { [weak runningApps] in
-                let apps = runningApps?.apps.map(RunningAppRecord.init) ?? []
+                var apps = runningApps?.apps.map(RunningAppRecord.init) ?? []
+                if runningApps?.includesSelf == true { apps.append(RunningAppRecord(.current)) }
                 return (apps, NSWorkspace.shared.frontmostApplication?.processIdentifier)
             },
             currentDisplays: AXWindowSource.currentDisplays
         )
         runningApps.onEvent = { [weak registry] name, app in
-            guard app.processIdentifier != selfPID else { return }
             MainActor.assumeIsolated {
                 guard let registry else { return }
                 let record = RunningAppRecord(app)
@@ -268,6 +269,15 @@ extension WindowRegistry {
             }
         }
         registry.feeds = [
+            // Portside joins when Settings makes it regular and leaves when it
+            // goes back to accessory; neither is a workspace launch or quit.
+            runningApps.$includesSelf.removeDuplicates().dropFirst().receive(on: DispatchQueue.main)
+                .sink { [weak registry] included in
+                    MainActor.assumeIsolated {
+                        let record = RunningAppRecord(.current)
+                        if included { registry?.appLaunched(record) } else { registry?.appTerminated(record) }
+                    }
+                },
             AccessibilityTrust.shared.$isTrusted.removeDuplicates().dropFirst().receive(on: DispatchQueue.main)
                 .sink { [weak registry] _ in MainActor.assumeIsolated { registry?.accessibilityChanged() } },
             NotificationCenter.default.addObserver(

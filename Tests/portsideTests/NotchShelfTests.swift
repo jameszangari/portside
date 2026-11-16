@@ -786,3 +786,44 @@ final class NotchShelfTests: XCTestCase {
                        "the T3 row of a hook session in T3 goes; a Terminal hook session or another project keeps its row")
     }
 }
+
+/// "Needs you" from a hook file: no hook fires when a permission prompt is
+/// answered, so a transcript written since the prompt clears it.
+final class AgentPromptAnsweredTests: XCTestCase {
+    private func hookFile(transcript: URL, at time: Date) throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("hook-\(UUID().uuidString).json")
+        let json: [String: Any] = [
+            "pid": 4242, "provider": "claude", "time": time.timeIntervalSince1970,
+            "payload": ["hook_event_name": "Notification", "notification_type": "permission_prompt",
+                        "cwd": "/tmp/portside", "transcript_path": transcript.path],
+        ]
+        try JSONSerialization.data(withJSONObject: json).write(to: url)
+        return url
+    }
+
+    func testAPromptNeedsYouUntilTheTranscriptMovesOn() throws {
+        let transcript = FileManager.default.temporaryDirectory.appendingPathComponent("transcript-\(UUID().uuidString).jsonl")
+        try Data("{}\n".utf8).write(to: transcript)
+        defer { try? FileManager.default.removeItem(at: transcript) }
+        let prompted = Date()
+        try FileManager.default.setAttributes([.modificationDate: prompted], ofItemAtPath: transcript.path)
+        let file = try hookFile(transcript: transcript, at: prompted)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let waiting = try XCTUnwrap(AgentSession(contentsOf: file))
+        XCTAssertTrue(waiting.needsAttention, "the prompt's own write is within the settle margin")
+        XCTAssertEqual(waiting.state, .running)
+
+        try FileManager.default.setAttributes([.modificationDate: prompted.addingTimeInterval(AgentSession.promptSettle + 5)],
+                                              ofItemAtPath: transcript.path)
+        let answered = try XCTUnwrap(AgentSession(contentsOf: file))
+        XCTAssertFalse(answered.needsAttention)
+        XCTAssertEqual(answered.state, .running)
+    }
+
+    func testNoTranscriptKeepsThePrompt() throws {
+        let file = try hookFile(transcript: URL(fileURLWithPath: "/nonexistent/transcript.jsonl"), at: Date())
+        defer { try? FileManager.default.removeItem(at: file) }
+        XCTAssertTrue(try XCTUnwrap(AgentSession(contentsOf: file)).needsAttention)
+    }
+}

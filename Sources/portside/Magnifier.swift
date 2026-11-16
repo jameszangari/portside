@@ -668,7 +668,7 @@ private struct MagnifiedShelf: ViewModifier {
         if let magnifier {
             content.modifier(ObservedShelf(magnifier: magnifier, look: look, edge: edge))
         } else {
-            content.background { Color.clear.dockBackground(look) }
+            content.background { Color.clear.dockTextScrim(look).dockBackground(look) }
         }
     }
 }
@@ -690,6 +690,9 @@ private struct ObservedShelf: ViewModifier {
         // strip's layout size.
         content.background {
             Color.clear
+                // The same shade as the group and stack grids, so the
+                // shelf reads the same over a light page.
+                .dockTextScrim(look)
                 .dockBackground(look)
                 .padding(leadEdge, -lead)
                 .padding(trailEdge, -trail)

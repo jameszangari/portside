@@ -151,6 +151,7 @@ enum SettingsSearch {
         .init(.notch, "Displays", "Show in full screen", "fullscreen hide spaces"),
         .init(.general, "Updates", "Updates", "upgrade version"),
         .init(.general, "Startup", "Open at login", "startup launch"),
+        .init(.general, "App icon", "App icon", "icon navy dark light system logo appearance"),
         .init(.general, "More", "Open Settings when Portside launches", "startup"),
         .init(.general, "Keyboard", "Keyboard", ""),
         .init(.general, "Automatic updates", "Automatic updates", "upgrade version"),

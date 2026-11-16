@@ -87,12 +87,14 @@ enum PreviewState {
 ///   unless both hold, so this never raises the system prompt.
 /// - One still picture of one window per request. No stream, no full-screen
 ///   capture, nothing written to disk.
-/// - Only while a surface is attached (the switcher is showing), and only for
+/// - Only while a surface is attached (the switcher is open), and only for
 ///   rows the surface asks about, which are the visible ones.
 /// - A bounded memory cache and a small concurrency limit. A window asked for
 ///   by two surfaces is captured once.
+/// - The last surface leaving cancels work but keeps the pictures, so the
+///   next open shows them at once and takes each again in the background.
 /// - Turning it off, losing the permission, locking the screen, sleeping the
-///   display or the last surface leaving cancels work and drops every picture.
+///   display or switching sessions cancels work and drops every picture.
 @MainActor
 final class WindowPreviewService: ObservableObject {
     /// Pictures kept at once, oldest dropped first. A full switcher shows nine
@@ -120,6 +122,9 @@ final class WindowPreviewService: ObservableObject {
     private var entries: [WindowID: PreviewState] = [:]
     /// Ready pictures, oldest first.
     private var order: [WindowID] = []
+    /// Ready pictures kept from an earlier open: shown, and taken again on
+    /// the first request.
+    private var stale = Set<WindowID>()
     private var running: [WindowID: Task<Void, Never>] = [:]
     private var queue: [PreviewTarget] = []
     private var generation = 0
@@ -152,6 +157,7 @@ final class WindowPreviewService: ObservableObject {
     var attachedSurfaces: Set<String> { surfaces }
     var inFlightCount: Int { running.count }
     var storedImageCount: Int { order.count }
+    var staleImageCount: Int { stale.count }
 
     // MARK: Switches
 
@@ -160,39 +166,48 @@ final class WindowPreviewService: ObservableObject {
     func setOptedIn(_ on: Bool) {
         guard on != isOptedIn else { return }
         isOptedIn = on
-        if !on { stop() }
-    }
-
-    /// A surface that shows pictures is on screen. Nothing is captured for a
-    /// surface that has not attached.
-    func attach(surface: String) {
-        guard surfaces.insert(surface).inserted else { return }
-        if surfaces.count == 1, watchesSystem { observeSystem() }
-    }
-
-    /// The last surface leaving cancels work and drops every picture, so no
-    /// picture outlives the panel that showed it.
-    func detach(surface: String) {
-        guard surfaces.remove(surface) != nil else { return }
-        if surfaces.isEmpty {
+        if on {
+            if watchesSystem { observeSystem() }
+        } else {
             removeObservers()
             stop()
         }
     }
 
+    /// A surface that shows pictures is on screen. Nothing is captured for a
+    /// surface that has not attached.
+    func attach(surface: String) {
+        surfaces.insert(surface)
+    }
+
+    /// The last surface leaving cancels work and keeps only finished
+    /// pictures, each marked to be taken again when next asked for.
+    func detach(surface: String) {
+        guard surfaces.remove(surface) != nil, surfaces.isEmpty else { return }
+        cancelWork()
+        let kept = Set(order)
+        entries = entries.filter { kept.contains($0.key) }
+        stale = kept
+    }
+
     /// Drops everything in flight and stored. Also what a lock, a display
     /// sleep, a session switch and a revoked permission do.
     func stop() {
+        cancelWork()
+        let hadEntries = !entries.isEmpty
+        entries = [:]
+        order = []
+        stale = []
+        if hadEntries { revision += 1 }
+    }
+
+    private func cancelWork() {
         generation += 1
         for task in running.values { task.cancel() }
         running = [:]
         queue = []
         listTask?.cancel()
         listTask = nil
-        let hadEntries = !entries.isEmpty
-        entries = [:]
-        order = []
-        if hadEntries { revision += 1 }
     }
 
     // MARK: Asking
@@ -222,8 +237,11 @@ final class WindowPreviewService: ObservableObject {
             return
         }
         guard !target.isMinimized, target.frame != nil else { return }
-        guard entries[target.window] == nil else { return }
-        entries[target.window] = .loading
+        if stale.remove(target.window) == nil {
+            guard entries[target.window] == nil else { return }
+            entries[target.window] = .loading
+        }
+        // A kept picture stays on screen until the new one arrives.
         queue.append(target)
         pump()
     }
@@ -253,12 +271,14 @@ final class WindowPreviewService: ObservableObject {
         case .success(let image):
             captureCount += 1
             entries[target.window] = .ready(image)
+            order.removeAll { $0 == target.window }
             order.append(target.window)
             while order.count > Self.maxImages {
                 entries[order.removeFirst()] = nil
             }
         case .failure(let reason):
             entries[target.window] = .fallback(reason)
+            order.removeAll { $0 == target.window }
         }
         revision += 1
         pump()
