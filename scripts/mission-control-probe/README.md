@@ -1,5 +1,7 @@
 # Mission Control and App Exposé probe
 
+Findings and summary: [docs/research/mission-control-dock-cover.md](../../docs/research/mission-control-dock-cover.md).
+
 Standalone SwiftPM executable. It never starts Portside, changes Dock preferences,
 restarts the Dock, or changes another app's windows. No polling or screen capture.
 
