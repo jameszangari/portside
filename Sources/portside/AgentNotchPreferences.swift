@@ -81,9 +81,21 @@ struct AgentNotchSettings: Codable, Equatable {
     var musicSeeking = true
     var musicTint = false
     var musicHideWhenPaused = true
-    /// The music card shows for a few seconds when the track changes.
+    /// A new track shows its name under the strip for a few seconds.
     var musicBanner = true
     var agentCard = NotchAgentCard.latest
+    /// Files page (SHELF-06b): how long dropped files stay, and whether a
+    /// file leaves once dragged out somewhere.
+    var filesKeep = NotchFilesKeep.day
+    var filesRemoveAfterDrag = false
+    /// The shelf strip shows the volume or brightness level for a moment
+    /// when it changes (SHELF-09).
+    var hudVolume = true
+    var hudBrightness = true
+    /// Takes the volume and brightness keys so only the shelf's HUD shows
+    /// (SHELF-09b). On by default (maintainer decision, 2026-11-15); needs
+    /// Accessibility and is held off by restricted mode.
+    var hudReplaceSystem = true
     /// Finished sessions leave the list this many minutes after they
     /// finish (Bartender's completed-task dismiss); 0 keeps them.
     var finishedDismissMinutes = 5
@@ -96,6 +108,10 @@ struct AgentNotchSettings: Codable, Equatable {
     var alertBattery = true
     var batteryLowPercent = 20
     static let batteryLowChoices = [10, 20, 30]
+    /// AirPods connect and low alerts (SHELF-10); the low mark shares the
+    /// battery's choices.
+    var alertAirPods = true
+    var airPodsLowPercent = 20
     var alertWeather = true
     /// Shows over full-screen apps (SHELF-08); off hides it in full-screen Spaces.
     var showInFullScreen = false
@@ -134,8 +150,8 @@ struct AgentNotchSettings: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case position, display, compactStyle, clickAction, filter, hideWhenEmpty, animate, showTotal, showUsage, showMedia
         case expandOnHover, shelfEnabled, shelfPages, shelfLeadingWidget, shelfTrailingWidget, shelfHoverDelay, shelfCollapseDelay
-        case shelfHaptics, musicStyle, musicSeeking, musicTint, musicHideWhenPaused, musicBanner, agentCard, finishedDismissMinutes, stripOrder, meetingMinutes
-        case alertAgents, alertBattery, batteryLowPercent, alertWeather, showInFullScreen, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
+        case shelfHaptics, musicStyle, musicSeeking, musicTint, musicHideWhenPaused, musicBanner, agentCard, filesKeep, filesRemoveAfterDrag, hudVolume, hudBrightness, hudReplaceSystem, finishedDismissMinutes, stripOrder, meetingMinutes
+        case alertAgents, alertBattery, batteryLowPercent, alertAirPods, airPodsLowPercent, alertWeather, showInFullScreen, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
         case showFinished, claude, codex, copilot, opencode, cursor, showBorder, compactWidth, compactHeight, expandedWidth, cornerRadius, opacity, fontSize
         case rowSpacing, maxSessions, hoverDelay, collapseDelay, animationDuration, horizontalOffset, verticalOffset, accent
     }
@@ -171,6 +187,11 @@ struct AgentNotchSettings: Codable, Equatable {
         musicHideWhenPaused = values.value(.musicHideWhenPaused, or: true)
         musicBanner = values.value(.musicBanner, or: true)
         agentCard = values.value(.agentCard, or: .latest)
+        filesKeep = values.value(.filesKeep, or: .day)
+        filesRemoveAfterDrag = values.value(.filesRemoveAfterDrag, or: false)
+        hudVolume = values.value(.hudVolume, or: true)
+        hudBrightness = values.value(.hudBrightness, or: true)
+        hudReplaceSystem = values.value(.hudReplaceSystem, or: true)
         finishedDismissMinutes = values.value(.finishedDismissMinutes, or: 5)
         let order = ((try? values.decodeIfPresent([String].self, forKey: .stripOrder)) ?? nil)?.compactMap(NotchShelfActivity.init(rawValue:))
         stripOrder = order ?? NotchShelfOrder.defaults
@@ -178,6 +199,8 @@ struct AgentNotchSettings: Codable, Equatable {
         alertAgents = values.value(.alertAgents, or: true)
         alertBattery = values.value(.alertBattery, or: true)
         batteryLowPercent = values.value(.batteryLowPercent, or: 20)
+        alertAirPods = values.value(.alertAirPods, or: true)
+        airPodsLowPercent = values.value(.airPodsLowPercent, or: 20)
         alertWeather = values.value(.alertWeather, or: true)
         showInFullScreen = values.value(.showInFullScreen, or: false)
         collapseAfterFocus = values.value(.collapseAfterFocus, or: true)
@@ -226,6 +249,7 @@ struct AgentNotchSettings: Codable, Equatable {
         stripOrder = NotchShelfOrder.normalized(stripOrder)
         if !NotchMeetingSoon.choices.contains(meetingMinutes) { meetingMinutes = 5 }
         if !Self.batteryLowChoices.contains(batteryLowPercent) { batteryLowPercent = 20 }
+        if !Self.batteryLowChoices.contains(airPodsLowPercent) { airPodsLowPercent = 20 }
         hoverDelay = bounded(hoverDelay, 0...1, 0.25)
         collapseDelay = bounded(collapseDelay, 0.1...2, 0.6)
         shelfHoverDelay = bounded(shelfHoverDelay, 0...1, 0.15)

@@ -7,6 +7,7 @@ struct AgentNotchSettingsView: View {
     /// Form's DisclosureGroup often fails to collapse; match Appearance's
     /// chevron row that toggles the editor under it.
     @State private var accentOpen = false
+    @ObservedObject private var accessibility = AccessibilityTrust.shared
 
     private var preferences: AgentNotchSettings { model.agentNotchSettings }
 
@@ -90,7 +91,7 @@ struct AgentNotchSettingsView: View {
                     SettingsFold("Shelf", symbol: "rectangle.topthird.inset.filled", summary: shelfSummary) {
                         cards("Widgets page, left", \.shelfLeadingWidget, NotchShelfSlot.allCases.map { ($0, $0.title) }, columns: 4) { NotchSlotPicture(slot: $0) }
                         cards("Widgets page, right", \.shelfTrailingWidget, NotchShelfSlot.allCases.map { ($0, $0.title) }, columns: 4) { NotchSlotPicture(slot: $0) }
-                        cards("Opens on", \.shelfPages.start, NotchShelfStartPage.allCases.map { ($0, $0.title) }, columns: 5) { NotchStartPagePicture(start: $0) }
+                        cards("Opens on", \.shelfPages.start, NotchShelfStartPage.allCases.map { ($0, $0.title) }, columns: 3) { NotchStartPagePicture(start: $0) }
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Tabs")
                             ForEach(Array(preferences.shelfPages.order.enumerated()), id: \.element) { index, page in
@@ -102,9 +103,40 @@ struct AgentNotchSettingsView: View {
                     }
                 }
                 if preferences.shelfEnabled {
+                    SettingsFold("Files", symbol: "tray", summary: filesSummary) {
+                        Picker("Keep files for", selection: binding(\.filesKeep)) {
+                            ForEach(NotchFilesKeep.allCases) { Text($0.title).tag($0) }
+                        }
+                        Toggle(isOn: binding(\.filesRemoveAfterDrag)) {
+                            Text("Remove a file after dragging it out")
+                            Text("Off keeps it on the shelf to drop again.").helperStyle()
+                        }
+                        Text("Drag files onto the notch to hold them. Only a link is kept: the files stay where they are.").helperStyle()
+                    }
+                }
+                if preferences.shelfEnabled {
+                    SettingsFold("Volume and brightness", symbol: "speaker.wave.2", summary: levelsSummary) {
+                        Toggle("Show volume changes", isOn: binding(\.hudVolume))
+                        Toggle(isOn: binding(\.hudBrightness)) {
+                            Text("Show brightness changes")
+                            Text("Built-in display only. Automatic brightness changes are skipped.").helperStyle()
+                        }
+                        Toggle(isOn: binding(\.hudReplaceSystem)) {
+                            Text("Replace the macOS indicator")
+                            Text(replaceHelp).helperStyle()
+                        }
+                        .disabled(model.restrictedMode || !(preferences.hudVolume || preferences.hudBrightness))
+                        if preferences.hudReplaceSystem, !accessibility.isTrusted, !model.restrictedMode {
+                            Button("Allow Accessibility…") {
+                                accessibility.requestAccess(forFeature: "replacing the macOS volume and brightness indicator")
+                            }
+                        }
+                    }
+                }
+                if preferences.shelfEnabled {
                     SettingsFold("Strip and alerts", symbol: "bell.badge", summary: alertsSummary) {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("When several are on, the first one owns the strip")
+                            Text("When several are on, the first two share the strip")
                             ForEach(Array(preferences.stripOrder.enumerated()), id: \.element) { index, activity in
                                 HStack(spacing: 8) {
                                     Text("\(index + 1).").monospacedDigit().foregroundStyle(.secondary).frame(width: 18, alignment: .trailing)
@@ -130,8 +162,14 @@ struct AgentNotchSettingsView: View {
                                 ForEach(AgentNotchSettings.batteryLowChoices, id: \.self) { Text("\($0)%").tag($0) }
                             }
                         }
+                        Toggle("AirPods connected or low", isOn: binding(\.alertAirPods))
+                        if preferences.alertAirPods {
+                            Picker("Low AirPods at", selection: binding(\.airPodsLowPercent)) {
+                                ForEach(AgentNotchSettings.batteryLowChoices, id: \.self) { Text("\($0)%").tag($0) }
+                            }
+                        }
                         Toggle("Rain or snow soon", isOn: binding(\.alertWeather))
-                        Text("Alerts take the strip's right side for 4 seconds. Meetings need Calendar access (Widgets > Calendar).").helperStyle()
+                        Text("Alerts take the strip's right side for 4 seconds. Meetings need Calendar access (Widgets > Calendar). AirPods and Beats levels come from System Information; no Bluetooth permission.").helperStyle()
                     }
                 }
                 if preferences.showMedia, preferences.shelfEnabled {
@@ -214,10 +252,26 @@ struct AgentNotchSettingsView: View {
         "\(preferences.shelfLeadingWidget.title) and \(preferences.shelfTrailingWidget.title), opens on \(preferences.shelfPages.start.title.lowercased())"
     }
 
+    private var filesSummary: String {
+        let kept = "Kept for \(preferences.filesKeep.title.replacingOccurrences(of: "1 ", with: "a "))"
+        return preferences.filesRemoveAfterDrag ? kept + ", removed after dragging out" : kept
+    }
+
+    private var levelsSummary: String {
+        let shown = settingsList([("Volume", preferences.hudVolume), ("brightness", preferences.hudBrightness)])
+        return preferences.hudReplaceSystem && !model.restrictedMode && shown != "Off" ? shown + ", replaces macOS" : shown
+    }
+
+    private var replaceHelp: String {
+        if model.restrictedMode { return "Off in restricted mode: it reads the volume and brightness keys." }
+        if preferences.hudReplaceSystem && !accessibility.isTrusted { return "Needs Accessibility to take the volume and brightness keys. Until then macOS shows its own." }
+        return "Portside takes the volume and brightness keys and sets the level itself, so only the notch shows it. Off, macOS shows its own indicator too."
+    }
+
     private var alertsSummary: String {
         let order = preferences.stripOrder.map { $0 == .meeting ? "meeting" : $0.title.lowercased() }.joined(separator: ", ")
         let alerts = settingsList([("agents", preferences.alertAgents), ("battery", preferences.alertBattery),
-                                   ("weather", preferences.alertWeather)], none: "no alerts")
+                                   ("AirPods", preferences.alertAirPods), ("weather", preferences.alertWeather)], none: "no alerts")
         return "\(order.prefix(1).uppercased() + order.dropFirst()); \(alerts)"
     }
 

@@ -23,28 +23,32 @@ struct SettingsFold<Content: View>: View {
 
     var body: some View {
         Group {
-            SettingsFoldRow(title, symbol: symbol, summary: summary, anchors: anchors, open: $open)
+            SettingsFoldRow(title, symbol: symbol, summary: summary, anchors: anchors, animated: true, open: $open)
             if open { content() }
         }
     }
 }
 
 /// A fold's header row alone, for a fold whose contents are whole sections
-/// (the caller shows them while `open`).
+/// (the caller shows them while `open`). Not animated by default: a grouped
+/// Form that inserts whole sections inside an animation leaves their rows
+/// and footers undrawn on macOS, so only the headers show.
 struct SettingsFoldRow: View {
     let title: String
     let symbol: String
     let summary: String
     /// Search anchors inside the fold that should open it too.
     var anchors: [String] = []
+    var animated = false
     @Binding var open: Bool
     @Environment(\.settingsHighlight) private var highlight
 
-    init(_ title: String, symbol: String, summary: String, anchors: [String] = [], open: Binding<Bool>) {
+    init(_ title: String, symbol: String, summary: String, anchors: [String] = [], animated: Bool = false, open: Binding<Bool>) {
         self.title = title
         self.symbol = symbol
         self.summary = summary
         self.anchors = anchors
+        self.animated = animated
         _open = open
     }
 
@@ -52,7 +56,7 @@ struct SettingsFoldRow: View {
 
     var body: some View {
         Button {
-            withAnimation(.easeOut(duration: 0.15)) { open.toggle() }
+            if animated { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } } else { open.toggle() }
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: symbol).frame(width: 20).foregroundStyle(.secondary)
@@ -67,6 +71,7 @@ struct SettingsFoldRow: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .rotationEffect(.degrees(open ? 90 : 0))
+                    .animation(.easeOut(duration: 0.15), value: open)
             }
             .contentShape(Rectangle())
         }

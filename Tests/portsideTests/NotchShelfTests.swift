@@ -27,13 +27,16 @@ final class NotchShelfTests: XCTestCase {
 
     // MARK: One hover rule (SHELF-04c)
 
-    private let musicStrip = NotchShelfStrip.layout(music: true, agents: true, agentAlert: false)
+    private let musicStrip = NotchShelfStrip.layout(music: true, agents: false, agentAlert: false)
     private func music(_ side: NotchShelfSide) -> NotchShelfActivity? { musicStrip.activity(side) }
 
     func testStripLayout() {
-        XCTAssertEqual(musicStrip, NotchShelfStrip(leading: .music, trailing: .music), "music takes both sides from agents")
-        XCTAssertEqual(NotchShelfStrip.layout(music: true, agents: true, agentAlert: true),
-                       NotchShelfStrip(leading: .music, trailing: .agents), "an agent alert borrows the right side")
+        XCTAssertEqual(musicStrip, NotchShelfStrip(leading: .music, trailing: .music), "music alone takes both sides")
+        XCTAssertFalse(musicStrip.isSplit)
+        let both = NotchShelfStrip.layout(music: true, agents: true, agentAlert: false)
+        XCTAssertEqual(both, NotchShelfStrip(leading: .music, trailing: .agents), "music and agents both show")
+        XCTAssertTrue(both.isSplit)
+        XCTAssertEqual(NotchShelfStrip.layout(music: true, agents: true, agentAlert: true), both)
         XCTAssertEqual(NotchShelfStrip.layout(music: true, agents: false, agentAlert: true), musicStrip, "no agents: no alert")
         XCTAssertEqual(NotchShelfStrip.layout(music: false, agents: true, agentAlert: false), NotchShelfStrip(leading: .agents, trailing: .agents))
         XCTAssertEqual(NotchShelfStrip.layout(music: false, agents: false, agentAlert: true), NotchShelfStrip())
@@ -119,7 +122,9 @@ final class NotchShelfTests: XCTestCase {
         m.fire(.bannerEnd)
         XCTAssertEqual(m.phase, .compact)
         XCTAssertEqual(m.showBanner(), .bannerEnd)
+        XCTAssertTrue(m.banner, "a fresh banner shows the song name only")
         XCTAssertNil(m.pointer(.body, activity: music), "the pointer on the banner keeps it")
+        XCTAssertFalse(m.banner, "hovered, it grows into the full card")
         m.fire(.bannerEnd)
         XCTAssertEqual(m.card, .music, "a stale banner timer is ignored")
         XCTAssertEqual(m.pointer(.outside), .collapseCard, "then it behaves like a hovered card")
@@ -208,7 +213,7 @@ final class NotchShelfTests: XCTestCase {
 
     func testPagesDefaultsAndOpening() {
         let pages = NotchShelfPages()
-        XCTAssertEqual(pages.order, [.widgets, .agents, .clipboard])
+        XCTAssertEqual(pages.order, [.widgets, .agents, .files, .clipboard])
         XCTAssertEqual(pages.start, .first)
         XCTAssertEqual(pages.opening(lastUsed: .clipboard, available: all), .widgets, "like Bartender: the first tab")
         var last = pages
@@ -222,28 +227,30 @@ final class NotchShelfTests: XCTestCase {
         pages.start = .clipboard
         XCTAssertEqual(pages.opening(lastUsed: .agents, available: all), .clipboard)
         let noClipboard: (NotchShelfPage) -> Bool = { $0 != .clipboard }
-        XCTAssertEqual(pages.visible(available: noClipboard), [.widgets, .agents])
+        XCTAssertEqual(pages.visible(available: noClipboard), [.widgets, .agents, .files])
         XCTAssertEqual(pages.opening(lastUsed: nil, available: noClipboard), .widgets, "start page unavailable: the first")
         pages.setOn(.widgets, false)
         XCTAssertEqual(pages.opening(lastUsed: nil, available: noClipboard), .agents)
         pages.setOn(.agents, false)
+        XCTAssertEqual(pages.opening(lastUsed: nil, available: noClipboard), .files)
+        pages.setOn(.files, false)
         XCTAssertNil(pages.opening(lastUsed: nil, available: noClipboard))
     }
 
     func testPagesMoveWithinBounds() {
         var pages = NotchShelfPages()
         pages.move(.clipboard, by: -1)
-        XCTAssertEqual(pages.order, [.widgets, .clipboard, .agents])
+        XCTAssertEqual(pages.order, [.widgets, .agents, .clipboard, .files])
         pages.move(.widgets, by: -1)
-        XCTAssertEqual(pages.order, [.widgets, .clipboard, .agents], "first stays first")
-        pages.move(.agents, by: 1)
-        XCTAssertEqual(pages.order, [.widgets, .clipboard, .agents])
+        XCTAssertEqual(pages.order, [.widgets, .agents, .clipboard, .files], "first stays first")
+        pages.move(.files, by: 1)
+        XCTAssertEqual(pages.order, [.widgets, .agents, .clipboard, .files], "last stays last")
     }
 
     func testPagesDecodeRepairsOrder() throws {
         let json = #"{"order":["agents","bogus","agents"],"hidden":["clipboard","nope"],"start":"weird"}"#
         let pages = try JSONDecoder().decode(NotchShelfPages.self, from: Data(json.utf8))
-        XCTAssertEqual(pages.order, [.agents, .widgets, .clipboard], "unknown and repeated dropped, missing appended")
+        XCTAssertEqual(pages.order, [.agents, .widgets, .files, .clipboard], "unknown and repeated dropped, missing appended")
         XCTAssertFalse(pages.isOn(.clipboard))
         XCTAssertEqual(pages.start, .first)
         let back = try JSONDecoder().decode(NotchShelfPages.self, from: JSONEncoder().encode(pages))
@@ -349,7 +356,9 @@ final class NotchShelfTests: XCTestCase {
     // MARK: Strip priority and alerts (SHELF-07)
 
     func testStripFollowsTheOrderAndAlertsBorrowTheRight() {
-        XCTAssertEqual(NotchShelfStrip.layout(active: [.meeting, .music], alert: nil), NotchShelfStrip(leading: .meeting, trailing: .meeting))
+        XCTAssertEqual(NotchShelfStrip.layout(active: [.meeting, .music], alert: nil), NotchShelfStrip(leading: .meeting, trailing: .music))
+        XCTAssertEqual(NotchShelfStrip.layout(active: [.agents, .meeting, .music], alert: nil), NotchShelfStrip(leading: .agents, trailing: .meeting),
+                       "the first two share the strip")
         XCTAssertEqual(NotchShelfStrip.layout(active: [.music], alert: .battery), NotchShelfStrip(leading: .music, trailing: .battery))
         XCTAssertEqual(NotchShelfStrip.layout(active: [], alert: .weather), NotchShelfStrip(leading: nil, trailing: .weather))
         XCTAssertEqual(NotchShelfOrder.normalized([.agents, .battery, .agents]), [.agents, .meeting, .music],
@@ -414,5 +423,226 @@ final class NotchShelfTests: XCTestCase {
         XCTAssertEqual(focused.display, .focused)
         XCTAssertTrue(focused.showInFullScreen)
         XCTAssertEqual(AgentNotchDisplay.focused.title, "Display you're using")
+    }
+
+    // MARK: Files page (SHELF-06b)
+
+    private func file(_ name: String) -> URL { URL(fileURLWithPath: "/tmp/shelf/\(name)") }
+
+    func testFileTrayAddsNewestFirstDedupesAndCaps() {
+        var tray = NotchFileTray()
+        let start = Date(timeIntervalSince1970: 1000)
+        XCTAssertFalse(tray.add([URL(string: "https://example.com")!], now: start), "web links are not files")
+        XCTAssertTrue(tray.add([file("a"), file("b"), file("a")], now: start))
+        XCTAssertEqual(tray.items.map(\.name), ["a", "b"], "a repeat in one drop counts once")
+        tray.add([file("b")], now: start.addingTimeInterval(10))
+        XCTAssertEqual(tray.items.map(\.name), ["b", "a"], "a file already here moves to the front")
+        XCTAssertEqual(tray.items.first?.added, start.addingTimeInterval(10))
+        tray.add((1...6).map { file("n\($0)") }, now: start.addingTimeInterval(20))
+        XCTAssertEqual(tray.items.count, NotchFileTray.limit)
+        XCTAssertEqual(tray.items.map(\.name), ["n1", "n2", "n3", "n4", "n5", "n6"], "past six the oldest leave")
+        let id = tray.items[2].id
+        tray.remove(id)
+        XCTAssertFalse(tray.items.contains { $0.id == id })
+        tray.removeAll()
+        XCTAssertTrue(tray.items.isEmpty)
+    }
+
+    func testFileTrayPrunesExpiredAndMissingFiles() throws {
+        var tray = NotchFileTray()
+        let start = Date(timeIntervalSince1970: 1000)
+        tray.add([file("old")], now: start)
+        tray.add([file("gone")], now: start.addingTimeInterval(1800))
+        tray.add([file("new")], now: start.addingTimeInterval(3000))
+        let keep = NotchFilesKeep.hour.seconds
+        XCTAssertEqual(tray.nextExpiry(keep: keep), start.addingTimeInterval(3600), "the oldest expires first")
+        XCTAssertFalse(tray.prune(now: start.addingTimeInterval(3599), keep: keep, exists: { _ in true }))
+        XCTAssertTrue(tray.prune(now: start.addingTimeInterval(3600), keep: keep, exists: { !$0.hasSuffix("gone") }))
+        XCTAssertEqual(tray.items.map(\.name), ["new"])
+        XCTAssertNil(NotchFileTray().nextExpiry(keep: keep))
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        XCTAssertEqual(try decoder.decode(NotchFileTray.self, from: encoder.encode(tray)), tray)
+    }
+
+    func testFilesSettingsDefaultsAndRoundTrip() throws {
+        let old = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"shelfEnabled":true}"#.utf8))
+        XCTAssertEqual(old.filesKeep, .day, "Bartender's default")
+        XCTAssertFalse(old.filesRemoveAfterDrag)
+        var settings = AgentNotchSettings()
+        settings.filesKeep = .week
+        settings.filesRemoveAfterDrag = true
+        let back = try JSONDecoder().decode(AgentNotchSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(back.filesKeep, .week)
+        XCTAssertTrue(back.filesRemoveAfterDrag)
+        let bad = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"filesKeep":"forever"}"#.utf8))
+        XCTAssertEqual(bad.filesKeep, .day)
+        XCTAssertEqual(NotchShelfStartPage.files.page, .files)
+    }
+
+    // MARK: Volume and brightness HUD (SHELF-09)
+
+    func testBrightnessFilterShowsKeyStepsAndSkipsAmbientDrift() {
+        let t0 = Date(timeIntervalSince1970: 1000)
+        var filter = NotchBrightnessFilter(last: 0.5)
+        XCTAssertTrue(filter.accept(0.5625, at: t0, showing: false), "one key step (1/16) shows")
+        var ramp = NotchBrightnessFilter(last: 0.5)
+        XCTAssertFalse(ramp.accept(0.52, at: t0, showing: false))
+        XCTAssertFalse(ramp.accept(0.535, at: t0.addingTimeInterval(0.1), showing: false))
+        XCTAssertTrue(ramp.accept(0.55, at: t0.addingTimeInterval(0.2), showing: false), "a quick ramp to a key step shows")
+        var ambient = NotchBrightnessFilter(last: 0.5)
+        for step in 1...10 {
+            XCTAssertFalse(ambient.accept(0.5 + Float(step) * 0.01, at: t0.addingTimeInterval(Double(step) * 0.6), showing: false),
+                           "slow drift never shows")
+        }
+        var shown = NotchBrightnessFilter(last: 0.5)
+        XCTAssertTrue(shown.accept(0.501, at: t0, showing: true), "while up, every change updates the HUD")
+    }
+
+    func testHUDSymbolsAndLabels() {
+        XCTAssertEqual(NotchHUD(kind: .volume, level: 0.5, muted: true).symbol, "speaker.slash.fill")
+        XCTAssertEqual(NotchHUD(kind: .volume, level: 0).symbol, "speaker.slash.fill")
+        XCTAssertEqual(NotchHUD(kind: .volume, level: 0.2).symbol, "speaker.wave.3.fill", "the waves fill with the level")
+        XCTAssertEqual(NotchHUD(kind: .volume, level: 0.9).symbol, "speaker.wave.3.fill")
+        XCTAssertEqual(NotchHUD(kind: .brightness, level: 0.8).symbol, "sun.max.fill")
+        XCTAssertEqual(NotchHUD(kind: .volume, level: 0.25).label, "Volume 25%")
+        XCTAssertEqual(NotchHUD(kind: .volume, level: 0.25, muted: true).label, "Volume muted")
+        XCTAssertEqual(NotchHUD(kind: .brightness, level: 0.566).label, "Brightness 57%")
+    }
+
+    func testAirPodsProfileReadsConnectedHeadphonesOnly() {
+        let json = #"""
+        {"SPBluetoothDataType":[{
+          "device_connected":[
+            {"James's AirPods Pro":{"device_address":"2C:32:6A:BF:DB:DA","device_vendorID":"0x004C","device_productID":"0x2014",
+              "device_minorType":"Headphones","device_batteryLevelLeft":"80%","device_batteryLevelRight":"15%","device_batteryLevelCase":"0%"}},
+            {"AirPods Max":{"device_address":"AA","device_vendorID":"0x004C","device_productID":"0x200A",
+              "device_minorType":"Headphones","device_batteryLevelMain":"55%"}},
+            {"Magic Keyboard":{"device_address":"BB","device_vendorID":"0x004C","device_minorType":"Keyboard","device_batteryLevelMain":"90%"}},
+            {"JBL Charge 5":{"device_address":"CC","device_vendorID":"0x0ECB","device_minorType":"Headphones"}}
+          ],
+          "device_not_connected":[
+            {"AirPods3":{"device_address":"DD","device_vendorID":"0x004C","device_productID":"0x2013","device_minorType":"Headphones"}}
+          ]}]}
+        """#
+        let pairs = AirPodsProfile.parse(Data(json.utf8))
+        XCTAssertEqual(pairs.map(\.name), ["AirPods Max", "James's AirPods Pro"], "connected Apple headphones only, by name")
+        let pro = pairs[1]
+        XCTAssertEqual(pro.left, 80)
+        XCTAssertEqual(pro.right, 15)
+        XCTAssertNil(pro.case, "0% means not read yet")
+        XCTAssertEqual(pro.lowest, 15)
+        XCTAssertEqual(pro.symbol, "airpodspro")
+        XCTAssertEqual(pro.detail, "Left 80%, Right 15%")
+        XCTAssertEqual(pairs[0].lowest, 55, "headphones with one battery")
+        XCTAssertEqual(pairs[0].symbol, "airpodsmax")
+        XCTAssertEqual(pairs[0].parts, [NotchLevelPart(label: "Battery", percent: 55)])
+        XCTAssertEqual(AirPodsProfile.parse(Data("not json".utf8)), [])
+        XCTAssertEqual(AirPodsReading.symbol(nil), "headphones")
+    }
+
+    func testAirPodsAlerts() {
+        let bare = AirPodsReading(address: "A", name: "Pods", productID: 0x2014)
+        var full = bare
+        full.left = 40
+        full.right = 30
+        XCTAssertEqual(AirPodsAlert.detect(previous: [], current: [bare], low: 20), [.connected(bare)], "a new pair")
+        XCTAssertEqual(AirPodsAlert.detect(previous: [bare], current: [full], low: 20), [.connected(full)], "again once levels arrive")
+        XCTAssertEqual(AirPodsAlert.detect(previous: [full], current: [full], low: 20), [])
+        var low = full
+        low.right = 20
+        XCTAssertEqual(AirPodsAlert.detect(previous: [full], current: [low], low: 20), [.low(low)], "the lowest bud reaches the mark")
+        var lower = low
+        lower.right = 10
+        XCTAssertEqual(AirPodsAlert.detect(previous: [low], current: [lower], low: 20), [], "once per crossing")
+        XCTAssertEqual(AirPodsAlert.detect(previous: [full], current: [], low: 20), [], "disconnect is quiet")
+    }
+
+    func testAirPodsSettingsDefaultsAndRoundTrip() throws {
+        let old = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"shelfEnabled":true}"#.utf8))
+        XCTAssertTrue(old.alertAirPods)
+        XCTAssertEqual(old.airPodsLowPercent, 20)
+        var settings = AgentNotchSettings()
+        settings.alertAirPods = false
+        settings.airPodsLowPercent = 30
+        let back = try JSONDecoder().decode(AgentNotchSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertFalse(back.alertAirPods)
+        XCTAssertEqual(back.airPodsLowPercent, 30)
+        let bad = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"airPodsLowPercent":7}"#.utf8))
+        XCTAssertEqual(bad.airPodsLowPercent, 20, "off the choices falls back")
+    }
+
+    func testHUDSettingsDefaultsAndRoundTrip() throws {
+        let old = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"shelfEnabled":true}"#.utf8))
+        XCTAssertTrue(old.hudVolume)
+        XCTAssertTrue(old.hudBrightness)
+        var settings = AgentNotchSettings()
+        settings.hudVolume = false
+        settings.hudBrightness = false
+        let back = try JSONDecoder().decode(AgentNotchSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertFalse(back.hudVolume)
+        XCTAssertFalse(back.hudBrightness)
+        XCTAssertTrue(old.hudReplaceSystem, "on by default, like Bartender")
+        settings.hudReplaceSystem = false
+        XCTAssertFalse(try JSONDecoder().decode(AgentNotchSettings.self, from: JSONEncoder().encode(settings)).hudReplaceSystem)
+    }
+
+    func testLevelKeysDecodeTheMediaRow() {
+        XCTAssertEqual(SystemLevelKey.decode(data1: 0 << 16 | 0x0A00)?.key, .volumeUp)
+        XCTAssertEqual(SystemLevelKey.decode(data1: 1 << 16 | 0x0A00)?.key, .volumeDown)
+        XCTAssertEqual(SystemLevelKey.decode(data1: 2 << 16 | 0x0A01)?.key, .brightnessUp, "a repeat is still a press")
+        XCTAssertEqual(SystemLevelKey.decode(data1: 3 << 16 | 0x0A00)?.key, .brightnessDown)
+        XCTAssertEqual(SystemLevelKey.decode(data1: 7 << 16 | 0x0A00)?.key, .mute)
+        XCTAssertEqual(SystemLevelKey.decode(data1: 7 << 16 | 0x0B00)?.down, false)
+        XCTAssertNil(SystemLevelKey.decode(data1: 16 << 16 | 0x0A00), "play/pause is left to macOS")
+        XCTAssertNil(SystemLevelKey.decode(data1: 0 << 16 | 0x0100), "not a key state")
+    }
+
+    func testLevelStepsLikeMacOS() {
+        XCTAssertEqual(SystemLevelKey.step(0.5, up: true, fine: false), 0.5625, accuracy: 0.0001)
+        XCTAssertEqual(SystemLevelKey.step(0.5, up: false, fine: true), 0.484375, accuracy: 0.0001)
+        XCTAssertEqual(SystemLevelKey.step(0.53, up: true, fine: false), 0.5625, accuracy: 0.0001, "off the grid snaps up")
+        XCTAssertEqual(SystemLevelKey.step(0.53, up: false, fine: false), 0.5, accuracy: 0.0001, "and down")
+        XCTAssertEqual(SystemLevelKey.step(1, up: true, fine: false), 1)
+        XCTAssertEqual(SystemLevelKey.step(0.02, up: false, fine: false), 0)
+        XCTAssertEqual(NotchHUD(kind: .volume, level: 0.5625).percent, 56)
+        XCTAssertEqual(NotchHUD.stripWidth(notch: 185, flare: 20), 185 + 2 * NotchHUD.sideWidth + 20, "both sides fit beside the notch")
+        XCTAssertEqual(NotchHUD.stripWidth(notch: 0, flare: 0), 3 * NotchHUD.sideWidth, "without a notch each side is a third")
+    }
+
+    func testFileShelfStoreSavesAndReloads() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("notch-files-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let real = dir.appendingPathComponent("note.txt")
+        try Data("hi".utf8).write(to: real)
+        let url = dir.appendingPathComponent("tray.json")
+        let shelf = NotchFileShelf(url: url)
+        shelf.add([real, dir.appendingPathComponent("missing.txt")])
+        XCTAssertEqual(shelf.items.count, 2)
+        let reloaded = NotchFileShelf(url: url)
+        XCTAssertEqual(reloaded.items.map(\.name), ["note.txt"], "a missing file is dropped on load")
+    }
+
+    // MARK: Session merge
+
+    func testT3RowDropsWhenItsHookSessionRunsInT3() {
+        func session(_ id: String, _ provider: String, project: String?, host: String?) -> AgentSession {
+            AgentSession(id: id, provider: AgentProvider.named(provider), pid: 0, state: .running, needsAttention: false, ended: false,
+                         updated: Date(), project: project, host: host)
+        }
+        let hook = session("123", "claude", project: "portside", host: "T3 Code (Beta)")
+        let terminal = session("456", "codex", project: "site", host: "Terminal")
+        let merged = AgentStatusWidget.merged(hooks: [hook, terminal], discovered: [
+            session("t3:a", "claudeAgent", project: "portside", host: "T3 Code"),
+            session("t3:b", "codex", project: "site", host: "T3 Code"),
+            session("t3:c", "claudeAgent", project: "other", host: "T3 Code"),
+            session("opencode:d", "opencode", project: "portside", host: "T3 Code"),
+        ])
+        XCTAssertEqual(merged.map(\.id), ["123", "456", "t3:b", "t3:c", "opencode:d"],
+                       "the T3 row of a hook session in T3 goes; a Terminal hook session or another project keeps its row")
     }
 }
