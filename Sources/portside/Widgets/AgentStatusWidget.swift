@@ -20,6 +20,9 @@ final class AgentStatusWidget: DockWidget {
 
     @Published private(set) var sessions: [AgentSession] = []
 
+    /// Sample sessions for the Top Notch Settings preview; never started.
+    func preview(_ sessions: [AgentSession]) { self.sessions = sessions }
+
     private var watcher: DispatchSourceFileSystemObject?
     private let logger = Logger(subsystem: "com.james.portside", category: "Widgets")
 

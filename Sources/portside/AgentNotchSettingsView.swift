@@ -7,259 +7,275 @@ struct AgentNotchSettingsView: View {
     /// Form's DisclosureGroup often fails to collapse; match Appearance's
     /// chevron row that toggles the editor under it.
     @State private var accentOpen = false
+    /// The one open section; the preview shows the part it changes.
+    @State private var openSection: String?
+    private var scene: NotchPreviewScene { openSection.flatMap { Self.scenes[$0] } ?? .strip }
+    @State private var confirmReset = false
     @ObservedObject private var accessibility = AccessibilityTrust.shared
     @ObservedObject private var hotkeyStatus = NotchShelfHotkeyStatus.shared
 
     private var preferences: AgentNotchSettings { model.agentNotchSettings }
 
     var body: some View {
-        Form {
-            Section {
-                Toggle(isOn: Binding(get: { model.showAgentNotch }, set: { model.setShowAgentNotch($0) })) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Top Notch")
-                        Text("A black island around the notch that shows your agents and music.").helperStyle()
-                    }
-                }
-                .settingsAnchor("Top Notch")
-                if model.showAgentNotch { AgentNotchSettingsPreview(preferences: preferences) }
+        // The preview stays in view while the sections scroll under it.
+        VStack(spacing: 0) {
+            if model.showAgentNotch {
+                NotchSettingsPreview(preferences: preferences, scene: scene)
+                    .padding(.horizontal, 20).padding(.top, 14)
+                Divider()
             }
-            if model.showAgentNotch { details }
+            Form {
+                Section {
+                    Toggle(isOn: Binding(get: { model.showAgentNotch }, set: { model.setShowAgentNotch($0) })) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Top Notch")
+                            Text("Your music, agents and alerts around the notch. Hover the notch to open the shelf.").helperStyle()
+                        }
+                    }
+                    .settingsAnchor("Top Notch")
+                }
+                if model.showAgentNotch { details }
+            }
         }
     }
 
-    /// Everything past the on switch, shown while Top Notch is on.
-    @ViewBuilder
-    private var details: some View {
-            Section {
-                cards("Position", \.position, AgentNotchPosition.allCases.map { ($0, $0.title) }, columns: 4) { NotchPositionPicture(position: $0) }
-                Toggle(isOn: binding(\.shelfEnabled)) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Notch Shelf")
-                        Text("Hover music or agents to see a card. Hover the notch itself to open the shelf.").helperStyle()
-                    }
-                }
-                .settingsAnchor("Notch Shelf")
-                Toggle(isOn: binding(\.showMedia)) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Show music")
-                        Text(preferences.shelfEnabled ? "Album art and the playing animation while something plays."
-                             : "A playing animation while something plays.").helperStyle()
-                    }
-                }
-            }
-            Section {
-                SettingsFold("Appearance", symbol: "paintbrush", summary: appearanceSummary) {
-                    HStack {
-                        Text("Quick styles")
-                        Spacer()
-                        Button("Minimal") { preset("minimal") }
-                        Button("Balanced") { preset("balanced") }
-                        Button("Detailed") { preset("detailed") }
-                    }
-                    if !preferences.shelfEnabled {
-                        cards("Style", \.compactStyle, AgentNotchCompactStyle.allCases.map { ($0, $0.title) }, columns: 3) { NotchCompactStylePicture(style: $0) }
-                    }
-                    slider("Width", \.compactWidth, 140...280, unit: "pt")
-                    slider("Height", \.compactHeight, 24...44, unit: "pt")
-                    slider("Corner radius", \.cornerRadius, 8...32, unit: "pt")
-                    slider("Background opacity", \.opacity, 0.75...1, percent: true)
-                    Toggle("Show border", isOn: binding(\.showBorder))
-                    Toggle("Use provider colors", isOn: binding(\.providerColors))
-                    Button {
-                        accentOpen.toggle()
-                    } label: {
-                        HStack(spacing: 10) {
-                            Text("Accent color")
-                            Spacer()
-                            ColorChip(color: preferences.accent.color, size: 18)
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                                .rotationEffect(.degrees(accentOpen ? 90 : 0))
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(accentOpen ? "Hide accent color" : "Show accent color")
-                    if accentOpen {
-                        PaletteColorEditor(color: preferences.accent, showsOpacity: false) { color, _ in
-                            model.updateAgentNotch { $0.accent = color }
-                        }
-                    }
-                }
-                if preferences.shelfEnabled {
-                    SettingsFold("Shelf", symbol: "rectangle.topthird.inset.filled", summary: shelfSummary) {
-                        cards("Widgets page, left", \.shelfLeadingWidget, NotchShelfSlot.allCases.map { ($0, $0.title) }, columns: 4) { NotchSlotPicture(slot: $0) }
-                        cards("Widgets page, right", \.shelfTrailingWidget, NotchShelfSlot.allCases.map { ($0, $0.title) }, columns: 4) { NotchSlotPicture(slot: $0) }
-                        cards("Opens on", \.shelfPages.start, NotchShelfStartPage.allCases.map { ($0, $0.title) }, columns: 3) { NotchStartPagePicture(start: $0) }
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Tabs")
-                            ForEach(Array(preferences.shelfPages.order.enumerated()), id: \.element) { index, page in
-                                shelfPageRow(page, index: index)
-                            }
-                        }
-                        cards("Agent card", \.agentCard, NotchAgentCard.allCases.map { ($0, $0.title) }, columns: 2) { NotchAgentCardPicture(card: $0) }
-                        Toggle("Haptic feedback on hover", isOn: binding(\.shelfHaptics))
-                    }
-                }
-                if preferences.shelfEnabled {
-                    SettingsFold("Files", symbol: "tray", summary: filesSummary) {
-                        Picker("Keep files for", selection: binding(\.filesKeep)) {
-                            ForEach(NotchFilesKeep.allCases) { Text($0.title).tag($0) }
-                        }
-                        Toggle(isOn: binding(\.filesRemoveAfterDrag)) {
-                            Text("Remove a file after dragging it out")
-                            Text("Off keeps it on the shelf to drop again.").helperStyle()
-                        }
-                        Text("Drag files onto the notch to hold them. Only a link is kept: the files stay where they are.").helperStyle()
-                    }
-                }
-                if preferences.shelfEnabled {
-                    SettingsFold("Volume and brightness", symbol: "speaker.wave.2", summary: levelsSummary) {
-                        Toggle("Show volume changes", isOn: binding(\.hudVolume))
-                        Toggle(isOn: binding(\.hudBrightness)) {
-                            Text("Show brightness changes")
-                            Text("Built-in display only. Automatic brightness changes are skipped.").helperStyle()
-                        }
-                        Toggle(isOn: binding(\.hudReplaceSystem)) {
-                            Text("Replace the macOS indicator")
-                            Text(replaceHelp).helperStyle()
-                        }
-                        .disabled(model.restrictedMode || !(preferences.hudVolume || preferences.hudBrightness))
-                        if preferences.hudReplaceSystem, !accessibility.isTrusted, !model.restrictedMode {
-                            Button("Allow Accessibility…") {
-                                accessibility.requestAccess(forFeature: "replacing the macOS volume and brightness indicator")
-                            }
-                        }
-                    }
-                }
-                if preferences.shelfEnabled {
-                    SettingsFold("Hotkeys", symbol: "command", summary: hotkeysSummary) {
-                        shelfHotkey("Open or close the shelf", \.shelfToggleHotkey)
-                        shelfHotkey("Open on Files", \.shelfFilesHotkey)
-                        shelfHotkey("Search clipboard", \.shelfClipboardHotkey)
-                        Picker("Opened by a hotkey, stays for", selection: binding(\.hotkeyOpenSeconds)) {
-                            ForEach(AgentNotchSettings.hotkeyOpenChoices, id: \.self) { seconds in
-                                Text(seconds < 60 ? "\(seconds) seconds" : seconds == 60 ? "1 minute" : "\(seconds / 60) minutes").tag(seconds)
-                            }
-                        }
-                        Text("None are set. A shelf a hotkey opens stays when the pointer leaves, until this time runs out or you press Escape or click outside. Search clipboard puts up a search field on the Clipboard page: type, then Return copies the first match.").helperStyle()
-                    }
-                }
-                if preferences.shelfEnabled {
-                    SettingsFold("Strip and alerts", symbol: "bell.badge", summary: alertsSummary) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("When several are on, the first two share the strip")
-                            ForEach(Array(preferences.stripOrder.enumerated()), id: \.element) { index, activity in
-                                HStack(spacing: 8) {
-                                    Text("\(index + 1).").monospacedDigit().foregroundStyle(.secondary).frame(width: 18, alignment: .trailing)
-                                    Text(activity.title)
-                                    Spacer()
-                                    Button { model.updateAgentNotch { $0.stripOrder.swapAt(index, index - 1) } } label: { Image(systemName: "chevron.up") }
-                                        .buttonStyle(.borderless).disabled(index == 0).accessibilityLabel("Move \(activity.title) up")
-                                    Button { model.updateAgentNotch { $0.stripOrder.swapAt(index, index + 1) } } label: { Image(systemName: "chevron.down") }
-                                        .buttonStyle(.borderless).disabled(index == preferences.stripOrder.count - 1)
-                                        .accessibilityLabel("Move \(activity.title) down")
-                                }
-                            }
-                        }
-                        Picker("Meeting soon", selection: binding(\.meetingMinutes)) {
-                            ForEach(NotchMeetingSoon.choices, id: \.self) { minutes in
-                                Text(minutes == 0 ? "Off" : "\(minutes) min before").tag(minutes)
-                            }
-                        }
-                        Toggle("Agent finished or needs you", isOn: binding(\.alertAgents))
-                        Toggle("Battery low or charging", isOn: binding(\.alertBattery))
-                        if preferences.alertBattery {
-                            Picker("Low battery at", selection: binding(\.batteryLowPercent)) {
-                                ForEach(AgentNotchSettings.batteryLowChoices, id: \.self) { Text("\($0)%").tag($0) }
-                            }
-                        }
-                        Toggle("AirPods connected or low", isOn: binding(\.alertAirPods))
-                        if preferences.alertAirPods {
-                            Picker("Low AirPods at", selection: binding(\.airPodsLowPercent)) {
-                                ForEach(AgentNotchSettings.batteryLowChoices, id: \.self) { Text("\($0)%").tag($0) }
-                            }
-                        }
-                        Toggle("Rain or snow soon", isOn: binding(\.alertWeather))
-                        Text("Alerts take the strip's right side for 4 seconds. Meetings need Calendar access (Widgets > Calendar). AirPods and Beats levels come from System Information; no Bluetooth permission.").helperStyle()
-                    }
-                }
-                if preferences.showMedia, preferences.shelfEnabled {
-                    SettingsFold("Music", symbol: "music.note", summary: musicSummary) {
-                        cards("Style", \.musicStyle, NotchMusicStyle.allCases.map { ($0, $0.title) }, columns: 2) { NotchMusicStylePicture(style: $0) }
-                        Toggle("Drag the progress bar to seek", isOn: binding(\.musicSeeking))
-                        Toggle("Tint with album colors", isOn: binding(\.musicTint))
-                        Toggle("Show the song when it changes", isOn: binding(\.musicBanner))
-                        Toggle("Hide when paused", isOn: binding(\.musicHideWhenPaused))
-                    }
-                }
-                SettingsFold("Agents", symbol: "sparkles", summary: agentsSummary) {
-                    Toggle("Claude Code", isOn: binding(\.claude))
-                    Toggle("Codex", isOn: binding(\.codex))
-                    Toggle("OpenCode", isOn: binding(\.opencode))
-                    Toggle("Cursor (in T3)", isOn: binding(\.cursor))
-                    Toggle("Copilot", isOn: binding(\.copilot))
-                    Picker("Show", selection: binding(\.filter)) {
-                        ForEach(AgentNotchFilter.allCases) { Text($0.title).tag($0) }
-                    }
-                    Toggle("Include finished sessions", isOn: binding(\.showFinished))
-                    if preferences.showFinished {
-                        Picker("Hide finished after", selection: binding(\.finishedDismissMinutes)) {
-                            ForEach(AgentNotchSettings.finishedDismissChoices, id: \.self) { minutes in
-                                Text(minutes == 0 ? "Never" : minutes == 60 ? "1 hour" : "\(minutes) min").tag(minutes)
-                            }
-                        }
-                    }
-                    Stepper("Sessions in the list: \(preferences.maxSessions)", value: binding(\.maxSessions), in: 2...10)
-                    Toggle("Show project names", isOn: binding(\.showProject))
-                    Toggle("Show provider names", isOn: binding(\.showProviderNames))
-                    Toggle("Show terminal or editor", isOn: binding(\.showHost))
-                    Toggle("Show time since activity", isOn: binding(\.showUpdated))
-                    Toggle("Show plan usage", isOn: binding(\.showUsage))
-                    slider("List width", \.expandedWidth, 340...560, unit: "pt")
-                    slider("Text size", \.fontSize, 10...16, unit: "pt")
-                    slider("Card spacing", \.rowSpacing, 4...16, unit: "pt")
-                    Text("Claude Code and Codex need Agent Hooks in Settings > Widgets; T3 Code and OpenCode are read directly.").helperStyle()
-                }
-                SettingsFold("Behavior", symbol: "hand.point.up.left", summary: behaviorSummary) {
-                    if preferences.shelfEnabled {
-                        slider("Hover delay", \.shelfHoverDelay, 0...1, unit: "ms", milliseconds: true)
-                        slider("Collapse delay", \.shelfCollapseDelay, 0.1...2, unit: "ms", milliseconds: true)
-                    } else {
-                        Toggle("Expand on hover", isOn: binding(\.expandOnHover))
-                        if preferences.expandOnHover { slider("Hover delay", \.hoverDelay, 0...1, unit: "ms", milliseconds: true) }
-                        slider("Collapse delay", \.collapseDelay, 0.1...2, unit: "ms", milliseconds: true)
-                        cards("Click action", \.clickAction, AgentNotchClickAction.allCases.map { ($0, $0.title) }, columns: 2) { NotchClickActionPicture(action: $0) }
-                    }
-                    Toggle("Collapse after opening a session", isOn: binding(\.collapseAfterFocus))
-                    Toggle("Hide when nothing is running", isOn: binding(\.hideWhenEmpty))
-                    Toggle("Animate", isOn: binding(\.animate))
-                    if preferences.animate { slider("Animation duration", \.animationDuration, 0.1...0.5, unit: "ms", milliseconds: true) }
-                }
-                SettingsFold("Displays", symbol: "display.2", summary: preferences.display.title + (preferences.shelfEnabled && preferences.showInFullScreen ? ", also in full screen" : "")) {
-                    cards("Show on", \.display, AgentNotchDisplay.allCases.map { ($0, $0.title) }, columns: 4) { NotchDisplayPicture(display: $0) }
-                    if preferences.shelfEnabled {
-                        Toggle(isOn: binding(\.showInFullScreen)) {
-                            Text("Show in full screen")
-                            Text("Off hides the shelf while an app is full screen.").helperStyle()
-                        }
-                    }
-                    if preferences.position != .attached {
-                        slider("Horizontal offset", \.horizontalOffset, -300...300, unit: "pt")
-                        slider("Distance from top", \.verticalOffset, 0...80, unit: "pt")
-                    }
-                }
-            }
-            Section {
-                Button("Reset Top Notch Settings") { model.updateAgentNotch { $0 = AgentNotchSettings() } }
-            }
+    /// What each section's preview shows: the part of the notch it changes.
+    private static let scenes: [String: NotchPreviewScene] = [
+        "Strip": .strip,
+        "Shelf": .page(.widgets),
+        "Alerts": .card(.airPods),
+        "Music": .card(.music),
+        "Agents": .page(.agents),
+        "Files": .page(.files),
+        "Hotkeys": .strip,
+        "Volume and brightness": .volume,
+        "Look and feel": .card(.music),
+        "Displays": .strip,
+    ]
+
+    /// One section open at a time; opening one closes the other.
+    private func folded(_ title: String) -> Binding<Bool> {
+        Binding(get: { openSection == title }, set: { open in
+            if open { openSection = title } else if openSection == title { openSection = nil }
+        })
     }
 
-    private var appearanceSummary: String {
-        let size = "\(Int(preferences.compactWidth)) × \(Int(preferences.compactHeight)) pt"
-        return preferences.shelfEnabled ? size : "\(preferences.compactStyle.title), \(size)"
+    /// Everything past the on switch, shown while Top Notch is on (SHELF-12):
+    /// one section per part of the notch, nothing hidden by another switch
+    /// except a setting's own details.
+    @ViewBuilder
+    private var details: some View {
+        Section {
+            SettingsFold("Strip", symbol: "capsule", summary: stripSummary, isOpen: folded("Strip")) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Order: the first two that are running share the strip, left and right")
+                    ForEach(Array(preferences.stripOrder.enumerated()), id: \.element) { index, activity in
+                        HStack(spacing: 8) {
+                            Text("\(index + 1).").monospacedDigit().foregroundStyle(.secondary).frame(width: 18, alignment: .trailing)
+                            Text(activity.title)
+                            Spacer()
+                            Button { model.updateAgentNotch { $0.stripOrder.swapAt(index, index - 1) } } label: { Image(systemName: "chevron.up") }
+                                .buttonStyle(.borderless).disabled(index == 0).accessibilityLabel("Move \(activity.title) up")
+                            Button { model.updateAgentNotch { $0.stripOrder.swapAt(index, index + 1) } } label: { Image(systemName: "chevron.down") }
+                                .buttonStyle(.borderless).disabled(index == preferences.stripOrder.count - 1)
+                                .accessibilityLabel("Move \(activity.title) down")
+                        }
+                    }
+                }
+                slider("Width", \.compactWidth, AgentNotchSettings.compactWidthRange, unit: "pt")
+            }
+            SettingsFold("Shelf", symbol: "rectangle.topthird.inset.filled", summary: shelfSummary, isOpen: folded("Shelf")) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Tabs")
+                    ForEach(Array(preferences.shelfPages.order.enumerated()), id: \.element) { index, page in
+                        shelfPageRow(page, index: index)
+                    }
+                }
+                Picker("Opens on", selection: binding(\.shelfPages.start)) {
+                    ForEach(NotchShelfStartPage.allCases) { Text($0.title).tag($0) }
+                }
+                Picker("Widgets page, left", selection: binding(\.shelfLeadingWidget)) {
+                    ForEach(NotchShelfSlot.allCases) { Text($0.title).tag($0) }
+                }
+                Picker("Widgets page, right", selection: binding(\.shelfTrailingWidget)) {
+                    ForEach(NotchShelfSlot.allCases) { Text($0.title).tag($0) }
+                }
+                Picker("Agent card shows", selection: binding(\.agentCard)) {
+                    ForEach(NotchAgentCard.allCases) { Text($0 == .latest ? "Latest" : "All").tag($0) }
+                }
+                .pickerStyle(.segmented)
+            }
+            SettingsFold("Alerts", symbol: "bell.badge", summary: alertsSummary, isOpen: folded("Alerts")) {
+                Picker("Meeting soon", selection: binding(\.meetingMinutes)) {
+                    ForEach(NotchMeetingSoon.choices, id: \.self) { minutes in
+                        Text(minutes == 0 ? "Off" : "\(minutes) min before").tag(minutes)
+                    }
+                }
+                Toggle("Agent finished or needs you", isOn: binding(\.alertAgents))
+                Toggle("Battery low or charging", isOn: binding(\.alertBattery))
+                if preferences.alertBattery {
+                    Picker("Low battery at", selection: binding(\.batteryLowPercent)) {
+                        ForEach(AgentNotchSettings.batteryLowChoices, id: \.self) { Text("\($0)%").tag($0) }
+                    }
+                }
+                Toggle("AirPods connected or low", isOn: binding(\.alertAirPods))
+                if preferences.alertAirPods {
+                    Picker("Low AirPods at", selection: binding(\.airPodsLowPercent)) {
+                        ForEach(AgentNotchSettings.batteryLowChoices, id: \.self) { Text("\($0)%").tag($0) }
+                    }
+                }
+                Toggle("Live AirPods levels", isOn: binding(\.airPodsLive))
+                if preferences.airPodsLive, AirPodsLiveScanner.denied {
+                    Text("Bluetooth access is off for Portside. Turn it on in System Settings > Privacy & Security > Bluetooth.").helperStyle()
+                }
+                Toggle("Rain or snow soon", isOn: binding(\.alertWeather))
+                Text("Alerts take the strip's right side for 4 seconds. Meetings need Calendar access (Widgets > Calendar) and show a timer while they run. AirPods and Beats levels come from System Information, every 5 minutes and when the AirPods tab opens, with no permission; Live AirPods levels also listens for the levels your AirPods broadcast over Bluetooth and updates within seconds, and asks for Bluetooth access the first time.").helperStyle()
+            }
+            SettingsFold("Music", symbol: "music.note", summary: musicSummary, isOpen: folded("Music")) {
+                Toggle("Show music", isOn: binding(\.showMedia))
+                if preferences.showMedia {
+                    Picker("Style", selection: binding(\.musicStyle)) {
+                        ForEach(NotchMusicStyle.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    Toggle("Drag the progress bar to seek", isOn: binding(\.musicSeeking))
+                    Toggle("Tint with album colors", isOn: binding(\.musicTint))
+                    Toggle("Show the song when it changes", isOn: binding(\.musicBanner))
+                    Toggle("Hide when paused", isOn: binding(\.musicHideWhenPaused))
+                }
+            }
+            SettingsFold("Agents", symbol: "sparkles", summary: agentsSummary, isOpen: folded("Agents")) {
+                Toggle("Claude Code", isOn: binding(\.claude))
+                Toggle("Codex", isOn: binding(\.codex))
+                Toggle("OpenCode", isOn: binding(\.opencode))
+                Toggle("Cursor (in T3)", isOn: binding(\.cursor))
+                Toggle("Copilot", isOn: binding(\.copilot))
+                Picker("Show", selection: binding(\.filter)) {
+                    ForEach(AgentNotchFilter.allCases) { Text($0.title).tag($0) }
+                }
+                Toggle("Include finished sessions", isOn: binding(\.showFinished))
+                if preferences.showFinished {
+                    Picker("Hide finished after", selection: binding(\.finishedDismissMinutes)) {
+                        ForEach(AgentNotchSettings.finishedDismissChoices, id: \.self) { minutes in
+                            Text(minutes == 0 ? "Never" : minutes == 60 ? "1 hour" : "\(minutes) min").tag(minutes)
+                        }
+                    }
+                }
+                Stepper("Sessions in the list: \(preferences.maxSessions)", value: binding(\.maxSessions), in: 2...10)
+                Toggle("Show project names", isOn: binding(\.showProject))
+                Toggle("Show provider names", isOn: binding(\.showProviderNames))
+                Toggle("Show terminal or editor", isOn: binding(\.showHost))
+                Toggle("Show time since activity", isOn: binding(\.showUpdated))
+                Toggle("Show plan usage", isOn: binding(\.showUsage))
+                Toggle("Close the shelf after opening a session", isOn: binding(\.collapseAfterFocus))
+                Text("Claude Code and Codex need Agent Hooks in Settings > Widgets; T3 Code and OpenCode are read directly.").helperStyle()
+            }
+            SettingsFold("Files", symbol: "tray", summary: filesSummary, isOpen: folded("Files")) {
+                Picker("Keep files for", selection: binding(\.filesKeep)) {
+                    ForEach(NotchFilesKeep.allCases) { Text($0.title).tag($0) }
+                }
+                Toggle(isOn: binding(\.filesRemoveAfterDrag)) {
+                    Text("Remove a file after dragging it out")
+                    Text("Off keeps it on the shelf to drop again.").helperStyle()
+                }
+                Text("Drag files onto the notch to hold them. Only a link is kept: the files stay where they are.").helperStyle()
+            }
+            SettingsFold("Hotkeys", symbol: "command", summary: hotkeysSummary, isOpen: folded("Hotkeys")) {
+                shelfHotkey("Open or close the shelf", \.shelfToggleHotkey)
+                shelfHotkey("Open on Files", \.shelfFilesHotkey)
+                shelfHotkey("Search clipboard", \.shelfClipboardHotkey)
+                Picker("Opened by a hotkey, stays for", selection: binding(\.hotkeyOpenSeconds)) {
+                    ForEach(AgentNotchSettings.hotkeyOpenChoices, id: \.self) { seconds in
+                        Text(seconds < 60 ? "\(seconds) seconds" : seconds == 60 ? "1 minute" : "\(seconds / 60) minutes").tag(seconds)
+                    }
+                }
+                Text("None are set. A shelf a hotkey opens stays when the pointer leaves, until this time runs out or you press Escape or click outside. Search clipboard puts up a search field on the Clipboard page: type, then Return copies the first match.").helperStyle()
+            }
+            SettingsFold("Volume and brightness", symbol: "speaker.wave.2", summary: levelsSummary, isOpen: folded("Volume and brightness")) {
+                Toggle("Show volume changes", isOn: binding(\.hudVolume))
+                Toggle(isOn: binding(\.hudBrightness)) {
+                    Text("Show brightness changes")
+                    Text("Built-in display only. Automatic brightness changes are skipped.").helperStyle()
+                }
+                Toggle(isOn: binding(\.hudReplaceSystem)) {
+                    Text("Replace the macOS indicator")
+                    Text(replaceHelp).helperStyle()
+                }
+                .disabled(model.restrictedMode || !(preferences.hudVolume || preferences.hudBrightness))
+                if preferences.hudReplaceSystem, !accessibility.isTrusted, !model.restrictedMode {
+                    Button("Allow Accessibility…") {
+                        accessibility.requestAccess(forFeature: "replacing the macOS volume and brightness indicator")
+                    }
+                }
+            }
+            SettingsFold("Look and feel", symbol: "paintbrush", summary: lookSummary, isOpen: folded("Look and feel")) {
+                slider("Height", \.compactHeight, 24...44, unit: "pt")
+                slider("Corner radius", \.cornerRadius, 8...32, unit: "pt")
+                slider("Background opacity", \.opacity, 0.75...1, percent: true)
+                slider("Card width", \.expandedWidth, 340...560, unit: "pt")
+                slider("Text size", \.fontSize, 10...16, unit: "pt")
+                slider("Card spacing", \.rowSpacing, 4...16, unit: "pt")
+                Toggle("Border", isOn: binding(\.showBorder))
+                Toggle("Use provider colors", isOn: binding(\.providerColors))
+                Button {
+                    accentOpen.toggle()
+                } label: {
+                    HStack(spacing: 10) {
+                        Text("Accent color")
+                        Spacer()
+                        ColorChip(color: preferences.accent.color, size: 18)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(accentOpen ? 90 : 0))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(accentOpen ? "Hide accent color" : "Show accent color")
+                if accentOpen {
+                    PaletteColorEditor(color: preferences.accent, showsOpacity: false) { color, _ in
+                        model.updateAgentNotch { $0.accent = color }
+                    }
+                }
+                slider("Hover delay", \.shelfHoverDelay, 0...1, unit: "ms", milliseconds: true)
+                slider("Collapse delay", \.shelfCollapseDelay, 0.1...2, unit: "ms", milliseconds: true)
+                Toggle("Haptic feedback on hover", isOn: binding(\.shelfHaptics))
+                Toggle("Animate", isOn: binding(\.animate))
+                if preferences.animate { slider("Animation duration", \.animationDuration, 0.1...0.5, unit: "ms", milliseconds: true) }
+            }
+            SettingsFold("Displays", symbol: "display.2", summary: displaysSummary, isOpen: folded("Displays")) {
+                Picker("Show on", selection: binding(\.display)) {
+                    ForEach(AgentNotchDisplay.allCases) { Text($0.title).tag($0) }
+                }
+                Toggle(isOn: binding(\.showInFullScreen)) {
+                    Text("Show in full screen")
+                    Text("Off hides the notch while an app is full screen.").helperStyle()
+                }
+            }
+        }
+        Section {
+            Button("Reset Top Notch Settings…") { confirmReset = true }
+        }
+        .confirmationDialog("Reset every Top Notch setting?", isPresented: $confirmReset) {
+            Button("Reset", role: .destructive) { model.updateAgentNotch { $0 = AgentNotchSettings() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Hotkeys, alerts, tabs and the look go back to their defaults. Files and clipboard history stay.")
+        }
+    }
+
+    private var stripSummary: String {
+        let order = preferences.stripOrder.map { $0 == .meeting ? "meeting" : $0.title.lowercased() }.joined(separator: ", ")
+        return "\(order.prefix(1).uppercased() + order.dropFirst()), \(Int(preferences.compactWidth)) pt"
+    }
+
+    private var lookSummary: String {
+        "\(Int(preferences.compactHeight)) pt high, hover \(Int((preferences.shelfHoverDelay * 1000).rounded())) ms, collapse \(Int((preferences.shelfCollapseDelay * 1000).rounded())) ms"
+    }
+
+    private var displaysSummary: String {
+        preferences.display.title + (preferences.showInFullScreen ? ", also in full screen" : "")
     }
 
     private var shelfSummary: String {
@@ -310,13 +326,13 @@ struct AgentNotchSettingsView: View {
     }
 
     private var alertsSummary: String {
-        let order = preferences.stripOrder.map { $0 == .meeting ? "meeting" : $0.title.lowercased() }.joined(separator: ", ")
-        let alerts = settingsList([("agents", preferences.alertAgents), ("battery", preferences.alertBattery),
-                                   ("AirPods", preferences.alertAirPods), ("weather", preferences.alertWeather)], none: "no alerts")
-        return "\(order.prefix(1).uppercased() + order.dropFirst()); \(alerts)"
+        let alerts = settingsList([("Agents", preferences.alertAgents), ("battery", preferences.alertBattery),
+                                   ("AirPods", preferences.alertAirPods), ("weather", preferences.alertWeather)], none: "No alerts")
+        return preferences.meetingMinutes > 0 ? "\(alerts), meetings" : alerts
     }
 
     private var musicSummary: String {
+        guard preferences.showMedia else { return "Off" }
         var parts = [preferences.musicStyle == .vinyl ? "Vinyl" : "Album art"]
         if preferences.musicSeeking { parts.append("seeking") }
         if preferences.musicTint { parts.append("album tint") }
@@ -330,12 +346,6 @@ struct AgentNotchSettingsView: View {
         let on = names.filter(\.1).map(\.0)
         let who = on.count == names.count ? "All agents" : on.isEmpty ? "No agents" : on.joined(separator: ", ")
         return "\(who), \(preferences.filter.title.lowercased())"
-    }
-
-    private var behaviorSummary: String {
-        let hover = preferences.shelfEnabled ? preferences.shelfHoverDelay : preferences.hoverDelay
-        let collapse = preferences.shelfEnabled ? preferences.shelfCollapseDelay : preferences.collapseDelay
-        return "Hover \(Int((hover * 1000).rounded())) ms, collapse \(Int((collapse * 1000).rounded())) ms"
     }
 
     private func shelfPageRow(_ page: NotchShelfPage, index: Int) -> some View {
@@ -363,16 +373,6 @@ struct AgentNotchSettingsView: View {
         }
     }
 
-    /// A titled row of picture cards, as in Settings > Menu Bar.
-    private func cards<Value: Hashable, Picture: View>(_ title: String, _ key: WritableKeyPath<AgentNotchSettings, Value>,
-                                                      _ choices: [(Value, String)], columns: Int,
-                                                      @ViewBuilder picture: @escaping (Value) -> Picture) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-            SettingsChoiceCards(selection: binding(key), choices: choices, columns: columns, picture: picture)
-        }
-    }
-
     private func binding<Value>(_ key: WritableKeyPath<AgentNotchSettings, Value>) -> Binding<Value> {
         Binding(get: { model.agentNotchSettings[keyPath: key] }, set: { value in model.updateAgentNotch { $0[keyPath: key] = value } })
     }
@@ -394,142 +394,5 @@ struct AgentNotchSettingsView: View {
             },
             set: { value, persist in model.updateAgentNotch({ $0[keyPath: key] = value }, persist: persist) }
         )
-    }
-
-    private func preset(_ name: String) {
-        model.updateAgentNotch { settings in
-            let position = settings.position
-            let display = settings.display
-            settings = AgentNotchSettings()
-            settings.position = position
-            settings.display = display
-            if name == "minimal" {
-                settings.compactStyle = .minimal
-                settings.compactWidth = 140
-                settings.showTotal = false
-                settings.showUsage = false
-                settings.showHost = false
-                settings.showUpdated = false
-            } else if name == "detailed" {
-                settings.compactStyle = .providers
-                settings.expandedWidth = 500
-                settings.maxSessions = 8
-                settings.fontSize = 13
-            }
-        }
-    }
-}
-
-struct AgentNotchSettingsPreview: View {
-    let preferences: AgentNotchSettings
-
-    var body: some View {
-        Group {
-            if preferences.shelfEnabled { shelf } else { classic }
-        }
-        .font(.system(size: preferences.fontSize)).foregroundStyle(.white)
-        .padding(16).frame(maxWidth: .infinity)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
-        .accessibilityElement(children: .ignore).accessibilityLabel("Sample notch preview")
-    }
-
-    /// The shelf with music playing: the strip (art and animation) and the
-    /// music card that hovering it shows.
-    private var shelf: some View {
-        let art = LinearGradient(colors: [.pink, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
-        return VStack(spacing: 10) {
-            HStack {
-                RoundedRectangle(cornerRadius: 4).fill(art).frame(width: 18, height: 18)
-                Spacer()
-                NotchAudioBars(paused: !preferences.animate, color: preferences.accent.color, height: 12)
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 30)
-            Divider().overlay(Color.white.opacity(0.08))
-            HStack(spacing: 12) {
-                Group {
-                    if preferences.musicStyle == .vinyl {
-                        ZStack {
-                            Circle().fill(Color(white: 0.08))
-                            Circle().fill(art).padding(3)
-                            Circle().fill(Color.black).frame(width: 7, height: 7)
-                        }
-                    } else {
-                        RoundedRectangle(cornerRadius: 8).fill(art)
-                    }
-                }
-                .frame(width: 52, height: 52)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Song title").fontWeight(.semibold)
-                    Text("Artist").foregroundStyle(.white.opacity(0.55))
-                    HStack(spacing: 6) {
-                        Capsule().fill(Color.white.opacity(0.8)).frame(width: 60, height: 3)
-                        Capsule().fill(Color.white.opacity(0.15)).frame(height: 3)
-                    }
-                    HStack(spacing: 24) {
-                        Image(systemName: "backward.fill"); Image(systemName: "pause.fill"); Image(systemName: "forward.fill")
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-            }
-            .padding(12)
-            .background {
-                if preferences.musicTint {
-                    LinearGradient(colors: [Color.indigo.opacity(0.55), .clear], startPoint: .leading, endPoint: .trailing)
-                }
-            }
-        }
-        .frame(width: min(420, preferences.expandedWidth))
-        .background(UnevenRoundedRectangle(bottomLeadingRadius: preferences.cornerRadius, bottomTrailingRadius: preferences.cornerRadius)
-            .fill(.black.opacity(preferences.opacity)))
-    }
-
-    private var classic: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 8) {
-                if preferences.compactStyle == .providers {
-                    Circle().fill(preferences.providerColors ? AgentProvider.named("claude").color : preferences.accent.color).frame(width: 6, height: 6)
-                } else {
-                    let loaderSize = min(16, max(10, preferences.compactHeight * 0.48))
-                    ThinkingLoader(
-                        style: ThinkingLoader.preferredStyle(for: loaderSize),
-                        paused: !preferences.animate,
-                        size: loaderSize,
-                        color: preferences.accent.color
-                    )
-                    if preferences.compactStyle == .counts { Text("2").monospacedDigit() }
-                }
-                Spacer(minLength: 12)
-                if preferences.showTotal { Text("3 agents").foregroundStyle(.white.opacity(0.6)) }
-                else { Image(systemName: "chevron.down").font(.system(size: 9)) }
-            }
-            .padding(.horizontal, 18)
-            .frame(width: preferences.compactWidth, height: preferences.compactHeight)
-            .background(.black.opacity(preferences.opacity), in: RoundedRectangle(cornerRadius: preferences.cornerRadius))
-            .overlay {
-                if preferences.showBorder {
-                    RoundedRectangle(cornerRadius: preferences.cornerRadius)
-                        .strokeBorder(.white.opacity(0.1), lineWidth: 0.5)
-                }
-            }
-            HStack(spacing: 10) {
-                Image(systemName: "sparkles").foregroundStyle(preferences.accent.color)
-                    .frame(width: 30, height: 30).background(preferences.accent.color.opacity(0.14), in: RoundedRectangle(cornerRadius: 9))
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(preferences.showProject ? "portside" : "Claude").fontWeight(.medium)
-                    HStack(spacing: 6) {
-                        if preferences.showProviderNames { Text("Claude") }
-                        if preferences.showHost { Text("Terminal") }
-                        if preferences.showUpdated { Text("2s ago") }
-                    }.font(.system(size: max(9, preferences.fontSize - 2))).foregroundStyle(.white.opacity(0.5))
-                }
-                Spacer()
-                Text("Working").font(.system(size: 10)).foregroundStyle(preferences.accent.color)
-                    .padding(7).background(.white.opacity(0.06), in: Capsule())
-            }
-            .padding(12).background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-            .padding(12)
-            .background(.black.opacity(preferences.opacity), in: RoundedRectangle(cornerRadius: preferences.cornerRadius))
-        }
     }
 }

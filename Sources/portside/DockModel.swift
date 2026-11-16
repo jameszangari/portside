@@ -787,8 +787,8 @@ final class DockModel: Codable, ObservableObject {
         return !restrictedMode && clipboard && commandCenter
     }
 
-    /// The Notch Shelf is on and owns the notch (SHELF-02).
-    var notchShelfActive: Bool { showAgentNotch && agentNotchSettings.shelfEnabled }
+    /// The Top Notch (the Notch Shelf) is on and owns the notch (SHELF-02).
+    var notchShelfActive: Bool { showAgentNotch }
 
     /// Where hidden menu bar items open, after the Notch Shelf's lock.
     var menuBarPresentation: MenuBarPresentation { menuBarTriggers.presentation(notchShelf: notchShelfActive) }

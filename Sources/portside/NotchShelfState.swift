@@ -50,25 +50,39 @@ enum NotchShelfOrder {
     }
 }
 
-/// When the strip shows a meeting: from `minutes` before it starts until a
-/// minute after. All-day events never count.
+/// When the strip shows a meeting: from `minutes` before it starts until it
+/// ends, its timer running during it (Bartender's meeting timer). An event
+/// with no end, or longer than 3 hours (a focus block, a trip), leaves a
+/// minute after it starts. All-day events never count.
 enum NotchMeetingSoon {
+    typealias Event = (start: Date, end: Date?, allDay: Bool)
     static let after: TimeInterval = 60
+    static let longest: TimeInterval = 3 * 3600
     static let choices = [0, 1, 5, 10, 15]
 
-    static func current(_ starts: [(start: Date, allDay: Bool)], now: Date, minutes: Int) -> Int? {
+    /// The meeting runs a timer: it has an end within 3 hours of its start.
+    static func timed(start: Date, end: Date?) -> Bool {
+        guard let end else { return false }
+        return end > start && end.timeIntervalSince(start) <= longest
+    }
+
+    /// When the strip stops showing it.
+    static func until(_ event: Event) -> Date {
+        timed(start: event.start, end: event.end) ? event.end ?? event.start : event.start.addingTimeInterval(after)
+    }
+
+    static func current(_ events: [Event], now: Date, minutes: Int) -> Int? {
         guard minutes > 0 else { return nil }
-        return starts.indices.filter { !starts[$0].allDay }.first { index in
-            let start = starts[index].start
-            return now >= start.addingTimeInterval(-TimeInterval(minutes * 60)) && now < start.addingTimeInterval(after)
+        return events.indices.filter { !events[$0].allDay }.first { index in
+            now >= events[index].start.addingTimeInterval(-TimeInterval(minutes * 60)) && now < until(events[index])
         }
     }
 
     /// The next time the answer of `current` can change, for one timer.
-    static func nextChange(_ starts: [(start: Date, allDay: Bool)], now: Date, minutes: Int) -> Date? {
+    static func nextChange(_ events: [Event], now: Date, minutes: Int) -> Date? {
         guard minutes > 0 else { return nil }
-        return starts.filter { !$0.allDay }
-            .flatMap { [$0.start.addingTimeInterval(-TimeInterval(minutes * 60)), $0.start.addingTimeInterval(after)] }
+        return events.filter { !$0.allDay }
+            .flatMap { [$0.start.addingTimeInterval(-TimeInterval(minutes * 60)), until($0)] }
             .filter { $0 > now }.min()
     }
 }

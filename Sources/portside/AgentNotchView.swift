@@ -6,6 +6,9 @@ struct AgentNotchView: View {
     let usage: UsageWidget?
     let nowPlaying: NowPlayingWidget?
     @ObservedObject var state: AgentNotchPresentation
+    /// The Files page's files: the shelf's own, or sample files in the
+    /// Settings preview.
+    var fileShelf = NotchFileShelf.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var preferences: AgentNotchSettings { state.preferences }
@@ -29,14 +32,8 @@ struct AgentNotchView: View {
         return min(preferences.cornerRadius, state.headerHeight * (state.topAttached ? 0.375 : 0.5))
     }
 
-    static func dashboardHeight(preferences: AgentNotchSettings, sessionCount: Int) -> CGFloat {
-        let rowHeight = preferences.fontSize * 2 + 34
-        let rows = min(preferences.maxSessions, max(1, sessionCount))
-        return min(650, 86 + Double(rows) * (rowHeight + preferences.rowSpacing) + (preferences.showUsage ? 172 : 0))
-    }
-
     /// The shelf's Agents page: the session cards (or the empty note) and
-    /// usage, without the classic dashboard's title row.
+    /// usage.
     static func agentsPageHeight(preferences: AgentNotchSettings, sessionCount: Int, chips: Bool = false, usageRows: Int = 0) -> CGFloat {
         let rowHeight = preferences.fontSize * 2 + 34
         let rows = min(preferences.maxSessions, sessionCount)
@@ -81,15 +78,11 @@ struct AgentNotchView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Group {
-                if preferences.shelfEnabled { shelfStrip } else { compactHeader }
-            }
-            .frame(height: state.headerHeight)
+            shelfStrip
+                .frame(height: state.headerHeight)
             if state.expanded {
-                Group {
-                    if preferences.shelfEnabled { shelfOpen } else { dashboard }
-                }
-                .transition(.opacity)
+                shelfOpen
+                    .transition(.opacity)
             } else if state.banner, state.card == .music {
                 songBanner
                     .transition(.opacity)
@@ -105,19 +98,10 @@ struct AgentNotchView: View {
         .clipShape(NotchShape(topFlare: state.topAttached ? NotchShape.flare : 0,
                               topRadius: state.topAttached ? 0 : preferences.cornerRadius,
                               bottomRadius: bottomRadius))
-        .overlay {
-            if preferences.showBorder, !state.topAttached {
-                RoundedRectangle(cornerRadius: preferences.cornerRadius)
-                    .strokeBorder(.white.opacity(0.1), lineWidth: 0.5)
-                    .allowsHitTesting(false)
-            }
-        }
         .foregroundStyle(.white)
         .font(.system(size: preferences.fontSize))
         .environment(\.colorScheme, .dark)
-        .onHover { state.hover($0) }
         .onContinuousHover(coordinateSpace: .local) { phase in
-            guard preferences.shelfEnabled else { return }
             switch phase {
             case .active(let point):
                 state.shelfPointer(.at(point, panelWidth: state.panelWidth, compactWidth: state.compactWidth,
@@ -130,7 +114,7 @@ struct AgentNotchView: View {
         // the drag opens the shelf on it.
         .onDrop(of: [.fileURL], isTargeted: Binding(get: { state.fileDragOver }, set: { state.fileDrag($0) })) { providers in
             guard state.acceptsFiles else { return false }
-            NotchFilesPage.urls(from: providers) { NotchFileShelf.shared.add($0) }
+            NotchFilesPage.urls(from: providers) { fileShelf.add($0) }
             return true
         }
         .animation(preferences.animate && !reduceMotion ? .easeInOut(duration: preferences.animationDuration) : nil, value: state.expanded)
@@ -141,132 +125,6 @@ struct AgentNotchView: View {
             // Keep compact media bars in sync when Now Playing publishes.
             if let nowPlaying { NotchNowPlayingObserver(widget: nowPlaying) }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    }
-
-    private var compactHeader: some View {
-        HStack(spacing: 0) {
-            compactButton {
-                HStack(spacing: 6) {
-                    if preferences.compactStyle == .providers {
-                        ForEach(Array(Set(sessions.map(\.provider))).sorted { $0.id < $1.id }.prefix(3)) { provider in
-                            Circle().fill(tint(provider)).frame(width: 7, height: 7)
-                        }
-                        if sessions.isEmpty { Image(systemName: "sparkles").foregroundStyle(preferences.accent.color) }
-                    } else if attention > 0 {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(.orange)
-                        if preferences.compactStyle == .counts { Text("\(working)").monospacedDigit().fontWeight(.semibold) }
-                    } else if working > 0 {
-                        let loaderSize = min(16, max(10, preferences.compactHeight * 0.48))
-                        ThinkingLoader(
-                            style: ThinkingLoader.preferredStyle(for: loaderSize),
-                            paused: !preferences.animate || reduceMotion,
-                            size: loaderSize,
-                            color: preferences.accent.color
-                        )
-                        if preferences.compactStyle == .counts { Text("\(working)").monospacedDigit().fontWeight(.semibold) }
-                    } else if mediaPlaying {
-                        // No agent working: the album art, bars on the right, as on the shelf.
-                        stripArt
-                    } else if !sessions.isEmpty {
-                        Image(systemName: "sparkles")
-                            .foregroundStyle(preferences.accent.color)
-                        if preferences.compactStyle == .counts { Text("\(working)").monospacedDigit().fontWeight(.semibold) }
-                    }
-                }
-            }
-            if state.notchWidth > 0 {
-                if preferences.shelfEnabled {
-                    // The housing itself opens the shelf on click.
-                    Color.clear.frame(width: state.notchWidth).contentShape(Rectangle())
-                        .onTapGesture { state.shelfClick() }
-                        .accessibilityElement()
-                        .accessibilityLabel(state.expanded ? "Close shelf" : "Open shelf")
-                        .accessibilityAddTraits(.isButton)
-                        .accessibilityAction { state.shelfClick() }
-                } else {
-                    Color.clear.frame(width: state.notchWidth).allowsHitTesting(false)
-                }
-            }
-            compactButton {
-                HStack(spacing: 5) {
-                    if mediaPlaying, working > 0 || attention > 0 {
-                        NotchAudioBars(
-                            paused: !preferences.animate || reduceMotion,
-                            color: .white.opacity(0.9),
-                            height: min(12, max(8, preferences.compactHeight * 0.36))
-                        )
-                    }
-                    if mediaPlaying, working == 0, attention == 0, preferences.compactStyle != .providers {
-                        // Art on the left: the bars alone here. Finished sessions
-                        // stay in the dashboard rather than crowd them.
-                        NotchAudioBars(
-                            paused: !preferences.animate || reduceMotion,
-                            color: ArtworkTint.musicColor(nowPlaying?.track, fallback: preferences.accent.color),
-                            height: min(14, max(9, preferences.compactHeight * 0.4))
-                        )
-                    } else if attention > 0 {
-                        Circle().fill(.orange).frame(width: 5, height: 5)
-                        Text("\(attention)").monospacedDigit()
-                    } else if preferences.showTotal, !sessions.isEmpty {
-                        Text("\(sessions.count)").monospacedDigit()
-                        if preferences.compactStyle != .minimal { Text("agents").foregroundStyle(.white.opacity(0.55)) }
-                    } else if !mediaPlaying {
-                        Image(systemName: state.expanded ? "chevron.up" : "chevron.down").font(.system(size: 9, weight: .bold))
-                    }
-                }
-            }
-        }
-        .frame(maxWidth: state.compactWidth)
-        .frame(maxWidth: .infinity)
-    }
-
-    private func compactButton<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        Button {
-            if preferences.shelfEnabled { state.shelfClick() }
-            else if state.expanded { state.setExpanded(false) }
-            else if preferences.clickAction == .focus, let session = sessions.first {
-                AgentFocus.focus(session: session)
-            } else { state.setExpanded(true) }
-        } label: {
-            content().frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(working) working, \(attention) need attention, \(sessions.count) sessions\(mediaPlaying ? ", media playing" : ""). \(state.expanded ? "Collapse" : "Open agent dashboard")")
-        .help("Click to \(state.expanded ? "collapse" : preferences.clickAction == .focus ? "focus latest session" : "expand"). Hover to show sessions.")
-    }
-
-    private var dashboard: some View {
-        // Plain VStack first so ImageRenderer and fixed panel frames get a real
-        // height; ScrollView alone often draws empty in bitmap captures.
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                if !preferences.shelfEnabled { dashboardTitle }
-                if sessions.isEmpty {
-                    VStack(spacing: 7) {
-                        Image(systemName: "sparkles").font(.title2).foregroundStyle(preferences.accent.color)
-                        Text("No matching sessions").fontWeight(.medium)
-                        Text("Install agent hooks in Settings > Widgets, or adjust the session filters.")
-                            .font(.system(size: preferences.fontSize - 1)).foregroundStyle(.white.opacity(0.55))
-                            .multilineTextAlignment(.center)
-                    }.frame(maxWidth: .infinity).padding(.vertical, 14)
-                } else {
-                    VStack(spacing: preferences.rowSpacing) {
-                        ForEach(Array(sessions.prefix(preferences.maxSessions).enumerated()), id: \.offset) { _, session in
-                            sessionCard(session)
-                        }
-                    }
-                }
-                if preferences.showUsage, let usage {
-                    NotchUsageDetails(usage: usage, preferences: preferences)
-                }
-            }
-            .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding).padding(.bottom, Self.dashboardBottomPadding)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        .scrollIndicators(.hidden)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
@@ -310,10 +168,11 @@ struct AgentNotchView: View {
                 case .widgets: shelfWidgets
                 case .clipboard:
                     NotchClipboardPage(service: ClipboardService.shared, preferences: preferences,
-                                       searching: state.searching, query: $state.query) { state.setExpanded(false) }
+                                       searching: state.searching, query: $state.query,
+                                       onSearch: { state.setSearching($0) }) { state.setExpanded(false) }
                         .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding)
                 case .files:
-                    NotchFilesPage(shelf: NotchFileShelf.shared, preferences: preferences, dragOver: state.fileDragOver)
+                    NotchFilesPage(shelf: fileShelf, preferences: preferences, dragOver: state.fileDragOver)
                         .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding)
                 case .airPods:
                     airPodsPage.padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding)
@@ -404,31 +263,6 @@ struct AgentNotchView: View {
         }
         .frame(maxWidth: .infinity).padding(.horizontal, 16).padding(.top, 24)
         .accessibilityElement(children: .combine)
-    }
-
-    private var dashboardTitle: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Your agents").font(.system(size: preferences.fontSize + 3, weight: .semibold))
-                Text(attention > 0 ? "\(attention) waiting for you" : working > 0 ? "\(working) working · stay in flow" : "All caught up")
-                    .font(.system(size: preferences.fontSize - 1)).foregroundStyle(.white.opacity(0.55))
-            }
-            Spacer()
-            Button {
-                state.setPinned(!state.pinned)
-            } label: {
-                Image(systemName: state.pinned ? "pin.fill" : "pin")
-                    .foregroundStyle(state.pinned ? preferences.accent.color : .white.opacity(0.55))
-                    .frame(width: 28, height: 28)
-                    .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
-            }.buttonStyle(.plain).help(state.pinned ? "Unpin dashboard" : "Keep dashboard open")
-                .accessibilityLabel(state.pinned ? "Unpin dashboard" : "Pin dashboard")
-            Button { state.setExpanded(false) } label: {
-                Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
-                    .frame(width: 28, height: 28)
-                    .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
-            }.buttonStyle(.plain).accessibilityLabel("Collapse dashboard")
-        }
     }
 
     /// A new song: its name and artist under the strip, as in Bartender.
@@ -657,7 +491,7 @@ struct AgentNotchView: View {
             parts.append("\(sessions.count) agent sessions\(attention > 0 ? ", \(attention) need you" : "")")
         }
         if state.strip.leading == .meeting || state.strip.trailing == .meeting, let meeting = state.meeting {
-            parts.insert("\(meeting.title) \(NotchMeetingCard.countdown(to: meeting.start, now: Date()))", at: 0)
+            parts.insert("\(meeting.title) \(NotchMeetingCard.detail(meeting, now: Date()))", at: 0)
         }
         if let alert = state.alert { parts.append(alert.title) }
         if let hud = state.hud { parts = [hud.label] }
@@ -787,8 +621,9 @@ struct AgentNotchView: View {
     @ViewBuilder
     private var stripCountdown: some View {
         if let meeting = state.meeting {
-            TimelineView(.periodic(from: .now, by: 15)) { context in
-                Text(NotchMeetingCard.countdown(to: meeting.start, now: context.date)).monospacedDigit().fontWeight(.semibold)
+            // Each second, for the timer once the meeting starts.
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(NotchMeetingCard.stripText(meeting, now: context.date)).monospacedDigit().fontWeight(.semibold)
             }
         }
     }
@@ -800,7 +635,7 @@ struct AgentNotchView: View {
         } label: {
             HStack(spacing: 10) {
                 Group {
-                    if preferences.shelfEnabled, session.state == .running, !session.needsAttention {
+                    if session.state == .running, !session.needsAttention {
                         // Bartender's agent lamp: the working loader.
                         ThinkingLoader(style: .snakeBoxes, paused: !preferences.animate || reduceMotion, size: 14, color: tint(session.provider))
                     } else {
@@ -852,7 +687,7 @@ private struct NotchNowPlayingObserver: View {
 }
 
 /// The Agents page's usage: one row per provider with each window's bar
-/// and percentage. The classic dashboard keeps `NotchUsageDetails`.
+/// and percentage.
 struct NotchUsageSummary: View {
     @ObservedObject var usage: UsageWidget
     let preferences: AgentNotchSettings
@@ -898,68 +733,6 @@ struct NotchUsageSummary: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
     }
-}
-
-private struct NotchUsageDetails: View {
-    @ObservedObject var usage: UsageWidget
-    let preferences: AgentNotchSettings
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("PLAN USAGE").font(.system(size: 9, weight: .semibold)).tracking(1.4)
-                Spacer()
-                Text("Used").font(.system(size: 10))
-            }.foregroundStyle(.white.opacity(0.45))
-            if usage.usage.isEmpty {
-                Text(usage.providers.isEmpty ? "Choose usage providers in Settings > Widgets." : "Usage follows provider consent in Settings > Widgets.")
-                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
-            }
-            ForEach(usage.usage, id: \.provider.id) { item in
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack {
-                        Circle().fill(preferences.providerColors ? item.provider.color : preferences.accent.color).frame(width: 6, height: 6)
-                        Text(item.provider.name).font(.system(size: 11, weight: .medium))
-                    }
-                    if item.windows.isEmpty {
-                        Text(item.note ?? "No usage available").font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
-                    }
-                    ForEach(Array(item.windows.enumerated()), id: \.offset) { _, window in
-                        HStack(spacing: 8) {
-                            Text(window.label).frame(width: 30, alignment: .leading).foregroundStyle(.white.opacity(0.5))
-                            GeometryReader { geometry in
-                                Capsule().fill(.white.opacity(0.09))
-                                    .overlay(alignment: .leading) {
-                                        Capsule().fill(window.percent >= 90 ? .orange : preferences.providerColors ? item.provider.color : preferences.accent.color)
-                                            .frame(width: geometry.size.width * window.percent / 100)
-                                    }
-                            }.frame(height: 4)
-                            Text("\(Int(window.percent.rounded()))%")
-                                .monospacedDigit().frame(width: 34, alignment: .trailing)
-                        }.font(.system(size: 10))
-                        .help(window.resetsAt.map { "Resets \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Reset time unavailable")
-                        if let used = window.used, let limit = window.limit {
-                            // Request quotas (Copilot): the count behind the percentage.
-                            HStack(spacing: 4) {
-                                Text("\(used.formatted()) / \(limit.formatted()) \(window.unit ?? "requests")")
-                                    .monospacedDigit()
-                                Spacer(minLength: 4)
-                                if let reset = window.resetsAt {
-                                    Text("Resets \(reset.formatted(.dateTime.month(.abbreviated).day()))")
-                                }
-                            }
-                            .font(.system(size: 9.5))
-                            .foregroundStyle(.white.opacity(0.5))
-                            .padding(.leading, 38)
-                        }
-                    }
-                }
-            }
-        }
-        .padding(12)
-        .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
-    }
-
 }
 
 /// The island's outline. Attached to the top edge, its top corners flare

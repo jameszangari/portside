@@ -12,59 +12,65 @@ final class AgentNotchPresentation: ObservableObject {
     /// menu bar on a display without one): square-ish top corners, no border.
     @Published var topAttached = false
     @Published var compactWidth: CGFloat = 184
-    /// Shelf only: the activity whose card shows below the strip.
+    /// The activity whose card shows below the strip.
     @Published private(set) var card: NotchShelfActivity?
-    /// Shelf only: the music card is a fresh song banner, so it shows the
+    /// The music card is a fresh song banner, so it shows the
     /// song's name only until the pointer reaches it.
     @Published private(set) var banner = false
-    /// Shelf only: the volume or brightness level, shown on the strip for a
+    /// The volume or brightness level, shown on the strip for a
     /// moment after it changes (SHELF-09).
     @Published var hud: NotchHUD?
-    /// Shelf only: what the compact strip shows on each side.
+    /// What the compact strip shows on each side.
     @Published var strip = NotchShelfStrip()
-    /// Shelf only: a short alert (an agent finished or needs you, battery,
+    /// A short alert (an agent finished or needs you, battery,
     /// weather) on the strip's right side for a few seconds.
     @Published var alert: NotchShelfAlert?
-    /// Shelf only: the meeting the strip is counting down to.
+    /// The meeting the strip is counting down to.
     @Published var meeting: CalendarWidget.NextEvent?
-    /// Shelf only: the Agents page's provider chip, nil for all. Kept for
+    /// The Agents page's provider chip, nil for all. Kept for
     /// this run only.
     @Published var agentProvider: String?
     /// Redraws once a finished session's dismiss time passes.
     @Published var dismissTick = 0
     /// Current panel width, for mapping hover points to shelf regions.
     var panelWidth: CGFloat = 0
-    /// Shelf only: the size the view draws, top centered in the panel. The
+    /// The size the view draws, top centered in the panel. The
     /// panel snaps to fit it and the view animates, so the top edge never
-    /// moves. Nil fills the panel (classic island).
+    /// moves. Nil fills the panel (before the first layout).
     @Published var surfaceSize: CGSize?
-    /// Shelf only: shrinks the panel to `surfaceSize` once the view has
+    /// Shrinks the panel to `surfaceSize` once the view has
     /// animated down to it.
     var settleTask: DispatchWorkItem?
-    /// Shelf only: the open shelf's page. Nil while closed, or when every
+    /// The open shelf's page. Nil while closed, or when every
     /// page is off or unavailable.
     @Published private(set) var page: NotchShelfPage?
-    /// Shelf only: the page shown last, for the "Last used" starting page.
+    /// The page shown last, for the "Last used" starting page.
     /// Kept for this run only.
     private var lastUsedPage: NotchShelfPage?
-    /// Shelf only: whether the pointer is over this panel now.
+    /// Whether the pointer is over this panel now.
     var pointerInside: () -> Bool = { false }
-    /// Shelf only: a file drag is over the panel.
+    /// A file drag is over the panel.
     @Published private(set) var fileDragOver = false
     /// The Clipboard page's search field is up and takes the keyboard
     /// (SHELF-11's search hotkey); `query` is what was typed.
     @Published private(set) var searching = false
     @Published var query = ""
-    /// The search started or ended, so the panel takes or gives back keys.
+    /// The panel takes the keyboard (a search started) or gives it back
+    /// (the shelf closed).
     var onSearch: ((Bool) -> Void)?
-    /// Shelf only: the connected AirPods and Beats, for the AirPods page.
+    /// The panel has the keyboard: from a search's start until the shelf
+    /// closes, even once the search ends. Giving it back orders the panel
+    /// out and in, which blinks an open shelf (maintainer report: the
+    /// search field's close button closed and reopened the shelf).
+    private var holdsKeys = false
+    /// The connected AirPods and Beats, for the AirPods page.
     @Published var airPods: [AirPodsReading] = []
-    /// Shelf only: whether a page can show now (Clipboard needs its module,
+    /// Whether a page can show now (Clipboard needs its module,
     /// AirPods a connected pair).
     var pageAvailable: (NotchShelfPage) -> Bool = { $0 != .clipboard && $0 != .airPods }
-    /// Shelf only: a running widget, for the Widgets page.
+    /// A running widget, for the Widgets page.
     var widgetHost: (String) -> WidgetHost? = { _ in nil }
-    /// Shelf only: the chosen page while it is still on, else the first that is.
+    /// The chosen page while it is still on, else the first that is.
     var currentPage: NotchShelfPage? {
         let pages = preferences.shelfPages.visible(available: pageAvailable)
         return page.flatMap { pages.contains($0) ? $0 : nil } ?? pages.first
@@ -74,30 +80,28 @@ final class AgentNotchPresentation: ObservableObject {
     private var machine = NotchShelfMachine()
     private var lastHaptic = Date.distantPast
 
-    private var shelf: Bool { preferences.shelfEnabled }
-
     func setExpanded(_ value: Bool) {
         hoverTask?.cancel()
-        if shelf {
-            if value { machine.open() } else { machine.close() }
-            syncShelf()
-            return
-        }
-        guard expanded != value else { return }
-        expanded = value
-        if !value { pinned = false }
-        onExpansion?()
+        if value { machine.open() } else { machine.close() }
+        syncShelf()
     }
 
     func setPinned(_ value: Bool) {
-        guard shelf else { pinned = value; return }
         machine.setPinned(value)
         syncShelf()
     }
 
-    /// Shelf only: the pointer moved to `region` (`.outside` when it left).
-    func shelfPointer(_ region: NotchShelfRegion) {
-        guard shelf else { return }
+    /// False for the Settings preview, which sets its scene itself: the
+    /// pointer, or its window losing focus (SwiftUI ends hover tracking
+    /// then), never moves it (maintainer report: testing the notch with a
+    /// section open changed the preview).
+    var followsPointer = true
+
+    /// The pointer moved to `region` (`.outside` when it left). `force`
+    /// applies it even when the pointer is not followed (the preview's own
+    /// card).
+    func shelfPointer(_ region: NotchShelfRegion, force: Bool = false) {
+        guard followsPointer || force else { return }
         let strip = strip
         // A hotkey's shelf runs its own timer; the pointer only notes where it is.
         let hotkey = machine.viaHotkey && machine.isOpen
@@ -106,16 +110,15 @@ final class AgentNotchPresentation: ObservableObject {
         if banner != machine.banner { syncShelf() }
     }
 
-    /// Shelf only: the track changed; show the music card for a moment.
+    /// The track changed; show the music card for a moment.
     func showBanner() {
-        guard shelf, let timer = machine.showBanner() else { return }
+        guard let timer = machine.showBanner() else { return }
         syncShelf()
         schedule(timer)
     }
 
-    /// Shelf only: a click on the header.
+    /// A click on the header.
     func shelfClick() {
-        guard shelf else { return }
         hoverTask?.cancel()
         machine.click()
         syncShelf()
@@ -143,10 +146,10 @@ final class AgentNotchPresentation: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
     }
 
-    /// Shelf only: the Files page is on, so a file drop has somewhere to go.
-    var acceptsFiles: Bool { shelf && preferences.shelfPages.visible(available: pageAvailable).contains(.files) }
+    /// The Files page is on, so a file drop has somewhere to go.
+    var acceptsFiles: Bool { preferences.shelfPages.visible(available: pageAvailable).contains(.files) }
 
-    /// Shelf only: a file drag entered or left the panel. Entering opens the
+    /// A file drag entered or left the panel. Entering opens the
     /// shelf on Files, as Bartender does; leaving without a drop closes it
     /// after the collapse delay, like the pointer leaving.
     func fileDrag(_ over: Bool) {
@@ -164,11 +167,10 @@ final class AgentNotchPresentation: ObservableObject {
         }
     }
 
-    /// Shelf only: a hotkey (SHELF-11). `page` nil opens on the usual start
+    /// A hotkey (SHELF-11). `page` nil opens on the usual start
     /// page; `toggle` closes an open shelf instead; `search` puts up the
     /// Clipboard page's search field.
     func hotkey(page: NotchShelfPage?, toggle: Bool = false, search: Bool = false) {
-        guard shelf else { return }
         if toggle, expanded {
             setExpanded(false)
             return
@@ -181,14 +183,21 @@ final class AgentNotchPresentation: ObservableObject {
 
     func setSearching(_ value: Bool) {
         if !value { query = "" }
+        if !value, !expanded, holdsKeys {
+            holdsKeys = false
+            onSearch?(false)
+        }
         guard searching != value else { return }
         searching = value
-        onSearch?(value)
+        if value, !holdsKeys {
+            holdsKeys = true
+            onSearch?(true)
+        }
         // The field changes the page's height.
         if expanded { onExpansion?() }
     }
 
-    /// Shelf only: a tab was picked.
+    /// A tab was picked.
     func showPage(_ next: NotchShelfPage) {
         guard page != next else { return }
         if next != .clipboard { setSearching(false) }
@@ -217,18 +226,6 @@ final class AgentNotchPresentation: ObservableObject {
         banner = machine.banner
         if pinned != machine.pinned { pinned = machine.pinned }
         if changed { onExpansion?() }
-    }
-
-    func hover(_ inside: Bool) {
-        guard !shelf else { return }
-        hoverTask?.cancel()
-        guard inside ? preferences.expandOnHover && !expanded : expanded && !pinned else { return }
-        let task = DispatchWorkItem { [weak self] in
-            guard let self, inside || !self.pinned else { return }
-            self.setExpanded(inside)
-        }
-        hoverTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + (inside ? preferences.hoverDelay : preferences.collapseDelay), execute: task)
     }
 
     func stop() { hoverTask?.cancel(); hoverTask = nil; settleTask?.cancel(); settleTask = nil; onExpansion = nil }
@@ -278,13 +275,12 @@ final class AgentNotch {
                 guard let self else { return }
                 let nextAgents = widgets.widget(AgentStatusWidget.kind) as? AgentStatusWidget
                 let nextUsage = preferences.showUsage ? widgets.widget(UsageWidget.kind) as? UsageWidget : nil
-                let musicSlot = preferences.shelfEnabled && [preferences.shelfLeadingWidget, preferences.shelfTrailingWidget].contains(.music)
+                let musicSlot = [preferences.shelfLeadingWidget, preferences.shelfTrailingWidget].contains(.music)
                 let nextMedia = preferences.showMedia || musicSlot ? widgets.widget(NowPlayingWidget.kind) as? NowPlayingWidget : nil
                 let changed = self.enabled != enabled || self.agents !== nextAgents || self.usage !== nextUsage
                     || self.nowPlaying !== nextMedia
                     || self.preferences.display != preferences.display
                     || self.preferences.showInFullScreen != preferences.showInFullScreen
-                    || self.preferences.shelfEnabled != preferences.shelfEnabled
                 self.preferences = preferences
                 NotchFileShelf.shared.keep = preferences.filesKeep
                 self.enabled = enabled
@@ -381,8 +377,7 @@ final class AgentNotch {
             // Without fullScreenAuxiliary the panel stays out of full-screen
             // Spaces, which is the default (SHELF-08).
             var behavior: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-            // The classic island keeps showing there, as it always has.
-            if preferences.showInFullScreen || !preferences.shelfEnabled { behavior.insert(.fullScreenAuxiliary) }
+            if preferences.showInFullScreen { behavior.insert(.fullScreenAuxiliary) }
             panel.collectionBehavior = behavior
             panel.isOpaque = false
             panel.backgroundColor = .clear
@@ -412,12 +407,11 @@ final class AgentNotch {
         }
         builtAt = Date()
         // The Clipboard page's height follows its entries and pause state.
-        clipboardSubscription = preferences.shelfEnabled ? MainActor.assumeIsolated {
+        clipboardSubscription = MainActor.assumeIsolated {
             ClipboardService.shared.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.layoutPanels() }
-        } : nil
+        }
         // So does the Files page's, with its files.
-        filesSubscription = preferences.shelfEnabled
-            ? NotchFileShelf.shared.$tray.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.layoutPanels() } : nil
+        filesSubscription = NotchFileShelf.shared.$tray.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.layoutPanels() }
         bannerTrack = nowPlaying?.track?.id
         if let nowPlaying {
             mediaSubscription = nowPlaying.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in
@@ -440,10 +434,9 @@ final class AgentNotch {
     /// Battery, weather and calendar feed the strip while the shelf is on
     /// (the widget store runs them for it). Rebound when their hosts change.
     private func bindAlertSources(_ widgets: WidgetStore) {
-        let shelf = preferences.shelfEnabled
-        let nextBattery = shelf && preferences.alertBattery ? widgets.widget(BatteryWidget.kind) as? BatteryWidget : nil
-        let nextWeather = shelf && preferences.alertWeather ? widgets.widget(WeatherWidget.kind) as? WeatherWidget : nil
-        let nextCalendar = shelf && preferences.meetingMinutes > 0 ? widgets.widget(CalendarWidget.kind) as? CalendarWidget : nil
+        let nextBattery = preferences.alertBattery ? widgets.widget(BatteryWidget.kind) as? BatteryWidget : nil
+        let nextWeather = preferences.alertWeather ? widgets.widget(WeatherWidget.kind) as? WeatherWidget : nil
+        let nextCalendar = preferences.meetingMinutes > 0 ? widgets.widget(CalendarWidget.kind) as? CalendarWidget : nil
         guard nextBattery !== battery || nextWeather !== weather || nextCalendar !== calendar else { return }
         battery = nextBattery
         weather = nextWeather
@@ -513,7 +506,7 @@ final class AgentNotch {
     private var hotkeys: [String: (chord: HotkeyChord, key: HotKey?)] = [:]
 
     private func bindHotkeys() {
-        let shelf = enabled && preferences.shelfEnabled && !surfaces.isEmpty
+        let shelf = enabled && !surfaces.isEmpty
         let wanted: [(name: String, chord: HotkeyChord?, action: (AgentNotchPresentation) -> Void)] = [
             ("Open or close the shelf", preferences.shelfToggleHotkey, { $0.hotkey(page: nil, toggle: true) }),
             ("Open on Files", preferences.shelfFilesHotkey, { $0.hotkey(page: .files) }),
@@ -548,7 +541,7 @@ final class AgentNotch {
     /// display goes away with the lid closed).
     private func bindLevels() {
         bindHotkeys()
-        let shelf = enabled && preferences.shelfEnabled && !surfaces.isEmpty
+        let shelf = enabled && !surfaces.isEmpty
         if shelf && preferences.hudVolume {
             volume.onChange = { [weak self] level in
                 self?.showHUD(NotchHUD(kind: .volume, level: Double(level.volume), muted: level.muted))
@@ -591,6 +584,7 @@ final class AgentNotch {
         if shelf && (preferences.alertAirPods || preferences.shelfPages.isOn(.airPods)) {
             airPods.onChange = { [weak self] readings in self?.checkAirPods(readings) }
             airPods.start()
+            airPods.live = preferences.airPodsLive
         } else {
             airPods.stop()
             lastAirPods = nil
@@ -636,7 +630,6 @@ final class AgentNotch {
 
     /// Shows `hud` on the strip for `NotchHUD.duration`; each change restarts it.
     private func showHUD(_ hud: NotchHUD) {
-        guard preferences.shelfEnabled else { return }
         let appearing = surfaces.contains { $0.state.hud == nil }
         surfaces.forEach { if $0.state.hud != hud { $0.state.hud = hud } }
         hudTask?.cancel()
@@ -651,7 +644,6 @@ final class AgentNotch {
 
     /// Shows `alert` on the strip's right side for 4 s.
     private func showAlert(_ alert: NotchShelfAlert) {
-        guard preferences.shelfEnabled else { return }
         surfaces.forEach { $0.state.alert = alert }
         alertTask?.cancel()
         let task = DispatchWorkItem { [weak self] in
@@ -691,16 +683,16 @@ final class AgentNotch {
     private func bannerOnNewTrack() {
         guard let track = nowPlaying?.track, track.id != bannerTrack else { return }
         bannerTrack = track.id
-        guard preferences.shelfEnabled, preferences.musicBanner, track.isPlaying, musicShowing,
+        guard preferences.musicBanner, track.isPlaying, musicShowing,
               Date().timeIntervalSince(builtAt) > 3 else { return }
         surfaces.forEach { $0.state.showBanner() }
     }
 
     /// Music on the strip: something plays, or is paused with Hide when
-    /// paused off. The classic island shows bars only while playing.
+    /// paused off.
     private var musicShowing: Bool {
         guard preferences.showMedia, let track = nowPlaying?.track else { return false }
-        return track.isPlaying || preferences.shelfEnabled && !preferences.musicHideWhenPaused
+        return track.isPlaying || !preferences.musicHideWhenPaused
     }
 
     static let idleCapsuleWidth: CGFloat = 96
@@ -741,8 +733,8 @@ final class AgentNotch {
     private func currentMeeting() -> CalendarWidget.NextEvent? {
         meetingTask?.cancel()
         meetingTask = nil
-        guard preferences.shelfEnabled, let events = calendar?.upcoming, !events.isEmpty else { return nil }
-        let starts = events.map { (start: $0.start, allDay: $0.isAllDay) }
+        guard let events = calendar?.upcoming, !events.isEmpty else { return nil }
+        let starts = events.map { (start: $0.start, end: $0.end, allDay: $0.isAllDay) }
         let now = Date()
         if let next = NotchMeetingSoon.nextChange(starts, now: now, minutes: preferences.meetingMinutes) {
             let task = DispatchWorkItem { [weak self] in self?.layoutPanels() }
@@ -778,22 +770,20 @@ final class AgentNotch {
             let screen = surface.screen
             let state = surface.state
             let notched = screen.safeAreaInsets.top > 0
-            let attached = notched && preferences.position == .attached
-            // No notch to wrap: attached mode sits inside the menu bar instead,
-            // hanging from the top edge at the bar's height.
-            let inMenuBar = !notched && preferences.position == .attached
-            let beside = notched && (preferences.position == .left || preferences.position == .right)
+            // It wraps the notch; with no notch to wrap it sits inside the
+            // menu bar instead, hanging from the top edge at the bar's height.
+            let attached = notched
+            let inMenuBar = !notched
             let notchWidth = max(0, (screen.auxiliaryTopRightArea?.minX ?? screen.frame.midX)
                                  - (screen.auxiliaryTopLeftArea?.maxX ?? screen.frame.midX))
             state.notchWidth = attached ? notchWidth : 0
             state.topAttached = attached || inMenuBar
-            state.headerHeight = attached ? max(screen.safeAreaInsets.top, preferences.compactHeight)
-                : inMenuBar ? Self.menuBarHeight(on: screen) : preferences.compactHeight
+            state.headerHeight = attached ? max(screen.safeAreaInsets.top, preferences.compactHeight) : Self.menuBarHeight(on: screen)
             // Attached, the flared top corners sit inside the frame; widen it so the body keeps its width.
             state.compactWidth = min(screen.frame.width - 24, preferences.compactWidth + state.notchWidth
                                      + (state.topAttached ? 2 * NotchShape.flare : 0))
             // The HUD's bar and number need more room than a narrow strip has.
-            if preferences.shelfEnabled, state.hud != nil {
+            if state.hud != nil {
                 state.compactWidth = min(screen.frame.width - 24, max(state.compactWidth, NotchHUD.stripWidth(
                     notch: state.notchWidth, flare: state.topAttached ? 2 * NotchShape.flare : 0)))
             }
@@ -810,7 +800,7 @@ final class AgentNotch {
             if state.strip != strip { state.strip = strip }
             // Without a notch, the shelf's capsule shrinks while nothing runs
             // (Bartender's smaller idle capsule), so the menu bar keeps its room.
-            if preferences.shelfEnabled, !notched, strip == NotchShelfStrip(), state.hud == nil {
+            if !notched, strip == NotchShelfStrip(), state.hud == nil {
                 state.compactWidth = min(state.compactWidth, Self.idleCapsuleWidth)
             }
             if let card = state.card, strip.leading != card, strip.trailing != card, !state.expanded {
@@ -824,32 +814,22 @@ final class AgentNotch {
             let shelfWidth = min(screen.frame.width - 24, max(Self.shelfOpenWidth, state.compactWidth))
             // The song banner is a name under the strip, barely wider than it.
             let bannerWidth = min(cardWidth, max(state.compactWidth, Self.bannerMinWidth))
-            let width = state.expanded ? (preferences.shelfEnabled ? shelfWidth : cardWidth)
+            let width = state.expanded ? shelfWidth
                 : peeking ? (state.banner && state.card == .music ? bannerWidth : cardWidth) : state.compactWidth
-            let contentHeight = preferences.shelfEnabled
-                ? AgentNotchView.shelfHeight(page: state.currentPage, preferences: preferences,
-                                             sessionCount: AgentNotchView.providerFiltered(sessions, state.agentProvider).count,
-                                             chips: AgentNotchView.providerChips(sessions).count > 1,
-                                             usageRows: preferences.showUsage ? usage?.usage.count ?? 0 : 0,
-                                             clipboard: clipboard, searching: state.searching, files: NotchFileShelf.shared.items.count,
-                                             airPods: state.airPods.count)
-                : AgentNotchView.dashboardHeight(preferences: preferences, sessionCount: sessions.count)
+            let contentHeight = AgentNotchView.shelfHeight(page: state.currentPage, preferences: preferences,
+                                                           sessionCount: AgentNotchView.providerFiltered(sessions, state.agentProvider).count,
+                                                           chips: AgentNotchView.providerChips(sessions).count > 1,
+                                                           usageRows: preferences.showUsage ? usage?.usage.count ?? 0 : 0,
+                                                           clipboard: clipboard, searching: state.searching,
+                                                           files: NotchFileShelf.shared.items.count, airPods: state.airPods.count)
             let height = min(screen.visibleFrame.height - 16, state.headerHeight
                              + (state.expanded ? contentHeight : state.card.map {
                                  state.banner && $0 == .music ? AgentNotchView.bannerHeight
                                      : AgentNotchView.cardHeight($0, preferences: preferences, sessionCount: sessions.count)
                              } ?? 0))
             state.panelWidth = width
-            var x = screen.frame.midX - width / 2 + (state.topAttached ? 0 : preferences.horizontalOffset)
-            if beside {
-                x = preferences.position == .left
-                    ? (screen.auxiliaryTopLeftArea?.maxX ?? screen.frame.midX - 100) - width - 6
-                    : (screen.auxiliaryTopRightArea?.minX ?? screen.frame.midX + 100) + 6
-                x += preferences.horizontalOffset
-            }
-            x = min(screen.frame.maxX - width - 8, max(screen.frame.minX + 8, x))
-            let top = state.topAttached || beside ? screen.frame.maxY : min(screen.visibleFrame.maxY, screen.frame.maxY - screen.safeAreaInsets.top) - 4
-            let frame = NSRect(x: x, y: top - height - (state.topAttached ? 0 : preferences.verticalOffset), width: width, height: height)
+            let x = min(screen.frame.maxX - width - 8, max(screen.frame.minX + 8, screen.frame.midX - width / 2))
+            let frame = NSRect(x: x, y: screen.frame.maxY - height, width: width, height: height)
             // The window shadow is the other half of the border: it rims the
             // pill's edge, so "Show border" off turns it off too.
             if surface.panel.hasShadow != preferences.showBorder {
@@ -857,19 +837,9 @@ final class AgentNotch {
                 surface.panel.invalidateShadow()
             }
             let animate = preferences.animate && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && surface.panel.isVisible
-            if preferences.shelfEnabled {
-                settleShelf(surface, to: frame, panelWidth: shelfWidth, animate: animate)
-            } else {
-                if state.surfaceSize != nil { state.surfaceSize = nil }
-                if surface.panel.frame != frame { NSAnimationContext.runAnimationGroup { context in
-                    context.duration = preferences.animationDuration
-                    if animate { surface.panel.animator().setFrame(frame, display: true) }
-                    else { surface.panel.setFrame(frame, display: true) }
-                } }
-            }
-            if preferences.hideWhenEmpty && sessions.isEmpty && !playing && meeting == nil && state.alert == nil
-                && state.hud == nil && !state.expanded && !peeking { surface.panel.orderOut(nil) }
-            else if !surface.panel.isVisible { surface.panel.orderFrontRegardless() }
+            settleShelf(surface, to: frame, panelWidth: shelfWidth, animate: animate)
+            // Always shown, so the notch opens with nothing running.
+            if !surface.panel.isVisible { surface.panel.orderFrontRegardless() }
         }
         publishBarSpans()
     }
@@ -915,7 +885,7 @@ final class AgentNotch {
     private func publishBarSpans() {
         // The shelf owns the notch and its header whether or not the panel
         // shows, so no menu bar trigger reveals hidden items there.
-        MenuBarShelfExclusion.update(preferences.shelfEnabled ? surfaces.compactMap { surface in
+        MenuBarShelfExclusion.update(surfaces.compactMap { surface in
             let screen = surface.screen.frame
             let height = max(Self.menuBarHeight(on: surface.screen), surface.screen.safeAreaInsets.top)
             let band = CGRect(x: screen.minX, y: screen.maxY - height, width: screen.width, height: height)
@@ -925,7 +895,7 @@ final class AgentNotch {
             let width = surface.state.compactWidth
             let header = surface.state.topAttached ? (screen.midX - width / 2)...(screen.midX + width / 2) : nil
             return MenuBarShelfExclusion.rect(band: band, notch: notch, header: header)
-        } : [])
+        })
         MenuBarReservedSpans.update(surfaces.filter { $0.state.topAttached && $0.panel.isVisible }.map { surface in
             let width = surface.state.compactWidth
             // Window positions land on whole points, rounding down.
