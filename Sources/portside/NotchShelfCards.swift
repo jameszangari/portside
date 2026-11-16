@@ -59,9 +59,9 @@ struct NotchMusicCard: View {
                 HStack(alignment: .top, spacing: 8) {
                     titles(track, title: 14, artist: 12)
                     Spacer(minLength: 4)
-                    PlayerIcon(bundleID: track.player.bundleID).frame(width: 16, height: 16)
+                    focusButton(track) { PlayerIcon(bundleID: track.player.bundleID).frame(width: 16, height: 16) }
                 }
-                NotchProgressBar(track: track, seekable: preferences.musicSeeking, accent: preferences.accent.color) { widget.seek(to: $0) }
+                NotchProgressBar(track: track, seekable: preferences.musicSeeking, accent: ArtworkTint.musicColor(track, fallback: preferences.accent.color)) { widget.seek(to: $0) }
                 controls(track, small: 15, large: 21, spacing: 34)
             }
             .frame(height: NotchShelfCardMetrics.wideHeight)
@@ -77,7 +77,7 @@ struct NotchMusicCard: View {
                 titles(track, title: 13, artist: 11)
                 Spacer(minLength: 0)
             }
-            NotchProgressBar(track: track, seekable: preferences.musicSeeking, accent: preferences.accent.color) { widget.seek(to: $0) }
+            NotchProgressBar(track: track, seekable: preferences.musicSeeking, accent: ArtworkTint.musicColor(track, fallback: preferences.accent.color)) { widget.seek(to: $0) }
             controls(track, small: 13, large: 18, spacing: 26)
         }
         .accessibilityElement(children: .contain)
@@ -91,8 +91,20 @@ struct NotchMusicCard: View {
         }
     }
 
-    @ViewBuilder
+    /// The art and the player's icon open the player, as in Bartender.
+    private func focusButton<Label: View>(_ track: NowPlayingWidget.Track, @ViewBuilder label: () -> Label) -> some View {
+        Button { widget.focusPlayer() } label: { label().contentShape(Rectangle()) }
+            .buttonStyle(.plain)
+            .help("Open \(track.player.name)")
+            .accessibilityLabel("Open \(track.player.name)")
+    }
+
     private func art(_ track: NowPlayingWidget.Track, side: CGFloat) -> some View {
+        focusButton(track) { artwork(track, side: side) }
+    }
+
+    @ViewBuilder
+    private func artwork(_ track: NowPlayingWidget.Track, side: CGFloat) -> some View {
         if preferences.musicStyle == .vinyl {
             VinylArt(artwork: track.artwork, side: side, spinning: track.isPlaying && preferences.animate && !reduceMotion)
         } else {
@@ -253,6 +265,47 @@ enum ArtworkTint {
         let color = Color(hue: hue, saturation: min(1, saturation * 1.2), brightness: min(0.42, brightness))
         if cache.count > 32 { cache.removeAll() }
         cache[key] = color
+        return color
+    }
+
+    private static var accentCache: [ObjectIdentifier: Color] = [:]
+
+    /// The playing track's art color, else `fallback` (no art).
+    static func musicColor(_ track: NowPlayingWidget.Track?, fallback: Color) -> Color {
+        track?.artwork.flatMap(accent) ?? fallback
+    }
+
+    /// The art's liveliest color, brightened for the audio bars as in
+    /// Bartender: the most saturated of an 8 by 8 sample that is not near
+    /// black. Gray art gives white.
+    static func accent(for image: NSImage) -> Color? {
+        let key = ObjectIdentifier(image)
+        if let cached = accentCache[key] { return cached }
+        let side = 8
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: side, pixelsHigh: side, bitsPerSample: 8,
+                                         samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: side * 4, bitsPerPixel: 32),
+              let context = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        context.imageInterpolation = .medium
+        image.draw(in: NSRect(x: 0, y: 0, width: side, height: side))
+        NSGraphicsContext.restoreGraphicsState()
+        var best: (hue: CGFloat, saturation: CGFloat, score: CGFloat)?
+        for x in 0..<side {
+            for y in 0..<side {
+                guard let pixel = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
+                pixel.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
+                guard brightness > 0.2 else { continue }
+                let score = saturation * (0.5 + brightness)
+                if score > best?.score ?? -1 { best = (hue, saturation, score) }
+            }
+        }
+        let color = best.map { $0.saturation < 0.15 ? Color.white : Color(hue: $0.hue, saturation: min(0.85, max(0.45, $0.saturation)), brightness: 0.95) }
+            ?? .white
+        if accentCache.count > 32 { accentCache.removeAll() }
+        accentCache[key] = color
         return color
     }
 }
@@ -470,6 +523,183 @@ struct NotchClipboardPage: View {
     private func show(_ message: String) {
         failure = message
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { if failure == message { failure = nil } }
+    }
+}
+
+/// The Files page (SHELF-06b), as in Bartender: files dropped on the notch,
+/// up to six, with an AirDrop card beside them. Click opens a file, drag
+/// hands out a copy, right click has the rest.
+struct NotchFilesPage: View {
+    @ObservedObject var shelf: NotchFileShelf
+    let preferences: AgentNotchSettings
+    /// A file drag is over the notch.
+    let dragOver: Bool
+    @State private var hovered: UUID?
+    @State private var airDropOver = false
+    @State private var failure: String?
+
+    static let columns = 3
+    static let tileHeight: CGFloat = 64
+    static let spacing: CGFloat = 8
+    static let footerHeight: CGFloat = 18
+    static let airDropWidth: CGFloat = 112
+    static let emptyHeight: CGFloat = 96
+
+    /// Content height for `count` files.
+    static func height(count: Int) -> CGFloat {
+        guard count > 0 else { return emptyHeight }
+        let rows = CGFloat((min(count, NotchFileTray.limit) + columns - 1) / columns)
+        return rows * tileHeight + (rows - 1) * spacing + spacing + footerHeight
+    }
+
+    var body: some View {
+        let items = shelf.items
+        HStack(alignment: .top, spacing: Self.spacing) {
+            if items.isEmpty {
+                dropZone
+            } else {
+                VStack(alignment: .leading, spacing: Self.spacing) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Self.spacing), count: Self.columns),
+                              spacing: Self.spacing) {
+                        ForEach(items) { tile($0) }
+                    }
+                    HStack(spacing: 6) {
+                        Text("Files kept for \(preferences.filesKeep.phrase)").foregroundStyle(.white.opacity(0.45))
+                        Spacer()
+                        Button("Clear") { shelf.removeAll() }
+                            .buttonStyle(.plain).foregroundStyle(.white.opacity(0.7))
+                    }
+                    .font(.system(size: 10, weight: .medium))
+                    .frame(height: Self.footerHeight)
+                }
+            }
+            airDropCard(items.map(\.url))
+        }
+        .frame(height: Self.height(count: items.count), alignment: .top)
+        .overlay(alignment: .bottom) {
+            if let failure {
+                Text(failure).font(.system(size: 11)).padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(.red.opacity(0.85), in: Capsule())
+            }
+        }
+        .onAppear { shelf.prune() }
+    }
+
+    private var dropZone: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "tray.and.arrow.down").font(.title2).foregroundStyle(preferences.accent.color)
+            Text("Drop Files Here").fontWeight(.medium)
+            Text("Files kept for \(preferences.filesKeep.phrase)").font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
+        }
+        .frame(maxWidth: .infinity).frame(height: Self.emptyHeight)
+        .background(.white.opacity(dragOver ? 0.1 : 0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(.white.opacity(dragOver ? 0.5 : 0.18), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func tile(_ item: NotchFileTray.Item) -> some View {
+        VStack(spacing: 4) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: item.path))
+                .resizable().interpolation(.high).frame(width: 30, height: 30)
+            Text(item.name).font(.system(size: 10)).lineLimit(2).truncationMode(.middle)
+                .multilineTextAlignment(.center).frame(maxWidth: .infinity)
+        }
+        .padding(.horizontal, 6).padding(.vertical, 6)
+        .frame(height: Self.tileHeight)
+        .frame(maxWidth: .infinity)
+        .background(.white.opacity(hovered == item.id ? 0.1 : 0.055), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            NotchFileDragSource(url: item.url, onOpen: { open(item) }, onDragEnded: { delivered in
+                if delivered, preferences.filesRemoveAfterDrag { shelf.remove(item.id) }
+            }, menu: { menu(item) })
+        }
+        .overlay(alignment: .topTrailing) {
+            if hovered == item.id {
+                Button { shelf.remove(item.id) } label: {
+                    Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                        .frame(width: 16, height: 16).background(.black.opacity(0.7), in: Circle())
+                }
+                .buttonStyle(.plain).padding(4)
+                .accessibilityLabel("Remove")
+            }
+        }
+        .onHover { hovered = $0 ? item.id : (hovered == item.id ? nil : hovered) }
+        .help(item.path)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(item.name)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Opens it. Drag to copy it somewhere.")
+        .accessibilityAction { open(item) }
+        .accessibilityAction(named: "Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
+        .accessibilityAction(named: "Remove") { shelf.remove(item.id) }
+    }
+
+    private func airDropCard(_ urls: [URL]) -> some View {
+        Button {
+            if !NotchFileShelf.airDrop(urls) { show(urls.isEmpty ? "Drop files on AirDrop to send them" : "AirDrop is not available") }
+        } label: {
+            VStack(spacing: 6) {
+                Image(systemName: "airplayaudio").font(.system(size: 22, weight: .medium))
+                    .foregroundStyle(airDropOver ? preferences.accent.color : .white)
+                Text("AirDrop").font(.system(size: 11, weight: .medium))
+            }
+            .frame(width: Self.airDropWidth)
+            .frame(maxHeight: .infinity)
+            .background(.white.opacity(airDropOver ? 0.14 : 0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onDrop(of: [.fileURL], isTargeted: $airDropOver) { providers in
+            NotchFilesPage.urls(from: providers) { dropped in
+                if !NotchFileShelf.airDrop(dropped) { show("AirDrop is not available") }
+            }
+            return true
+        }
+        .help(urls.isEmpty ? "Drop files here to send them with AirDrop" : "Send these files with AirDrop")
+        .accessibilityLabel("AirDrop")
+        .accessibilityHint(urls.isEmpty ? "Drop files here to send them" : "Sends the files on the shelf")
+    }
+
+    private func open(_ item: NotchFileTray.Item) {
+        guard FileManager.default.fileExists(atPath: item.path) else {
+            shelf.prune()
+            return show("That file moved or was deleted")
+        }
+        NSWorkspace.shared.open(item.url)
+    }
+
+    private func menu(_ item: NotchFileTray.Item) -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(ClosureMenuItem("Open") { open(item) })
+        menu.addItem(ClosureMenuItem("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) })
+        menu.addItem(ClosureMenuItem("Copy") { NotchFileShelf.copy(item.url) })
+        menu.addItem(ClosureMenuItem("AirDrop") { if !NotchFileShelf.airDrop([item.url]) { show("AirDrop is not available") } })
+        menu.addItem(.separator())
+        menu.addItem(ClosureMenuItem("Remove from Shelf") { shelf.remove(item.id) })
+        return menu
+    }
+
+    private func show(_ message: String) {
+        failure = message
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { if failure == message { failure = nil } }
+    }
+
+    /// File URLs from a drop, on the main queue.
+    static func urls(from providers: [NSItemProvider], _ done: @escaping ([URL]) -> Void) {
+        let group = DispatchGroup()
+        var urls: [Int: URL] = [:]
+        let lock = NSLock()
+        for (index, provider) in providers.enumerated() where provider.canLoadObject(ofClass: URL.self) {
+            group.enter()
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                if let url, url.isFileURL { lock.lock(); urls[index] = url; lock.unlock() }
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) { done(urls.sorted { $0.key < $1.key }.map(\.value)) }
     }
 }
 

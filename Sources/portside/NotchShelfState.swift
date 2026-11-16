@@ -4,10 +4,10 @@ import Foundation
 enum NotchShelfSide: Equatable { case leading, trailing }
 
 /// Something the compact strip shows and that has a card. Music, agents
-/// and a meeting about to start last while they are true; battery and
-/// weather only ever come as short alerts (SHELF-07).
+/// and a meeting about to start last while they are true; battery,
+/// weather and AirPods only ever come as short alerts (SHELF-07, SHELF-10).
 enum NotchShelfActivity: String, Codable, CaseIterable, Identifiable {
-    case meeting, music, agents, battery, weather
+    case meeting, music, agents, battery, weather, airPods
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -16,6 +16,7 @@ enum NotchShelfActivity: String, Codable, CaseIterable, Identifiable {
         case .agents: "Agents"
         case .battery: "Battery"
         case .weather: "Weather"
+        case .airPods: "AirPods"
         }
     }
     /// Lasts while true, so it can own the strip; the rest are alerts.
@@ -32,6 +33,8 @@ struct NotchShelfAlert: Equatable {
     let detail: String
     /// Drawn in red (low battery).
     var isWarning = false
+    /// Battery bars on the card (AirPods: left, right, case).
+    var parts: [NotchLevelPart] = []
 }
 
 /// Which lasting activity owns the strip when several are on, first wins.
@@ -114,19 +117,24 @@ enum NotchShelfPhase: Equatable {
     case open
 }
 
-/// What the compact strip shows on each side of the notch. The lasting
-/// activity first in `stripOrder` takes both sides (music: art left,
-/// animation right); an alert takes the right side for a few seconds
-/// (SHELF-07). Nil: that side shows nothing.
+/// What the compact strip shows on each side of the notch. One lasting
+/// activity takes both sides (music: art left, animation right); with two
+/// on, the first in `stripOrder` takes the left and the second the right,
+/// each drawn whole on its side (music and agents both show). An alert
+/// takes the right side for a few seconds (SHELF-07). Nil: that side shows
+/// nothing.
 struct NotchShelfStrip: Equatable {
     var leading: NotchShelfActivity?
     var trailing: NotchShelfActivity?
 
     /// `active`: lasting activities that are on, in priority order; the
-    /// first takes both sides. `alert` borrows the right side.
+    /// first two split the sides. `alert` borrows the right side.
     static func layout(active: [NotchShelfActivity], alert: NotchShelfActivity?) -> NotchShelfStrip {
-        NotchShelfStrip(leading: active.first, trailing: alert ?? active.first)
+        NotchShelfStrip(leading: active.first, trailing: alert ?? (active.count > 1 ? active[1] : active.first))
     }
+
+    /// Each side shows a different activity, so each draws whole on its side.
+    var isSplit: Bool { leading != nil && trailing != nil && leading != trailing }
 
     /// SHELF-04c's fixed order: music over agents, an agent alert on the right.
     static func layout(music: Bool, agents: Bool, agentAlert: Bool) -> NotchShelfStrip {
@@ -276,12 +284,13 @@ struct NotchShelfMachine: Equatable {
 
 /// A page of the open shelf (SHELF-03).
 enum NotchShelfPage: String, Codable, CaseIterable, Identifiable {
-    case widgets, agents, clipboard
+    case widgets, agents, files, clipboard
     var id: String { rawValue }
     var title: String {
         switch self {
         case .widgets: "Widgets"
         case .agents: "Agents"
+        case .files: "Files"
         case .clipboard: "Clipboard"
         }
     }
@@ -289,6 +298,7 @@ enum NotchShelfPage: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .widgets: "square.grid.2x2"
         case .agents: "sparkles"
+        case .files: "tray"
         case .clipboard: "doc.on.clipboard"
         }
     }
@@ -297,7 +307,7 @@ enum NotchShelfPage: String, Codable, CaseIterable, Identifiable {
 /// Which page the shelf opens on: the first tab (Bartender), the last one
 /// shown, or a fixed page.
 enum NotchShelfStartPage: String, Codable, CaseIterable, Identifiable {
-    case first, lastUsed, widgets, agents, clipboard
+    case first, lastUsed, widgets, agents, files, clipboard
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -422,4 +432,88 @@ enum NotchAgentCard: String, Codable, CaseIterable, Identifiable {
     case latest, all
     var id: String { rawValue }
     var title: String { self == .latest ? "Latest session" : "All running sessions" }
+}
+
+/// How long the Files page keeps a file (SHELF-06b). Bartender's default
+/// is a day.
+enum NotchFilesKeep: String, Codable, CaseIterable, Identifiable {
+    case hour, day, week
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .hour: "1 hour"
+        case .day: "1 day"
+        case .week: "1 week"
+        }
+    }
+    /// For "Files kept for a day".
+    var phrase: String {
+        switch self {
+        case .hour: "an hour"
+        case .day: "a day"
+        case .week: "a week"
+        }
+    }
+    var seconds: TimeInterval {
+        switch self {
+        case .hour: 3600
+        case .day: 86_400
+        case .week: 604_800
+        }
+    }
+}
+
+/// The Files page's items (SHELF-06b): references to files dropped on the
+/// notch, newest first, at most `limit`. The files stay where they are;
+/// only their paths are kept, so a file that moves or is deleted leaves.
+struct NotchFileTray: Codable, Equatable {
+    struct Item: Codable, Equatable, Identifiable {
+        let id: UUID
+        let path: String
+        let added: Date
+        var url: URL { URL(fileURLWithPath: path) }
+        var name: String { url.lastPathComponent }
+    }
+
+    /// Bartender's six.
+    static let limit = 6
+
+    private(set) var items: [Item] = []
+
+    init(items: [Item] = []) {
+        self.items = Array(items.prefix(Self.limit))
+    }
+
+    /// Adds files to the front. A file already here moves to the front with
+    /// a new date; past the limit the oldest leave. Returns whether anything
+    /// changed.
+    @discardableResult
+    mutating func add(_ urls: [URL], now: Date = Date()) -> Bool {
+        var seen = Set<String>()
+        let paths = urls.filter(\.isFileURL).map { $0.standardizedFileURL.path }.filter { seen.insert($0).inserted }
+        guard !paths.isEmpty else { return false }
+        let added = paths.map { Item(id: UUID(), path: $0, added: now) }
+        items = Array((added + items.filter { !seen.contains($0.path) }).prefix(Self.limit))
+        return true
+    }
+
+    mutating func remove(_ id: UUID) {
+        items.removeAll { $0.id == id }
+    }
+
+    mutating func removeAll() { items = [] }
+
+    /// Drops items older than `keep` and files that are gone. Returns
+    /// whether anything left.
+    @discardableResult
+    mutating func prune(now: Date = Date(), keep: TimeInterval, exists: (String) -> Bool) -> Bool {
+        let before = items.count
+        items.removeAll { now.timeIntervalSince($0.added) >= keep || !exists($0.path) }
+        return items.count != before
+    }
+
+    /// When the next item expires, for a single timer.
+    func nextExpiry(keep: TimeInterval) -> Date? {
+        items.map { $0.added.addingTimeInterval(keep) }.min()
+    }
 }

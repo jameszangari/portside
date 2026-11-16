@@ -95,12 +95,14 @@ enum AgentNotchProbe {
                 id: "probe", title: "I'm On", artist: "Anderson .Paak, Cordae", artwork: art, artworkURL: nil, isPlaying: true,
                 player: NowPlayingWidget.Player(bundleID: "com.apple.Music", name: "Music", notification: ""),
                 duration: 233, elapsed: 72, elapsedAt: Date()))
-            let shelfVariants = ["shelf-agents", "shelf-widgets", "shelf-clipboard", "strip-music", "card-music", "card-vinyl", "card-agents", "card-meeting", "card-battery"]
-            for name in ["compact", "attached", "expanded", "large-text", "minimal"] + shelfVariants {
+            let shelfVariants = ["shelf-agents", "shelf-widgets", "shelf-clipboard", "shelf-files-empty", "shelf-files", "strip-music", "strip-solo", "strip-hud", "card-banner", "card-music", "card-vinyl", "card-agents", "card-meeting", "card-battery", "card-airpods"]
+            for name in ["compact", "attached", "attached-music", "expanded", "large-text", "minimal"] + shelfVariants {
                 let state = AgentNotchPresentation()
                 state.preferences.animate = false
-                state.expanded = name != "compact" && name != "attached" && !name.hasPrefix("strip") && !name.hasPrefix("card")
-                if name == "attached" || shelfVariants.contains(name) { state.topAttached = true; state.headerHeight = 32; state.notchWidth = 180 }
+                state.expanded = name != "compact" && !name.hasPrefix("attached") && !name.hasPrefix("strip") && !name.hasPrefix("card")
+                if name.hasPrefix("attached") || shelfVariants.contains(name) { state.topAttached = true; state.headerHeight = 32; state.notchWidth = 180 }
+                // Attached, the island wraps the notch, as `layoutPanels` sizes it.
+                if name.hasPrefix("attached") { state.compactWidth = 184 + 180 + 2 * NotchShape.flare }
                 if shelfVariants.contains(name) {
                     state.preferences.shelfEnabled = true
                     state.preferences.shelfHoverDelay = 0
@@ -114,14 +116,35 @@ enum AgentNotchProbe {
                                                                  color: .orange, meeting: URL(string: "https://meet.google.com/abc-defg-hij"))
                         state.strip = NotchShelfStrip.layout(active: [.meeting, .music], alert: nil)
                     }
+                    if name == "strip-solo" { state.strip = NotchShelfStrip.layout(active: [.music], alert: nil) }
+                    if name == "card-banner" { state.showBanner() }
+                    if name == "strip-hud" {
+                        // A 140 pt strip, as layoutPanels widens it for the HUD.
+                        state.hud = NotchHUD(kind: .volume, level: 0.4)
+                        state.compactWidth = max(140 + 180 + 2 * NotchShape.flare, NotchHUD.stripWidth(notch: 180, flare: 2 * NotchShape.flare))
+                    }
                     if name == "card-battery" {
                         state.alert = NotchShelfAlert(activity: .battery, symbol: "battery.25percent", short: "18%",
                                                       title: "Low battery", detail: "18% left. Plug in soon.", isWarning: true)
                         state.strip = NotchShelfStrip.layout(active: [.music], alert: .battery)
                     }
+                    if name == "card-airpods" {
+                        let pair = AirPodsReading(address: "probe", name: "James's AirPods Pro", productID: 0x2014, left: 80, right: 15, case: 62)
+                        state.alert = NotchShelfAlert(activity: .airPods, symbol: pair.symbol, short: "15%", title: pair.name,
+                                                      detail: pair.detail, parts: pair.parts)
+                        state.strip = NotchShelfStrip.layout(active: [.music], alert: .airPods)
+                    }
                     if name.hasPrefix("shelf") {
                         state.pageAvailable = { _ in true }
-                        state.showPage(name == "shelf-agents" ? .agents : name == "shelf-clipboard" ? .clipboard : .widgets)
+                        state.showPage(name == "shelf-agents" ? .agents : name == "shelf-clipboard" ? .clipboard
+                                       : name.hasPrefix("shelf-files") ? .files : .widgets)
+                        if name.hasPrefix("shelf-files") {
+                            // Files that exist on every Mac, so the icons are real. Never saved.
+                            NotchFileShelf.shared.preview(name == "shelf-files-empty" ? [] : [
+                                "/System/Applications/TextEdit.app", "/System/Library/CoreServices/Finder.app",
+                                "/etc/hosts", "/System/Library/Desktop Pictures", "/usr/share/dict/words",
+                            ].map { URL(fileURLWithPath: $0) })
+                        }
                         if name == "shelf-clipboard" {
                             ClipboardService.shared.preview(["https://github.com/jameszangari/portside/pull/74", "swift build && swift test",
                                                              "Meeting moved to 3 pm, same room", "let width = min(screen.frame.width - 24, 600)",
@@ -133,27 +156,31 @@ enum AgentNotchProbe {
                     // Not started: no network or calendar queries, only each card's empty state.
                     let hosts = [WeatherWidget.kind, CalendarWidget.kind].compactMap { WidgetCatalog.make($0).map(WidgetHost.init(widget:)) }
                     state.widgetHost = { kind in hosts.first { $0.id == kind } }
-                    if name.hasPrefix("card") {
+                    if name.hasPrefix("card"), name != "card-banner" {
                         state.panelWidth = state.preferences.expandedWidth + 2 * NotchShape.flare
-                        state.shelfPointer(.side(name == "card-battery" ? .trailing : .leading))
+                        state.shelfPointer(.side(name == "card-battery" || name == "card-airpods" ? .trailing : .leading))
                         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
                     }
                 }
                 state.preferences.showUsage = false
+                // Music with no agents: the fixture's providers filtered out.
+                if name == "attached-music" { state.preferences.claude = false; state.preferences.codex = false }
                 if name == "large-text" { state.preferences.fontSize = 16; state.preferences.expandedWidth = 340 }
                 if name == "minimal" { state.preferences.compactStyle = .minimal; state.preferences.providerColors = false; state.preferences.showTotal = false }
-                let shelfWide = state.preferences.shelfEnabled && (state.expanded || state.card != nil)
+                let shelfWide = state.preferences.shelfEnabled && (state.expanded || state.card != nil) && !state.banner
                 let width = state.preferences.shelfEnabled && state.expanded ? AgentNotch.shelfOpenWidth
                     : shelfWide ? state.preferences.expandedWidth + 2 * NotchShape.flare
                     : state.expanded ? state.preferences.expandedWidth
-                    : state.preferences.shelfEnabled ? state.compactWidth : state.preferences.compactWidth
+                    : state.preferences.shelfEnabled || name.hasPrefix("attached") ? state.compactWidth : state.preferences.compactWidth
                 state.panelWidth = width
                 let content = state.preferences.shelfEnabled
                     ? AgentNotchView.shelfHeight(page: state.currentPage, preferences: state.preferences, sessionCount: agents.sessions.count,
                                                  chips: AgentNotchView.providerChips(agents.sessions).count > 1,
-                                                 clipboard: (ClipboardService.shared.entries.count, false))
+                                                 clipboard: (ClipboardService.shared.entries.count, false),
+                                                 files: NotchFileShelf.shared.items.count)
                     : AgentNotchView.dashboardHeight(preferences: state.preferences, sessionCount: agents.sessions.count)
-                let card = state.card.map { AgentNotchView.cardHeight($0, preferences: state.preferences, sessionCount: agents.sessions.count) } ?? 0
+                let card = state.banner ? AgentNotchView.bannerHeight
+                    : state.card.map { AgentNotchView.cardHeight($0, preferences: state.preferences, sessionCount: agents.sessions.count) } ?? 0
                 let height = state.headerHeight + (state.expanded ? content : card)
                 let view = AgentNotchView(agents: agents, usage: nil, nowPlaying: music, state: state).frame(width: width, height: height)
                 // Hosting view bitmaps are more reliable than ImageRenderer for ScrollView.

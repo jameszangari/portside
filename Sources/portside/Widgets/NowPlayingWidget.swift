@@ -136,6 +136,17 @@ final class NowPlayingWidget: DockWidget {
         send(.playPause)
     }
 
+    /// Brings the playing app forward (the browser for web media), opening
+    /// it if it has quit since.
+    func focusPlayer() {
+        guard let id = track?.player.bundleID else { return }
+        if let app = NSRunningApplication.runningApplications(withBundleIdentifier: id).first {
+            app.activate()
+        } else if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
+            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+        }
+    }
+
     func send(_ command: Command) {
         guard let track else { return }
         if command == .playPause {

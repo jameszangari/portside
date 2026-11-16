@@ -67,11 +67,7 @@ final class AgentStatusWidget: DockWidget {
             next.append(located)
         }
         // T3 Code / OpenCode do not fire Claude hooks; merge their local DBs.
-        let discovered = AgentSessionDiscovery.discover(existing: next)
-        var seen = Set(next.map(\.id))
-        for session in discovered where seen.insert(session.id).inserted {
-            next.append(session)
-        }
+        next = Self.merged(hooks: next, discovered: AgentSessionDiscovery.discover(existing: next))
         next.sort { $0.updated > $1.updated }
         AppActivity.shared.setAgentWorking(workingHosts(next))
         if next != sessions {
@@ -80,6 +76,23 @@ final class AgentStatusWidget: DockWidget {
             let done = next.filter { $0.state == .done }.count
             logger.info("agents: \(next.count) sessions, \(running) running, \(done) done")
         }
+    }
+
+    /// Hook sessions plus discovered ones. T3 Code runs Claude Code and
+    /// Codex, which fire hooks too, so one run can arrive twice: as a hook
+    /// file and as a T3 database row. The hook session wins (it knows the
+    /// process and attention prompts); the T3 row for the same provider and
+    /// project is dropped while a hook session in T3 has it.
+    static func merged(hooks: [AgentSession], discovered: [AgentSession]) -> [AgentSession] {
+        let inT3 = Set(hooks.filter { $0.host?.hasPrefix("T3 Code") == true }
+            .compactMap { session in session.project.map { "\(session.provider.id)/\($0)" } })
+        var seen = Set(hooks.map(\.id))
+        var next = hooks
+        for session in discovered where seen.insert(session.id).inserted {
+            if session.id.hasPrefix("t3:"), let project = session.project, inT3.contains("\(session.provider.id)/\(project)") { continue }
+            next.append(session)
+        }
+        return next
     }
 
     /// Focuses the window of the agent that is working (latest first),

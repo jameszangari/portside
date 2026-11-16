@@ -14,6 +14,12 @@ final class AgentNotchPresentation: ObservableObject {
     @Published var compactWidth: CGFloat = 184
     /// Shelf only: the activity whose card shows below the strip.
     @Published private(set) var card: NotchShelfActivity?
+    /// Shelf only: the music card is a fresh song banner, so it shows the
+    /// song's name only until the pointer reaches it.
+    @Published private(set) var banner = false
+    /// Shelf only: the volume or brightness level, shown on the strip for a
+    /// moment after it changes (SHELF-09).
+    @Published var hud: NotchHUD?
     /// Shelf only: what the compact strip shows on each side.
     @Published var strip = NotchShelfStrip()
     /// Shelf only: a short alert (an agent finished or needs you, battery,
@@ -41,6 +47,10 @@ final class AgentNotchPresentation: ObservableObject {
     /// Shelf only: the page shown last, for the "Last used" starting page.
     /// Kept for this run only.
     private var lastUsedPage: NotchShelfPage?
+    /// Shelf only: whether the pointer is over this panel now.
+    var pointerInside: () -> Bool = { false }
+    /// Shelf only: a file drag is over the panel.
+    @Published private(set) var fileDragOver = false
     /// Shelf only: whether a page can show now (Clipboard needs its module).
     var pageAvailable: (NotchShelfPage) -> Bool = { $0 != .clipboard }
     /// Shelf only: a running widget, for the Widgets page.
@@ -81,6 +91,7 @@ final class AgentNotchPresentation: ObservableObject {
         guard shelf else { return }
         let strip = strip
         schedule(machine.pointer(region) { strip.activity($0) })
+        if banner != machine.banner { syncShelf() }
     }
 
     /// Shelf only: the track changed; show the music card for a moment.
@@ -119,6 +130,27 @@ final class AgentNotchPresentation: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
     }
 
+    /// Shelf only: the Files page is on, so a file drop has somewhere to go.
+    var acceptsFiles: Bool { shelf && preferences.shelfPages.visible(available: pageAvailable).contains(.files) }
+
+    /// Shelf only: a file drag entered or left the panel. Entering opens the
+    /// shelf on Files, as Bartender does; leaving without a drop closes it
+    /// after the collapse delay, like the pointer leaving.
+    func fileDrag(_ over: Bool) {
+        guard acceptsFiles, fileDragOver != over else { return }
+        fileDragOver = over
+        if over {
+            hoverTask?.cancel()
+            machine.open()
+            syncShelf()
+            showPage(.files)
+        } else if !pointerInside() {
+            // Dropped, or dragged away. After a drop the pointer is still on
+            // the shelf; hover takes over from there.
+            shelfPointer(.outside)
+        }
+    }
+
     /// Shelf only: a tab was picked.
     func showPage(_ next: NotchShelfPage) {
         guard page != next else { return }
@@ -136,13 +168,14 @@ final class AgentNotchPresentation: ObservableObject {
     }
 
     private func syncShelf() {
-        let changed = expanded != machine.isOpen || card != machine.card
+        let changed = expanded != machine.isOpen || card != machine.card || banner != machine.banner
         if machine.isOpen, !expanded {
             page = preferences.shelfPages.opening(lastUsed: lastUsedPage, available: pageAvailable)
             lastUsedPage = page ?? lastUsedPage
         }
         expanded = machine.isOpen
         card = machine.card
+        banner = machine.banner
         if pinned != machine.pinned { pinned = machine.pinned }
         if changed { onExpansion?() }
     }
@@ -183,6 +216,17 @@ final class AgentNotch {
     private weak var nowPlaying: NowPlayingWidget?
     private var mediaSubscription: AnyCancellable?
     private var clipboardSubscription: AnyCancellable?
+    private var filesSubscription: AnyCancellable?
+    private let volume = SystemVolumeObserver()
+    private let brightness = DisplayBrightnessObserver()
+    private var brightnessFilter = NotchBrightnessFilter()
+    private var hudTask: DispatchWorkItem?
+    private let keyTap = SystemLevelKeyTap()
+    private let dragCatcher = NotchDragCatcher()
+    private let airPods = AirPodsMonitor()
+    /// The pairs last seen; nil until the first read, which never alerts.
+    private var lastAirPods: [AirPodsReading]?
+    private var keyTapSubscription: AnyCancellable?
     private var focusObservers: [NSObjectProtocol] = []
     /// The screen "Display you're using" shows on, by its display ID.
     private var focusedDisplay: CGDirectDisplayID?
@@ -203,6 +247,7 @@ final class AgentNotch {
                     || self.preferences.showInFullScreen != preferences.showInFullScreen
                     || self.preferences.shelfEnabled != preferences.shelfEnabled
                 self.preferences = preferences
+                NotchFileShelf.shared.keep = preferences.filesKeep
                 self.enabled = enabled
                 self.agents = nextAgents
                 self.usage = nextUsage
@@ -211,9 +256,14 @@ final class AgentNotch {
                 if changed { self.rebuildPanels() }
                 else {
                     self.surfaces.forEach { $0.state.preferences = preferences }
+                    self.bindLevels()
                     self.layoutPanels()
                 }
             }
+        // The key tap starts once Accessibility is granted, and stops in
+        // restricted mode.
+        keyTapSubscription = AccessibilityTrust.shared.$isTrusted.combineLatest(model.$restrictedMode).dropFirst()
+            .receive(on: DispatchQueue.main).sink { [weak self] _, _ in self?.bindLevels() }
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in self?.rebuildPanels() }
@@ -269,6 +319,7 @@ final class AgentNotch {
         surfaces.forEach { $0.state.stop(); $0.panel.close() }
         surfaces = []
         guard enabled, let agents else {
+            bindLevels()
             publishBarSpans()
             return
         }
@@ -302,6 +353,7 @@ final class AgentNotch {
             state.pageAvailable = { [weak self] page in
                 page != .clipboard || MainActor.assumeIsolated { self?.model?.clipboardHistoryOn == true }
             }
+            state.pointerInside = { [weak panel] in panel.map { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? false }
             panel.contentView = NSHostingView(rootView: AgentNotchView(agents: agents, usage: usage, nowPlaying: nowPlaying, state: state))
             surfaces.append(Surface(panel: panel, state: state, screen: screen))
         }
@@ -315,6 +367,9 @@ final class AgentNotch {
         clipboardSubscription = preferences.shelfEnabled ? MainActor.assumeIsolated {
             ClipboardService.shared.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.layoutPanels() }
         } : nil
+        // So does the Files page's, with its files.
+        filesSubscription = preferences.shelfEnabled
+            ? NotchFileShelf.shared.$tray.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.layoutPanels() } : nil
         bannerTrack = nowPlaying?.track?.id
         if let nowPlaying {
             mediaSubscription = nowPlaying.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in
@@ -322,6 +377,7 @@ final class AgentNotch {
                 self?.bannerOnNewTrack()
             }
         }
+        bindLevels()
         layoutPanels()
     }
 
@@ -385,6 +441,125 @@ final class AgentNotch {
                                   detail: weather.place.map { "Forecast for \($0)" } ?? "From the forecast"))
     }
 
+    private func checkAirPods(_ readings: [AirPodsReading]) {
+        defer { lastAirPods = readings }
+        guard let previous = lastAirPods else { return }
+        for alert in AirPodsAlert.detect(previous: previous, current: readings, low: preferences.airPodsLowPercent) {
+            switch alert {
+            case .connected(let pair):
+                showAlert(NotchShelfAlert(activity: .airPods, symbol: pair.symbol, short: pair.lowest.map { "\($0)%" } ?? "",
+                                          title: pair.name, detail: pair.detail, parts: pair.parts))
+            case .low(let pair):
+                showAlert(NotchShelfAlert(activity: .airPods, symbol: pair.symbol, short: pair.lowest.map { "\($0)%" } ?? "",
+                                          title: "\(pair.name) low", detail: pair.detail, isWarning: true, parts: pair.parts))
+            }
+        }
+    }
+
+    /// Volume and brightness HUD (SHELF-09): listen while the shelf and each
+    /// switch are on. Rebound on settings and display changes (the built-in
+    /// display goes away with the lid closed).
+    private func bindLevels() {
+        let shelf = enabled && preferences.shelfEnabled && !surfaces.isEmpty
+        if shelf && preferences.hudVolume {
+            volume.onChange = { [weak self] level in
+                self?.showHUD(NotchHUD(kind: .volume, level: Double(level.volume), muted: level.muted))
+            }
+            volume.start()
+        } else {
+            volume.stop()
+        }
+        brightness.stop()
+        if shelf && preferences.hudBrightness, brightness.start() {
+            brightnessFilter = NotchBrightnessFilter(last: brightness.brightness)
+            brightness.onChange = { [weak self] value in
+                guard let self else { return }
+                let showing = self.surfaces.contains { $0.state.hud?.kind == .brightness }
+                guard self.brightnessFilter.accept(value, at: Date(), showing: showing) else { return }
+                self.showHUD(NotchHUD(kind: .brightness, level: Double(value)))
+            }
+        }
+        let restricted = MainActor.assumeIsolated { model?.restrictedMode ?? false }
+        if shelf && preferences.hudReplaceSystem && !restricted && (preferences.hudVolume || preferences.hudBrightness) {
+            keyTap.handle = { [weak self] key, fine in self?.levelKey(key, fine: fine) ?? false }
+            keyTap.start()
+        } else {
+            keyTap.stop()
+        }
+        // A file drag needs a target over the menu bar, or macOS 27 opens
+        // Mission Control before it reaches the notch.
+        if shelf && surfaces.contains(where: { $0.state.acceptsFiles }) {
+            dragCatcher.above = { [weak self] in self?.surfaces.map(\.panel) ?? [] }
+            dragCatcher.onHover = { [weak self] screen, inside in self?.surface(on: screen)?.state.fileDrag(inside) }
+            dragCatcher.onDrop = { [weak self] screen, urls in
+                NotchFileShelf.shared.add(urls)
+                self?.surface(on: screen)?.state.fileDrag(false)
+            }
+            dragCatcher.start()
+        } else {
+            dragCatcher.stop()
+        }
+        // AirPods connect and low alerts (SHELF-10).
+        if shelf && preferences.alertAirPods {
+            airPods.onChange = { [weak self] readings in self?.checkAirPods(readings) }
+            airPods.start()
+        } else {
+            airPods.stop()
+            lastAirPods = nil
+        }
+        if !shelf, surfaces.contains(where: { $0.state.hud != nil }) {
+            hudTask?.cancel()
+            surfaces.forEach { $0.state.hud = nil }
+        }
+    }
+
+    /// A volume or brightness key the tap took (SHELF-09b): applies it as
+    /// macOS would and shows the HUD. False sends the key on to macOS.
+    private func levelKey(_ key: SystemLevelKey, fine: Bool) -> Bool {
+        switch key {
+        case .volumeUp, .volumeDown, .mute:
+            guard preferences.hudVolume, let device = SystemVolumeObserver.defaultDevice(),
+                  let level = SystemVolumeObserver.level(device) else { return false }
+            if key == .mute {
+                guard SystemVolumeObserver.setMuted(!level.muted) else { return false }
+                showHUD(NotchHUD(kind: .volume, level: Double(level.volume), muted: !level.muted))
+                return true
+            }
+            let next = SystemLevelKey.step(level.volume, up: key == .volumeUp, fine: fine)
+            guard SystemVolumeObserver.setVolume(next) else { return false }
+            // Like macOS, a volume key unmutes.
+            if level.muted { _ = SystemVolumeObserver.setMuted(false) }
+            showHUD(NotchHUD(kind: .volume, level: Double(next)))
+            return true
+        case .brightnessUp, .brightnessDown:
+            guard preferences.hudBrightness, let current = brightness.brightness else { return false }
+            let next = SystemLevelKey.step(current, up: key == .brightnessUp, fine: fine)
+            guard brightness.setBrightness(next) else { return false }
+            showHUD(NotchHUD(kind: .brightness, level: Double(next)))
+            return true
+        }
+    }
+
+    /// The shelf on `screen`, else the first one (a single-display choice).
+    private func surface(on screen: NSScreen) -> Surface? {
+        surfaces.first { $0.screen.displayID == screen.displayID } ?? surfaces.first
+    }
+
+    /// Shows `hud` on the strip for `NotchHUD.duration`; each change restarts it.
+    private func showHUD(_ hud: NotchHUD) {
+        guard preferences.shelfEnabled else { return }
+        let appearing = surfaces.contains { $0.state.hud == nil }
+        surfaces.forEach { if $0.state.hud != hud { $0.state.hud = hud } }
+        hudTask?.cancel()
+        let task = DispatchWorkItem { [weak self] in
+            self?.surfaces.forEach { $0.state.hud = nil }
+            self?.layoutPanels()
+        }
+        hudTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + NotchHUD.duration, execute: task)
+        if appearing { layoutPanels() }
+    }
+
     /// Shows `alert` on the strip's right side for 4 s.
     private func showAlert(_ alert: NotchShelfAlert) {
         guard preferences.shelfEnabled else { return }
@@ -440,6 +615,7 @@ final class AgentNotch {
     }
 
     static let idleCapsuleWidth: CGFloat = 96
+    static let bannerMinWidth: CGFloat = 280
 
     /// Bartender's open Top Shelf is about 605 pt wide on a 14-inch MacBook Pro.
     static let shelfOpenWidth: CGFloat = 600
@@ -527,20 +703,25 @@ final class AgentNotch {
             // Attached, the flared top corners sit inside the frame; widen it so the body keeps its width.
             state.compactWidth = min(screen.frame.width - 24, preferences.compactWidth + state.notchWidth
                                      + (state.topAttached ? 2 * NotchShape.flare : 0))
+            // The HUD's bar and number need more room than a narrow strip has.
+            if preferences.shelfEnabled, state.hud != nil {
+                state.compactWidth = min(screen.frame.width - 24, max(state.compactWidth, NotchHUD.stripWidth(
+                    notch: state.notchWidth, flare: state.topAttached ? 2 * NotchShape.flare : 0)))
+            }
             if state.meeting != meeting { state.meeting = meeting }
             let active = preferences.stripOrder.filter { activity in
                 switch activity {
                 case .meeting: meeting != nil
                 case .music: playing
                 case .agents: !sessions.isEmpty
-                case .battery, .weather: false
+                case .battery, .weather, .airPods: false
                 }
             }
             let strip = NotchShelfStrip.layout(active: active, alert: state.alert?.activity)
             if state.strip != strip { state.strip = strip }
             // Without a notch, the shelf's capsule shrinks while nothing runs
             // (Bartender's smaller idle capsule), so the menu bar keeps its room.
-            if preferences.shelfEnabled, !notched, strip == NotchShelfStrip() {
+            if preferences.shelfEnabled, !notched, strip == NotchShelfStrip(), state.hud == nil {
                 state.compactWidth = min(state.compactWidth, Self.idleCapsuleWidth)
             }
             if let card = state.card, strip.leading != card, strip.trailing != card, !state.expanded {
@@ -552,18 +733,21 @@ final class AgentNotch {
             // from a card grows sideways and down.
             let cardWidth = min(screen.frame.width - 24, max(preferences.expandedWidth, state.compactWidth))
             let shelfWidth = min(screen.frame.width - 24, max(Self.shelfOpenWidth, state.compactWidth))
+            // The song banner is a name under the strip, barely wider than it.
+            let bannerWidth = min(cardWidth, max(state.compactWidth, Self.bannerMinWidth))
             let width = state.expanded ? (preferences.shelfEnabled ? shelfWidth : cardWidth)
-                : peeking ? cardWidth : state.compactWidth
+                : peeking ? (state.banner && state.card == .music ? bannerWidth : cardWidth) : state.compactWidth
             let contentHeight = preferences.shelfEnabled
                 ? AgentNotchView.shelfHeight(page: state.currentPage, preferences: preferences,
                                              sessionCount: AgentNotchView.providerFiltered(sessions, state.agentProvider).count,
                                              chips: AgentNotchView.providerChips(sessions).count > 1,
                                              usageRows: preferences.showUsage ? usage?.usage.count ?? 0 : 0,
-                                             clipboard: clipboard)
+                                             clipboard: clipboard, files: NotchFileShelf.shared.items.count)
                 : AgentNotchView.dashboardHeight(preferences: preferences, sessionCount: sessions.count)
             let height = min(screen.visibleFrame.height - 16, state.headerHeight
                              + (state.expanded ? contentHeight : state.card.map {
-                                 AgentNotchView.cardHeight($0, preferences: preferences, sessionCount: sessions.count)
+                                 state.banner && $0 == .music ? AgentNotchView.bannerHeight
+                                     : AgentNotchView.cardHeight($0, preferences: preferences, sessionCount: sessions.count)
                              } ?? 0))
             state.panelWidth = width
             var x = screen.frame.midX - width / 2 + (state.topAttached ? 0 : preferences.horizontalOffset)
@@ -594,7 +778,7 @@ final class AgentNotch {
                 } }
             }
             if preferences.hideWhenEmpty && sessions.isEmpty && !playing && meeting == nil && state.alert == nil
-                && !state.expanded && !peeking { surface.panel.orderOut(nil) }
+                && state.hud == nil && !state.expanded && !peeking { surface.panel.orderOut(nil) }
             else if !surface.panel.isVisible { surface.panel.orderFrontRegardless() }
         }
         publishBarSpans()

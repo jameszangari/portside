@@ -71,9 +71,11 @@ struct AgentNotchView: View {
             let more: CGFloat = preferences.agentCard == .latest && sessionCount > 1 ? 22 : 0
             return dashboardTopPadding + CGFloat(rows) * rowHeight + CGFloat(rows - 1) * preferences.rowSpacing + more + dashboardBottomPadding
         case .meeting: return dashboardTopPadding + 52 + dashboardBottomPadding
-        case .battery, .weather: return dashboardTopPadding + 44 + dashboardBottomPadding
+        case .battery, .weather, .airPods: return dashboardTopPadding + 44 + dashboardBottomPadding
         }
     }
+    /// The song banner's height below the strip: one line, the song's name.
+    static let bannerHeight: CGFloat = 30
     static let dashboardTopPadding: CGFloat = 12
     static let dashboardBottomPadding: CGFloat = 16
 
@@ -88,6 +90,9 @@ struct AgentNotchView: View {
                     if preferences.shelfEnabled { shelfOpen } else { dashboard }
                 }
                 .transition(.opacity)
+            } else if state.banner, state.card == .music {
+                songBanner
+                    .transition(.opacity)
             } else if let card = state.card {
                 shelfCard(card)
                     .transition(.opacity)
@@ -121,8 +126,16 @@ struct AgentNotchView: View {
                 state.shelfPointer(.outside)
             }
         }
+        // Files dropped anywhere on the notch go to the Files page (SHELF-06b);
+        // the drag opens the shelf on it.
+        .onDrop(of: [.fileURL], isTargeted: Binding(get: { state.fileDragOver }, set: { state.fileDrag($0) })) { providers in
+            guard state.acceptsFiles else { return false }
+            NotchFilesPage.urls(from: providers) { NotchFileShelf.shared.add($0) }
+            return true
+        }
         .animation(preferences.animate && !reduceMotion ? .easeInOut(duration: preferences.animationDuration) : nil, value: state.expanded)
         .animation(preferences.animate && !reduceMotion ? .easeInOut(duration: preferences.animationDuration) : nil, value: state.card)
+        .animation(preferences.animate && !reduceMotion ? .easeInOut(duration: preferences.animationDuration) : nil, value: state.banner)
         .animation(preferences.animate && !reduceMotion ? .easeInOut(duration: preferences.animationDuration) : nil, value: state.surfaceSize)
         .background {
             // Keep compact media bars in sync when Now Playing publishes.
@@ -154,11 +167,8 @@ struct AgentNotchView: View {
                         )
                         if preferences.compactStyle == .counts { Text("\(working)").monospacedDigit().fontWeight(.semibold) }
                     } else if mediaPlaying {
-                        NotchAudioBars(
-                            paused: !preferences.animate || reduceMotion,
-                            color: preferences.accent.color,
-                            height: min(14, max(9, preferences.compactHeight * 0.4))
-                        )
+                        // No agent working: the album art, bars on the right, as on the shelf.
+                        stripArt
                     } else if !sessions.isEmpty {
                         Image(systemName: "sparkles")
                             .foregroundStyle(preferences.accent.color)
@@ -188,7 +198,15 @@ struct AgentNotchView: View {
                             height: min(12, max(8, preferences.compactHeight * 0.36))
                         )
                     }
-                    if attention > 0 {
+                    if mediaPlaying, working == 0, attention == 0, preferences.compactStyle != .providers {
+                        // Art on the left: the bars alone here. Finished sessions
+                        // stay in the dashboard rather than crowd them.
+                        NotchAudioBars(
+                            paused: !preferences.animate || reduceMotion,
+                            color: ArtworkTint.musicColor(nowPlaying?.track, fallback: preferences.accent.color),
+                            height: min(14, max(9, preferences.compactHeight * 0.4))
+                        )
+                    } else if attention > 0 {
                         Circle().fill(.orange).frame(width: 5, height: 5)
                         Text("\(attention)").monospacedDigit()
                     } else if preferences.showTotal, !sessions.isEmpty {
@@ -264,13 +282,15 @@ struct AgentNotchView: View {
     /// The open shelf's height below the strip, per page: the tab row, then
     /// the page.
     static func shelfHeight(page: NotchShelfPage?, preferences: AgentNotchSettings, sessionCount: Int,
-                            chips: Bool = false, usageRows: Int = 0, clipboard: (count: Int, paused: Bool) = (0, false)) -> CGFloat {
+                            chips: Bool = false, usageRows: Int = 0, clipboard: (count: Int, paused: Bool) = (0, false),
+                            files: Int = 0) -> CGFloat {
         shelfBarHeight + {
             switch page {
             case .agents: agentsPageHeight(preferences: preferences, sessionCount: sessionCount, chips: chips, usageRows: usageRows)
             case .widgets: dashboardTopPadding + NotchShelfCardMetrics.slotHeight + dashboardBottomPadding
             case .clipboard:
                 dashboardTopPadding + NotchClipboardPage.height(count: clipboard.count, paused: clipboard.paused) + dashboardBottomPadding
+            case .files: dashboardTopPadding + NotchFilesPage.height(count: files) + dashboardBottomPadding
             case nil: 150
             }
         }()
@@ -288,6 +308,9 @@ struct AgentNotchView: View {
                 case .widgets: shelfWidgets
                 case .clipboard:
                     NotchClipboardPage(service: ClipboardService.shared, preferences: preferences)
+                        .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding)
+                case .files:
+                    NotchFilesPage(shelf: NotchFileShelf.shared, preferences: preferences, dragOver: state.fileDragOver)
                         .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding)
                 case nil: shelfPlaceholder(nil, "Every page is off. Turn one on in Settings > Top Notch > Shelf.")
                 }
@@ -403,8 +426,28 @@ struct AgentNotchView: View {
         }
     }
 
+    /// A new song: its name and artist under the strip, as in Bartender.
+    /// Hovering it grows it into the music card; a click opens the shelf.
+    @ViewBuilder
+    private var songBanner: some View {
+        if let track = nowPlaying?.track {
+            HStack(spacing: 6) {
+                Text(track.title).fontWeight(.semibold)
+                if let artist = track.artist { Text(artist).foregroundStyle(.white.opacity(0.55)) }
+            }
+            .lineLimit(1)
+            .padding(.horizontal, 16).padding(.bottom, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onTapGesture { state.shelfClick() }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Now playing \(track.title)\(track.artist.map { " by \($0)" } ?? "")")
+        }
+    }
+
     /// The card below the strip for the hovered activity (or the song
-    /// banner). A click on it opens the shelf, except on its own controls.
+    /// banner once hovered). A click on it opens the shelf, except on its
+    /// own controls.
     @ViewBuilder
     private func shelfCard(_ activity: NotchShelfActivity) -> some View {
         Group {
@@ -415,7 +458,7 @@ struct AgentNotchView: View {
                 agentCard
             case .meeting:
                 if let meeting = state.meeting { NotchMeetingCard(event: meeting) }
-            case .battery, .weather:
+            case .battery, .weather, .airPods:
                 if let alert = state.alert { alertCard(alert) }
             }
         }
@@ -432,12 +475,32 @@ struct AgentNotchView: View {
                 .foregroundStyle(alert.isWarning ? Color.red : .white, alert.isWarning ? Color.red : .white)
             VStack(alignment: .leading, spacing: 3) {
                 Text(alert.title).fontWeight(.semibold)
-                Text(alert.detail).font(.system(size: max(9, preferences.fontSize - 1))).foregroundStyle(.white.opacity(0.55))
+                if alert.parts.isEmpty {
+                    Text(alert.detail).font(.system(size: max(9, preferences.fontSize - 1))).foregroundStyle(.white.opacity(0.55))
+                } else {
+                    HStack(spacing: 12) {
+                        ForEach(alert.parts, id: \.self) { levelPill($0, low: preferences.airPodsLowPercent) }
+                    }
+                    .accessibilityLabel(alert.detail)
+                }
             }
             Spacer(minLength: 0)
         }
         .frame(height: 44)
         .accessibilityElement(children: .combine)
+    }
+
+    /// One AirPods part on its card: label, a short bar, the number. Red at
+    /// or under the low mark, as Bartender's battery pills.
+    private func levelPill(_ part: NotchLevelPart, low: Int) -> some View {
+        let color: Color = part.percent <= low ? .red : .green
+        return HStack(spacing: 4) {
+            Text(part.label).foregroundStyle(.white.opacity(0.55))
+            Capsule().fill(.white.opacity(0.15)).frame(width: 24, height: 4)
+                .overlay(alignment: .leading) { Capsule().fill(color).frame(width: 24 * CGFloat(part.percent) / 100, height: 4) }
+            Text("\(part.percent)%").monospacedDigit()
+        }
+        .font(.system(size: max(9, preferences.fontSize - 1)))
     }
 
     /// Bartender's agent card: the latest session, "+N more" below; or
@@ -551,57 +614,70 @@ struct AgentNotchView: View {
         if state.strip.leading == .agents || state.strip.trailing == .agents {
             parts.append("\(sessions.count) agent sessions\(attention > 0 ? ", \(attention) need you" : "")")
         }
-        if state.strip.leading == .meeting, let meeting = state.meeting {
+        if state.strip.leading == .meeting || state.strip.trailing == .meeting, let meeting = state.meeting {
             parts.insert("\(meeting.title) \(NotchMeetingCard.countdown(to: meeting.start, now: Date()))", at: 0)
         }
         if let alert = state.alert { parts.append(alert.title) }
+        if let hud = state.hud { parts = [hud.label] }
         return (parts.isEmpty ? "Notch shelf" : parts.joined(separator: ", ")) + ". Open shelf"
     }
 
+    /// One side of the strip: a volume or brightness change while it shows
+    /// (SHELF-09), else the running activities.
     @ViewBuilder
     private func stripSide(_ side: NotchShelfSide) -> some View {
-        let paused = !preferences.animate || reduceMotion
-        Group {
-            switch (state.strip.activity(side), side) {
-            case (.music?, .leading):
-                let size = max(14, state.headerHeight - 12)
-                Group {
-                    if let artwork = nowPlaying?.track?.artwork {
-                        Image(nsImage: artwork).resizable().interpolation(.high).scaledToFill()
-                    } else {
-                        Image(systemName: "music.note").font(.system(size: size * 0.55)).foregroundStyle(.white.opacity(0.6))
-                    }
-                }
-                .frame(width: size, height: size)
-                .background(.white.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
-            case (.music?, .trailing):
-                NotchAudioBars(paused: paused || nowPlaying?.track?.isPlaying != true, color: preferences.accent.color,
-                               height: min(14, max(9, state.headerHeight * 0.4)))
-            case (.agents?, .leading):
-                if attention > 0 {
-                    Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
-                } else if working > 0 {
-                    let loaderSize = min(16, max(10, state.headerHeight * 0.48))
-                    ThinkingLoader(style: ThinkingLoader.preferredStyle(for: loaderSize), paused: paused, size: loaderSize, color: preferences.accent.color)
+        if let hud = state.hud { hudSide(hud, side) } else { activitySide(side) }
+    }
+
+    /// The level HUD: its symbol left of the notch, a bar right of it.
+    /// Moves like Bartender's, without scaling: on each step the speaker
+    /// wiggles (its waves fill with the level) or the sun's rays turn, the
+    /// bar springs and the number rolls.
+    private func hudSide(_ hud: NotchHUD, _ side: NotchShelfSide) -> some View {
+        let animate = preferences.animate && !reduceMotion
+        let shown = hud.muted ? 0 : hud.percent
+        return Group {
+            if side == .leading {
+                let step = animate ? hud.percent : 0
+                let symbol = Image(systemName: hud.symbol, variableValue: hud.kind == .volume && !hud.muted ? hud.level : nil)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(hud.muted ? .white.opacity(0.55) : .white)
+                    .contentTransition(.symbolEffect(.replace))
+                if hud.kind == .volume {
+                    symbol.symbolEffect(.wiggle.forward.byLayer, options: .speed(1.8), value: step)
                 } else {
-                    Image(systemName: "sparkles").foregroundStyle(preferences.accent.color)
+                    symbol.symbolEffect(.rotate.byLayer, options: .speed(2), value: step)
                 }
-            case (.agents?, .trailing):
-                HStack(spacing: 4) {
-                    if attention > 0 { Circle().fill(.orange).frame(width: 5, height: 5) }
-                    Text("\(attention > 0 ? attention : sessions.count)").monospacedDigit().fontWeight(.semibold)
-                        .foregroundStyle(attention > 0 ? .orange : .white)
+            } else {
+                HStack(spacing: 8) {
+                    NotchLevelBar(level: hud.level, dimmed: hud.muted, animate: animate)
+                    Text("\(shown)").monospacedDigit().fontWeight(.semibold)
+                        .foregroundStyle(hud.muted ? .white.opacity(0.55) : .white)
+                        .contentTransition(.numericText(value: Double(shown)))
+                        .animation(animate ? .snappy(duration: 0.2) : nil, value: shown)
+                        .fixedSize().frame(minWidth: 26, alignment: .trailing)
                 }
-            case (.meeting?, .leading):
-                Image(systemName: "calendar").foregroundStyle(state.meeting?.color ?? .red)
-            case (.meeting?, .trailing):
-                if let meeting = state.meeting {
-                    TimelineView(.periodic(from: .now, by: 15)) { context in
-                        Text(NotchMeetingCard.countdown(to: meeting.start, now: context.date)).monospacedDigit().fontWeight(.semibold)
-                    }
-                }
-            case (.battery?, _), (.weather?, _):
+            }
+        }
+        .padding(.horizontal, state.expanded || state.card != nil ? 16 : 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: side == .leading ? .leading : .trailing)
+    }
+
+    /// One side of the strip. Alone, an activity spreads over both sides
+    /// (music: art left, bars right); split, each side draws its activity
+    /// whole (music and agents both show).
+    @ViewBuilder
+    private func activitySide(_ side: NotchShelfSide) -> some View {
+        let split = state.strip.isSplit
+        Group {
+            switch state.strip.activity(side) {
+            case .music?:
+                if split { HStack(spacing: 6) { stripArt; stripBars } } else if side == .leading { stripArt } else { stripBars }
+            case .agents?:
+                if split { HStack(spacing: 6) { stripAgentMark; stripAgentCount } } else if side == .leading { stripAgentMark } else { stripAgentCount }
+            case .meeting?:
+                if split { HStack(spacing: 6) { stripMeetingMark; stripCountdown } } else if side == .leading { stripMeetingMark } else { stripCountdown }
+            case .battery?, .weather?, .airPods?:
                 if let alert = state.alert {
                     HStack(spacing: 4) {
                         Image(systemName: alert.symbol).symbolRenderingMode(alert.activity == .weather ? .multicolor : .palette)
@@ -610,13 +686,69 @@ struct AgentNotchView: View {
                     }
                     .foregroundStyle(alert.isWarning ? .red : .white)
                 }
-            case (nil, _):
+            case nil:
                 Color.clear
             }
         }
-        // Open, line up with the cards' 16 pt margin.
-        .padding(.horizontal, state.expanded || state.card != nil ? 16 : 12)
+        // Open, line up with the cards' 16 pt margin; split, leave room for both marks.
+        .padding(.horizontal, state.expanded || state.card != nil ? 16 : split ? 8 : 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: side == .leading ? .leading : .trailing)
+    }
+
+    private var stripPaused: Bool { !preferences.animate || reduceMotion }
+
+    private var stripArt: some View {
+        let size = max(14, state.headerHeight - 12)
+        return Group {
+            if let artwork = nowPlaying?.track?.artwork {
+                Image(nsImage: artwork).resizable().interpolation(.high).scaledToFill()
+            } else {
+                Image(systemName: "music.note").font(.system(size: size * 0.55)).foregroundStyle(.white.opacity(0.6))
+            }
+        }
+        .frame(width: size, height: size)
+        .background(.white.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+    }
+
+    /// The bars take the art's color, as in Bartender.
+    private var stripBars: some View {
+        NotchAudioBars(paused: stripPaused || nowPlaying?.track?.isPlaying != true,
+                       color: ArtworkTint.musicColor(nowPlaying?.track, fallback: preferences.accent.color),
+                       height: min(14, max(9, state.headerHeight * 0.4)))
+    }
+
+    @ViewBuilder
+    private var stripAgentMark: some View {
+        if attention > 0 {
+            Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
+        } else if working > 0 {
+            let loaderSize = min(16, max(10, state.headerHeight * 0.48))
+            ThinkingLoader(style: ThinkingLoader.preferredStyle(for: loaderSize), paused: stripPaused, size: loaderSize, color: preferences.accent.color)
+        } else {
+            Image(systemName: "sparkles").foregroundStyle(preferences.accent.color)
+        }
+    }
+
+    private var stripAgentCount: some View {
+        HStack(spacing: 4) {
+            if attention > 0 { Circle().fill(.orange).frame(width: 5, height: 5) }
+            Text("\(attention > 0 ? attention : sessions.count)").monospacedDigit().fontWeight(.semibold)
+                .foregroundStyle(attention > 0 ? .orange : .white)
+        }
+    }
+
+    private var stripMeetingMark: some View {
+        Image(systemName: "calendar").foregroundStyle(state.meeting?.color ?? .red)
+    }
+
+    @ViewBuilder
+    private var stripCountdown: some View {
+        if let meeting = state.meeting {
+            TimelineView(.periodic(from: .now, by: 15)) { context in
+                Text(NotchMeetingCard.countdown(to: meeting.start, now: context.date)).monospacedDigit().fontWeight(.semibold)
+            }
+        }
     }
 
     private func sessionCard(_ session: AgentSession) -> some View {
@@ -830,5 +962,36 @@ struct NotchShape: Shape {
         }
         path.closeSubpath()
         return path
+    }
+}
+
+/// The HUD's level: a short white bar on a dim track, as in Bartender.
+/// Springs to each new level and swells for a moment while it changes.
+struct NotchLevelBar: View {
+    let level: Double
+    var dimmed = false
+    var animate = true
+    static let width: CGFloat = 64
+    @State private var swell = false
+    @State private var settle: DispatchWorkItem?
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            Capsule().fill(.white.opacity(0.2))
+            Capsule().fill(.white.opacity(dimmed ? 0.4 : 1))
+                .frame(width: Self.width * min(1, max(0, level)))
+        }
+        .frame(width: Self.width, height: swell ? 7 : 5)
+        .animation(animate ? .spring(response: 0.28, dampingFraction: 0.72) : nil, value: level)
+        .animation(animate ? .easeOut(duration: 0.15) : nil, value: swell)
+        .onChange(of: level) {
+            guard animate else { return }
+            swell = true
+            settle?.cancel()
+            let task = DispatchWorkItem { swell = false }
+            settle = task
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: task)
+        }
+        .accessibilityHidden(true)
     }
 }
