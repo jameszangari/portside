@@ -600,7 +600,7 @@ struct AgentNotchView: View {
             Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
         } else if working > 0 {
             let loaderSize = min(16, max(10, state.headerHeight * 0.48))
-            ThinkingLoader(style: ThinkingLoader.preferredStyle(for: loaderSize), paused: stripPaused, size: loaderSize, color: preferences.accent.color)
+            ThinkingLoader(style: ThinkingLoader.preferredStyle(preferences.thinking, for: loaderSize), paused: stripPaused, size: loaderSize, color: preferences.accent.color)
         } else {
             Image(systemName: "sparkles").foregroundStyle(preferences.accent.color)
         }
@@ -637,7 +637,7 @@ struct AgentNotchView: View {
                 Group {
                     if session.state == .running, !session.needsAttention {
                         // Bartender's agent lamp: the working loader.
-                        ThinkingLoader(style: .snakeBoxes, paused: !preferences.animate || reduceMotion, size: 14, color: tint(session.provider))
+                        ThinkingLoader(style: ThinkingLoader.preferredStyle(preferences.thinking, for: 14), paused: !preferences.animate || reduceMotion, size: 14, color: tint(session.provider))
                     } else {
                         Image(systemName: session.needsAttention ? "hand.raised.fill" : session.state == .running ? "sparkles" : session.state == .done ? "checkmark" : "moon")
                             .font(.system(size: preferences.fontSize + 1, weight: .medium))

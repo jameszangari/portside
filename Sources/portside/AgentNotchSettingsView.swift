@@ -145,6 +145,9 @@ struct AgentNotchSettingsView: View {
                 }
             }
             SettingsFold("Agents", symbol: "sparkles", summary: agentsSummary, isOpen: folded("Agents")) {
+                Picker("Working animation", selection: binding(\.thinking)) {
+                    ForEach(NotchThinkingStyle.allCases) { Text($0.title).tag($0) }
+                }
                 Toggle("Claude Code", isOn: binding(\.claude))
                 Toggle("Codex", isOn: binding(\.codex))
                 Toggle("OpenCode", isOn: binding(\.opencode))

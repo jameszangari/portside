@@ -827,3 +827,26 @@ final class AgentPromptAnsweredTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(AgentSession(contentsOf: file)).needsAttention)
     }
 }
+
+/// The working animation (`thinking` in `agentNotchSettings`).
+final class ThinkingStyleTests: XCTestCase {
+    func testShipByDefaultUnknownReadsAsShipAndRoundTrips() throws {
+        let decode = { (json: String) in try JSONDecoder().decode(AgentNotchSettings.self, from: Data(json.utf8)) }
+        XCTAssertEqual(try decode("{}").thinking, .ship)
+        XCTAssertEqual(try decode(#"{"thinking": "kraken"}"#).thinking, .ship)
+        XCTAssertEqual(try decode(#"{"thinking": "boxes"}"#).thinking, .snakeBoxes)
+        XCTAssertEqual(try decode(#"{"thinking": "wheel"}"#).thinking, .wheel)
+        var settings = AgentNotchSettings()
+        settings.thinking = .dots
+        XCTAssertEqual(try JSONDecoder().decode(AgentNotchSettings.self, from: JSONEncoder().encode(settings)).thinking, .dots)
+    }
+
+    func testSmallSizesFallBackToDots() {
+        XCTAssertEqual(ThinkingLoader.preferredStyle(.ship, for: 10), .ship)
+        XCTAssertEqual(ThinkingLoader.preferredStyle(.ship, for: 8), .dots)
+        XCTAssertEqual(ThinkingLoader.preferredStyle(.wheel, for: 12), .wheel)
+        XCTAssertEqual(ThinkingLoader.preferredStyle(.wheel, for: 8), .dots)
+        XCTAssertEqual(ThinkingLoader.preferredStyle(.snakeBoxes, for: 10), .dots)
+        XCTAssertEqual(ThinkingLoader.preferredStyle(.snakeBoxes, for: 14), .snakeBoxes)
+    }
+}

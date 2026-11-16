@@ -55,6 +55,8 @@ struct AgentNotchSettings: Codable, Equatable {
     /// A new track shows its name under the strip for a few seconds.
     var musicBanner = true
     var agentCard = NotchAgentCard.latest
+    /// The working animation (Ship, Boxes or Dots).
+    var thinking = NotchThinkingStyle.ship
     /// Files page (SHELF-06b): how long dropped files stay, and whether a
     /// file leaves once dragged out somewhere.
     var filesKeep = NotchFilesKeep.day
@@ -131,7 +133,7 @@ struct AgentNotchSettings: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case display, filter, animate, showUsage, showMedia
         case shelfPages, shelfLeadingWidget, shelfTrailingWidget, shelfHoverDelay, shelfCollapseDelay
-        case shelfHaptics, musicStyle, musicSeeking, musicTint, musicHideWhenPaused, musicBanner, agentCard, filesKeep, filesRemoveAfterDrag, hudVolume, hudBrightness, hudReplaceSystem, finishedDismissMinutes, stripOrder, meetingMinutes
+        case shelfHaptics, musicStyle, musicSeeking, musicTint, musicHideWhenPaused, musicBanner, agentCard, thinking, filesKeep, filesRemoveAfterDrag, hudVolume, hudBrightness, hudReplaceSystem, finishedDismissMinutes, stripOrder, meetingMinutes
         case alertAgents, alertBattery, batteryLowPercent, alertAirPods, airPodsLowPercent, airPodsLive, shelfToggleHotkey, shelfFilesHotkey, shelfClipboardHotkey, hotkeyOpenSeconds, alertWeather, showInFullScreen, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
         case showFinished, claude, codex, copilot, opencode, cursor, showBorder, compactWidth, compactHeight, expandedWidth, cornerRadius, opacity, fontSize
         case rowSpacing, maxSessions, animationDuration, accent
@@ -161,6 +163,7 @@ struct AgentNotchSettings: Codable, Equatable {
         musicHideWhenPaused = values.value(.musicHideWhenPaused, or: true)
         musicBanner = values.value(.musicBanner, or: true)
         agentCard = values.value(.agentCard, or: .latest)
+        thinking = values.value(.thinking, or: .ship)
         filesKeep = values.value(.filesKeep, or: .day)
         filesRemoveAfterDrag = values.value(.filesRemoveAfterDrag, or: false)
         hudVolume = values.value(.hudVolume, or: true)

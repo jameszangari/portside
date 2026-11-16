@@ -478,6 +478,9 @@ enum NotchMusicStyle: String, Codable, CaseIterable, Identifiable {
     var title: String { self == .music ? "Album art" : "Vinyl" }
 }
 
+/// The working animation on the strip and in the agent rows.
+typealias NotchThinkingStyle = ThinkingLoader.Style
+
 /// What the agent card lists: the latest session, or every running one.
 enum NotchAgentCard: String, Codable, CaseIterable, Identifiable {
     case latest, all
