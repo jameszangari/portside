@@ -13,6 +13,7 @@ How Portside is put together. See also [PLAN.md](PLAN.md) for the original miles
 
 ## Notes
 
+- The standalone Mission Control probe uses four undocumented `AXExpose*` notification names in `scripts/mission-control-probe/Sources/DockNotifications.swift`. The observer API and window levels are public. The maintainer confirmed visual coverage in both modes on macOS 27.0.1 but received no AX events. Its optional `--detect` mode dynamically loads `SLSMainConnectionID`, `SLSRegisterConnectionNotifyProc` and `SLSRequestNotificationsForWindows` through `dlopen`/`dlsym`, isolated in `WindowServerNotifications.swift`; an order-in event's window number is classified at once with `SLSGetWindowOwner`, `SLSConnectionGetPID`, `SLSGetWindowLevel` and `SLSGetWindowBounds`, about one settle read before the public window list shows it. Missing symbols or failed subscriptions leave the default visual probe usable. Window lifecycle, ordering and Space events trigger a coalesced metadata read after 50 ms, never idle polling; a screen-covering WindowManager surface at level 19 is the experimental active signature. Subscriptions and callback storage last for the bounded process lifetime. None of this is linked into Portside or claims reliable production hiding.
 - The separator's resize cursor needs a private SkyLight call, because macOS ignores cursor changes from a background app. `BackgroundCursor.swift` loads it with `dlopen`/`dlsym`. If the framework or symbols are missing, the cursor feature is disabled and nothing crashes.
 - The Notch Shelf's brightness HUD reads the built-in display's brightness through DisplayServices (`DisplayServicesGetBrightness`, `DisplayServicesRegisterForBrightnessChangeNotifications`), as there is no public API on Apple silicon. `DisplayBrightness.swift` loads them with `dlopen`/`dlsym`; it sets brightness (`DisplayServicesSetBrightness`) only for a brightness key taken with "Replace the macOS indicator" on. If they are missing there is no brightness HUD and brightness keys go to macOS. Volume uses public CoreAudio listeners and setters (`NotchLevels.swift`); the keys come from a public active event tap (`SystemLevelKeys.swift`, Accessibility).
 - The Notch Shelf's AirPods alerts (`NotchAirPods.swift`) read battery levels from `/usr/sbin/system_profiler SPBluetoothDataType -json` (public, no Bluetooth permission; the same report as System Information), run off the main queue only when a CoreAudio device-list listener sees a Bluetooth audio device, a few seconds after, and every 5 minutes while a pair stays connected. Bartender scans Bluetooth LE advertisements instead, which needs Bluetooth permission. Live AirPods levels (`NotchAirPodsLive.swift`, opt-in) do that too with public CoreBluetooth, only while a pair is connected, and only to notice that a level changed: a change reads system_profiler again 2 s later for the exact levels. Its usage string is `NSBluetoothAlwaysUsageDescription` in `Info.plist`.
@@ -257,6 +258,16 @@ scripts/
   SigningConsent.swift      Stock NSAlert + LocalAuthentication for build consent
   check-tile-input.swift    Synthetic Accessibility check: clicks, hold menu, label centering
   window-fit-probe/         Probe window + AX observer: how Rectangle, Window > Fill and Dock hiding resize windows (run.sh)
+  mission-control-probe/    Standalone SwiftPM diagnostic, no native Dock preference writes
+    Package.swift          Separate executable package, not linked into Portside
+    Sources/Probe.swift    Non-activating window-level panels, bounded run and metadata logs
+    Sources/DockNotifications.swift  Optional AXExpose notification observer with failure logging
+    Sources/WindowServerNotifications.swift  Optional dynamically loaded lifecycle event probe, no polling
+    Sources/DockGeometry.swift  Native Dock AXList frame on entry and pure cover/fallback rect math
+    Sources/OverlayPresence.swift  Experimental Exposé shield signature from public window metadata
+    Tests/OverlayPresenceTests.swift  Captured geometry, false-positive rejection and Dock cover tests
+    run.sh                 Build and run the probe with the shared Swift environment
+    README.md              Mission Control and App Exposé hand-test procedure and limitations
 Portside.entitlements       Hardened Runtime entitlements for Developer ID / notarized builds
 design/                    Approved Portside sail icon, wordmarks, menu bar assets, and tokens; see its README
 ```
