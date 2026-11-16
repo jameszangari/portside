@@ -92,6 +92,9 @@ final class DockEngine {
     /// live Settings changes stay visible on the strip; the saved
     /// `dockModel.autoHide` preference is not changed.
     private var settingsIsKey = false
+    /// Mission Control or App Exposé is open. The macOS Dock shows there, so
+    /// the panel and edge windows step aside until it closes.
+    private var overviewOpen = false
 
     /// Timestamp (CACurrentMediaTime) of the mouseEntered that started the
     /// current reveal, used for the enter -> animation start -> interactive logs.
@@ -478,6 +481,37 @@ final class DockEngine {
             dockPanel.show(animated: false)
             logger.info("engine started, auto-hide off, panel revealed, edge tracker idle")
         }
+        MissionControlMonitor.shared.onChange = { [weak self] open in self?.overviewChanged(open) }
+        // Window events are only delivered once the app names a window of its own.
+        MissionControlMonitor.shared.start(anchors: NSApp.windows.compactMap { $0.windowNumber > 0 ? UInt32(exactly: $0.windowNumber) : nil })
+    }
+
+    // MARK: - Mission Control and App Exposé
+
+    private func overviewChanged(_ open: Bool) {
+        guard overviewOpen != open else { return }
+        overviewOpen = open
+        if open {
+            pendingHide?.cancel()
+            pendingHide = nil
+            pendingReveal?.cancel()
+            pendingReveal = nil
+            revealSuppressedForButtonHold = false
+            hover.clear()
+            magnifier.reset()
+            bouncer.cancel(reason: "Mission Control")
+            edgeTracker.stop()
+            dockPanel.prepareHidden()
+            groups.collapse(reason: "Mission Control", animated: false)
+            stacks.collapse(reason: "Mission Control", animated: false)
+            logger.info("Mission Control or App Exposé open, dock hidden")
+        } else if effectiveAutoHide {
+            edgeTracker.start()
+            logger.info("Mission Control or App Exposé closed, edge tracker armed")
+        } else {
+            dockPanel.show(animated: true)
+            logger.info("Mission Control or App Exposé closed, panel revealed")
+        }
     }
 
     // MARK: - Sleep, wake and displays
@@ -540,7 +574,9 @@ final class DockEngine {
         dockPanel.reassert()
         edgeTracker.rebuild()
         queueReservationUpdate(reason: "system woke")
-        if effectiveAutoHide {
+        if overviewOpen {
+            dockPanel.prepareHidden()
+        } else if effectiveAutoHide {
             rearmHideIfCursorOutside(source: "system woke")
         } else {
             dockPanel.show(animated: false)
@@ -594,6 +630,8 @@ final class DockEngine {
         pendingHide = nil
         pendingReveal?.cancel()
         pendingReveal = nil
+        // Closing Mission Control applies the current state.
+        guard !overviewOpen else { return }
         let on = effectiveAutoHide
         if on {
             edgeTracker.start()
@@ -620,6 +658,9 @@ final class DockEngine {
 
     /// Stop the engine: hide the panel and tear down the edge tracker.
     func stop() {
+        MissionControlMonitor.shared.onChange = nil
+        MissionControlMonitor.shared.stop()
+        overviewOpen = false
         pendingHide?.cancel()
         pendingHide = nil
         pendingReveal?.cancel()
@@ -723,7 +764,7 @@ final class DockEngine {
         hover.setEdge(edge)
         dockPanel.setEdge(edge)
         edgeTracker.setEdge(edge)
-        if !effectiveAutoHide {
+        if !effectiveAutoHide, !overviewOpen {
             dockPanel.show(animated: true)
         }
         logger.info("dock moved to the \(edge.rawValue, privacy: .public) edge")
@@ -862,7 +903,7 @@ final class DockEngine {
             logger.info("\(source, privacy: .public) enter: pending hide canceled")
         }
 
-        if dockPanel.isRevealedOrRevealing {
+        if dockPanel.isRevealedOrRevealing || overviewOpen {
             return
         }
 
@@ -978,6 +1019,7 @@ final class DockEngine {
     }
 
     private func reveal() {
+        guard !overviewOpen else { return }
         dockPanel.show(animated: true)
     }
 

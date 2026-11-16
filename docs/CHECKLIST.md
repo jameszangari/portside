@@ -284,6 +284,8 @@ Status of the milestones in `docs/PLAN.md`, what still needs a hand check, and t
 
 ## Needs a hand check
 
+- [ ] Dock steps aside in Mission Control and App Exposé (2026-11-16): `MissionControlMonitor` (guarded SkyLight window events, ported from the research probe) hides the panel and edge zones while either is open and restores pinned or auto-hide state on close. Build and 886 tests passed. Isolated left-edge pinned run (`CFFIXED_USER_HOME`, native Dock hiding off): screenshot inside Mission Control showed no Portside dock, and it was back after exit; exited 0, native Dock preferences unchanged. Hand test: bottom, left and right edges, pinned and auto-hide; trackpad and keyboard entry for both modes; touch the edge during Mission Control (no reveal); exit by clicking a window, Esc and the gesture; open grid or menu when entering; Settings focused while entering; two displays.
+
 - [ ] Folder drop on an app inside a group (2026-11-15, maintainer report: dragging a Finder folder onto an app opens it there, as in the native Dock, except when the app is in a group). A folder-only drag is pin-folders mode, which only showed the pin gap: it never targeted an app tile or opened a group's grid, and the grid only targeted members for other files. Now a folder over an app tile that can open it (`FileDropSession.canOpen`) highlights it and opens there, with spring-load; over a group tile the grid opens and a member that can open it takes the drop; elsewhere it pins as before. Hand test: drag a folder onto VS Code or Terminal in the strip and inside a group grid (opens there); onto an app that cannot open folders (no highlight); onto empty strip (pins as a stack); onto the group tile itself and release (nothing happens).
 
 These were built and tested with synthetic input; a person should confirm them on a real machine:
@@ -331,6 +333,8 @@ These were built and tested with synthetic input; a person should confirm them o
 Out of scope: minimized windows in the Dock, the two-finger App Expose gesture, assigning apps to Spaces, bounce on attention request (needs private APIs).
 
 ## Known gaps
+
+- Mission Control and App Exposé still show the native Dock; Portside's dock only steps aside. Covering the native Dock was explored on `research/mission-control-probe` and deferred (trackpad entry can expose a few points before detection). Detection depends on an observed WindowManager level-19 shield and private SkyLight events; if macOS changes them, Portside's dock stays up as before.
 
 - Window previews: the first open after launch, a lock or a revoke still shows icons until each picture arrives; a kept picture can be up to one open old until it is retaken. Grid Rows use a fixed row height (icon plus 28 pt), so a long name could show a sliver of the next row.
 
