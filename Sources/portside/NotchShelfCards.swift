@@ -405,13 +405,22 @@ struct NotchCalendarCard: View {
 struct NotchClipboardPage: View {
     @ObservedObject var service: ClipboardService
     let preferences: AgentNotchSettings
+    /// The search hotkey's field is up (SHELF-11).
+    var searching = false
+    @Binding var query: String
+    /// Return copied a match; the shelf closes.
+    var onDone: () -> Void = {}
+    @FocusState private var fieldFocused: Bool
     @State private var copied: UUID?
     @State private var hovered: UUID?
     @State private var failure: String?
+    /// Clear was clicked once; a second click clears the whole history.
+    @State private var confirmClear = false
 
     static let columns = 3
     static let maxRows = 2
     static let cardHeight: CGFloat = 64
+    static let footerHeight: CGFloat = 18
     static let spacing: CGFloat = 8
 
     /// Cards shown: the newest first, up to two rows.
@@ -419,17 +428,33 @@ struct NotchClipboardPage: View {
         Array(entries.sorted { $0.date > $1.date }.prefix(columns * maxRows))
     }
 
-    /// Content height for `count` entries, the paused note included.
-    static func height(count: Int, paused: Bool) -> CGFloat {
+    static let searchHeight: CGFloat = 30
+
+    /// Entries whose text holds every typed word, newest first, up to two
+    /// rows; no words shows the newest.
+    static func matches(_ entries: [ClipboardEntry], query: String) -> [ClipboardEntry] {
+        let terms = CommandCenterRanker.terms(query)
+        return shown(terms.isEmpty ? entries : entries.filter { entry in
+            let folded = CommandCenterRanker.normalize(entry.text)
+            return terms.allSatisfy(folded.contains)
+        })
+    }
+
+    /// Content height for `count` entries, the paused note and the Clear
+    /// footer included. While searching it holds two rows and no footer, so
+    /// the shelf stays still as you type.
+    static func height(count: Int, paused: Bool, searching: Bool = false) -> CGFloat {
         let note: CGFloat = paused ? 30 : 0
+        if searching { return searchHeight + spacing + note + 2 * cardHeight + spacing }
         guard count > 0 else { return note + 96 }
         let rows = CGFloat(min(maxRows, (min(count, columns * maxRows) + columns - 1) / columns))
-        return note + rows * cardHeight + (rows - 1) * spacing
+        return note + rows * cardHeight + (rows - 1) * spacing + spacing + footerHeight
     }
 
     var body: some View {
-        let entries = Self.shown(service.entries)
+        let entries = searching ? Self.matches(service.entries, query: query) : Self.shown(service.entries)
         VStack(alignment: .leading, spacing: Self.spacing) {
+            if searching { searchField(first: entries.first) }
             if service.prefs.paused {
                 HStack(spacing: 8) {
                     Image(systemName: "pause.circle.fill").foregroundStyle(.orange)
@@ -442,7 +467,10 @@ struct NotchClipboardPage: View {
                 }
                 .frame(height: 22)
             }
-            if entries.isEmpty {
+            if entries.isEmpty, searching, !service.entries.isEmpty {
+                Text("No copied text matches").foregroundStyle(.white.opacity(0.55))
+                    .frame(maxWidth: .infinity).frame(height: 2 * Self.cardHeight)
+            } else if entries.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "doc.on.clipboard").font(.title2).foregroundStyle(preferences.accent.color)
                     Text("Nothing copied yet").fontWeight(.medium)
@@ -453,6 +481,7 @@ struct NotchClipboardPage: View {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Self.spacing), count: Self.columns), spacing: Self.spacing) {
                     ForEach(entries) { card($0) }
                 }
+                if !searching { footer }
             }
         }
         .overlay(alignment: .bottom) {
@@ -461,6 +490,65 @@ struct NotchClipboardPage: View {
                     .background(.red.opacity(0.85), in: Capsule())
             }
         }
+    }
+
+    /// How long history keeps text, and Clear, as on the Files page. Clear
+    /// deletes every entry, not only the cards shown, so it asks first.
+    private var footer: some View {
+        let count = service.entries.count
+        return HStack(spacing: 10) {
+            if confirmClear {
+                Text("Clear all \(count) copied \(count == 1 ? "text" : "texts")? This cannot be undone.")
+                    .foregroundStyle(.white.opacity(0.7))
+                Spacer()
+                Button("Cancel") { confirmClear = false }
+                    .buttonStyle(.plain).foregroundStyle(.white.opacity(0.7))
+                Button("Clear History") {
+                    service.clear()
+                    confirmClear = false
+                }
+                .buttonStyle(.plain).foregroundStyle(.red)
+            } else {
+                Text("\(count) copied, kept for \(Self.expiryPhrase(service.prefs.expiryHours))").foregroundStyle(.white.opacity(0.45))
+                Spacer()
+                Button("Clear") { confirmClear = true }
+                    .buttonStyle(.plain).foregroundStyle(.white.opacity(0.7))
+                    .accessibilityLabel("Clear clipboard history")
+            }
+        }
+        .font(.system(size: 10, weight: .medium))
+        .frame(height: Self.footerHeight)
+        .onDisappear { confirmClear = false }
+    }
+
+    static func expiryPhrase(_ hours: Int) -> String {
+        switch hours {
+        case 1: "1 hour"
+        case 24: "1 day"
+        case 168: "7 days"
+        case 720: "30 days"
+        default: hours % 24 == 0 ? "\(hours / 24) days" : "\(hours) hours"
+        }
+    }
+
+    /// Type to filter; Return copies the first match and closes the shelf,
+    /// Escape closes it.
+    private func searchField(first: ClipboardEntry?) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.white.opacity(0.55))
+            TextField("Search copied text", text: $query)
+                .textFieldStyle(.plain)
+                .focused($fieldFocused)
+                .onSubmit {
+                    guard let first else { return }
+                    if case .success = service.copy(first.id) { onDone() } else { copy(first) }
+                }
+        }
+        .font(.system(size: 13))
+        .padding(.horizontal, 10)
+        .frame(height: Self.searchHeight)
+        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onAppear { fieldFocused = true }
     }
 
     private func card(_ entry: ClipboardEntry) -> some View {

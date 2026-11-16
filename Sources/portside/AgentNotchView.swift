@@ -283,14 +283,16 @@ struct AgentNotchView: View {
     /// the page.
     static func shelfHeight(page: NotchShelfPage?, preferences: AgentNotchSettings, sessionCount: Int,
                             chips: Bool = false, usageRows: Int = 0, clipboard: (count: Int, paused: Bool) = (0, false),
-                            files: Int = 0) -> CGFloat {
+                            searching: Bool = false, files: Int = 0, airPods: Int = 0) -> CGFloat {
         shelfBarHeight + {
             switch page {
             case .agents: agentsPageHeight(preferences: preferences, sessionCount: sessionCount, chips: chips, usageRows: usageRows)
             case .widgets: dashboardTopPadding + NotchShelfCardMetrics.slotHeight + dashboardBottomPadding
             case .clipboard:
-                dashboardTopPadding + NotchClipboardPage.height(count: clipboard.count, paused: clipboard.paused) + dashboardBottomPadding
+                dashboardTopPadding + NotchClipboardPage.height(count: clipboard.count, paused: clipboard.paused, searching: searching)
+                    + dashboardBottomPadding
             case .files: dashboardTopPadding + NotchFilesPage.height(count: files) + dashboardBottomPadding
+            case .airPods: dashboardTopPadding + airPodsPageHeight(count: airPods) + dashboardBottomPadding
             case nil: 150
             }
         }()
@@ -307,11 +309,14 @@ struct AgentNotchView: View {
                 case .agents: agentsPage
                 case .widgets: shelfWidgets
                 case .clipboard:
-                    NotchClipboardPage(service: ClipboardService.shared, preferences: preferences)
+                    NotchClipboardPage(service: ClipboardService.shared, preferences: preferences,
+                                       searching: state.searching, query: $state.query) { state.setExpanded(false) }
                         .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding)
                 case .files:
                     NotchFilesPage(shelf: NotchFileShelf.shared, preferences: preferences, dragOver: state.fileDragOver)
                         .padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding)
+                case .airPods:
+                    airPodsPage.padding(.horizontal, 16).padding(.top, Self.dashboardTopPadding)
                 case nil: shelfPlaceholder(nil, "Every page is off. Turn one on in Settings > Top Notch > Shelf.")
                 }
             }
@@ -488,6 +493,43 @@ struct AgentNotchView: View {
         }
         .frame(height: 44)
         .accessibilityElement(children: .combine)
+    }
+
+    // MARK: AirPods page
+
+    static let airPodsRowHeight: CGFloat = 44
+    static let airPodsRowSpacing: CGFloat = 10
+
+    static func airPodsPageHeight(count: Int) -> CGFloat {
+        let rows = CGFloat(max(1, count))
+        return rows * airPodsRowHeight + (rows - 1) * airPodsRowSpacing
+    }
+
+    /// The shelf's AirPods page, shown while a pair is connected: a row per
+    /// pair with its model, name and a bar per part, as on its alert card.
+    private var airPodsPage: some View {
+        VStack(alignment: .leading, spacing: Self.airPodsRowSpacing) {
+            ForEach(state.airPods, id: \.address) { pair in
+                HStack(spacing: 12) {
+                    Image(systemName: pair.symbol).font(.system(size: 26)).foregroundStyle(.white).frame(width: 40)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(pair.name).fontWeight(.semibold).lineLimit(1)
+                        if pair.parts.isEmpty {
+                            Text("Waiting for battery levels").font(.system(size: max(9, preferences.fontSize - 1)))
+                                .foregroundStyle(.white.opacity(0.55))
+                        } else {
+                            HStack(spacing: 12) {
+                                ForEach(pair.parts, id: \.self) { levelPill($0, low: preferences.airPodsLowPercent) }
+                            }
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(height: Self.airPodsRowHeight)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(pair.name), \(pair.detail)")
+            }
+        }
     }
 
     /// One AirPods part on its card: label, a short bar, the number. Red at

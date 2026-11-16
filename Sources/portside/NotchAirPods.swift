@@ -120,6 +120,8 @@ final class AirPodsMonitor {
     static let refresh: TimeInterval = 300
     /// After a connection, when to read again for the levels.
     static let followUps: [TimeInterval] = [1.5, 6]
+    /// `refresh` reads again at most this often.
+    static let refreshGap: TimeInterval = 30
 
     var onChange: (([AirPodsReading]) -> Void)?
     private(set) var running = false
@@ -128,7 +130,10 @@ final class AirPodsMonitor {
     /// Pending reads by number.
     private var reads: [Int: DispatchWorkItem] = [:]
     private var readCount = 0
+    /// The first read since `start` was reported, even when it found none.
+    private var reported = false
     private var bluetooth = false
+    private var lastRead = Date.distantPast
     private let logger = Logger(subsystem: "com.james.portside", category: "AirPods")
 
     func start() {
@@ -140,7 +145,14 @@ final class AirPodsMonitor {
             listener = block
         }
         bluetooth = Self.hasBluetoothAudio()
-        if bluetooth { read(after: 0) }
+        if bluetooth {
+            read(after: 0)
+        } else {
+            // Nothing connected: report that now, so a pair connecting
+            // later reads as a connection, not the starting state.
+            reported = true
+            onChange?([])
+        }
     }
 
     func stop() {
@@ -154,6 +166,15 @@ final class AirPodsMonitor {
         reads.values.forEach { $0.cancel() }
         reads = [:]
         readings = []
+        reported = false
+    }
+
+    /// Reads the levels again now (the AirPods page opened), unless a read
+    /// finished in the last 30 s or no pair is connected.
+    func refresh() {
+        guard running, !readings.isEmpty, Date().timeIntervalSince(lastRead) > Self.refreshGap else { return }
+        lastRead = Date()
+        readNow()
     }
 
     private func devicesChanged() {
@@ -187,7 +208,9 @@ final class AirPodsMonitor {
             let found = Self.profile()
             DispatchQueue.main.async {
                 guard let self, self.running else { return }
-                if found != self.readings {
+                self.lastRead = Date()
+                if found != self.readings || !self.reported {
+                    self.reported = true
                     self.readings = found
                     self.onChange?(found)
                 }

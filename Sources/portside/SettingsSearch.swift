@@ -143,6 +143,7 @@ enum SettingsSearch {
         .init(.notch, "Appearance", "Appearance", "compact style size width height corner radius opacity border accent provider colors quick styles"),
         .init(.notch, "Shelf", "Shelf", "widgets page left right slots opens on first tab last used tabs order agent card haptics"),
         .init(.notch, "Files", "Files", "drop files tray airdrop hold keep for hour day week remove after dragging out"),
+        .init(.notch, "Hotkeys", "Hotkeys", "hotkey shortcut keyboard open close shelf files clipboard search toggle"),
         .init(.notch, "Volume and brightness", "Volume and brightness", "hud volume brightness level indicator keys sound mute display replace macos osd accessibility"),
         .init(.notch, "Strip and alerts", "Strip and alerts", "priority order meeting soon battery low charging airpods beats headphones rain snow weather agent finished"),
         .init(.notch, "Music", "Music", "vinyl seek tint album colors paused song banner"),

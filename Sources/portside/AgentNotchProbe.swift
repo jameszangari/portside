@@ -95,7 +95,7 @@ enum AgentNotchProbe {
                 id: "probe", title: "I'm On", artist: "Anderson .Paak, Cordae", artwork: art, artworkURL: nil, isPlaying: true,
                 player: NowPlayingWidget.Player(bundleID: "com.apple.Music", name: "Music", notification: ""),
                 duration: 233, elapsed: 72, elapsedAt: Date()))
-            let shelfVariants = ["shelf-agents", "shelf-widgets", "shelf-clipboard", "shelf-files-empty", "shelf-files", "strip-music", "strip-solo", "strip-hud", "card-banner", "card-music", "card-vinyl", "card-agents", "card-meeting", "card-battery", "card-airpods"]
+            let shelfVariants = ["shelf-agents", "shelf-widgets", "shelf-clipboard", "shelf-clipboard-search", "shelf-files-empty", "shelf-files", "shelf-airpods", "strip-music", "strip-solo", "strip-hud", "card-banner", "card-music", "card-vinyl", "card-agents", "card-meeting", "card-battery", "card-airpods"]
             for name in ["compact", "attached", "attached-music", "expanded", "large-text", "minimal"] + shelfVariants {
                 let state = AgentNotchPresentation()
                 state.preferences.animate = false
@@ -136,8 +136,8 @@ enum AgentNotchProbe {
                     }
                     if name.hasPrefix("shelf") {
                         state.pageAvailable = { _ in true }
-                        state.showPage(name == "shelf-agents" ? .agents : name == "shelf-clipboard" ? .clipboard
-                                       : name.hasPrefix("shelf-files") ? .files : .widgets)
+                        state.showPage(name == "shelf-agents" ? .agents : name.hasPrefix("shelf-clipboard") ? .clipboard
+                                       : name.hasPrefix("shelf-files") ? .files : name == "shelf-airpods" ? .airPods : .widgets)
                         if name.hasPrefix("shelf-files") {
                             // Files that exist on every Mac, so the icons are real. Never saved.
                             NotchFileShelf.shared.preview(name == "shelf-files-empty" ? [] : [
@@ -145,7 +145,15 @@ enum AgentNotchProbe {
                                 "/etc/hosts", "/System/Library/Desktop Pictures", "/usr/share/dict/words",
                             ].map { URL(fileURLWithPath: $0) })
                         }
-                        if name == "shelf-clipboard" {
+                        if name == "shelf-airpods" {
+                            state.airPods = [AirPodsReading(address: "probe", name: "James's AirPods Pro", productID: 0x2014, left: 80, right: 15, case: 62),
+                                             AirPodsReading(address: "probe-max", name: "AirPods Max", productID: 0x201F, single: 90)]
+                        }
+                        if name == "shelf-clipboard-search" {
+                            state.hotkey(page: .clipboard, search: true)
+                            state.query = "swift"
+                        }
+                        if name.hasPrefix("shelf-clipboard") {
                             ClipboardService.shared.preview(["https://github.com/jameszangari/portside/pull/74", "swift build && swift test",
                                                              "Meeting moved to 3 pm, same room", "let width = min(screen.frame.width - 24, 600)",
                                                              "me@example.com"].enumerated().map {
@@ -176,8 +184,8 @@ enum AgentNotchProbe {
                 let content = state.preferences.shelfEnabled
                     ? AgentNotchView.shelfHeight(page: state.currentPage, preferences: state.preferences, sessionCount: agents.sessions.count,
                                                  chips: AgentNotchView.providerChips(agents.sessions).count > 1,
-                                                 clipboard: (ClipboardService.shared.entries.count, false),
-                                                 files: NotchFileShelf.shared.items.count)
+                                                 clipboard: (ClipboardService.shared.entries.count, false), searching: state.searching,
+                                                 files: NotchFileShelf.shared.items.count, airPods: state.airPods.count)
                     : AgentNotchView.dashboardHeight(preferences: state.preferences, sessionCount: agents.sessions.count)
                 let card = state.banner ? AgentNotchView.bannerHeight
                     : state.card.map { AgentNotchView.cardHeight($0, preferences: state.preferences, sessionCount: agents.sessions.count) } ?? 0

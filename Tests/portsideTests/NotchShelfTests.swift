@@ -1,3 +1,4 @@
+import Carbon.HIToolbox
 import XCTest
 @testable import portside
 
@@ -213,7 +214,7 @@ final class NotchShelfTests: XCTestCase {
 
     func testPagesDefaultsAndOpening() {
         let pages = NotchShelfPages()
-        XCTAssertEqual(pages.order, [.widgets, .agents, .files, .clipboard])
+        XCTAssertEqual(pages.order, [.widgets, .agents, .files, .clipboard, .airPods])
         XCTAssertEqual(pages.start, .first)
         XCTAssertEqual(pages.opening(lastUsed: .clipboard, available: all), .widgets, "like Bartender: the first tab")
         var last = pages
@@ -226,7 +227,8 @@ final class NotchShelfTests: XCTestCase {
         var pages = NotchShelfPages()
         pages.start = .clipboard
         XCTAssertEqual(pages.opening(lastUsed: .agents, available: all), .clipboard)
-        let noClipboard: (NotchShelfPage) -> Bool = { $0 != .clipboard }
+        // No clipboard module and no AirPods connected.
+        let noClipboard: (NotchShelfPage) -> Bool = { $0 != .clipboard && $0 != .airPods }
         XCTAssertEqual(pages.visible(available: noClipboard), [.widgets, .agents, .files])
         XCTAssertEqual(pages.opening(lastUsed: nil, available: noClipboard), .widgets, "start page unavailable: the first")
         pages.setOn(.widgets, false)
@@ -240,17 +242,17 @@ final class NotchShelfTests: XCTestCase {
     func testPagesMoveWithinBounds() {
         var pages = NotchShelfPages()
         pages.move(.clipboard, by: -1)
-        XCTAssertEqual(pages.order, [.widgets, .agents, .clipboard, .files])
+        XCTAssertEqual(pages.order, [.widgets, .agents, .clipboard, .files, .airPods])
         pages.move(.widgets, by: -1)
-        XCTAssertEqual(pages.order, [.widgets, .agents, .clipboard, .files], "first stays first")
-        pages.move(.files, by: 1)
-        XCTAssertEqual(pages.order, [.widgets, .agents, .clipboard, .files], "last stays last")
+        XCTAssertEqual(pages.order, [.widgets, .agents, .clipboard, .files, .airPods], "first stays first")
+        pages.move(.airPods, by: 1)
+        XCTAssertEqual(pages.order, [.widgets, .agents, .clipboard, .files, .airPods], "last stays last")
     }
 
     func testPagesDecodeRepairsOrder() throws {
         let json = #"{"order":["agents","bogus","agents"],"hidden":["clipboard","nope"],"start":"weird"}"#
         let pages = try JSONDecoder().decode(NotchShelfPages.self, from: Data(json.utf8))
-        XCTAssertEqual(pages.order, [.agents, .widgets, .files, .clipboard], "unknown and repeated dropped, missing appended")
+        XCTAssertEqual(pages.order, [.agents, .widgets, .files, .clipboard, .airPods], "unknown and repeated dropped, missing appended")
         XCTAssertFalse(pages.isOn(.clipboard))
         XCTAssertEqual(pages.start, .first)
         let back = try JSONDecoder().decode(NotchShelfPages.self, from: JSONEncoder().encode(pages))
@@ -347,8 +349,11 @@ final class NotchShelfTests: XCTestCase {
         XCTAssertEqual(shown.first?.text, "clip 7", "newest first")
         let one = NotchClipboardPage.height(count: 2, paused: false)
         let two = NotchClipboardPage.height(count: 8, paused: false)
-        XCTAssertEqual(one, NotchClipboardPage.cardHeight)
-        XCTAssertEqual(two, 2 * NotchClipboardPage.cardHeight + NotchClipboardPage.spacing, "never more than two rows")
+        let footer = NotchClipboardPage.spacing + NotchClipboardPage.footerHeight
+        XCTAssertEqual(one, NotchClipboardPage.cardHeight + footer, "a row and the Clear footer")
+        XCTAssertEqual(two, 2 * NotchClipboardPage.cardHeight + NotchClipboardPage.spacing + footer, "never more than two rows")
+        XCTAssertEqual(NotchClipboardPage.expiryPhrase(24), "1 day")
+        XCTAssertEqual(NotchClipboardPage.expiryPhrase(720), "30 days")
         XCTAssertGreaterThan(NotchClipboardPage.height(count: 2, paused: true), one, "the paused note adds a row")
         XCTAssertGreaterThan(NotchClipboardPage.height(count: 0, paused: false), 0, "empty state has room")
     }
@@ -573,6 +578,67 @@ final class NotchShelfTests: XCTestCase {
         XCTAssertEqual(back.airPodsLowPercent, 30)
         let bad = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"airPodsLowPercent":7}"#.utf8))
         XCTAssertEqual(bad.airPodsLowPercent, 20, "off the choices falls back")
+    }
+
+    func testHotkeyShelfIgnoresPointerUntilItsTimeRunsOut() {
+        var machine = NotchShelfMachine()
+        XCTAssertEqual(machine.openViaHotkey(), .hotkeyEnd)
+        XCTAssertTrue(machine.isOpen)
+        XCTAssertNil(machine.pointer(.body), "pointer moves leave the hotkey timer alone")
+        XCTAssertNil(machine.pointer(.outside), "leaving does not close it")
+        XCTAssertEqual(machine.pending, .hotkeyEnd)
+        machine.fire(.hotkeyEnd)
+        XCTAssertFalse(machine.isOpen, "time ran out with the pointer away")
+
+        _ = machine.openViaHotkey()
+        machine.pointer(.body)
+        machine.fire(.hotkeyEnd)
+        XCTAssertTrue(machine.isOpen, "the pointer is on it: hover rules take over")
+        XCTAssertFalse(machine.viaHotkey)
+        XCTAssertEqual(machine.pointer(.outside), .collapse)
+
+        var clicked = NotchShelfMachine()
+        _ = clicked.openViaHotkey()
+        clicked.click()
+        XCTAssertFalse(clicked.viaHotkey, "a click hands it to the hover rules")
+        var pinned = NotchShelfMachine()
+        _ = pinned.openViaHotkey()
+        pinned.setPinned(true)
+        XCTAssertNil(pinned.pending, "pinned stays")
+        pinned.close()
+        XCTAssertFalse(pinned.viaHotkey)
+    }
+
+    func testClipboardSearchMatchesEveryWord() {
+        let now = Date()
+        let entries = ["swift build && swift test", "Meeting moved to 3 pm", "let width = 600", "Swift package resolve"].enumerated().map {
+            ClipboardEntry(text: $1, date: now.addingTimeInterval(-Double($0) * 60))
+        }
+        XCTAssertEqual(NotchClipboardPage.matches(entries, query: "swift").map(\.text), ["swift build && swift test", "Swift package resolve"])
+        XCTAssertEqual(NotchClipboardPage.matches(entries, query: "swift test").map(\.text), ["swift build && swift test"])
+        XCTAssertEqual(NotchClipboardPage.matches(entries, query: "  ").count, 4, "no words shows the newest")
+        XCTAssertEqual(NotchClipboardPage.matches(entries, query: "zebra"), [])
+        XCTAssertEqual(NotchClipboardPage.height(count: 0, paused: false, searching: true),
+                       NotchClipboardPage.height(count: 6, paused: false, searching: true), "searching holds its height")
+    }
+
+    func testShelfHotkeySettingsDefaultsAndRoundTrip() throws {
+        let old = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"shelfEnabled":true}"#.utf8))
+        XCTAssertNil(old.shelfToggleHotkey, "none set by default")
+        XCTAssertNil(old.shelfFilesHotkey)
+        XCTAssertNil(old.shelfClipboardHotkey)
+        XCTAssertEqual(old.hotkeyOpenSeconds, 30)
+        var settings = AgentNotchSettings()
+        settings.shelfToggleHotkey = HotkeyChord(keyCode: 46, modifiers: UInt32(cmdKey | optionKey))
+        settings.hotkeyOpenSeconds = 300
+        let back = try JSONDecoder().decode(AgentNotchSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(back.shelfToggleHotkey, settings.shelfToggleHotkey)
+        XCTAssertNil(back.shelfFilesHotkey)
+        XCTAssertEqual(back.hotkeyOpenSeconds, 300)
+        let bad = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(
+            #"{"hotkeyOpenSeconds":7,"shelfFilesHotkey":{"keyCode":3,"modifiers":0}}"#.utf8))
+        XCTAssertEqual(bad.hotkeyOpenSeconds, 30, "off the choices falls back")
+        XCTAssertNil(bad.shelfFilesHotkey, "a bare letter is never a hotkey")
     }
 
     func testHUDSettingsDefaultsAndRoundTrip() throws {

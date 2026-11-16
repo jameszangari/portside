@@ -112,6 +112,14 @@ struct AgentNotchSettings: Codable, Equatable {
     /// battery's choices.
     var alertAirPods = true
     var airPodsLowPercent = 20
+    /// Shelf hotkeys (SHELF-11), none set by default: open or close the
+    /// shelf, open it on Files, search the clipboard.
+    var shelfToggleHotkey: HotkeyChord?
+    var shelfFilesHotkey: HotkeyChord?
+    var shelfClipboardHotkey: HotkeyChord?
+    /// How long a shelf a hotkey opened stays when the pointer is not on it.
+    var hotkeyOpenSeconds = 30
+    static let hotkeyOpenChoices = [15, 30, 60, 300, 600]
     var alertWeather = true
     /// Shows over full-screen apps (SHELF-08); off hides it in full-screen Spaces.
     var showInFullScreen = false
@@ -151,7 +159,7 @@ struct AgentNotchSettings: Codable, Equatable {
         case position, display, compactStyle, clickAction, filter, hideWhenEmpty, animate, showTotal, showUsage, showMedia
         case expandOnHover, shelfEnabled, shelfPages, shelfLeadingWidget, shelfTrailingWidget, shelfHoverDelay, shelfCollapseDelay
         case shelfHaptics, musicStyle, musicSeeking, musicTint, musicHideWhenPaused, musicBanner, agentCard, filesKeep, filesRemoveAfterDrag, hudVolume, hudBrightness, hudReplaceSystem, finishedDismissMinutes, stripOrder, meetingMinutes
-        case alertAgents, alertBattery, batteryLowPercent, alertAirPods, airPodsLowPercent, alertWeather, showInFullScreen, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
+        case alertAgents, alertBattery, batteryLowPercent, alertAirPods, airPodsLowPercent, shelfToggleHotkey, shelfFilesHotkey, shelfClipboardHotkey, hotkeyOpenSeconds, alertWeather, showInFullScreen, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
         case showFinished, claude, codex, copilot, opencode, cursor, showBorder, compactWidth, compactHeight, expandedWidth, cornerRadius, opacity, fontSize
         case rowSpacing, maxSessions, hoverDelay, collapseDelay, animationDuration, horizontalOffset, verticalOffset, accent
     }
@@ -201,6 +209,10 @@ struct AgentNotchSettings: Codable, Equatable {
         batteryLowPercent = values.value(.batteryLowPercent, or: 20)
         alertAirPods = values.value(.alertAirPods, or: true)
         airPodsLowPercent = values.value(.airPodsLowPercent, or: 20)
+        shelfToggleHotkey = (try? values.decodeIfPresent(HotkeyChord.self, forKey: .shelfToggleHotkey)) ?? nil
+        shelfFilesHotkey = (try? values.decodeIfPresent(HotkeyChord.self, forKey: .shelfFilesHotkey)) ?? nil
+        shelfClipboardHotkey = (try? values.decodeIfPresent(HotkeyChord.self, forKey: .shelfClipboardHotkey)) ?? nil
+        hotkeyOpenSeconds = values.value(.hotkeyOpenSeconds, or: 30)
         alertWeather = values.value(.alertWeather, or: true)
         showInFullScreen = values.value(.showInFullScreen, or: false)
         collapseAfterFocus = values.value(.collapseAfterFocus, or: true)
@@ -250,6 +262,10 @@ struct AgentNotchSettings: Codable, Equatable {
         if !NotchMeetingSoon.choices.contains(meetingMinutes) { meetingMinutes = 5 }
         if !Self.batteryLowChoices.contains(batteryLowPercent) { batteryLowPercent = 20 }
         if !Self.batteryLowChoices.contains(airPodsLowPercent) { airPodsLowPercent = 20 }
+        if !Self.hotkeyOpenChoices.contains(hotkeyOpenSeconds) { hotkeyOpenSeconds = 30 }
+        if shelfToggleHotkey?.isRegisterable == false { shelfToggleHotkey = nil }
+        if shelfFilesHotkey?.isRegisterable == false { shelfFilesHotkey = nil }
+        if shelfClipboardHotkey?.isRegisterable == false { shelfClipboardHotkey = nil }
         hoverDelay = bounded(hoverDelay, 0...1, 0.25)
         collapseDelay = bounded(collapseDelay, 0.1...2, 0.6)
         shelfHoverDelay = bounded(shelfHoverDelay, 0...1, 0.15)

@@ -51,8 +51,17 @@ final class AgentNotchPresentation: ObservableObject {
     var pointerInside: () -> Bool = { false }
     /// Shelf only: a file drag is over the panel.
     @Published private(set) var fileDragOver = false
-    /// Shelf only: whether a page can show now (Clipboard needs its module).
-    var pageAvailable: (NotchShelfPage) -> Bool = { $0 != .clipboard }
+    /// The Clipboard page's search field is up and takes the keyboard
+    /// (SHELF-11's search hotkey); `query` is what was typed.
+    @Published private(set) var searching = false
+    @Published var query = ""
+    /// The search started or ended, so the panel takes or gives back keys.
+    var onSearch: ((Bool) -> Void)?
+    /// Shelf only: the connected AirPods and Beats, for the AirPods page.
+    @Published var airPods: [AirPodsReading] = []
+    /// Shelf only: whether a page can show now (Clipboard needs its module,
+    /// AirPods a connected pair).
+    var pageAvailable: (NotchShelfPage) -> Bool = { $0 != .clipboard && $0 != .airPods }
     /// Shelf only: a running widget, for the Widgets page.
     var widgetHost: (String) -> WidgetHost? = { _ in nil }
     /// Shelf only: the chosen page while it is still on, else the first that is.
@@ -90,7 +99,10 @@ final class AgentNotchPresentation: ObservableObject {
     func shelfPointer(_ region: NotchShelfRegion) {
         guard shelf else { return }
         let strip = strip
-        schedule(machine.pointer(region) { strip.activity($0) })
+        // A hotkey's shelf runs its own timer; the pointer only notes where it is.
+        let hotkey = machine.viaHotkey && machine.isOpen
+        let timer = machine.pointer(region) { strip.activity($0) }
+        if !hotkey { schedule(timer) }
         if banner != machine.banner { syncShelf() }
     }
 
@@ -118,6 +130,7 @@ final class AgentNotchPresentation: ObservableObject {
         case .collapse: preferences.shelfCollapseDelay
         case .collapseCard: 0.2
         case .bannerEnd: 3
+        case .hotkeyEnd: TimeInterval(preferences.hotkeyOpenSeconds)
         }
         let task = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -151,9 +164,34 @@ final class AgentNotchPresentation: ObservableObject {
         }
     }
 
+    /// Shelf only: a hotkey (SHELF-11). `page` nil opens on the usual start
+    /// page; `toggle` closes an open shelf instead; `search` puts up the
+    /// Clipboard page's search field.
+    func hotkey(page: NotchShelfPage?, toggle: Bool = false, search: Bool = false) {
+        guard shelf else { return }
+        if toggle, expanded {
+            setExpanded(false)
+            return
+        }
+        schedule(machine.openViaHotkey())
+        syncShelf()
+        if let page { showPage(page) }
+        setSearching(search && page == .clipboard && self.page == .clipboard)
+    }
+
+    func setSearching(_ value: Bool) {
+        if !value { query = "" }
+        guard searching != value else { return }
+        searching = value
+        onSearch?(value)
+        // The field changes the page's height.
+        if expanded { onExpansion?() }
+    }
+
     /// Shelf only: a tab was picked.
     func showPage(_ next: NotchShelfPage) {
         guard page != next else { return }
+        if next != .clipboard { setSearching(false) }
         page = next
         lastUsedPage = next
         // Pages differ in height.
@@ -174,6 +212,7 @@ final class AgentNotchPresentation: ObservableObject {
             lastUsedPage = page ?? lastUsedPage
         }
         expanded = machine.isOpen
+        if !expanded { setSearching(false) }
         card = machine.card
         banner = machine.banner
         if pinned != machine.pinned { pinned = machine.pinned }
@@ -197,7 +236,7 @@ final class AgentNotchPresentation: ObservableObject {
 
 final class AgentNotch {
     private struct Surface {
-        let panel: NSPanel
+        let panel: NotchShelfPanel
         let state: AgentNotchPresentation
         let screen: NSScreen
     }
@@ -308,9 +347,10 @@ final class AgentNotch {
     }
 
     private func collapseUnpinned() {
-        // The shelf closes on any click outside, pinned or not; the classic
-        // island keeps a pinned dashboard.
-        surfaces.filter { preferences.shelfEnabled || !$0.state.pinned }.forEach { $0.state.setExpanded(false) }
+        // A click outside closes what is not pinned. A pinned shelf stays
+        // while you work in other windows (maintainer request), until it is
+        // unpinned, closed with its button or Escape, or the toggle hotkey.
+        surfaces.filter { !$0.state.pinned }.forEach { $0.state.setExpanded(false) }
     }
 
     private func rebuildPanels() {
@@ -335,7 +375,7 @@ final class AgentNotch {
         for screen in screens {
             let state = AgentNotchPresentation()
             state.preferences = preferences
-            let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            let panel = NotchShelfPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             panel.isReleasedWhenClosed = false
             panel.level = .statusBar
             // Without fullScreenAuxiliary the panel stays out of full-screen
@@ -348,11 +388,19 @@ final class AgentNotch {
             panel.backgroundColor = .clear
             panel.hasShadow = preferences.showBorder
             panel.hidesOnDeactivate = false
-            state.onExpansion = { [weak self] in self?.layoutPanels() }
-            state.widgetHost = { [weak self] kind in self?.widgets.host(kind) }
-            state.pageAvailable = { [weak self] page in
-                page != .clipboard || MainActor.assumeIsolated { self?.model?.clipboardHistoryOn == true }
+            state.onExpansion = { [weak self, weak state] in
+                self?.layoutPanels()
+                if state?.expanded == true, state?.currentPage == .airPods { self?.airPods.refresh() }
             }
+            state.widgetHost = { [weak self] kind in self?.widgets.host(kind) }
+            state.pageAvailable = { [weak self, weak state] page in
+                switch page {
+                case .clipboard: MainActor.assumeIsolated { self?.model?.clipboardHistoryOn == true }
+                case .airPods: state?.airPods.isEmpty == false
+                default: true
+                }
+            }
+            state.onSearch = { [weak panel] on in panel?.takeKeys(on) }
             state.pointerInside = { [weak panel] in panel.map { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? false }
             panel.contentView = NSHostingView(rootView: AgentNotchView(agents: agents, usage: usage, nowPlaying: nowPlaying, state: state))
             surfaces.append(Surface(panel: panel, state: state, screen: screen))
@@ -443,7 +491,10 @@ final class AgentNotch {
 
     private func checkAirPods(_ readings: [AirPodsReading]) {
         defer { lastAirPods = readings }
-        guard let previous = lastAirPods else { return }
+        // The AirPods page shows while a pair is connected.
+        for surface in surfaces where surface.state.airPods != readings { surface.state.airPods = readings }
+        layoutPanels()
+        guard preferences.alertAirPods, let previous = lastAirPods else { return }
         for alert in AirPodsAlert.detect(previous: previous, current: readings, low: preferences.airPodsLowPercent) {
             switch alert {
             case .connected(let pair):
@@ -456,10 +507,47 @@ final class AgentNotch {
         }
     }
 
+    /// Shelf hotkeys (SHELF-11): registered while the shelf is on, one
+    /// Carbon hotkey each (no permission). A press acts on the shelf under
+    /// the pointer's display, else the first.
+    private var hotkeys: [String: (chord: HotkeyChord, key: HotKey?)] = [:]
+
+    private func bindHotkeys() {
+        let shelf = enabled && preferences.shelfEnabled && !surfaces.isEmpty
+        let wanted: [(name: String, chord: HotkeyChord?, action: (AgentNotchPresentation) -> Void)] = [
+            ("Open or close the shelf", preferences.shelfToggleHotkey, { $0.hotkey(page: nil, toggle: true) }),
+            ("Open on Files", preferences.shelfFilesHotkey, { $0.hotkey(page: .files) }),
+            ("Search clipboard", preferences.shelfClipboardHotkey, { $0.hotkey(page: .clipboard, search: true) }),
+        ]
+        var failures: [String: String] = [:]
+        for (name, chord, action) in wanted {
+            guard shelf, let chord, chord.isRegisterable else {
+                hotkeys[name] = nil
+                continue
+            }
+            if hotkeys[name]?.chord == chord, hotkeys[name]?.key != nil { continue }
+            // Release first: the same chord cannot be held twice.
+            hotkeys[name] = nil
+            let key = HotKey(chord: chord, name: "Notch Shelf \(name)") { [weak self] in
+                guard let self, let surface = self.hotkeySurface() else { return }
+                action(surface.state)
+            }
+            hotkeys[name] = (chord, key)
+            if key == nil { failures[name] = "macOS refused \(chord.displayString). Another app may already use it. Choose another shortcut." }
+        }
+        if NotchShelfHotkeyStatus.shared.failures != failures { NotchShelfHotkeyStatus.shared.failures = failures }
+    }
+
+    private func hotkeySurface() -> Surface? {
+        let mouse = NSEvent.mouseLocation
+        return surfaces.first { $0.screen.frame.contains(mouse) && $0.panel.isVisible } ?? surfaces.first { $0.panel.isVisible } ?? surfaces.first
+    }
+
     /// Volume and brightness HUD (SHELF-09): listen while the shelf and each
     /// switch are on. Rebound on settings and display changes (the built-in
     /// display goes away with the lid closed).
     private func bindLevels() {
+        bindHotkeys()
         let shelf = enabled && preferences.shelfEnabled && !surfaces.isEmpty
         if shelf && preferences.hudVolume {
             volume.onChange = { [weak self] level in
@@ -499,13 +587,14 @@ final class AgentNotch {
         } else {
             dragCatcher.stop()
         }
-        // AirPods connect and low alerts (SHELF-10).
-        if shelf && preferences.alertAirPods {
+        // AirPods connect and low alerts (SHELF-10), and the AirPods page.
+        if shelf && (preferences.alertAirPods || preferences.shelfPages.isOn(.airPods)) {
             airPods.onChange = { [weak self] readings in self?.checkAirPods(readings) }
             airPods.start()
         } else {
             airPods.stop()
             lastAirPods = nil
+            surfaces.forEach { $0.state.airPods = [] }
         }
         if !shelf, surfaces.contains(where: { $0.state.hud != nil }) {
             hudTask?.cancel()
@@ -742,7 +831,8 @@ final class AgentNotch {
                                              sessionCount: AgentNotchView.providerFiltered(sessions, state.agentProvider).count,
                                              chips: AgentNotchView.providerChips(sessions).count > 1,
                                              usageRows: preferences.showUsage ? usage?.usage.count ?? 0 : 0,
-                                             clipboard: clipboard, files: NotchFileShelf.shared.items.count)
+                                             clipboard: clipboard, searching: state.searching, files: NotchFileShelf.shared.items.count,
+                                             airPods: state.airPods.count)
                 : AgentNotchView.dashboardHeight(preferences: preferences, sessionCount: sessions.count)
             let height = min(screen.visibleFrame.height - 16, state.headerHeight
                              + (state.expanded ? contentHeight : state.card.map {
@@ -858,4 +948,32 @@ private extension NSScreen {
     var displayID: CGDirectDisplayID? {
         (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber).map { CGDirectDisplayID($0.uint32Value) }
     }
+}
+
+/// The shelf's panel. It takes the keyboard only while the Clipboard
+/// page's search field is up (SHELF-11); otherwise, as in Bartender, the
+/// shelf never takes the keyboard from your app. Non-activating, so your
+/// app stays frontmost either way.
+final class NotchShelfPanel: NSPanel {
+    private var takesKeys = false
+    override var canBecomeKey: Bool { takesKeys }
+
+    func takeKeys(_ on: Bool) {
+        guard on != takesKeys else { return }
+        takesKeys = on
+        if on {
+            orderFrontRegardless()
+            makeKey()
+        } else if isKeyWindow {
+            // Ordering out hands the keyboard back to the app that had it.
+            orderOut(nil)
+            orderFrontRegardless()
+        }
+    }
+}
+
+/// Shelf hotkeys macOS refused, by name, for Settings.
+final class NotchShelfHotkeyStatus: ObservableObject {
+    static let shared = NotchShelfHotkeyStatus()
+    @Published var failures: [String: String] = [:]
 }

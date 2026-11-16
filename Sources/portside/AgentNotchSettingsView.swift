@@ -8,6 +8,7 @@ struct AgentNotchSettingsView: View {
     /// chevron row that toggles the editor under it.
     @State private var accentOpen = false
     @ObservedObject private var accessibility = AccessibilityTrust.shared
+    @ObservedObject private var hotkeyStatus = NotchShelfHotkeyStatus.shared
 
     private var preferences: AgentNotchSettings { model.agentNotchSettings }
 
@@ -131,6 +132,19 @@ struct AgentNotchSettingsView: View {
                                 accessibility.requestAccess(forFeature: "replacing the macOS volume and brightness indicator")
                             }
                         }
+                    }
+                }
+                if preferences.shelfEnabled {
+                    SettingsFold("Hotkeys", symbol: "command", summary: hotkeysSummary) {
+                        shelfHotkey("Open or close the shelf", \.shelfToggleHotkey)
+                        shelfHotkey("Open on Files", \.shelfFilesHotkey)
+                        shelfHotkey("Search clipboard", \.shelfClipboardHotkey)
+                        Picker("Opened by a hotkey, stays for", selection: binding(\.hotkeyOpenSeconds)) {
+                            ForEach(AgentNotchSettings.hotkeyOpenChoices, id: \.self) { seconds in
+                                Text(seconds < 60 ? "\(seconds) seconds" : seconds == 60 ? "1 minute" : "\(seconds / 60) minutes").tag(seconds)
+                            }
+                        }
+                        Text("None are set. A shelf a hotkey opens stays when the pointer leaves, until this time runs out or you press Escape or click outside. Search clipboard puts up a search field on the Clipboard page: type, then Return copies the first match.").helperStyle()
                     }
                 }
                 if preferences.shelfEnabled {
@@ -268,6 +282,33 @@ struct AgentNotchSettingsView: View {
         return "Portside takes the volume and brightness keys and sets the level itself, so only the notch shows it. Off, macOS shows its own indicator too."
     }
 
+    /// One shelf hotkey row, with why it may not work under it.
+    @ViewBuilder
+    private func shelfHotkey(_ title: String, _ key: WritableKeyPath<AgentNotchSettings, HotkeyChord?>) -> some View {
+        HotkeyRecorderButton(title: title, chord: preferences[keyPath: key], defaultChord: nil) { chord in
+            model.updateAgentNotch { $0[keyPath: key] = chord }
+        }
+        if let chord = preferences[keyPath: key], let warning = hotkeyWarning(title, chord) {
+            Label { Text(warning).helperStyle() } icon: { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
+        }
+    }
+
+    private func hotkeyWarning(_ title: String, _ chord: HotkeyChord) -> String? {
+        let shelf: [(name: String, chord: HotkeyChord?)] = [
+            ("Open or close the shelf", preferences.shelfToggleHotkey), ("Open on Files", preferences.shelfFilesHotkey),
+            ("Search clipboard", preferences.shelfClipboardHotkey),
+        ].filter { $0.name != title }
+        let portside = [("Open Settings", model.settingsHotkey), ("Command Center", model.commandCenterHotkey),
+                        ("App Switcher", model.switcherHotkey)] + shelf
+        return HotkeyConflicts.conflict(for: chord, system: HotkeyConflicts.systemHotkeys(), portside: portside)
+            ?? hotkeyStatus.failures[title]
+    }
+
+    private var hotkeysSummary: String {
+        let set = [preferences.shelfToggleHotkey, preferences.shelfFilesHotkey, preferences.shelfClipboardHotkey].compactMap { $0 }
+        return set.isEmpty ? "None set" : set.map(\.displayString).joined(separator: ", ")
+    }
+
     private var alertsSummary: String {
         let order = preferences.stripOrder.map { $0 == .meeting ? "meeting" : $0.title.lowercased() }.joined(separator: ", ")
         let alerts = settingsList([("agents", preferences.alertAgents), ("battery", preferences.alertBattery),
@@ -308,6 +349,9 @@ struct AgentNotchSettingsView: View {
                     .buttonStyle(.borderless).disabled(index == 0).accessibilityLabel("Move \(page.title) earlier")
                 Button { model.updateAgentNotch { $0.shelfPages.move(page, by: 1) } } label: { Image(systemName: "chevron.down") }
                     .buttonStyle(.borderless).disabled(index == pages.order.count - 1).accessibilityLabel("Move \(page.title) later")
+            }
+            if page == .airPods {
+                Text("Shows while AirPods or Beats are connected.").helperStyle()
             }
             if needsClipboard {
                 HStack {
