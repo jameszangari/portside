@@ -159,7 +159,6 @@ final class WidgetStore: ObservableObject {
     /// What the Notch Shelf reads while it is on: its Widgets slots, and
     /// the battery, weather and calendar behind its alerts (SHELF-07).
     static func shelfKinds(_ settings: AgentNotchSettings) -> [String] {
-        guard settings.shelfEnabled else { return [] }
         var kinds = settings.shelfPages.isOn(.widgets)
             ? [settings.shelfLeadingWidget, settings.shelfTrailingWidget].compactMap(\.widgetKind) : []
         if settings.alertBattery { kinds.append(BatteryWidget.kind) }

@@ -461,27 +461,27 @@ final class AppSwitcherWindowTests: XCTestCase {
         XCTAssertEqual(presenter.calls, ["present", "dismiss"], "the quick tap never showed a panel")
     }
 
-    func testPreviewsAreOptInAndOnlyCaptureOnceTheRevealShowsThePanel() async throws {
+    func testPreviewsAreOptInAndStartWhileThePanelIsArmed() async throws {
         try await enable()
         XCTAssertFalse(previews.isOptedIn, "off until the setting is on")
         preferences.send(SwitcherPreferences(mode: .windows, previews: true))
         XCTAssertTrue(previews.isOptedIn)
         flags = .option
         switcher.hotkeyPressed()
-        XCTAssertTrue(previews.attachedSurfaces.isEmpty, "armed and transparent: no surface yet")
+        XCTAssertEqual(previews.attachedSurfaces, ["switcher"], "armed: pictures start before the reveal")
         switcher.revealDue()
         XCTAssertEqual(previews.attachedSurfaces, ["switcher"])
         switcher.keyPressed(.cancel)
-        XCTAssertTrue(previews.attachedSurfaces.isEmpty, "closing detaches, which drops every picture")
+        XCTAssertTrue(previews.attachedSurfaces.isEmpty, "closing detaches")
     }
 
-    func testAQuickTapThatNeverShowsThePanelNeverAttaches() async throws {
+    func testAQuickTapCapturesNothing() async throws {
         try await enable()
         preferences.send(SwitcherPreferences(mode: .windows, previews: true))
         flags = []
         switcher.hotkeyPressed()
         XCTAssertFalse(presenter.calls.contains("reveal"))
-        XCTAssertTrue(previews.attachedSurfaces.isEmpty)
+        XCTAssertTrue(previews.attachedSurfaces.isEmpty, "attached and detached in the same turn")
         XCTAssertEqual(capturer.listCalls, 0)
     }
 

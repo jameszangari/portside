@@ -311,9 +311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Menu-bar / edge-only: keep running when no titled windows are open
         // (otherwise AppKit may terminate a background `swift run` launch).
         ProcessInfo.processInfo.disableAutomaticTermination("portside dock")
-        if Bundle.main.bundleURL.pathExtension != "app" {
-            NSApp.applicationIconImage = AppIcon.image
-        }
+        NSApp.applicationIconImage = AppIcon.image
         registerCommands()
         nativeDock.applyAtLaunch()
         BackgroundCursor.enable()
@@ -515,8 +513,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// window registry. Enabled the same way `enableSaved` enables the rest.
     private func registerSwitcher(registry: WindowRegistry) {
         MainActor.assumeIsolated {
+            var actions = SwitcherActions.live
+            actions.openSelf = { [weak self] in self?.runOpenSettingsCommand() }
             let module = SwitcherModule(
-                switcher: AppSwitcher(registry: registry, previews: WindowPreviewService(capturer: ScreenCaptureKitCapturer())),
+                switcher: AppSwitcher(registry: registry, actions: actions,
+                                      previews: WindowPreviewService(capturer: ScreenCaptureKitCapturer())),
                 chords: dockModel.$switcherHotkey.eraseToAnyPublisher(),
                 preferences: dockModel.switcherPreferences
             )

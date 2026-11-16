@@ -36,6 +36,13 @@ final class SettingsSearchTests: XCTestCase {
         }
     }
 
+    func testSettingsWindowSizeStaysInBounds() {
+        XCTAssertEqual(SettingsLayout.clamped(NSSize(width: 100, height: 100)), SettingsLayout.minSize)
+        XCTAssertEqual(SettingsLayout.clamped(NSSize(width: 5000, height: 5000)), SettingsLayout.maxSize)
+        XCTAssertEqual(SettingsLayout.clamped(NSSize(width: 900, height: 700)), NSSize(width: 900, height: 700))
+        XCTAssertEqual(SettingsLayout.clamped(SettingsLayout.windowSize), SettingsLayout.windowSize, "the default fits")
+    }
+
     func testIdsAreUnique() {
         let ids = SettingsSearch.entries.map(\.id)
         XCTAssertEqual(ids.count, Set(ids).count)

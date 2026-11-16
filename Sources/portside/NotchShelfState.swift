@@ -50,25 +50,39 @@ enum NotchShelfOrder {
     }
 }
 
-/// When the strip shows a meeting: from `minutes` before it starts until a
-/// minute after. All-day events never count.
+/// When the strip shows a meeting: from `minutes` before it starts until it
+/// ends, its timer running during it (Bartender's meeting timer). An event
+/// with no end, or longer than 3 hours (a focus block, a trip), leaves a
+/// minute after it starts. All-day events never count.
 enum NotchMeetingSoon {
+    typealias Event = (start: Date, end: Date?, allDay: Bool)
     static let after: TimeInterval = 60
+    static let longest: TimeInterval = 3 * 3600
     static let choices = [0, 1, 5, 10, 15]
 
-    static func current(_ starts: [(start: Date, allDay: Bool)], now: Date, minutes: Int) -> Int? {
+    /// The meeting runs a timer: it has an end within 3 hours of its start.
+    static func timed(start: Date, end: Date?) -> Bool {
+        guard let end else { return false }
+        return end > start && end.timeIntervalSince(start) <= longest
+    }
+
+    /// When the strip stops showing it.
+    static func until(_ event: Event) -> Date {
+        timed(start: event.start, end: event.end) ? event.end ?? event.start : event.start.addingTimeInterval(after)
+    }
+
+    static func current(_ events: [Event], now: Date, minutes: Int) -> Int? {
         guard minutes > 0 else { return nil }
-        return starts.indices.filter { !starts[$0].allDay }.first { index in
-            let start = starts[index].start
-            return now >= start.addingTimeInterval(-TimeInterval(minutes * 60)) && now < start.addingTimeInterval(after)
+        return events.indices.filter { !events[$0].allDay }.first { index in
+            now >= events[index].start.addingTimeInterval(-TimeInterval(minutes * 60)) && now < until(events[index])
         }
     }
 
     /// The next time the answer of `current` can change, for one timer.
-    static func nextChange(_ starts: [(start: Date, allDay: Bool)], now: Date, minutes: Int) -> Date? {
+    static func nextChange(_ events: [Event], now: Date, minutes: Int) -> Date? {
         guard minutes > 0 else { return nil }
-        return starts.filter { !$0.allDay }
-            .flatMap { [$0.start.addingTimeInterval(-TimeInterval(minutes * 60)), $0.start.addingTimeInterval(after)] }
+        return events.filter { !$0.allDay }
+            .flatMap { [$0.start.addingTimeInterval(-TimeInterval(minutes * 60)), until($0)] }
             .filter { $0 > now }.min()
     }
 }
@@ -185,6 +199,8 @@ enum NotchShelfTimer: Equatable {
     case collapseCard
     /// The song banner ran its time without the pointer on it.
     case bannerEnd
+    /// A shelf a hotkey opened ran its time (SHELF-11).
+    case hotkeyEnd
 }
 
 /// The shelf's open/close rules, free of AppKit so they can be tested.
@@ -194,11 +210,17 @@ enum NotchShelfTimer: Equatable {
 /// (replacing any earlier one); nil means cancel whatever was pending.
 struct NotchShelfMachine: Equatable {
     private(set) var phase = NotchShelfPhase.compact
-    /// Stays open when the pointer leaves. Click outside and Esc still close.
+    /// Stays open when the pointer leaves and on clicks outside. Esc, the
+    /// close button and the toggle hotkey still close it.
     private(set) var pinned = false
     private(set) var pending: NotchShelfTimer?
     /// The card is a song banner the pointer has not touched yet.
     private(set) var banner = false
+    /// A hotkey opened the shelf (SHELF-11): as in Bartender, the pointer
+    /// leaving does not close it; it closes when its time runs out, unless
+    /// the pointer is on it then, which hands it to the hover rules.
+    private(set) var viaHotkey = false
+    private(set) var pointerInside = false
 
     init() {}
 
@@ -213,6 +235,10 @@ struct NotchShelfMachine: Equatable {
     mutating func pointer(_ region: NotchShelfRegion,
                           activity: (NotchShelfSide) -> NotchShelfActivity? = { _ in nil }) -> NotchShelfTimer? {
         if region != .outside { banner = false }
+        pointerInside = region != .outside
+        // A hotkey's shelf keeps its own timer, whatever the pointer does;
+        // nil here means leave the running timer alone.
+        if viaHotkey, phase == .open { return nil }
         let next: NotchShelfTimer?
         switch (region, phase) {
         case (.outside, .compact): next = nil
@@ -238,7 +264,21 @@ struct NotchShelfMachine: Equatable {
         case .open: phase = .open
         case .collapse, .collapseCard: close()
         case .bannerEnd: if banner { close() }
+        case .hotkeyEnd:
+            viaHotkey = false
+            if !pointerInside { close() }
         }
+    }
+
+    /// A hotkey opens the shelf, or keeps it open and restarts its time.
+    /// Returns the timer that closes it.
+    mutating func openViaHotkey() -> NotchShelfTimer {
+        banner = false
+        phase = .open
+        pinned = false
+        viaHotkey = true
+        pending = .hotkeyEnd
+        return .hotkeyEnd
     }
 
     /// The song banner: shows the music card while the strip is idle and
@@ -258,6 +298,8 @@ struct NotchShelfMachine: Equatable {
     mutating func click() {
         pending = nil
         banner = false
+        // A click hands a hotkey's shelf to the hover rules.
+        viaHotkey = false
         guard phase != .open else { return }
         phase = .open
         pinned = false
@@ -266,17 +308,23 @@ struct NotchShelfMachine: Equatable {
     mutating func open() {
         pending = nil
         banner = false
+        viaHotkey = false
         phase = .open
     }
 
     mutating func setPinned(_ value: Bool) {
         pinned = value && phase == .open
+        if pinned {
+            viaHotkey = false
+            pending = nil
+        }
     }
 
     /// Click outside, Esc, or any explicit close.
     mutating func close() {
         pending = nil
         banner = false
+        viaHotkey = false
         phase = .compact
         pinned = false
     }
@@ -284,7 +332,7 @@ struct NotchShelfMachine: Equatable {
 
 /// A page of the open shelf (SHELF-03).
 enum NotchShelfPage: String, Codable, CaseIterable, Identifiable {
-    case widgets, agents, files, clipboard
+    case widgets, agents, files, clipboard, airPods
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -292,6 +340,7 @@ enum NotchShelfPage: String, Codable, CaseIterable, Identifiable {
         case .agents: "Agents"
         case .files: "Files"
         case .clipboard: "Clipboard"
+        case .airPods: "AirPods"
         }
     }
     var symbol: String {
@@ -300,6 +349,7 @@ enum NotchShelfPage: String, Codable, CaseIterable, Identifiable {
         case .agents: "sparkles"
         case .files: "tray"
         case .clipboard: "doc.on.clipboard"
+        case .airPods: "airpods"
         }
     }
 }
@@ -307,7 +357,7 @@ enum NotchShelfPage: String, Codable, CaseIterable, Identifiable {
 /// Which page the shelf opens on: the first tab (Bartender), the last one
 /// shown, or a fixed page.
 enum NotchShelfStartPage: String, Codable, CaseIterable, Identifiable {
-    case first, lastUsed, widgets, agents, files, clipboard
+    case first, lastUsed, widgets, agents, files, clipboard, airPods
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -373,7 +423,8 @@ struct NotchShelfPages: Codable, Equatable {
         order.swapAt(index, target)
     }
 
-    /// Tabs in order: turned on and `available` (Clipboard needs its module).
+    /// Tabs in order: turned on and `available` (Clipboard needs its module,
+    /// AirPods a connected pair).
     func visible(available: (NotchShelfPage) -> Bool) -> [NotchShelfPage] {
         order.filter { isOn($0) && available($0) }
     }
@@ -426,6 +477,9 @@ enum NotchMusicStyle: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String { self == .music ? "Album art" : "Vinyl" }
 }
+
+/// The working animation on the strip and in the agent rows.
+typealias NotchThinkingStyle = ThinkingLoader.Style
 
 /// What the agent card lists: the latest session, or every running one.
 enum NotchAgentCard: String, Codable, CaseIterable, Identifiable {

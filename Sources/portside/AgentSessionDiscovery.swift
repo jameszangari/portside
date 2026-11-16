@@ -40,7 +40,11 @@ enum AgentSessionDiscovery {
 
     private static func t3Sessions() -> [AgentSession] {
         guard FileManager.default.fileExists(atPath: t3Database.path) else { return [] }
-        let hostPID = pid(ofBundleIDs: ["com.t3tools.t3code"])
+        let host = runningApp(ofBundleIDs: ["com.t3tools.t3code"])
+        let hostPID = host?.processIdentifier
+        // The beta shares the bundle ID; its name ("T3 Code (Beta)") matches
+        // what the hook sessions in it report.
+        let hostName = host?.localizedName ?? "T3 Code"
         // Read through the WAL so a busy writer does not block us; ignore lock failures.
         // T3 stores ISO-8601 (`2026-11-04T04:40:51.869Z`). Normalize before
         // comparing to SQLite's `datetime('now')` (`2026-11-04 04:40:51`).
@@ -48,10 +52,12 @@ enum AgentSessionDiscovery {
         SELECT r.run_id, r.thread_id, r.provider, r.status, r.requested_at, r.completed_at,
                t.title,
                json_extract(t.payload_json, '$.worktreePath') AS worktree,
-               p.worktree_path
+               p.worktree_path,
+               pp.workspace_root
         FROM orchestration_v2_projection_runs r
         LEFT JOIN orchestration_v2_projection_threads t ON t.thread_id = r.thread_id
         LEFT JOIN projection_threads p ON p.thread_id = r.thread_id
+        LEFT JOIN projection_projects pp ON pp.project_id = coalesce(t.project_id, p.project_id)
         WHERE t.deleted_at IS NULL
           AND (
             r.status IN ('running','waiting','queued','starting','preparing')
@@ -83,7 +89,10 @@ enum AgentSessionDiscovery {
             guard !thread.isEmpty, seenThreads.insert(thread).inserted else { continue }
             let providerID = row["provider"] ?? "unknown"
             let statusName = row["status"] ?? ""
-            let worktree = firstNonEmpty(row["worktree"], row["worktree_path"])
+            // A thread in the project's own folder has no worktree path; its
+            // project's root is the folder its hook session reports, so the
+            // two merge instead of showing twice.
+            let worktree = firstNonEmpty(row["worktree"], row["worktree_path"], row["workspace_root"])
             let project = worktree.map { URL(fileURLWithPath: $0).lastPathComponent }
                 .flatMap { $0.isEmpty ? nil : $0 }
             let updated = parseISO8601(row["completed_at"] ?? "")
@@ -100,7 +109,7 @@ enum AgentSessionDiscovery {
                 ended: false,
                 updated: updated,
                 project: project,
-                host: "T3 Code",
+                host: hostName,
                 focusBundleIDs: ["com.t3tools.t3code"]
             ))
         }
@@ -227,9 +236,11 @@ enum AgentSessionDiscovery {
     }
 
     private static func pid(ofBundleIDs ids: [String]) -> pid_t? {
-        NSWorkspace.shared.runningApplications
-            .first { app in ids.contains(where: { app.bundleIdentifier == $0 }) }?
-            .processIdentifier
+        runningApp(ofBundleIDs: ids)?.processIdentifier
+    }
+
+    private static func runningApp(ofBundleIDs ids: [String]) -> NSRunningApplication? {
+        NSWorkspace.shared.runningApplications.first { app in ids.contains(where: { app.bundleIdentifier == $0 }) }
     }
 
     /// PID from T3's OpenCode server registry, else any live `opencode-servers` entry.

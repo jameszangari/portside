@@ -1,3 +1,4 @@
+import Carbon.HIToolbox
 import XCTest
 @testable import portside
 
@@ -155,7 +156,6 @@ final class NotchShelfTests: XCTestCase {
 
     func testSettingsDefaultsAndRoundTrip() throws {
         let old = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"expandOnHover":false,"shelfOpenMode":"click"}"#.utf8))
-        XCTAssertFalse(old.shelfEnabled, "existing files keep the classic island")
         XCTAssertEqual(old.shelfHoverDelay, 0.15)
         XCTAssertEqual(old.shelfCollapseDelay, 0.8)
         XCTAssertEqual(old.musicStyle, .music)
@@ -163,7 +163,6 @@ final class NotchShelfTests: XCTestCase {
         XCTAssertFalse(old.musicTint || old.shelfHaptics)
         XCTAssertEqual(old.agentCard, .latest)
         var settings = AgentNotchSettings()
-        settings.shelfEnabled = true
         settings.musicStyle = .vinyl
         settings.musicTint = true
         settings.agentCard = .all
@@ -213,7 +212,7 @@ final class NotchShelfTests: XCTestCase {
 
     func testPagesDefaultsAndOpening() {
         let pages = NotchShelfPages()
-        XCTAssertEqual(pages.order, [.widgets, .agents, .files, .clipboard])
+        XCTAssertEqual(pages.order, [.widgets, .agents, .files, .clipboard, .airPods])
         XCTAssertEqual(pages.start, .first)
         XCTAssertEqual(pages.opening(lastUsed: .clipboard, available: all), .widgets, "like Bartender: the first tab")
         var last = pages
@@ -226,7 +225,8 @@ final class NotchShelfTests: XCTestCase {
         var pages = NotchShelfPages()
         pages.start = .clipboard
         XCTAssertEqual(pages.opening(lastUsed: .agents, available: all), .clipboard)
-        let noClipboard: (NotchShelfPage) -> Bool = { $0 != .clipboard }
+        // No clipboard module and no AirPods connected.
+        let noClipboard: (NotchShelfPage) -> Bool = { $0 != .clipboard && $0 != .airPods }
         XCTAssertEqual(pages.visible(available: noClipboard), [.widgets, .agents, .files])
         XCTAssertEqual(pages.opening(lastUsed: nil, available: noClipboard), .widgets, "start page unavailable: the first")
         pages.setOn(.widgets, false)
@@ -240,22 +240,22 @@ final class NotchShelfTests: XCTestCase {
     func testPagesMoveWithinBounds() {
         var pages = NotchShelfPages()
         pages.move(.clipboard, by: -1)
-        XCTAssertEqual(pages.order, [.widgets, .agents, .clipboard, .files])
+        XCTAssertEqual(pages.order, [.widgets, .agents, .clipboard, .files, .airPods])
         pages.move(.widgets, by: -1)
-        XCTAssertEqual(pages.order, [.widgets, .agents, .clipboard, .files], "first stays first")
-        pages.move(.files, by: 1)
-        XCTAssertEqual(pages.order, [.widgets, .agents, .clipboard, .files], "last stays last")
+        XCTAssertEqual(pages.order, [.widgets, .agents, .clipboard, .files, .airPods], "first stays first")
+        pages.move(.airPods, by: 1)
+        XCTAssertEqual(pages.order, [.widgets, .agents, .clipboard, .files, .airPods], "last stays last")
     }
 
     func testPagesDecodeRepairsOrder() throws {
         let json = #"{"order":["agents","bogus","agents"],"hidden":["clipboard","nope"],"start":"weird"}"#
         let pages = try JSONDecoder().decode(NotchShelfPages.self, from: Data(json.utf8))
-        XCTAssertEqual(pages.order, [.agents, .widgets, .files, .clipboard], "unknown and repeated dropped, missing appended")
+        XCTAssertEqual(pages.order, [.agents, .widgets, .files, .clipboard, .airPods], "unknown and repeated dropped, missing appended")
         XCTAssertFalse(pages.isOn(.clipboard))
         XCTAssertEqual(pages.start, .first)
         let back = try JSONDecoder().decode(NotchShelfPages.self, from: JSONEncoder().encode(pages))
         XCTAssertEqual(back, pages)
-        let settings = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"shelfEnabled":true}"#.utf8))
+        let settings = try JSONDecoder().decode(AgentNotchSettings.self, from: Data("{}".utf8))
         XCTAssertEqual(settings.shelfPages, NotchShelfPages(), "older files get the default pages")
     }
 
@@ -347,8 +347,12 @@ final class NotchShelfTests: XCTestCase {
         XCTAssertEqual(shown.first?.text, "clip 7", "newest first")
         let one = NotchClipboardPage.height(count: 2, paused: false)
         let two = NotchClipboardPage.height(count: 8, paused: false)
-        XCTAssertEqual(one, NotchClipboardPage.cardHeight)
-        XCTAssertEqual(two, 2 * NotchClipboardPage.cardHeight + NotchClipboardPage.spacing, "never more than two rows")
+        let header = NotchClipboardPage.searchHeight + NotchClipboardPage.spacing
+        XCTAssertEqual(one, header + NotchClipboardPage.cardHeight, "the Search and Clear header and a row")
+        XCTAssertEqual(two, header + 2 * NotchClipboardPage.cardHeight + NotchClipboardPage.spacing, "never more than two rows")
+        XCTAssertEqual(NotchClipboardPage.height(count: 6, paused: false, searching: true), two, "the search field takes the header's place")
+        XCTAssertEqual(NotchClipboardPage.expiryPhrase(24), "1 day")
+        XCTAssertEqual(NotchClipboardPage.expiryPhrase(720), "30 days")
         XCTAssertGreaterThan(NotchClipboardPage.height(count: 2, paused: true), one, "the paused note adds a row")
         XCTAssertGreaterThan(NotchClipboardPage.height(count: 0, paused: false), 0, "empty state has room")
     }
@@ -368,15 +372,32 @@ final class NotchShelfTests: XCTestCase {
 
     func testMeetingWindowAndNextChange() {
         let now = Date(timeIntervalSince1970: 100_000)
-        let starts = [(start: now.addingTimeInterval(600), allDay: false), (start: now.addingTimeInterval(120), allDay: true),
-                      (start: now.addingTimeInterval(240), allDay: false)]
+        let starts: [NotchMeetingSoon.Event] = [(start: now.addingTimeInterval(600), end: nil, allDay: false),
+                                                (start: now.addingTimeInterval(120), end: nil, allDay: true),
+                                                (start: now.addingTimeInterval(240), end: nil, allDay: false)]
         XCTAssertEqual(NotchMeetingSoon.current(starts, now: now, minutes: 5), 2, "4 min away, all-day skipped")
         XCTAssertNil(NotchMeetingSoon.current(starts, now: now, minutes: 1))
         XCTAssertNil(NotchMeetingSoon.current(starts, now: now, minutes: 0), "off")
         XCTAssertEqual(NotchMeetingSoon.nextChange(starts, now: now, minutes: 5), now.addingTimeInterval(300), "the 10 min meeting enters")
-        XCTAssertEqual(NotchMeetingSoon.current(starts, now: now.addingTimeInterval(290), minutes: 5), 2, "until a minute after start")
+        XCTAssertEqual(NotchMeetingSoon.current(starts, now: now.addingTimeInterval(290), minutes: 5), 2, "with no end, until a minute after start")
         XCTAssertEqual(NotchMeetingCard.countdown(to: now.addingTimeInterval(61), now: now), "in 2 min")
         XCTAssertEqual(NotchMeetingCard.countdown(to: now.addingTimeInterval(-10), now: now), "now")
+    }
+
+    func testMeetingTimerRunsUntilItEnds() {
+        let start = Date(timeIntervalSince1970: 100_000)
+        let meeting: [NotchMeetingSoon.Event] = [(start: start, end: start.addingTimeInterval(1800), allDay: false)]
+        XCTAssertEqual(NotchMeetingSoon.current(meeting, now: start.addingTimeInterval(1500), minutes: 5), 0, "shows during the meeting")
+        XCTAssertNil(NotchMeetingSoon.current(meeting, now: start.addingTimeInterval(1800), minutes: 5), "gone at its end")
+        XCTAssertEqual(NotchMeetingSoon.nextChange(meeting, now: start.addingTimeInterval(60), minutes: 5), start.addingTimeInterval(1800))
+        let block: [NotchMeetingSoon.Event] = [(start: start, end: start.addingTimeInterval(4 * 3600), allDay: false)]
+        XCTAssertNil(NotchMeetingSoon.current(block, now: start.addingTimeInterval(120), minutes: 5), "over 3 hours: no timer")
+        XCTAssertEqual(NotchMeetingCard.elapsed(since: start, now: start.addingTimeInterval(245)), "4:05")
+        XCTAssertEqual(NotchMeetingCard.elapsed(since: start, now: start.addingTimeInterval(3723)), "1:02:03")
+        let event = CalendarWidget.NextEvent(title: "Standup", start: start, isAllDay: false, color: .red, end: start.addingTimeInterval(1800))
+        XCTAssertEqual(NotchMeetingCard.stripText(event, now: start.addingTimeInterval(-90)), "in 2 min")
+        XCTAssertEqual(NotchMeetingCard.stripText(event, now: start.addingTimeInterval(65)), "1:05")
+        XCTAssertTrue(NotchMeetingCard.detail(event, now: start.addingTimeInterval(600)).hasSuffix("20 min left"))
     }
 
     func testBatteryAlerts() {
@@ -408,13 +429,54 @@ final class NotchShelfTests: XCTestCase {
         XCTAssertEqual(bad.batteryLowPercent, 20)
         XCTAssertEqual(bad.stripOrder, [.agents, .meeting, .music])
         var on = AgentNotchSettings()
-        on.shelfEnabled = true
         XCTAssertTrue(Set(WidgetStore.shelfKinds(on)).isSuperset(of: ["battery", "weather", "calendar"]))
         on.alertBattery = false; on.alertWeather = false; on.meetingMinutes = 0
         XCTAssertFalse(WidgetStore.shelfKinds(on).contains("battery"))
     }
 
     // MARK: Displays and full screen (SHELF-08)
+
+    func testSettingsPreviewIgnoresThePointer() {
+        let state = AgentNotchPresentation()
+        state.preferences.shelfHoverDelay = 0
+        state.preferences.shelfCollapseDelay = 0.01
+        state.followsPointer = false
+        state.setExpanded(true)
+        // What SwiftUI sends when the Settings window loses focus.
+        state.shelfPointer(.outside)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertTrue(state.expanded, "the preview's open shelf stays")
+        state.setExpanded(false)
+        state.strip = NotchShelfStrip.layout(active: [.music], alert: nil)
+        state.shelfPointer(.side(.leading), force: true)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(state.card, .music, "the preview shows its own card")
+        state.shelfPointer(.outside)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        XCTAssertEqual(state.card, .music, "and keeps it")
+    }
+
+    func testBorderIsOffByDefault() throws {
+        XCTAssertFalse(AgentNotchSettings().showBorder)
+        XCTAssertFalse(try JSONDecoder().decode(AgentNotchSettings.self, from: Data("{}".utf8)).showBorder, "a file without it")
+        var reset = AgentNotchSettings()
+        reset.showBorder = true
+        reset = AgentNotchSettings()
+        XCTAssertFalse(reset.showBorder, "Reset Top Notch Settings turns it off")
+    }
+
+    func testRetiredIslandKeysAreDroppedOnSave() throws {
+        let old = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"""
+        {"shelfEnabled":false,"position":"left","compactStyle":"minimal","clickAction":"focus","expandOnHover":false,"hoverDelay":0.5,
+         "collapseDelay":0.3,"hideWhenEmpty":true,"showTotal":false,"horizontalOffset":40,"verticalOffset":10,"compactWidth":150}
+        """#.utf8))
+        XCTAssertEqual(old.compactWidth, 150, "settings beside retired keys still read")
+        let written = String(decoding: try JSONEncoder().encode(old), as: UTF8.self)
+        for key in ["shelfEnabled", "position", "compactStyle", "clickAction", "expandOnHover", "\"hoverDelay", "\"collapseDelay",
+                    "hideWhenEmpty", "showTotal", "horizontalOffset", "verticalOffset"] {
+            XCTAssertFalse(written.contains(key), "\(key) is retired")
+        }
+    }
 
     func testDisplayAndFullScreenSettings() throws {
         let fresh = AgentNotchSettings()
@@ -469,7 +531,7 @@ final class NotchShelfTests: XCTestCase {
     }
 
     func testFilesSettingsDefaultsAndRoundTrip() throws {
-        let old = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"shelfEnabled":true}"#.utf8))
+        let old = try JSONDecoder().decode(AgentNotchSettings.self, from: Data("{}".utf8))
         XCTAssertEqual(old.filesKeep, .day, "Bartender's default")
         XCTAssertFalse(old.filesRemoveAfterDrag)
         var settings = AgentNotchSettings()
@@ -562,21 +624,99 @@ final class NotchShelfTests: XCTestCase {
     }
 
     func testAirPodsSettingsDefaultsAndRoundTrip() throws {
-        let old = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"shelfEnabled":true}"#.utf8))
+        let old = try JSONDecoder().decode(AgentNotchSettings.self, from: Data("{}".utf8))
         XCTAssertTrue(old.alertAirPods)
         XCTAssertEqual(old.airPodsLowPercent, 20)
+        XCTAssertFalse(old.airPodsLive, "live levels ask for Bluetooth, so they start off")
         var settings = AgentNotchSettings()
         settings.alertAirPods = false
         settings.airPodsLowPercent = 30
+        settings.airPodsLive = true
         let back = try JSONDecoder().decode(AgentNotchSettings.self, from: JSONEncoder().encode(settings))
         XCTAssertFalse(back.alertAirPods)
         XCTAssertEqual(back.airPodsLowPercent, 30)
+        XCTAssertTrue(back.airPodsLive)
         let bad = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"airPodsLowPercent":7}"#.utf8))
         XCTAssertEqual(bad.airPodsLowPercent, 20, "off the choices falls back")
     }
 
+    func testAirPodsAdvertParsesProximityPairing() {
+        // Apple's company ID, type 0x07, length 0x19, prefix, model 0x2013
+        // (AirPods 3) little endian, status, pods 0x9A (90% and 100%),
+        // case nibble 6, then the rest of the message.
+        var bytes: [UInt8] = [0x4C, 0x00, 0x07, 0x19, 0x01, 0x13, 0x20, 0x2B, 0x9A, 0x86, 0x00]
+        bytes += [UInt8](repeating: 0, count: 16)
+        let advert = AirPodsAdvert.parse(Data(bytes))
+        XCTAssertEqual(advert, AirPodsAdvert(productID: 0x2013, pods: 0x9A, case: 6))
+        bytes[8] = 0x8A
+        XCTAssertNotEqual(AirPodsAdvert.parse(Data(bytes)), advert, "a bud's level step reads as a change")
+        XCTAssertNil(AirPodsAdvert.parse(Data([0x4C, 0x00, 0x10, 0x05, 0x01])), "other Apple messages are ignored")
+        XCTAssertNil(AirPodsAdvert.parse(Data([0x06, 0x00, 0x07, 0x19, 0x01, 0x13, 0x20, 0x2B, 0x9A, 0x86, 0x00])), "other companies")
+    }
+
+    func testHotkeyShelfIgnoresPointerUntilItsTimeRunsOut() {
+        var machine = NotchShelfMachine()
+        XCTAssertEqual(machine.openViaHotkey(), .hotkeyEnd)
+        XCTAssertTrue(machine.isOpen)
+        XCTAssertNil(machine.pointer(.body), "pointer moves leave the hotkey timer alone")
+        XCTAssertNil(machine.pointer(.outside), "leaving does not close it")
+        XCTAssertEqual(machine.pending, .hotkeyEnd)
+        machine.fire(.hotkeyEnd)
+        XCTAssertFalse(machine.isOpen, "time ran out with the pointer away")
+
+        _ = machine.openViaHotkey()
+        machine.pointer(.body)
+        machine.fire(.hotkeyEnd)
+        XCTAssertTrue(machine.isOpen, "the pointer is on it: hover rules take over")
+        XCTAssertFalse(machine.viaHotkey)
+        XCTAssertEqual(machine.pointer(.outside), .collapse)
+
+        var clicked = NotchShelfMachine()
+        _ = clicked.openViaHotkey()
+        clicked.click()
+        XCTAssertFalse(clicked.viaHotkey, "a click hands it to the hover rules")
+        var pinned = NotchShelfMachine()
+        _ = pinned.openViaHotkey()
+        pinned.setPinned(true)
+        XCTAssertNil(pinned.pending, "pinned stays")
+        pinned.close()
+        XCTAssertFalse(pinned.viaHotkey)
+    }
+
+    func testClipboardSearchMatchesEveryWord() {
+        let now = Date()
+        let entries = ["swift build && swift test", "Meeting moved to 3 pm", "let width = 600", "Swift package resolve"].enumerated().map {
+            ClipboardEntry(text: $1, date: now.addingTimeInterval(-Double($0) * 60))
+        }
+        XCTAssertEqual(NotchClipboardPage.matches(entries, query: "swift").map(\.text), ["swift build && swift test", "Swift package resolve"])
+        XCTAssertEqual(NotchClipboardPage.matches(entries, query: "swift test").map(\.text), ["swift build && swift test"])
+        XCTAssertEqual(NotchClipboardPage.matches(entries, query: "  ").count, 4, "no words shows the newest")
+        XCTAssertEqual(NotchClipboardPage.matches(entries, query: "zebra"), [])
+        XCTAssertEqual(NotchClipboardPage.height(count: 0, paused: false, searching: true),
+                       NotchClipboardPage.height(count: 6, paused: false, searching: true), "searching holds its height")
+    }
+
+    func testShelfHotkeySettingsDefaultsAndRoundTrip() throws {
+        let old = try JSONDecoder().decode(AgentNotchSettings.self, from: Data("{}".utf8))
+        XCTAssertNil(old.shelfToggleHotkey, "none set by default")
+        XCTAssertNil(old.shelfFilesHotkey)
+        XCTAssertNil(old.shelfClipboardHotkey)
+        XCTAssertEqual(old.hotkeyOpenSeconds, 30)
+        var settings = AgentNotchSettings()
+        settings.shelfToggleHotkey = HotkeyChord(keyCode: 46, modifiers: UInt32(cmdKey | optionKey))
+        settings.hotkeyOpenSeconds = 300
+        let back = try JSONDecoder().decode(AgentNotchSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(back.shelfToggleHotkey, settings.shelfToggleHotkey)
+        XCTAssertNil(back.shelfFilesHotkey)
+        XCTAssertEqual(back.hotkeyOpenSeconds, 300)
+        let bad = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(
+            #"{"hotkeyOpenSeconds":7,"shelfFilesHotkey":{"keyCode":3,"modifiers":0}}"#.utf8))
+        XCTAssertEqual(bad.hotkeyOpenSeconds, 30, "off the choices falls back")
+        XCTAssertNil(bad.shelfFilesHotkey, "a bare letter is never a hotkey")
+    }
+
     func testHUDSettingsDefaultsAndRoundTrip() throws {
-        let old = try JSONDecoder().decode(AgentNotchSettings.self, from: Data(#"{"shelfEnabled":true}"#.utf8))
+        let old = try JSONDecoder().decode(AgentNotchSettings.self, from: Data("{}".utf8))
         XCTAssertTrue(old.hudVolume)
         XCTAssertTrue(old.hudBrightness)
         var settings = AgentNotchSettings()
@@ -644,5 +784,69 @@ final class NotchShelfTests: XCTestCase {
         ])
         XCTAssertEqual(merged.map(\.id), ["123", "456", "t3:b", "t3:c", "opencode:d"],
                        "the T3 row of a hook session in T3 goes; a Terminal hook session or another project keeps its row")
+    }
+}
+
+/// "Needs you" from a hook file: no hook fires when a permission prompt is
+/// answered, so a transcript written since the prompt clears it.
+final class AgentPromptAnsweredTests: XCTestCase {
+    private func hookFile(transcript: URL, at time: Date) throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("hook-\(UUID().uuidString).json")
+        let json: [String: Any] = [
+            "pid": 4242, "provider": "claude", "time": time.timeIntervalSince1970,
+            "payload": ["hook_event_name": "Notification", "notification_type": "permission_prompt",
+                        "cwd": "/tmp/portside", "transcript_path": transcript.path],
+        ]
+        try JSONSerialization.data(withJSONObject: json).write(to: url)
+        return url
+    }
+
+    func testAPromptNeedsYouUntilTheTranscriptMovesOn() throws {
+        let transcript = FileManager.default.temporaryDirectory.appendingPathComponent("transcript-\(UUID().uuidString).jsonl")
+        try Data("{}\n".utf8).write(to: transcript)
+        defer { try? FileManager.default.removeItem(at: transcript) }
+        let prompted = Date()
+        try FileManager.default.setAttributes([.modificationDate: prompted], ofItemAtPath: transcript.path)
+        let file = try hookFile(transcript: transcript, at: prompted)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let waiting = try XCTUnwrap(AgentSession(contentsOf: file))
+        XCTAssertTrue(waiting.needsAttention, "the prompt's own write is within the settle margin")
+        XCTAssertEqual(waiting.state, .running)
+
+        try FileManager.default.setAttributes([.modificationDate: prompted.addingTimeInterval(AgentSession.promptSettle + 5)],
+                                              ofItemAtPath: transcript.path)
+        let answered = try XCTUnwrap(AgentSession(contentsOf: file))
+        XCTAssertFalse(answered.needsAttention)
+        XCTAssertEqual(answered.state, .running)
+    }
+
+    func testNoTranscriptKeepsThePrompt() throws {
+        let file = try hookFile(transcript: URL(fileURLWithPath: "/nonexistent/transcript.jsonl"), at: Date())
+        defer { try? FileManager.default.removeItem(at: file) }
+        XCTAssertTrue(try XCTUnwrap(AgentSession(contentsOf: file)).needsAttention)
+    }
+}
+
+/// The working animation (`thinking` in `agentNotchSettings`).
+final class ThinkingStyleTests: XCTestCase {
+    func testShipByDefaultUnknownReadsAsShipAndRoundTrips() throws {
+        let decode = { (json: String) in try JSONDecoder().decode(AgentNotchSettings.self, from: Data(json.utf8)) }
+        XCTAssertEqual(try decode("{}").thinking, .ship)
+        XCTAssertEqual(try decode(#"{"thinking": "kraken"}"#).thinking, .ship)
+        XCTAssertEqual(try decode(#"{"thinking": "boxes"}"#).thinking, .snakeBoxes)
+        XCTAssertEqual(try decode(#"{"thinking": "wheel"}"#).thinking, .wheel)
+        var settings = AgentNotchSettings()
+        settings.thinking = .dots
+        XCTAssertEqual(try JSONDecoder().decode(AgentNotchSettings.self, from: JSONEncoder().encode(settings)).thinking, .dots)
+    }
+
+    func testSmallSizesFallBackToDots() {
+        XCTAssertEqual(ThinkingLoader.preferredStyle(.ship, for: 10), .ship)
+        XCTAssertEqual(ThinkingLoader.preferredStyle(.ship, for: 8), .dots)
+        XCTAssertEqual(ThinkingLoader.preferredStyle(.wheel, for: 12), .wheel)
+        XCTAssertEqual(ThinkingLoader.preferredStyle(.wheel, for: 8), .dots)
+        XCTAssertEqual(ThinkingLoader.preferredStyle(.snakeBoxes, for: 10), .dots)
+        XCTAssertEqual(ThinkingLoader.preferredStyle(.snakeBoxes, for: 14), .snakeBoxes)
     }
 }

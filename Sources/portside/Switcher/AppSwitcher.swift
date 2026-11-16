@@ -16,6 +16,9 @@ struct SwitcherActions {
     /// Brings one window forward; the result arrives on main. Defaults to
     /// refusing, so a test that does not set it never touches Accessibility.
     var focus: @MainActor (WindowFocusTarget, @escaping @MainActor (WindowFocusResult) -> Void) -> Void = { _, done in done(.refused) }
+    /// Brings Portside's own Settings forward, the way its dock tile does.
+    /// Portside is listed only while Settings is open.
+    var openSelf: @MainActor () -> Void = {}
     /// Display names for window rows, empty with one display.
     var displayNames: @MainActor () -> [CGDirectDisplayID: String] = { [:] }
     /// The pointer, in screen coordinates. Hover selects only after it moves.
@@ -297,6 +300,7 @@ final class AppSwitcher: ObservableObject {
         let point = actions.mouseLocation()
         guard point != lastPointer else { return }
         self.lastPointer = point
+        guard id != state.selection else { return }
         send(.hover(id))
     }
 
@@ -336,8 +340,12 @@ final class AppSwitcher: ObservableObject {
 
     // MARK: Effects
 
+    /// Publishes only a real change: the pointer sends a hover on every
+    /// move, and redrawing the whole panel each time made hovering lag.
     private func send(_ event: SwitcherEvent) {
-        let effects = state.send(event)
+        var next = state
+        let effects = next.send(event)
+        if next != state { state = next }
         for effect in effects { perform(effect) }
     }
 
@@ -353,6 +361,9 @@ final class AppSwitcher: ObservableObject {
                     MainActor.assumeIsolated { _ = self?.keyPressed(.cancel) }
                 }
             }
+            // Pictures start with the armed panel, so most are in by the
+            // reveal; a quick tap dismisses before any row asks.
+            previews?.attach(surface: Self.previewSurface)
             presenter.present(self)
             revealWork?.cancel()
             let work = DispatchWorkItem { [weak self] in
@@ -361,9 +372,6 @@ final class AppSwitcher: ObservableObject {
             revealWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + actions.revealDelay, execute: work)
         case .reveal:
-            // Pictures are taken only once the panel can be seen, so a quick
-            // tap that never shows it captures nothing.
-            previews?.attach(surface: Self.previewSurface)
             presenter.reveal()
         case .dismiss:
             revealWork?.cancel()
@@ -377,6 +385,12 @@ final class AppSwitcher: ObservableObject {
             // Checked right before acting: a quit app or a reused pid is
             // refused and focus stays where it was.
             let key = item.key
+            if isSelf(key) {
+                guard registry.app(key) != nil else { return }
+                actions.openSelf()
+                requested.append(key)
+                return
+            }
             guard registry.app(key) != nil, actions.activate(item, { [weak self] in
                 if let index = self?.requested.firstIndex(of: key) { self?.requested.remove(at: index) }
             }) else {
@@ -388,6 +402,11 @@ final class AppSwitcher: ObservableObject {
         case .focus(let item, let window):
             // Checked right before acting: a closed window, a quit app or a
             // reused pid has no target, and nothing else is focused instead.
+            // Portside's one listed window is Settings.
+            if isSelf(item.key) {
+                perform(.activate(item))
+                return
+            }
             guard let target = registry.focusTarget(window.id) else {
                 logger.info("switcher window of \(item.name, privacy: .public) is gone; nothing focused")
                 return
@@ -409,6 +428,10 @@ final class AppSwitcher: ObservableObject {
         case .announce(let message):
             presenter.announce(message)
         }
+    }
+
+    private func isSelf(_ key: AppKey) -> Bool {
+        key.pid == ProcessInfo.processInfo.processIdentifier
     }
 
     // MARK: Recent order
@@ -471,6 +494,9 @@ final class AppSwitcher: ObservableObject {
 
     /// The dock's cached icon for the app's bundle, else the running app's.
     func icon(for item: SwitcherItem) -> NSImage {
+        // Portside's own icon follows its App icon setting; not cached, so a
+        // change shows on the next open.
+        if isSelf(item.key) { return AppIcon.image(points: 128) }
         if let cached = icons[item.key] { return cached }
         let app = NSRunningApplication(processIdentifier: item.key.pid)
         let image = app?.bundleURL.map { IconCache.shared.icon(for: $0) } ?? app?.icon

@@ -20,7 +20,11 @@ final class AgentStatusWidget: DockWidget {
 
     @Published private(set) var sessions: [AgentSession] = []
 
+    /// Sample sessions for the Top Notch Settings preview; never started.
+    func preview(_ sessions: [AgentSession]) { self.sessions = sessions }
+
     private var watcher: DispatchSourceFileSystemObject?
+    private var attentionCheck: DispatchWorkItem?
     private let logger = Logger(subsystem: "com.james.portside", category: "Widgets")
 
     static let directory: URL = FileManager.default
@@ -46,6 +50,8 @@ final class AgentStatusWidget: DockWidget {
     func stop() {
         watcher?.cancel()
         watcher = nil
+        attentionCheck?.cancel()
+        attentionCheck = nil
         AppActivity.shared.setAgentWorking(nil)
     }
 
@@ -69,6 +75,14 @@ final class AgentStatusWidget: DockWidget {
         // T3 Code / OpenCode do not fire Claude hooks; merge their local DBs.
         next = Self.merged(hooks: next, discovered: AgentSessionDiscovery.discover(existing: next))
         next.sort { $0.updated > $1.updated }
+        // An answered prompt writes no hook file; look again soon so "Needs
+        // you" clears within a couple of seconds, not at the 10 s refresh.
+        attentionCheck?.cancel()
+        if next.contains(where: { $0.needsAttention && $0.id.hasPrefix("hook:") }) {
+            let work = DispatchWorkItem { [weak self] in self?.refresh() }
+            attentionCheck = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
+        }
         AppActivity.shared.setAgentWorking(workingHosts(next))
         if next != sessions {
             sessions = next
@@ -253,11 +267,17 @@ struct AgentSession: Equatable {
               let pid = json["pid"] as? Int else { return nil }
         let payload = json["payload"] as? [String: Any] ?? [:]
         let event = payload["hook_event_name"] as? String ?? ""
-        needsAttention = event == "Notification" && ["permission_prompt", "elicitation_dialog"].contains(payload["notification_type"] as? String ?? "")
+        let time = Date(timeIntervalSince1970: json["time"] as? TimeInterval ?? 0)
+        let prompt = event == "Notification" && ["permission_prompt", "elicitation_dialog"].contains(payload["notification_type"] as? String ?? "")
+        // No hook fires when a prompt is answered (tool hooks are not
+        // installed), but the answer lands in the transcript: written since
+        // the prompt means the agent is working again.
+        let answered = prompt && Self.transcriptChanged(payload["transcript_path"] as? String, since: time)
+        needsAttention = prompt && !answered
         provider = AgentProvider.named(json["provider"] as? String ?? "unknown")
         self.pid = pid_t(pid)
         id = "hook:\(pid)"
-        updated = Date(timeIntervalSince1970: json["time"] as? TimeInterval ?? 0)
+        updated = answered ? Date() : time
         ended = event == "SessionEnd"
         project = (payload["cwd"] as? String).map { URL(fileURLWithPath: $0).lastPathComponent }
             .flatMap { $0.isEmpty || $0 == "/" ? nil : $0 }
@@ -278,6 +298,15 @@ struct AgentSession: Equatable {
         default:
             state = .idle
         }
+    }
+
+    /// Margin for the transcript write that comes with the prompt itself.
+    static let promptSettle: TimeInterval = 2
+
+    static func transcriptChanged(_ path: String?, since time: Date) -> Bool {
+        guard let path, !path.isEmpty,
+              let modified = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date else { return false }
+        return modified > time.addingTimeInterval(promptSettle)
     }
 }
 

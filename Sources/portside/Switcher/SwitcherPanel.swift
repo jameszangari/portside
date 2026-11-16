@@ -349,7 +349,7 @@ struct SwitcherView: View {
                     ForEach(entries) { entry in
                         SwitcherRow(item: entry, image: switcher.icon(for: entry), isSelected: isSelected(entry),
                                     previews: switcher.showsPreviews ? switcher.previews : nil,
-                                    isVisible: state.phase == .visible,
+                                    isVisible: state.isOpen,
                                     onChoose: { choose(entry) }, onHover: hover.map { hover in { hover(entry) } })
                         .id(entry.id)
                     }
@@ -490,7 +490,8 @@ private struct SwitcherRow: View {
     let isSelected: Bool
     /// Set when window pictures are on; the row's thumbnail reads it.
     var previews: WindowPreviewService?
-    /// The panel is on screen (not just armed): pictures are taken only then.
+    /// The switcher is open (armed or shown): pictures start while armed, so
+    /// most are in by the time the panel shows.
     var isVisible = true
     let onChoose: () -> Void
     let onHover: (() -> Void)?
@@ -593,8 +594,8 @@ private struct SwitcherThumbnail: View {
         }
         .frame(width: Self.size.width, height: Self.size.height)
         .accessibilityHidden(true)
-        // Asks again if the panel was only armed when the row appeared, and
-        // when the window's frame changes. Cancelled when the row goes away.
+        // Asks when the row appears in an open switcher, and again when the
+        // window's frame changes. Cancelled when the row goes away.
         .task(id: Ask(visible: isVisible, target: target)) {
             if isVisible { service.request(target) }
         }

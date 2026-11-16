@@ -299,6 +299,11 @@ final class AppSwitcherTests: XCTestCase {
     private let alpha = runningApp(10, "Alpha")
     private let bravo = runningApp(20, "Bravo")
     private let charlie = runningApp(30, "Charlie")
+    /// Portside itself, listed while Settings is open.
+    private let portside = RunningAppRecord(pid: ProcessInfo.processInfo.processIdentifier, bundleIdentifier: "com.james.portside",
+                                            name: "Portside", launchDate: Date(timeIntervalSince1970: 0))
+    private var others: [RunningAppRecord] = []
+    private var openedSelf = 0
     private var front: pid_t? = 10
     private var flags: NSEvent.ModifierFlags = []
     private var activated: [String] = []
@@ -319,7 +324,7 @@ final class AppSwitcherTests: XCTestCase {
     private lazy var registry = WindowRegistry(
         source: NoWindows(),
         isAccessGranted: { false },
-        currentApps: { [unowned self] in ([alpha, bravo, charlie], front) }
+        currentApps: { [unowned self] in ([alpha, bravo, charlie] + others, front) }
     )
 
     private lazy var switcher = AppSwitcher(
@@ -333,6 +338,7 @@ final class AppSwitcherTests: XCTestCase {
                 activationFailed = failed
                 return true
             },
+            openSelf: { [unowned self] in openedSelf += 1 },
             mouseLocation: { [unowned self] in pointer },
             lastModifierChange: { [unowned self] in modifierChangedAt },
             now: { [unowned self] in clock },
@@ -451,6 +457,18 @@ final class AppSwitcherTests: XCTestCase {
         activate(charlie)
         switcher.hotkeyPressed()
         XCTAssertEqual(activated, ["Charlie", "Bravo"])
+    }
+
+    func testChoosingPortsideOpensSettingsInsteadOfActivating() throws {
+        others = [portside]
+        try enable()
+        activate(portside)
+        activate(alpha)
+        XCTAssertEqual(registry.snapshot.apps.map(\.name).prefix(2), ["Alpha", "Portside"])
+        flags = []
+        switcher.hotkeyPressed()
+        XCTAssertEqual(openedSelf, 1, "Settings comes forward the dock tile's way")
+        XCTAssertEqual(activated, [])
     }
 
     func testHeldCyclingRevealAndReleaseCommit() throws {

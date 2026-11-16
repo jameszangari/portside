@@ -10,21 +10,27 @@ struct SettingsFold<Content: View>: View {
     let symbol: String
     let summary: String
     var anchors: [String] = []
+    /// Open state held by the caller (one open fold at a time); nil keeps
+    /// it here.
+    var isOpen: Binding<Bool>?
     @ViewBuilder let content: () -> Content
     @State private var open = false
 
-    init(_ title: String, symbol: String, summary: String, anchors: [String] = [], @ViewBuilder content: @escaping () -> Content) {
+    init(_ title: String, symbol: String, summary: String, anchors: [String] = [], isOpen: Binding<Bool>? = nil,
+         @ViewBuilder content: @escaping () -> Content) {
         self.title = title
         self.symbol = symbol
         self.summary = summary
         self.anchors = anchors
+        self.isOpen = isOpen
         self.content = content
     }
 
     var body: some View {
+        let open = isOpen ?? $open
         Group {
-            SettingsFoldRow(title, symbol: symbol, summary: summary, anchors: anchors, animated: true, open: $open)
-            if open { content() }
+            SettingsFoldRow(title, symbol: symbol, summary: summary, anchors: anchors, animated: true, open: open)
+            if open.wrappedValue { content() }
         }
     }
 }

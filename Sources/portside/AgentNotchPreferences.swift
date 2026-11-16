@@ -1,18 +1,5 @@
 import SwiftUI
 
-enum AgentNotchPosition: String, Codable, CaseIterable, Identifiable {
-    case attached, below, left, right
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .attached: "Attached to notch"
-        case .below: "Below the notch"
-        case .left: "Left of the notch"
-        case .right: "Right of the notch"
-        }
-    }
-}
-
 enum AgentNotchDisplay: String, Codable, CaseIterable, Identifiable {
     case automatic, focused, primary, all
     var id: String { rawValue }
@@ -24,18 +11,6 @@ enum AgentNotchDisplay: String, Codable, CaseIterable, Identifiable {
         case .all: "All displays"
         }
     }
-}
-
-enum AgentNotchCompactStyle: String, Codable, CaseIterable, Identifiable {
-    case counts, providers, minimal
-    var id: String { rawValue }
-    var title: String { rawValue.capitalized }
-}
-
-enum AgentNotchClickAction: String, Codable, CaseIterable, Identifiable {
-    case expand, focus
-    var id: String { rawValue }
-    var title: String { self == .expand ? "Expand dashboard" : "Focus latest session" }
 }
 
 enum AgentNotchFilter: String, Codable, CaseIterable, Identifiable {
@@ -50,29 +25,25 @@ enum AgentNotchFilter: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// The Top Notch, which is the Notch Shelf (SHELF-12: the classic island,
+/// its position, style and click settings were retired). Retired keys in
+/// older files (`shelfEnabled`, `position`, `compactStyle`, `clickAction`,
+/// `expandOnHover`, `hoverDelay`, `collapseDelay`, `hideWhenEmpty`,
+/// `showTotal`, `horizontalOffset`, `verticalOffset`) are ignored and
+/// dropped on the next save.
 struct AgentNotchSettings: Codable, Equatable {
-    var position = AgentNotchPosition.attached
     var display = AgentNotchDisplay.automatic
-    var compactStyle = AgentNotchCompactStyle.counts
-    var clickAction = AgentNotchClickAction.expand
     var filter = AgentNotchFilter.all
-    var hideWhenEmpty = true
     var animate = true
-    var showTotal = true
     var showUsage = true
     /// Compact waveform while Spotify or Music is playing (same sources as
     /// the Now Playing widget). Hidden when paused or nothing is playing.
     var showMedia = true
-    var expandOnHover = true
-    /// Notch Shelf preview (P2-SHELF): hovering a running activity shows
-    /// its card, the notch opens the full shelf. Off keeps the classic island.
-    var shelfEnabled = false
     var shelfPages = NotchShelfPages()
     /// The Widgets page's two slots.
     var shelfLeadingWidget = NotchShelfSlot.music
     var shelfTrailingWidget = NotchShelfSlot.calendar
-    /// Shelf hover delay for cards and the full shelf; the classic island
-    /// keeps `hoverDelay`.
+    /// Hover delay for cards and the full shelf.
     var shelfHoverDelay: Double = 0.15
     /// Pointer left the open shelf. A card closes after a fixed 0.2 s.
     var shelfCollapseDelay: Double = 0.8
@@ -84,6 +55,8 @@ struct AgentNotchSettings: Codable, Equatable {
     /// A new track shows its name under the strip for a few seconds.
     var musicBanner = true
     var agentCard = NotchAgentCard.latest
+    /// The working animation (Ship, Boxes or Dots).
+    var thinking = NotchThinkingStyle.ship
     /// Files page (SHELF-06b): how long dropped files stay, and whether a
     /// file leaves once dragged out somewhere.
     var filesKeep = NotchFilesKeep.day
@@ -112,6 +85,16 @@ struct AgentNotchSettings: Codable, Equatable {
     /// battery's choices.
     var alertAirPods = true
     var airPodsLowPercent = 20
+    /// Live AirPods levels from Bluetooth LE adverts (asks for Bluetooth).
+    var airPodsLive = false
+    /// Shelf hotkeys (SHELF-11), none set by default: open or close the
+    /// shelf, open it on Files, search the clipboard.
+    var shelfToggleHotkey: HotkeyChord?
+    var shelfFilesHotkey: HotkeyChord?
+    var shelfClipboardHotkey: HotkeyChord?
+    /// How long a shelf a hotkey opened stays when the pointer is not on it.
+    var hotkeyOpenSeconds = 30
+    static let hotkeyOpenChoices = [15, 30, 60, 300, 600]
     var alertWeather = true
     /// Shows over full-screen apps (SHELF-08); off hides it in full-screen Spaces.
     var showInFullScreen = false
@@ -127,10 +110,14 @@ struct AgentNotchSettings: Codable, Equatable {
     var copilot = true
     var opencode = true
     var cursor = true
-    /// Thin light edge around the floating island. Off when attached to the
-    /// camera housing (the housing already frames it).
-    var showBorder = true
+    /// The panel's shadow, which rims the notch with a faint edge. Off by
+    /// default (maintainer request): the notch blends into the housing.
+    var showBorder = false
     var compactWidth: Double = 184
+    /// Down to 100 (50 pt each side of a notch, the least that fits the
+    /// art and bars on one side and the agent count on the other; maintainer
+    /// request, 140 was too wide).
+    static let compactWidthRange: ClosedRange<Double> = 100...280
     var compactHeight: Double = 30
     var expandedWidth: Double = 420
     var cornerRadius: Double = 22
@@ -138,22 +125,18 @@ struct AgentNotchSettings: Codable, Equatable {
     var fontSize: Double = 12
     var rowSpacing: Double = 8
     var maxSessions = 5
-    var hoverDelay: Double = 0.25
-    var collapseDelay: Double = 0.6
     var animationDuration: Double = 0.22
-    var horizontalOffset: Double = 0
-    var verticalOffset: Double = 0
     var accent = PaletteColor(RGBAColor(red: 0.35, green: 0.82, blue: 0.95, alpha: 1))
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case position, display, compactStyle, clickAction, filter, hideWhenEmpty, animate, showTotal, showUsage, showMedia
-        case expandOnHover, shelfEnabled, shelfPages, shelfLeadingWidget, shelfTrailingWidget, shelfHoverDelay, shelfCollapseDelay
-        case shelfHaptics, musicStyle, musicSeeking, musicTint, musicHideWhenPaused, musicBanner, agentCard, filesKeep, filesRemoveAfterDrag, hudVolume, hudBrightness, hudReplaceSystem, finishedDismissMinutes, stripOrder, meetingMinutes
-        case alertAgents, alertBattery, batteryLowPercent, alertAirPods, airPodsLowPercent, alertWeather, showInFullScreen, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
+        case display, filter, animate, showUsage, showMedia
+        case shelfPages, shelfLeadingWidget, shelfTrailingWidget, shelfHoverDelay, shelfCollapseDelay
+        case shelfHaptics, musicStyle, musicSeeking, musicTint, musicHideWhenPaused, musicBanner, agentCard, thinking, filesKeep, filesRemoveAfterDrag, hudVolume, hudBrightness, hudReplaceSystem, finishedDismissMinutes, stripOrder, meetingMinutes
+        case alertAgents, alertBattery, batteryLowPercent, alertAirPods, airPodsLowPercent, airPodsLive, shelfToggleHotkey, shelfFilesHotkey, shelfClipboardHotkey, hotkeyOpenSeconds, alertWeather, showInFullScreen, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
         case showFinished, claude, codex, copilot, opencode, cursor, showBorder, compactWidth, compactHeight, expandedWidth, cornerRadius, opacity, fontSize
-        case rowSpacing, maxSessions, hoverDelay, collapseDelay, animationDuration, horizontalOffset, verticalOffset, accent
+        case rowSpacing, maxSessions, animationDuration, accent
     }
 
     /// Read once to migrate, never written.
@@ -161,18 +144,11 @@ struct AgentNotchSettings: Codable, Equatable {
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        position = values.value(.position, or: .attached)
         display = values.value(.display, or: .automatic)
-        compactStyle = values.value(.compactStyle, or: .counts)
-        clickAction = values.value(.clickAction, or: .expand)
         filter = values.value(.filter, or: .all)
-        hideWhenEmpty = values.value(.hideWhenEmpty, or: true)
         animate = values.value(.animate, or: true)
-        showTotal = values.value(.showTotal, or: true)
         showUsage = values.value(.showUsage, or: true)
         showMedia = values.value(.showMedia, or: true)
-        expandOnHover = values.value(.expandOnHover, or: true)
-        shelfEnabled = values.value(.shelfEnabled, or: false)
         shelfPages = values.value(.shelfPages, or: NotchShelfPages())
         let legacy = try decoder.container(keyedBy: LegacyKeys.self)
         let migrated = NotchShelfSlot.migrated((try? legacy.decodeIfPresent([String].self, forKey: .shelfWidgets)) ?? [])
@@ -187,6 +163,7 @@ struct AgentNotchSettings: Codable, Equatable {
         musicHideWhenPaused = values.value(.musicHideWhenPaused, or: true)
         musicBanner = values.value(.musicBanner, or: true)
         agentCard = values.value(.agentCard, or: .latest)
+        thinking = values.value(.thinking, or: .ship)
         filesKeep = values.value(.filesKeep, or: .day)
         filesRemoveAfterDrag = values.value(.filesRemoveAfterDrag, or: false)
         hudVolume = values.value(.hudVolume, or: true)
@@ -201,6 +178,11 @@ struct AgentNotchSettings: Codable, Equatable {
         batteryLowPercent = values.value(.batteryLowPercent, or: 20)
         alertAirPods = values.value(.alertAirPods, or: true)
         airPodsLowPercent = values.value(.airPodsLowPercent, or: 20)
+        airPodsLive = values.value(.airPodsLive, or: false)
+        shelfToggleHotkey = (try? values.decodeIfPresent(HotkeyChord.self, forKey: .shelfToggleHotkey)) ?? nil
+        shelfFilesHotkey = (try? values.decodeIfPresent(HotkeyChord.self, forKey: .shelfFilesHotkey)) ?? nil
+        shelfClipboardHotkey = (try? values.decodeIfPresent(HotkeyChord.self, forKey: .shelfClipboardHotkey)) ?? nil
+        hotkeyOpenSeconds = values.value(.hotkeyOpenSeconds, or: 30)
         alertWeather = values.value(.alertWeather, or: true)
         showInFullScreen = values.value(.showInFullScreen, or: false)
         collapseAfterFocus = values.value(.collapseAfterFocus, or: true)
@@ -215,7 +197,7 @@ struct AgentNotchSettings: Codable, Equatable {
         copilot = values.value(.copilot, or: true)
         opencode = values.value(.opencode, or: true)
         cursor = values.value(.cursor, or: true)
-        showBorder = values.value(.showBorder, or: true)
+        showBorder = values.value(.showBorder, or: false)
         compactWidth = values.value(.compactWidth, or: 184)
         compactHeight = values.value(.compactHeight, or: 30)
         expandedWidth = values.value(.expandedWidth, or: 420)
@@ -224,11 +206,7 @@ struct AgentNotchSettings: Codable, Equatable {
         fontSize = values.value(.fontSize, or: 12)
         rowSpacing = values.value(.rowSpacing, or: 8)
         maxSessions = values.value(.maxSessions, or: 5)
-        hoverDelay = values.value(.hoverDelay, or: 0.25)
-        collapseDelay = values.value(.collapseDelay, or: 0.6)
         animationDuration = values.value(.animationDuration, or: 0.22)
-        horizontalOffset = values.value(.horizontalOffset, or: 0)
-        verticalOffset = values.value(.verticalOffset, or: 0)
         accent = values.value(.accent, or: accent)
         normalize()
     }
@@ -237,7 +215,7 @@ struct AgentNotchSettings: Codable, Equatable {
         func bounded(_ value: Double, _ range: ClosedRange<Double>, _ fallback: Double) -> Double {
             value.isFinite ? min(range.upperBound, max(range.lowerBound, value)) : fallback
         }
-        compactWidth = bounded(compactWidth, 140...280, 184)
+        compactWidth = bounded(compactWidth, Self.compactWidthRange, 184)
         compactHeight = bounded(compactHeight, 24...44, 30)
         expandedWidth = bounded(expandedWidth, 340...560, 420)
         cornerRadius = bounded(cornerRadius, 8...32, 22)
@@ -250,13 +228,13 @@ struct AgentNotchSettings: Codable, Equatable {
         if !NotchMeetingSoon.choices.contains(meetingMinutes) { meetingMinutes = 5 }
         if !Self.batteryLowChoices.contains(batteryLowPercent) { batteryLowPercent = 20 }
         if !Self.batteryLowChoices.contains(airPodsLowPercent) { airPodsLowPercent = 20 }
-        hoverDelay = bounded(hoverDelay, 0...1, 0.25)
-        collapseDelay = bounded(collapseDelay, 0.1...2, 0.6)
+        if !Self.hotkeyOpenChoices.contains(hotkeyOpenSeconds) { hotkeyOpenSeconds = 30 }
+        if shelfToggleHotkey?.isRegisterable == false { shelfToggleHotkey = nil }
+        if shelfFilesHotkey?.isRegisterable == false { shelfFilesHotkey = nil }
+        if shelfClipboardHotkey?.isRegisterable == false { shelfClipboardHotkey = nil }
         shelfHoverDelay = bounded(shelfHoverDelay, 0...1, 0.15)
         shelfCollapseDelay = bounded(shelfCollapseDelay, 0.1...2, 0.8)
         animationDuration = bounded(animationDuration, 0.1...0.5, 0.22)
-        horizontalOffset = bounded(horizontalOffset, -300...300, 0)
-        verticalOffset = bounded(verticalOffset, 0...80, 0)
     }
 
     func sessions(from all: [AgentSession], now: Date = Date()) -> [AgentSession] {

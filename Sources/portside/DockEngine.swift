@@ -78,6 +78,7 @@ final class DockEngine {
     private let interactions = DockInteractions()
     private var edgeSubscription: AnyCancellable?
     private var iconStyleSubscription: AnyCancellable?
+    private var appIconSubscription: AnyCancellable?
     private var autoHideSubscription: AnyCancellable?
     private var accessibilityObserver: NSObjectProtocol?
     private var glassTintObserver: SystemGlassTintObserver?
@@ -332,6 +333,7 @@ final class DockEngine {
                 self?.queueReservationUpdate(reason: "hiding preference")
             }
         IconCache.shared.setStyle(dockModel.iconStyle)
+        IconCache.shared.setAppIcon(dockModel.appIcon)
         IconCache.shared.startObservingTheme()
         // Next main loop turn, like the edge: @Published emits from willSet.
         iconStyleSubscription = dockModel.$iconStyle
@@ -339,6 +341,11 @@ final class DockEngine {
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { IconCache.shared.setStyle($0) }
+        appIconSubscription = dockModel.$appIcon
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { IconCache.shared.setAppIcon($0) }
         // Settings apply live. Next main loop turn: @Published emits from
         // willSet, and the magnifier reads the model's current values.
         magnifySubscriptions = [

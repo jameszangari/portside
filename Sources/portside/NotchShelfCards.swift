@@ -405,9 +405,19 @@ struct NotchCalendarCard: View {
 struct NotchClipboardPage: View {
     @ObservedObject var service: ClipboardService
     let preferences: AgentNotchSettings
+    /// The search hotkey's field is up (SHELF-11).
+    var searching = false
+    @Binding var query: String
+    /// The Search button (true) or the field's close button (false).
+    var onSearch: (Bool) -> Void = { _ in }
+    /// Return copied a match; the shelf closes.
+    var onDone: () -> Void = {}
+    @FocusState private var fieldFocused: Bool
     @State private var copied: UUID?
     @State private var hovered: UUID?
     @State private var failure: String?
+    /// Clear was clicked once; a second click clears the whole history.
+    @State private var confirmClear = false
 
     static let columns = 3
     static let maxRows = 2
@@ -419,17 +429,38 @@ struct NotchClipboardPage: View {
         Array(entries.sorted { $0.date > $1.date }.prefix(columns * maxRows))
     }
 
-    /// Content height for `count` entries, the paused note included.
-    static func height(count: Int, paused: Bool) -> CGFloat {
+    static let searchHeight: CGFloat = 30
+
+    /// Entries whose text holds every typed word, newest first, up to two
+    /// rows; no words shows the newest.
+    static func matches(_ entries: [ClipboardEntry], query: String) -> [ClipboardEntry] {
+        let terms = CommandCenterRanker.terms(query)
+        return shown(terms.isEmpty ? entries : entries.filter { entry in
+            let folded = CommandCenterRanker.normalize(entry.text)
+            return terms.allSatisfy(folded.contains)
+        })
+    }
+
+    /// Content height for `count` entries, the paused note and the header
+    /// (Search and Clear, or the search field in the same place) included.
+    /// While searching it holds two rows, so the shelf stays still as you
+    /// type.
+    static func height(count: Int, paused: Bool, searching: Bool = false) -> CGFloat {
         let note: CGFloat = paused ? 30 : 0
+        if searching { return searchHeight + spacing + note + 2 * cardHeight + spacing }
         guard count > 0 else { return note + 96 }
         let rows = CGFloat(min(maxRows, (min(count, columns * maxRows) + columns - 1) / columns))
-        return note + rows * cardHeight + (rows - 1) * spacing
+        return searchHeight + spacing + note + rows * cardHeight + (rows - 1) * spacing
     }
 
     var body: some View {
-        let entries = Self.shown(service.entries)
+        let entries = searching ? Self.matches(service.entries, query: query) : Self.shown(service.entries)
         VStack(alignment: .leading, spacing: Self.spacing) {
+            if searching {
+                searchField(first: entries.first)
+            } else if !entries.isEmpty {
+                header
+            }
             if service.prefs.paused {
                 HStack(spacing: 8) {
                     Image(systemName: "pause.circle.fill").foregroundStyle(.orange)
@@ -442,7 +473,10 @@ struct NotchClipboardPage: View {
                 }
                 .frame(height: 22)
             }
-            if entries.isEmpty {
+            if entries.isEmpty, searching, !service.entries.isEmpty {
+                Text("No copied text matches").foregroundStyle(.white.opacity(0.55))
+                    .frame(maxWidth: .infinity).frame(height: 2 * Self.cardHeight)
+            } else if entries.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "doc.on.clipboard").font(.title2).foregroundStyle(preferences.accent.color)
                     Text("Nothing copied yet").fontWeight(.medium)
@@ -461,6 +495,75 @@ struct NotchClipboardPage: View {
                     .background(.red.opacity(0.85), in: Capsule())
             }
         }
+    }
+
+    /// Above the cards, where the search field opens: the count and how
+    /// long history keeps text, Search and Clear. Clear deletes every
+    /// entry, not only the cards shown, so it asks first.
+    private var header: some View {
+        let count = service.entries.count
+        return HStack(spacing: 10) {
+            if confirmClear {
+                Text("Clear all \(count) copied \(count == 1 ? "text" : "texts")? This cannot be undone.")
+                    .foregroundStyle(.white.opacity(0.7))
+                Spacer()
+                Button("Cancel") { confirmClear = false }
+                    .buttonStyle(.plain).foregroundStyle(.white.opacity(0.7))
+                Button("Clear History") {
+                    service.clear()
+                    confirmClear = false
+                }
+                .buttonStyle(.plain).foregroundStyle(.red)
+            } else {
+                Text("\(count) copied, kept for \(Self.expiryPhrase(service.prefs.expiryHours))").foregroundStyle(.white.opacity(0.45))
+                Spacer()
+                Button { onSearch(true) } label: { Label("Search", systemImage: "magnifyingglass") }
+                    .buttonStyle(.plain).foregroundStyle(.white.opacity(0.7))
+                    .help("Search all copied text")
+                Button("Clear") { confirmClear = true }
+                    .buttonStyle(.plain).foregroundStyle(.white.opacity(0.7))
+                    .accessibilityLabel("Clear clipboard history")
+            }
+        }
+        .font(.system(size: 11, weight: .medium))
+        .padding(.horizontal, 10)
+        .frame(height: Self.searchHeight)
+        .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onDisappear { confirmClear = false }
+    }
+
+    static func expiryPhrase(_ hours: Int) -> String {
+        switch hours {
+        case 1: "1 hour"
+        case 24: "1 day"
+        case 168: "7 days"
+        case 720: "30 days"
+        default: hours % 24 == 0 ? "\(hours / 24) days" : "\(hours) hours"
+        }
+    }
+
+    /// Opened from the search hotkey or the Search button. Type to filter;
+    /// Return copies the first match and closes the shelf, the close button
+    /// ends the search, Escape closes the shelf.
+    private func searchField(first: ClipboardEntry?) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.white.opacity(0.55))
+            TextField("Search copied text", text: $query)
+                .textFieldStyle(.plain)
+                .focused($fieldFocused)
+                .onSubmit {
+                    guard let first else { return }
+                    if case .success = service.copy(first.id) { onDone() } else { copy(first) }
+                }
+            Button { onSearch(false) } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.white.opacity(0.45)) }
+                .buttonStyle(.plain)
+                .accessibilityLabel("End search")
+        }
+        .font(.system(size: 13))
+        .padding(.horizontal, 10)
+        .frame(height: Self.searchHeight)
+        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onAppear { fieldFocused = true }
     }
 
     private func card(_ entry: ClipboardEntry) -> some View {
@@ -714,13 +817,37 @@ struct NotchMeetingCard: View {
         return minutes <= 0 ? "now" : "in \(minutes) min"
     }
 
+    /// The meeting's timer, time since it started: "4:05", "1:02:03".
+    static func elapsed(since start: Date, now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(start)))
+        let (h, m, s) = (seconds / 3600, seconds % 3600 / 60, seconds % 60)
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
+    }
+
+    /// The strip's text: the countdown before it starts, then its timer
+    /// (or "now" for one without a timer).
+    static func stripText(_ event: CalendarWidget.NextEvent, now: Date) -> String {
+        guard now >= event.start, NotchMeetingSoon.timed(start: event.start, end: event.end) else { return countdown(to: event.start, now: now) }
+        return elapsed(since: event.start, now: now)
+    }
+
+    /// The card's line: "10:00  ·  in 4 min", then "10:00 to 10:30  ·  18 min left".
+    static func detail(_ event: CalendarWidget.NextEvent, now: Date) -> String {
+        let time = event.start.formatted(.dateTime.hour().minute())
+        guard now >= event.start, let end = event.end, NotchMeetingSoon.timed(start: event.start, end: end) else {
+            return "\(time)  ·  \(countdown(to: event.start, now: now))"
+        }
+        let left = max(1, Int((end.timeIntervalSince(now) / 60).rounded(.up)))
+        return "\(time) to \(end.formatted(.dateTime.hour().minute()))  ·  \(left) min left"
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             Capsule().fill(event.color).frame(width: 4, height: 40)
             VStack(alignment: .leading, spacing: 3) {
                 Text(event.title).fontWeight(.semibold).lineLimit(1)
                 TimelineView(.periodic(from: .now, by: 15)) { context in
-                    Text("\(event.start.formatted(.dateTime.hour().minute()))  ·  \(Self.countdown(to: event.start, now: context.date))")
+                    Text(Self.detail(event, now: context.date))
                         .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55)).monospacedDigit()
                 }
             }

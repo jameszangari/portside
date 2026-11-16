@@ -115,20 +115,37 @@ enum AirPodsAlert: Equatable {
 /// list listener (public, no permission) notices a Bluetooth audio device
 /// coming or going; then `system_profiler` is read off the main queue,
 /// again a few seconds later (levels arrive after the connection), and
-/// every 5 minutes while one stays connected. Main queue only.
+/// every 5 minutes while one stays connected. With `live` on, a Bluetooth
+/// LE scan (`AirPodsLiveScanner`) also reads again 2 s after the pair's
+/// advertised levels change. Main queue only.
 final class AirPodsMonitor {
     static let refresh: TimeInterval = 300
     /// After a connection, when to read again for the levels.
     static let followUps: [TimeInterval] = [1.5, 6]
+    /// `refresh` reads again at most this often.
+    static let refreshGap: TimeInterval = 30
+    /// A live change reads this long after the advert (the report catches
+    /// up), and at most this often.
+    static let liveDelay: TimeInterval = 2
+    static let liveGap: TimeInterval = 5
 
     var onChange: (([AirPodsReading]) -> Void)?
+    /// Live levels from Bluetooth LE adverts (asks for Bluetooth access).
+    var live = false {
+        didSet { if live != oldValue { watchLive() } }
+    }
     private(set) var running = false
+    private let scanner = AirPodsLiveScanner()
+    private var liveTask: DispatchWorkItem?
     private(set) var readings: [AirPodsReading] = []
     private var listener: AudioObjectPropertyListenerBlock?
     /// Pending reads by number.
     private var reads: [Int: DispatchWorkItem] = [:]
     private var readCount = 0
+    /// The first read since `start` was reported, even when it found none.
+    private var reported = false
     private var bluetooth = false
+    private var lastRead = Date.distantPast
     private let logger = Logger(subsystem: "com.james.portside", category: "AirPods")
 
     func start() {
@@ -139,8 +156,16 @@ final class AirPodsMonitor {
         if AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, .main, block) == noErr {
             listener = block
         }
+        scanner.onChange = { [weak self] in self?.liveChanged() }
         bluetooth = Self.hasBluetoothAudio()
-        if bluetooth { read(after: 0) }
+        if bluetooth {
+            read(after: 0)
+        } else {
+            // Nothing connected: report that now, so a pair connecting
+            // later reads as a connection, not the starting state.
+            reported = true
+            onChange?([])
+        }
     }
 
     func stop() {
@@ -154,6 +179,38 @@ final class AirPodsMonitor {
         reads.values.forEach { $0.cancel() }
         reads = [:]
         readings = []
+        reported = false
+        liveTask?.cancel()
+        liveTask = nil
+        scanner.stop()
+    }
+
+    /// Scans while live is on and a pair is connected.
+    private func watchLive() {
+        guard running, live else {
+            scanner.stop()
+            return
+        }
+        scanner.watch(Set(readings.compactMap(\.productID)))
+    }
+
+    private func liveChanged() {
+        guard running, liveTask == nil else { return }
+        let wait = max(Self.liveDelay, Self.liveGap - Date().timeIntervalSince(lastRead))
+        let task = DispatchWorkItem { [weak self] in
+            self?.liveTask = nil
+            self?.readNow()
+        }
+        liveTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: task)
+    }
+
+    /// Reads the levels again now (the AirPods page opened), unless a read
+    /// finished in the last 30 s or no pair is connected.
+    func refresh() {
+        guard running, !readings.isEmpty, Date().timeIntervalSince(lastRead) > Self.refreshGap else { return }
+        lastRead = Date()
+        readNow()
     }
 
     private func devicesChanged() {
@@ -168,6 +225,7 @@ final class AirPodsMonitor {
             reads = [:]
             readings = []
             onChange?([])
+            watchLive()
         }
     }
 
@@ -187,9 +245,12 @@ final class AirPodsMonitor {
             let found = Self.profile()
             DispatchQueue.main.async {
                 guard let self, self.running else { return }
-                if found != self.readings {
+                self.lastRead = Date()
+                if found != self.readings || !self.reported {
+                    self.reported = true
                     self.readings = found
                     self.onChange?(found)
+                    self.watchLive()
                 }
                 // One refresh timer while a pair stays connected.
                 if !found.isEmpty, self.reads.isEmpty { self.read(after: Self.refresh) }

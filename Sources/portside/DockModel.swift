@@ -787,8 +787,8 @@ final class DockModel: Codable, ObservableObject {
         return !restrictedMode && clipboard && commandCenter
     }
 
-    /// The Notch Shelf is on and owns the notch (SHELF-02).
-    var notchShelfActive: Bool { showAgentNotch && agentNotchSettings.shelfEnabled }
+    /// The Top Notch (the Notch Shelf) is on and owns the notch (SHELF-02).
+    var notchShelfActive: Bool { showAgentNotch }
 
     /// Where hidden menu bar items open, after the Notch Shelf's lock.
     var menuBarPresentation: MenuBarPresentation { menuBarTriggers.presentation(notchShelf: notchShelfActive) }
@@ -804,6 +804,15 @@ final class DockModel: Codable, ObservableObject {
     }
 
     @Published private(set) var openSettingsOnLaunch: Bool = false
+
+    /// Portside's own icon (Settings > General).
+    @Published private(set) var appIcon = AppIconChoice.system
+
+    func setAppIcon(_ choice: AppIconChoice) {
+        guard choice != appIcon else { return }
+        appIcon = choice
+        persist()
+    }
 
     func setOpenSettingsOnLaunch(_ enabled: Bool) {
         guard enabled != openSettingsOnLaunch else { return }
@@ -1113,6 +1122,19 @@ final class DockModel: Codable, ObservableObject {
 
     /// Set or clear (nil) a group's custom tile icon.
     /// Slider drags pass `persist: false` until release.
+    /// Columns and rows of a group's open grid; automatic is stored as nil.
+    func setGroupGrid(groupID: String, to shape: GridShape) {
+        guard let index = entries.firstIndex(where: { $0.group?.id == groupID }),
+              var group = entries[index].group else { return }
+        let stored = shape.isAutomatic ? nil : shape
+        guard group.grid != stored else { return }
+        group.grid = stored
+        var list = entries
+        list[index] = .group(group)
+        entries = list
+        persist()
+    }
+
     func setGroupIcon(groupID: String, to icon: GroupIcon?, persist shouldPersist: Bool = true) {
         guard let index = entries.firstIndex(where: { $0.group?.id == groupID }),
               var group = entries[index].group else { return }
@@ -1184,7 +1206,7 @@ final class DockModel: Codable, ObservableObject {
         case revealDelay, hideDelay, animationDuration, iconSize, iconGap, magnificationEnabled, magnifiedSize, edge, entries, widgetKinds
         case autoHide, reserveSpace, openGroupsOnHover, groupHoverDelay, groupHoverCloseGrace
         case animateOpeningApplications
-        case hideNativeDock, nativeDockExplained, openSettingsOnLaunch, showAgentNotch, automaticUpdateChecks, agentNotchSettings
+        case hideNativeDock, nativeDockExplained, openSettingsOnLaunch, appIcon, showAgentNotch, automaticUpdateChecks, agentNotchSettings
         case showTrash, trashAccessHintDismissed
         case showBadges, badgeColor, badgeCustomColor
         case activityIcons
@@ -1246,6 +1268,7 @@ final class DockModel: Codable, ObservableObject {
         showAgentNotch = c.value(.showAgentNotch, or: false)
         automaticUpdateChecks = c.value(.automaticUpdateChecks, or: true)
         openSettingsOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .openSettingsOnLaunch) ?? false
+        appIcon = (try? c.decodeIfPresent(AppIconChoice.self, forKey: .appIcon)) ?? .system
         groupHoverDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverDelay) ?? Defaults.groupHoverDelay, to: Self.groupHoverDelayRange)
         groupHoverCloseGrace = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverCloseGrace) ?? Defaults.groupHoverCloseGrace, to: Self.groupHoverCloseGraceRange)
         // try? per key: an unknown enum value (from a newer build) falls back
@@ -1353,6 +1376,7 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(showAgentNotch, forKey: .showAgentNotch)
         try c.encode(automaticUpdateChecks, forKey: .automaticUpdateChecks)
         try c.encode(openSettingsOnLaunch, forKey: .openSettingsOnLaunch)
+        if appIcon != .system { try c.encode(appIcon, forKey: .appIcon) }
         try c.encode(groupHoverDelay, forKey: .groupHoverDelay)
         try c.encode(groupHoverCloseGrace, forKey: .groupHoverCloseGrace)
         try c.encode(iconStyle, forKey: .iconStyle)
@@ -1646,6 +1670,7 @@ final class DockModel: Codable, ObservableObject {
         showAgentNotch = old.showAgentNotch
         automaticUpdateChecks = old.automaticUpdateChecks
         openSettingsOnLaunch = old.openSettingsOnLaunch
+        appIcon = old.appIcon
         groupHoverDelay = old.groupHoverDelay
         groupHoverCloseGrace = old.groupHoverCloseGrace
         edge = old.edge
