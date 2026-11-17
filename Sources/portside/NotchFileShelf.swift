@@ -81,14 +81,12 @@ final class NotchFileShelf: ObservableObject {
         }
     }
 
-    #if DEBUG
-    /// Render probe only: shows `urls` without saving or pruning.
+    /// Settings preview and render probe: shows `urls` without saving or pruning.
     func preview(_ urls: [URL]) {
         var next = NotchFileTray()
         next.add(urls)
         tray = next
     }
-    #endif
 
     /// Hands files to AirDrop's picker. Portside comes forward so the picker
     /// can take the keyboard.
