@@ -1164,7 +1164,7 @@ private struct GeneralSettings: View {
                     set: { hidden in DispatchQueue.main.async { nativeDock.setHidden(hidden) } }
                 )) {
                     Text("Hide the macOS Dock")
-                    Text("Its settings are saved and restored when you turn this off or quit.").helperStyle()
+                    Text("Its settings are saved and restored when you turn this off or quit. Mission Control and App Exposé still show the macOS Dock; Portside's dock steps aside until they close.").helperStyle()
                 }
                 .settingsAnchor("macOS Dock")
                 Toggle("Check for updates automatically", isOn: Binding(

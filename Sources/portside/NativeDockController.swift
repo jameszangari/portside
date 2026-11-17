@@ -100,6 +100,8 @@ final class NativeDockController {
         alert.informativeText = """
             Portside turns on the macOS Dock's auto-hide and sets its reveal delay so long that it never appears, then restarts the Dock. Its position and size are not changed.
 
+            Mission Control and App Exposé still show the macOS Dock. Portside's dock steps aside while they are open.
+
             Your current Dock settings are saved first and put back exactly when you turn this off or quit Portside. If Portside crashes, they are put back right away.
 
             To undo it by hand, choose Restore macOS Dock from the Portside menu bar item, or run: portside --restore-dock
