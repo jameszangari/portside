@@ -38,7 +38,7 @@ final class MenuBarItemsTests: XCTestCase {
 
     private func listed(_ service: MenuBarItemsService) async {
         service.refresh {}
-        await settle()
+        await waitUntil(timeout: .seconds(2)) { !service.items.isEmpty || service.accessDenied }
     }
 
     // MARK: Item model
@@ -154,7 +154,7 @@ final class MenuBarItemsTests: XCTestCase {
             let service = service(source)
             await listed(service)
             _ = await service.press(item.id)
-            await settle()
+            await waitUntil { !reports.isEmpty }
             XCTAssertEqual(reports, [reason])
         }
     }
@@ -165,11 +165,11 @@ final class MenuBarItemsTests: XCTestCase {
         let service = service(source)
         let now = Date()
         service.refresh(now: now) {}
-        await settle()
+        await waitUntil { !service.items.isEmpty }
         _ = await service.press(item.id)
-        await settle()
+        await waitUntil { !source.presses.isEmpty && !reports.isEmpty }
         service.refresh(now: now.addingTimeInterval(1)) {}
-        await settle()
+        await waitUntil { source.sweeps == 2 }
         XCTAssertEqual(source.sweeps, 2)
     }
 

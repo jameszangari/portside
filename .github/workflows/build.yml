@@ -36,7 +36,8 @@ jobs:
 
       - name: Tests
         env:
-          CFFIXED_USER_HOME: ${{ runner.temp }}/portside-tests
+          # Some settings tests skip unless the home is under /tmp.
+          CFFIXED_USER_HOME: /tmp/portside-tests
         run: |
           mkdir -p "$CFFIXED_USER_HOME"
           swift test
