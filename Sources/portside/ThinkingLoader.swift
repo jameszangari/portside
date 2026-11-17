@@ -1,17 +1,33 @@
 import SwiftUI
 
-/// Compact "thinking" indicators for the Agent Notch and dock Working chip.
+/// Compact "thinking" indicators for the Top Notch and dock Working chip.
 ///
+/// `ship` (the default) is Portside's sailboat rocking gently over sliding
+/// waves, and `wheel` a ship's wheel turning a half turn and resting; both
+/// in one color so they take the accent or provider tint.
 /// `snakeBoxes` is a 2x3 grid with one empty cell that walks the loop
 /// (Nawsome blue-dragon-70 style). At very small sizes it reads poorly, so
 /// callers can pass `.dots` (three pulsing dots, same as the dock chip).
 struct ThinkingLoader: View {
-    enum Style {
-        case snakeBoxes
+    enum Style: String, Codable, CaseIterable, Identifiable {
+        case ship
+        case wheel
+        case snakeBoxes = "boxes"
         case dots
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .ship: "Ship"
+            case .wheel: "Ship's wheel"
+            case .snakeBoxes: "Boxes"
+            case .dots: "Dots"
+            }
+        }
     }
 
-    var style: Style = .snakeBoxes
+    var style: Style = .ship
     var paused = false
     /// Longest side. Snake uses a 2:3 frame; dots are roughly square.
     var size: CGFloat = 14
@@ -19,6 +35,8 @@ struct ThinkingLoader: View {
 
     private var frameSize: CGSize {
         switch style {
+        case .ship: CGSize(width: size * 1.15, height: size)
+        case .wheel: CGSize(width: size, height: size)
         case .snakeBoxes: CGSize(width: size * 0.72, height: size)
         case .dots: CGSize(width: size, height: size * 0.55)
         }
@@ -29,6 +47,8 @@ struct ThinkingLoader: View {
             let t = paused ? nil : context.date.timeIntervalSinceReferenceDate
             Canvas { gc, canvasSize in
                 switch style {
+                case .ship: Self.drawShip(gc, size: canvasSize, t: t, color: color)
+                case .wheel: Self.drawWheel(gc, size: canvasSize, t: t, color: color)
                 case .snakeBoxes: Self.drawSnake(gc, size: canvasSize, t: t, color: color)
                 case .dots: Self.drawDots(gc, size: canvasSize, t: t, color: color)
                 }
@@ -38,9 +58,106 @@ struct ThinkingLoader: View {
         .accessibilityHidden(true)
     }
 
-    /// Prefer snake boxes when there is room; fall back to dots under about 11pt.
-    static func preferredStyle(for size: CGFloat) -> Style {
-        size >= 11 ? .snakeBoxes : .dots
+    /// `chosen` when there is room; boxes fall back to dots under about
+    /// 11pt, where they read poorly. The ship and wheel hold up to 9pt.
+    static func preferredStyle(_ chosen: Style = .ship, for size: CGFloat) -> Style {
+        switch chosen {
+        case .ship: size >= 9 ? .ship : .dots
+        case .wheel: size >= 9 ? .wheel : .dots
+        case .snakeBoxes: size >= 11 ? .snakeBoxes : .dots
+        case .dots: .dots
+        }
+    }
+
+    /// The sailboat, after LottieFiles' "Ship" (the maintainer's
+    /// reference; its keyframes, not its art): the boat tilts 3 degrees
+    /// each way about its middle over 6 s and dips 1.6% of the frame every
+    /// 3 s, both eased, while one continuous wave rolls left under it. The brand's two sails (a straight jib and a rounded
+    /// main) over a hull. Paused, it sits level over still waves.
+    private static func drawShip(_ gc: GraphicsContext, size: CGSize, t: Double?, color: Color) {
+        let w = size.width, h = size.height
+        guard w >= 4, h >= 4 else { return }
+        drawWaves(gc, size: size, t: t, color: color)
+
+        let tilt = t.map { -3 * cos(2 * .pi * $0 / 6) } ?? 0
+        let dip = t.map { 0.016 * (1 - cos(2 * .pi * $0 / 3)) / 2 } ?? 0
+        let u = h
+        // Pivot: the boat's middle, about halfway up the sails.
+        let pivot = CGPoint(x: 0.5 * w, y: (0.82 + dip) * h - 0.36 * u)
+        var boat = gc
+        boat.translateBy(x: pivot.x, y: pivot.y)
+        boat.rotate(by: .degrees(tilt))
+        boat.translateBy(x: 0, y: 0.36 * u)
+        var hull = Path()
+        hull.move(to: CGPoint(x: -0.36 * u, y: -0.13 * u))
+        hull.addLine(to: CGPoint(x: 0.36 * u, y: -0.13 * u))
+        hull.addLine(to: CGPoint(x: 0.24 * u, y: 0.02 * u))
+        hull.addLine(to: CGPoint(x: -0.26 * u, y: 0.02 * u))
+        hull.closeSubpath()
+        boat.fill(hull, with: .color(color))
+
+        var jib = Path()
+        jib.move(to: CGPoint(x: -0.03 * u, y: -0.78 * u))
+        jib.addLine(to: CGPoint(x: -0.03 * u, y: -0.19 * u))
+        jib.addLine(to: CGPoint(x: -0.33 * u, y: -0.19 * u))
+        jib.closeSubpath()
+        boat.fill(jib, with: .color(color.opacity(0.85)))
+
+        var main = Path()
+        main.move(to: CGPoint(x: 0.03 * u, y: -0.78 * u))
+        main.addQuadCurve(to: CGPoint(x: 0.03 * u, y: -0.24 * u), control: CGPoint(x: 0.5 * u, y: -0.56 * u))
+        main.closeSubpath()
+        boat.fill(main, with: .color(color.opacity(0.85)))
+    }
+
+    /// One continuous wave across the frame, rolling left at about 0.4 of
+    /// the frame width per second (the reference's pace). Still when paused.
+    private static func drawWaves(_ gc: GraphicsContext, size: CGSize, t: Double?, color: Color) {
+        let w = size.width, h = size.height
+        let shift = (t ?? 0) * 0.4
+        var water = Path()
+        let steps = 32
+        for step in 0...steps {
+            let x = Double(step) / Double(steps)
+            let point = CGPoint(x: x * w, y: (0.88 + 0.035 * sin(2 * .pi * (x * 1.5 + shift))) * h)
+            if step == 0 { water.move(to: point) } else { water.addLine(to: point) }
+        }
+        gc.stroke(water, with: .color(color.opacity(0.6)),
+                  style: StrokeStyle(lineWidth: max(1, h * 0.07), lineCap: .round, lineJoin: .round))
+    }
+
+    /// A ship's wheel, after LottieFiles' "Boat steering": a half turn,
+    /// eased, over 2.25 s, then a rest until the 5 s loop starts again. The
+    /// wheel looks the same every 45 degrees, so the loop is seamless.
+    private static func drawWheel(_ gc: GraphicsContext, size: CGSize, t: Double?, color: Color) {
+        let side = min(size.width, size.height)
+        guard side >= 4 else { return }
+        let angle: Double = t.map { time in
+            let p = min(time.truncatingRemainder(dividingBy: 5) / 2.25, 1)
+            return 180 * (1 - cos(.pi * p)) / 2
+        } ?? 0
+        var wheel = gc
+        wheel.translateBy(x: size.width / 2, y: size.height / 2)
+        wheel.rotate(by: .degrees(angle))
+        let r = side / 2
+        let line = max(1, side * 0.09)
+        // Handles past the rim, then the rim, spokes and hub.
+        for k in 0..<8 {
+            let a = Double(k) * .pi / 4
+            let dir = CGPoint(x: cos(a), y: sin(a))
+            var spoke = Path()
+            spoke.move(to: CGPoint(x: dir.x * r * 0.18, y: dir.y * r * 0.18))
+            spoke.addLine(to: CGPoint(x: dir.x * r * 0.86, y: dir.y * r * 0.86))
+            wheel.stroke(spoke, with: .color(color), style: StrokeStyle(lineWidth: line, lineCap: .round))
+            let knob = r * 0.13
+            wheel.fill(Path(ellipseIn: CGRect(x: dir.x * r * 0.86 - knob, y: dir.y * r * 0.86 - knob, width: knob * 2, height: knob * 2)),
+                       with: .color(color))
+        }
+        let rim = r * 0.6
+        wheel.stroke(Path(ellipseIn: CGRect(x: -rim, y: -rim, width: rim * 2, height: rim * 2)),
+                     with: .color(color), lineWidth: line * 1.2)
+        let hub = r * 0.2
+        wheel.fill(Path(ellipseIn: CGRect(x: -hub, y: -hub, width: hub * 2, height: hub * 2)), with: .color(color))
     }
 
     // Counter-clockwise loop around a 2x3 grid, starting at top-left.
@@ -87,7 +204,7 @@ struct ThinkingLoader: View {
     }
 }
 
-/// Compact bouncing bars for the Agent Notch while Spotify or Music is
+/// Compact bouncing bars for the Top Notch while Spotify or Music is
 /// playing (Bartender-style). Hidden by the caller when nothing is playing.
 struct NotchAudioBars: View {
     var paused = false

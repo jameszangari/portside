@@ -506,6 +506,15 @@ struct DockLook: Equatable {
         reduceTransparency ? max(value, 0.92) : value
     }
 
+    /// A see-through background's shade under the content of the dock shelf
+    /// and the group and stack grids, so all three match. `contentScheme` assumes a backdrop that matches the
+    /// system appearance, so a light page under dark-mode glass left white
+    /// labels on light gray. Clear on an opaque solid background.
+    var textScrim: Color {
+        if background.style == .solid, opaque(background.solid.opacity) >= 0.9, !background.solid.blur { return .clear }
+        return contentScheme == .dark ? Color.black.opacity(0.42) : Color.white.opacity(0.55)
+    }
+
     /// Light or dark content (text, running dots) that stays readable on
     /// this background: a white solid dock gets black text, a dark tint
     /// gets white. Estimated from the colors the user picked, laid over a
@@ -553,6 +562,11 @@ extension View {
     /// keeps the system appearance.
     func dockContentScheme(_ look: DockLook) -> some View {
         environment(\.colorScheme, look.contentScheme)
+    }
+
+    /// `textScrim` under a floating card's content, inside its background.
+    func dockTextScrim(_ look: DockLook) -> some View {
+        background { RoundedRectangle(cornerRadius: look.cornerRadius, style: .continuous).fill(look.textScrim) }
     }
 
     /// The dock background in `look`, clipped to its rounded rectangle.

@@ -1,0 +1,113 @@
+import AppKit
+import Combine
+
+/// The optional `menuBarShelf` module (P2-MENU-03 prototype). Off by default
+/// and held off by restricted mode. Needs no permission: it only draws two
+/// status items of its own. See `MenuBarShelf` for how recovery works.
+@MainActor
+final class MenuBarShelfModule: PortsideModule {
+    static let moduleID = ModuleID("menuBarShelf")!
+    static let toggleCommand = CommandID("menuBarShelf.toggle")!
+
+    let id = MenuBarShelfModule.moduleID
+    let title = "Menu Bar Shelf"
+    var summary: String {
+        if shelf.hidesByMembership {
+            return "Click the eye to show or hide your chosen apps. Option-click or double-click for Always Hidden. Hiding needs Portside in /Applications and Accessibility. If hiding fails, the bar stays as macOS drew it."
+        }
+        return "Click the eye to show or hide items to the left of the divider. Hold Command and drag an icon across the divider to change its section. Editing the layout and detecting empty areas need Accessibility."
+    }
+    let fallback = "Your menu bar stays exactly as macOS lays it out."
+
+    private let shelf: MenuBarShelf
+    private let triggers: MenuBarTriggerService
+    private let settings: AnyPublisher<MenuBarTriggerSettings, Never>
+    private let overlay = MenuBarStyleOverlay()
+
+    /// `settings` publishes the saved trigger choices, current value first.
+    init(shelf: MenuBarShelf, triggers: MenuBarTriggerService,
+         settings: AnyPublisher<MenuBarTriggerSettings, Never> = Just(MenuBarTriggerSettings()).eraseToAnyPublisher()) {
+        self.shelf = shelf
+        self.triggers = triggers
+        self.settings = settings
+    }
+
+    var mode: MenuBarShelf.Mode { shelf.mode }
+
+    func commands() -> [CommandDescriptor] {
+        [
+            CommandDescriptor(
+                id: Self.toggleCommand,
+                title: "Hide or Show Menu Bar Items",
+                keywords: ["shelf", "status", "menu extra", "bartender"],
+                symbolName: "menubar.rectangle",
+                handler: { [triggers] _ in
+                    if case .refused(let reason) = triggers.activate(.command) {
+                        return .failure(CommandFailure(reason: reason))
+                    }
+                    return .success(nil)
+                }
+            ),
+        ]
+    }
+
+    func start(_ context: ModuleContext) throws {
+        shelf.start()
+        triggers.start(MenuBarTriggerSettings())
+        let saved = settings.sink { [triggers, shelf, overlay] value in
+            MainActor.assumeIsolated {
+                triggers.apply(value)
+                shelf.applyLook(value.look)
+                overlay.apply(value.look)
+            }
+        }
+        context.onStop { [overlay] in
+            saved.cancel()
+            MainActor.assumeIsolated { overlay.stop() }
+        }
+        let workspace = NSWorkspace.shared.notificationCenter
+        let center = NotificationCenter.default
+        let watched: [(NotificationCenter, Notification.Name, String)] = [
+            (workspace, NSWorkspace.willSleepNotification, "the Mac went to sleep"),
+            (workspace, NSWorkspace.didWakeNotification, "the Mac woke"),
+            (workspace, NSWorkspace.screensDidWakeNotification, "the screens woke"),
+            (center, NSApplication.didChangeScreenParametersNotification, "the displays changed"),
+        ]
+        for (source, name, reason) in watched {
+            let token = source.addObserver(forName: name, object: nil, queue: .main) { [shelf, triggers] _ in
+                MainActor.assumeIsolated {
+                    // An assertion is not tied to display geometry, so a
+                    // collapsed bar stays collapsed across sleep and displays.
+                    guard !shelf.hidesByMembership else {
+                        triggers.displayChanged()
+                        shelf.revalidate()
+                        return
+                    }
+                    triggers.cancelPending()
+                    shelf.failOpen(reason)
+                }
+            }
+            context.onStop { source.removeObserver(token) }
+        }
+        let activation = workspace.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [triggers] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            let bundleID = app?.bundleIdentifier
+            MainActor.assumeIsolated { triggers.appActivated(bundleID: bundleID) }
+        }
+        context.onStop { workspace.removeObserver(activation) }
+        let space = workspace.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [triggers] _ in
+            MainActor.assumeIsolated { triggers.spaceChanged() }
+        }
+        context.onStop { workspace.removeObserver(space) }
+        // The bar starts collapsed, right away: the saved choices were applied
+        // by the sink above, and items that appear later (login items) are
+        // caught by the surface's launch and bar watchers.
+        triggers.startCollapsed()
+        context.onStop { [shelf, triggers] in
+            MainActor.assumeIsolated {
+                triggers.stop()
+                shelf.stop()
+            }
+        }
+    }
+}

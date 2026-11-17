@@ -119,6 +119,15 @@ for bundle in "$bin_dir"/*.bundle; do
     cp -R "$bundle" "$contents/Resources/"
 done
 
+# MediaRemoteAdapter: not linked; /usr/bin/perl loads it for system-wide
+# Now Playing (MediaRemoteNowPlaying.swift looks in Contents/Frameworks).
+adapter="$bin_dir/libMediaRemoteAdapter.dylib"
+[ -f "$adapter" ] || { echo "build-app: no $adapter" >&2; exit 1; }
+mkdir -p "$contents/Frameworks"
+cp "$adapter" "$contents/Frameworks/"
+# BSD 3-Clause: binary copies carry its notice.
+cp "$root/Sources/MediaRemoteAdapter/LICENSE" "$contents/Resources/MediaRemoteAdapter-LICENSE.txt"
+
 # Info.plist: start from the repo's Info.plist (one source for the
 # Calendar and Finder Automation usage strings), then set the bundle keys.
 plist="$contents/Info.plist"
@@ -202,6 +211,7 @@ sign_app() {
                 codesign --force --options runtime --timestamp --sign "$sign_identity" "$bundle"
             done
         fi
+        codesign --force --options runtime --timestamp --sign "$sign_identity" "$contents/Frameworks/"*.dylib
         codesign --force --options runtime --timestamp \
             --entitlements "$entitlements" \
             --sign "$sign_identity" "$app"

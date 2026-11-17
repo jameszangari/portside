@@ -13,7 +13,8 @@ import os.log
 /// used when `DockModel.revealDelay > 0` (it is 0 by default).
 final class DockEngine {
     let dockModel: DockModel
-    private let runningApps: RunningApps
+    /// Also read by Command Center for its running-app rows.
+    let runningApps: RunningApps
     /// Live widgets; Settings previews them.
     let widgets: WidgetStore
     /// Shared with the Settings window for the icon size fit limit.
@@ -39,6 +40,9 @@ final class DockEngine {
     let reservation = DockReservation()
     /// Fits other apps' windows clear of the reservation.
     private let windowFitter = WindowFitter()
+    /// Shared app and window snapshots for 2.0 features. Idle until a
+    /// feature adds a client.
+    let windowRegistry: WindowRegistry
     private var reservationUpdateQueued = false
     private var reservationObservers: [NSObjectProtocol] = []
     private var reservationSubscriptions: [AnyCancellable] = []
@@ -74,6 +78,7 @@ final class DockEngine {
     private let interactions = DockInteractions()
     private var edgeSubscription: AnyCancellable?
     private var iconStyleSubscription: AnyCancellable?
+    private var appIconSubscription: AnyCancellable?
     private var autoHideSubscription: AnyCancellable?
     private var accessibilityObserver: NSObjectProtocol?
     private var glassTintObserver: SystemGlassTintObserver?
@@ -87,12 +92,18 @@ final class DockEngine {
     /// live Settings changes stay visible on the strip; the saved
     /// `dockModel.autoHide` preference is not changed.
     private var settingsIsKey = false
+    /// Mission Control or App Exposé is open. The macOS Dock shows there, so
+    /// the panel and edge windows step aside until it closes.
+    private var overviewOpen = false
 
     /// Timestamp (CACurrentMediaTime) of the mouseEntered that started the
     /// current reveal, used for the enter -> animation start -> interactive logs.
     private var revealRequestedAt: CFTimeInterval = 0
     /// Event that started the current reveal (mouseEntered or draggingEntered).
     private var revealTrigger = "mouseEntered"
+    /// System uptime of the edge event that started the current reveal and
+    /// the reveal delay then in force, for `RevealLatency`. nil once recorded.
+    private var revealEvent: (at: TimeInterval, delay: TimeInterval, interval: OSSignpostIntervalState)?
 
     /// Drag destinations ("edge", "panel", "strip", "group", "stack") a file
     /// drag is over. While any is set and the button is held, exits do not
@@ -106,6 +117,7 @@ final class DockEngine {
             if let quit = PinnedApp(runningApp: app) { dockModel?.noteAppQuit(quit) }
         }
         self.runningApps = runningApps
+        self.windowRegistry = MainActor.assumeIsolated { WindowRegistry.live(runningApps: runningApps) }
         self.widgets = WidgetStore(dockModel: dockModel)
         self.layout = DockLayout()
         self.hover = DockHover(overlay: OverlayPanel())
@@ -327,6 +339,7 @@ final class DockEngine {
                 self?.queueReservationUpdate(reason: "hiding preference")
             }
         IconCache.shared.setStyle(dockModel.iconStyle)
+        IconCache.shared.setAppIcon(dockModel.appIcon)
         IconCache.shared.startObservingTheme()
         // Next main loop turn, like the edge: @Published emits from willSet.
         iconStyleSubscription = dockModel.$iconStyle
@@ -334,6 +347,11 @@ final class DockEngine {
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { IconCache.shared.setStyle($0) }
+        appIconSubscription = dockModel.$appIcon
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { IconCache.shared.setAppIcon($0) }
         // Settings apply live. Next main loop turn: @Published emits from
         // willSet, and the magnifier reads the model's current values.
         magnifySubscriptions = [
@@ -396,6 +414,7 @@ final class DockEngine {
         }
         dockPanel.onRevealAnimationStarted = { [weak self] in
             self?.logTiming(label: "animation start")
+            self?.recordRevealLatency()
             // After the timing log: the reveal path itself is unchanged.
             self?.flipKeys.start()
             // Next runloop turn, so nothing is added to the reveal path. The
@@ -466,6 +485,37 @@ final class DockEngine {
             dockPanel.show(animated: false)
             logger.info("engine started, auto-hide off, panel revealed, edge tracker idle")
         }
+        MissionControlMonitor.shared.onChange = { [weak self] open in self?.overviewChanged(open) }
+        // Window events are only delivered once the app names a window of its own.
+        MissionControlMonitor.shared.start(anchors: NSApp.windows.compactMap { $0.windowNumber > 0 ? UInt32(exactly: $0.windowNumber) : nil })
+    }
+
+    // MARK: - Mission Control and App Exposé
+
+    private func overviewChanged(_ open: Bool) {
+        guard overviewOpen != open else { return }
+        overviewOpen = open
+        if open {
+            pendingHide?.cancel()
+            pendingHide = nil
+            pendingReveal?.cancel()
+            pendingReveal = nil
+            revealSuppressedForButtonHold = false
+            hover.clear()
+            magnifier.reset()
+            bouncer.cancel(reason: "Mission Control")
+            edgeTracker.stop()
+            dockPanel.prepareHidden()
+            groups.collapse(reason: "Mission Control", animated: false)
+            stacks.collapse(reason: "Mission Control", animated: false)
+            logger.info("Mission Control or App Exposé open, dock hidden")
+        } else if effectiveAutoHide {
+            edgeTracker.start()
+            logger.info("Mission Control or App Exposé closed, edge tracker armed")
+        } else {
+            dockPanel.show(animated: true)
+            logger.info("Mission Control or App Exposé closed, panel revealed")
+        }
     }
 
     // MARK: - Sleep, wake and displays
@@ -528,7 +578,9 @@ final class DockEngine {
         dockPanel.reassert()
         edgeTracker.rebuild()
         queueReservationUpdate(reason: "system woke")
-        if effectiveAutoHide {
+        if overviewOpen {
+            dockPanel.prepareHidden()
+        } else if effectiveAutoHide {
             rearmHideIfCursorOutside(source: "system woke")
         } else {
             dockPanel.show(animated: false)
@@ -582,6 +634,8 @@ final class DockEngine {
         pendingHide = nil
         pendingReveal?.cancel()
         pendingReveal = nil
+        // Closing Mission Control applies the current state.
+        guard !overviewOpen else { return }
         let on = effectiveAutoHide
         if on {
             edgeTracker.start()
@@ -608,6 +662,9 @@ final class DockEngine {
 
     /// Stop the engine: hide the panel and tear down the edge tracker.
     func stop() {
+        MissionControlMonitor.shared.onChange = nil
+        MissionControlMonitor.shared.stop()
+        overviewOpen = false
         pendingHide?.cancel()
         pendingHide = nil
         pendingReveal?.cancel()
@@ -711,7 +768,7 @@ final class DockEngine {
         hover.setEdge(edge)
         dockPanel.setEdge(edge)
         edgeTracker.setEdge(edge)
-        if !effectiveAutoHide {
+        if !effectiveAutoHide, !overviewOpen {
             dockPanel.show(animated: true)
         }
         logger.info("dock moved to the \(edge.rawValue, privacy: .public) edge")
@@ -850,7 +907,7 @@ final class DockEngine {
             logger.info("\(source, privacy: .public) enter: pending hide canceled")
         }
 
-        if dockPanel.isRevealedOrRevealing {
+        if dockPanel.isRevealedOrRevealing || overviewOpen {
             return
         }
 
@@ -867,6 +924,9 @@ final class DockEngine {
 
         revealRequestedAt = CACurrentMediaTime()
         revealTrigger = trigger
+        if let open = revealEvent { RevealLatency.signposter.endInterval("reveal", open.interval, "canceled") }
+        revealEvent = (event?.timestamp ?? ProcessInfo.processInfo.systemUptime, dockModel.revealDelay,
+                       RevealLatency.signposter.beginInterval("reveal", id: RevealLatency.signposter.makeSignpostID(), "\(trigger)"))
         if let event {
             // NSEvent.timestamp is system uptime; compare against the same clock
             // to see how long the event sat in the queue before we got it.
@@ -904,6 +964,10 @@ final class DockEngine {
         if let pendingReveal {
             pendingReveal.cancel()
             self.pendingReveal = nil
+            if let open = revealEvent {
+                revealEvent = nil
+                RevealLatency.signposter.endInterval("reveal", open.interval, "canceled")
+            }
             logger.info("\(source, privacy: .public) exit: pending reveal canceled")
         }
 
@@ -966,7 +1030,16 @@ final class DockEngine {
     }
 
     private func reveal() {
+        guard !overviewOpen else { return }
         dockPanel.show(animated: true)
+    }
+
+    private func recordRevealLatency() {
+        guard let open = revealEvent else { return }
+        revealEvent = nil
+        let ms = (ProcessInfo.processInfo.systemUptime - open.at - open.delay) * 1000
+        RevealLatency.signposter.endInterval("reveal", open.interval, "\(ms, format: .fixed(precision: 2))ms")
+        RevealLatency.shared.add(ms)
     }
 
     private func logTiming(label: String) {

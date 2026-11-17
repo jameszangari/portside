@@ -1,0 +1,19 @@
+{
+  "savedByVersion" : "0.4.0",
+  "pinnedApps" : [
+    { "bundleIdentifier" : "com.apple.finder", "path" : "/System/Library/CoreServices/Finder.app" },
+    { "bundleIdentifier" : "com.apple.Safari", "path" : "/Applications/Safari.app" },
+    { "path" : "/Applications/Unbundled Tool.app" }
+  ],
+  "edge" : "left",
+  "iconSize" : 40,
+  "hideDelay" : 5,
+  "hideNativeDock" : false,
+  "widgetKinds" : [ "clock" ],
+  "backgroundStyle" : "solid",
+  "backgroundFrost" : 0.5,
+  "futureModules" : {
+    "commandCenter" : { "enabled" : false, "hotkey" : "option-space" },
+    "schema" : 2
+  }
+}

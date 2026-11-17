@@ -6,6 +6,11 @@ import UniformTypeIdentifiers
 /// Process entry point. Runs before SwiftUI and AppKit start, so native
 /// Dock crash recovery happens before anything else, and
 /// `portside --restore-dock` can restore and exit without showing any UI.
+/// Whether Portside's own logo menu is in the menu bar.
+enum PortsideMenuIcon {
+    static let defaultsKey = "showsPortsideMenuIcon"
+}
+
 @main
 enum PortsideMain {
     /// Kept alive for the life of the process.
@@ -33,6 +38,12 @@ enum PortsideMain {
         }
         if let index = CommandLine.arguments.firstIndex(of: "--render-notch-previews"), index + 1 < CommandLine.arguments.count {
             exit(MainActor.assumeIsolated { AgentNotchProbe.render(to: CommandLine.arguments[index + 1]) })
+        }
+        if CommandLine.arguments.contains("--check-windows") {
+            exit(MainActor.assumeIsolated { WindowRegistryProbe.run() })
+        }
+        if CommandLine.arguments.contains("--check-listeners") {
+            exit(ListenerProbe.run())
         }
         if CommandLine.arguments.contains("--check-audio-levels") {
             exit(MainActor.assumeIsolated { AudioPlaybackProbe.run(capture: CommandLine.arguments.contains("--capture")) })
@@ -65,6 +76,7 @@ enum PortsideMain {
            let pid = pid_t(CommandLine.arguments[flag + 1]) {
             NativeDock.runWatchdog(watching: pid)
         }
+        CopyHandoff.runAtLaunch()
         NativeDock.recoverIfNeeded()
         installSignalHandlers()
         PortsideApp.main()
@@ -144,6 +156,7 @@ enum PortsideMain {
             source.setEventHandler {
                 WindowFitter.releaseForExit(reason: name)
                 NativeDockController.restoreForExit(reason: name)
+                CopyHandoff.relaunchIfNeeded()
                 exit(0)
             }
             source.resume()
@@ -157,8 +170,10 @@ enum PortsideMain {
 struct PortsideApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
+    @AppStorage(PortsideMenuIcon.defaultsKey) private var showsMenuIcon = true
+
     var body: some Scene {
-        MenuBarExtra {
+        MenuBarExtra(isInserted: $showsMenuIcon) {
             Text("Portside")
             Divider()
             UpdateMenuItem()
@@ -166,9 +181,10 @@ struct PortsideApp: App {
                 appDelegate.showAbout()
             }
             Button("Settings...") {
-                appDelegate.openSettings()
+                appDelegate.runOpenSettingsCommand()
             }
             .keyboardShortcut(",")
+            CommandCenterMenuItem { appDelegate.openCommandCenter() }
             Button("Add App to Dock...") {
                 appDelegate.addApps()
             }
@@ -215,6 +231,18 @@ private struct WidgetsMenu: View {
     }
 }
 
+/// Shown only while the Command Center module is on.
+private struct CommandCenterMenuItem: View {
+    @ObservedObject private var status = CommandCenterStatus.shared
+    let open: () -> Void
+
+    var body: some View {
+        if status.isEnabled {
+            Button("Command Center", action: open)
+        }
+    }
+}
+
 /// Same wording as the native Dock's divider menu. The shortcut shown here
 /// is the global Cmd+Option+D hotkey.
 private struct HidingMenuItem: View {
@@ -255,6 +283,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hideHotKey: HotKey?
     private var settingsHotKey: HotKey?
     private var settingsHotKeyObserver: AnyCancellable?
+    private var commandCenter: CommandCenter?
+    private let permissions = PermissionGate()
+    private lazy var commands = CommandRegistry(permissions: permissions)
+    private lazy var modules = ModuleRegistry(commands: commands, permissions: permissions)
+    /// Apple's on-device model; an isolated launch can pick the fake (see `FakeLocalModelProvider.fromEnvironment`).
+    /// Server rows for Command Center; empty until a server search or Refresh.
+    private let localServers = LocalServerStore()
+    private let shortcutsService = ShortcutsService()
+    private let menuBarService = MenuBarItemsService()
+    private var menuBarReorder: MenuBarReorderService?
+    private var menuBarLayout: MenuBarLayoutService?
+    private var menuBarShelf: MenuBarShelf?
+    private(set) var menuBarTriggers: MenuBarTriggerService?
+    private var menuBarEnvironment: LiveMenuBarTriggerEnvironment?
+    private var menuBarAssertionSurface: AssertionShelfSurface?
+    @MainActor private lazy var menuBarLayoutFile = MenuBarSystemFiles.layoutGrant()
+    @MainActor private lazy var menuBarAppListFile = MenuBarSystemFiles.appListGrant()
+    private let intelligence = ModelRouter(provider: FakeLocalModelProvider.fromEnvironment() ?? AppleOnDeviceModelProvider())
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // An SPM executable has no bundle, so LSUIElement in Info.plist is
@@ -267,21 +313,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Menu-bar / edge-only: keep running when no titled windows are open
         // (otherwise AppKit may terminate a background `swift run` launch).
         ProcessInfo.processInfo.disableAutomaticTermination("portside dock")
-        if Bundle.main.bundleURL.pathExtension != "app" {
-            NSApp.applicationIconImage = AppIcon.image
-        }
+        NSApp.applicationIconImage = AppIcon.image
+        registerCommands()
         nativeDock.applyAtLaunch()
         BackgroundCursor.enable()
         let engine = DockEngine(dockModel: dockModel)
         dockEngine = engine
-        engine.onOpenSettings = { [weak self] in self?.openSettings() }
+        registerSwitcher(registry: engine.windowRegistry)
+        engine.onOpenSettings = { [weak self] in self?.runOpenSettingsCommand() }
         engine.start()
         agentNotch = AgentNotch(model: dockModel, widgets: engine.widgets)
         UpdateMonitor.shared.start(model: dockModel)
-        if dockModel.openSettingsOnLaunch { openSettings() }
+        if dockModel.openSettingsOnLaunch { runOpenSettingsCommand() }
         // The native Dock's own shortcut. If macOS's "Turn Dock hiding
         // on/off" shortcut is enabled it may take the keypress first.
-        hideHotKey = HotKey(keyCode: kVK_ANSI_D, modifiers: cmdKey | optionKey, name: "Cmd+Option+D") { [weak self] in
+        hideHotKey = HotKey(chord: .dockHiding, name: "Cmd+Option+D") { [weak self] in
             self?.toggleAutoHide()
         }
         // Re-register whenever Settings changes the chord (including Clear).
@@ -292,11 +338,205 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
     }
 
+    /// Menu bar entry. The global shortcut toggles it the same way.
+    func openCommandCenter() {
+        MainActor.assumeIsolated { commandCenter?.open() }
+    }
+
     private func registerSettingsHotKey(_ chord: HotkeyChord?) {
         settingsHotKey = nil
         guard let chord else { return }
         settingsHotKey = HotKey(chord: chord, name: "Open Settings \(chord.displayString)") { [weak self] in
-            self?.openSettings()
+            self?.runOpenSettingsCommand()
+        }
+    }
+
+    private func registerCommands() {
+        MainActor.assumeIsolated {
+            permissions.register(AccessibilityPermissionAdapter())
+            permissions.register(ScreenRecordingPermissionAdapter())
+            let core = PortsideCoreModule(
+                isStarting: { [weak self] in self?.dockEngine == nil },
+                openSettings: { [weak self] in self?.openSettings() },
+                openSettingsPane: { [weak self] tab in self?.openSettings(tab: tab) },
+                toggleDockHiding: { [weak self] in self?.toggleAutoHide() },
+                showAbout: { [weak self] in self?.showAbout() },
+                quit: { NSApp.terminate(nil) }
+            )
+            let sources = CommandCenterSources(
+                quicklinks: { [dockModel] in dockModel.commandCenterQuicklinks },
+                applications: CommandCenterAppIndex(),
+                runningApps: { [weak self] in
+                    (self?.dockEngine?.runningApps.apps ?? []).compactMap(CommandCenterApp.init(running:))
+                },
+                history: .shared,
+                servers: localServers,
+                portLookup: PortLookup(router: intelligence),
+                quickAnswers: QuickAnswers(),
+                snippets: { SnippetStore.shared.snippets },
+                shortcuts: shortcutsService,
+                menuBar: menuBarService,
+                files: FileIndexService.shared,
+                clipboard: ClipboardService.shared,
+                openWithApps: { [openWith = OpenWithApps()] path in openWith.apps(for: URL(fileURLWithPath: path)) }
+            )
+            let center = CommandCenter(commands: commands, moduleTitle: { [modules] namespace in
+                modules.modules.first { $0.id.rawValue == namespace }?.title
+            }, sources: sources)
+            commandCenter = center
+            let commandCenterModule = CommandCenterModule(
+                center: center,
+                chords: dockModel.$commandCenterHotkey.eraseToAnyPublisher(),
+                actions: .live(quicklinks: { [dockModel] in dockModel.commandCenterQuicklinks }, snippets: { SnippetStore.shared.snippets })
+            )
+            do {
+                try modules.register(core)
+                try modules.register(commandCenterModule)
+                try modules.register(IntelligenceModule(router: intelligence))
+                try modules.register(LocalServersModule(store: localServers, actions: .live))
+                try modules.register(ShortcutsModule(service: shortcutsService))
+                try modules.register(MenuBarModule(service: menuBarService))
+                let shelf = makeMenuBarShelf()
+                let environment = LiveMenuBarTriggerEnvironment(busy: { [weak self] in
+                        (self?.menuBarLayout?.isBusy ?? false) || (self?.menuBarReorder?.isBusy ?? false)
+                    }, editing: { [weak self] in
+                        self?.menuBarLayout?.isEditing ?? false
+                    })
+                menuBarEnvironment = environment
+                let triggers = MenuBarTriggerService(
+                    shelf: shelf,
+                    environment: environment,
+                    probe: LiveMenuBarEmptyAreaProbe()
+                )
+                menuBarTriggers = triggers
+                try modules.register(MenuBarShelfModule(shelf: shelf, triggers: triggers, settings: dockModel.$menuBarTriggers.eraseToAnyPublisher()))
+                let reorder = MenuBarReorderService()
+                menuBarReorder = reorder
+                try modules.register(MenuBarReorderModule(service: reorder))
+                let layout = MenuBarLayoutService(reorder: reorder, shelf: shelf)
+                menuBarLayout = layout
+                layout.persistAlwaysHidden = { [weak self] on in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        var next = self.dockModel.menuBarTriggers
+                        next.alwaysHiddenEnabled = on
+                        self.dockModel.setMenuBarTriggers(next)
+                    }
+                }
+                if shelf.hidesByMembership {
+                    layout.positionTable = MenuBarPositionTable(grant: menuBarLayoutFile)
+                }
+                layout.onGroupsChanged = { [weak self] in MainActor.assumeIsolated { self?.menuBarAssertionSurface?.groupsDidChange() } }
+                triggers.beforeReveal = { [weak self, weak layout] in
+                    MainActor.assumeIsolated {
+                        // The Portside Bar never puts the items back on the real bar.
+                        guard self?.dockModel.menuBarPresentation != .portsideBar else { return }
+                        layout?.restoreOrderBeforeReveal()
+                    }
+                }
+                layout.movesRealItems = { [weak self] in MainActor.assumeIsolated { self?.dockModel.menuBarTriggers.arrangement != .manual } }
+                try modules.register(MenuBarLayoutModule(service: layout))
+                try modules.register(ClipboardModule(service: ClipboardService.shared))
+                try modules.register(FilesModule(index: FileIndexService.shared, actions: .live))
+                modules.enableSaved(dockModel.modules, restricted: dockModel.restrictedMode)
+            } catch {
+                NSLog("portside: command registration failed: \(error)")
+            }
+        }
+    }
+
+    @MainActor private func makeMenuBarShelf() -> MenuBarShelf {
+        let onToggle: () -> Void = { [weak self] in MainActor.assumeIsolated { _ = self?.menuBarTriggers?.activate(.control) } }
+        let turnOff: () -> Void = { [weak self] in
+            // After the menu closes: disabling removes the control that ran it.
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.dockModel.setModuleEnabled(MenuBarShelfModule.moduleID, false)
+                self.modules.disable(MenuBarShelfModule.moduleID)
+            }
+        }
+        let usesAssertion = MenuBarAssertionOptIn.isEnabled()
+        let onAlwaysHidden: () -> Void = { [weak self] in MainActor.assumeIsolated { self?.menuBarTriggers?.toggleAlwaysHidden() } }
+        let available: () -> Bool = { [weak self] in MainActor.assumeIsolated { self?.menuBarTriggers?.alwaysHiddenAvailable ?? false } }
+        let controlSurface = StatusItemShelfSurface(onToggle: onToggle, turnOff: turnOff, dividerMode: usesAssertion, onAlwaysHidden: onAlwaysHidden, alwaysHiddenAvailable: available)
+        let surface: MenuBarShelfSurface
+        do {
+            // macOS 27 no longer reflows wide status items. Bridge or inputs
+            // missing leaves the bar as it is and says why.
+            controlSurface.extraMenuItems = { [weak self] in self?.menuBarLayout?.profileMenuItems() ?? [] }
+            let assertionSurface = AssertionShelfSurface(
+                base: controlSurface,
+                bridge: LiveMenuBarAssertionBridge(),
+                hidesByMembership: usesAssertion,
+                assignments: { MenuBarLayoutStore(defaults: .standard).assignments },
+                assign: { [weak self] bundle, section in MainActor.assumeIsolated { self?.menuBarLayout?.assignBundle(bundle, to: section) } },
+                newItemsSection: { [weak self] in MainActor.assumeIsolated { self?.dockModel.menuBarTriggers.newItemsSection ?? .visible } },
+                overflowAllowed: { [weak self] in MainActor.assumeIsolated { !(self?.menuBarLayout?.isEditing ?? false) } },
+                presentation: { [weak self] in MainActor.assumeIsolated { self?.dockModel.menuBarPresentation ?? .menuBar } },
+                barLocation: { [weak self] in MainActor.assumeIsolated { self?.dockModel.menuBarTriggers.barLocation ?? .dynamic } },
+                barLook: { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self else { return MenuBarOverflowPanel.Look() }
+                        return self.dockModel.menuBarTriggers.look.panelLook(dock: self.dockModel.look)
+                    }
+                },
+                emptyClickToggles: { [weak self] in MainActor.assumeIsolated { self?.dockModel.menuBarTriggers.emptyClick ?? false } },
+                dismissBar: { [weak self] in MainActor.assumeIsolated { _ = self?.menuBarTriggers?.activate(.control, action: .hide) } },
+                // From the trigger service, not the model: a setting's change
+                // is published before the model's own value updates.
+                method: { [weak self] in MainActor.assumeIsolated { self?.menuBarTriggers?.settings.hidingMethod ?? .standard } },
+                nativeHider: usesAssertion ? MenuBarNativeHider(grant: menuBarAppListFile) : nil,
+                developerHooks: usesAssertion && MenuBarAssertionOptIn.developerHooks(),
+                onToggle: onToggle,
+                turnOff: turnOff
+            )
+            assertionSurface.moveLegacyItem = { [weak self] id, section in
+                Task { @MainActor [weak self] in
+                    guard let layout = self?.menuBarLayout else { return }
+                    await layout.refresh()
+                    _ = await layout.drop(id, into: section)
+                }
+            }
+            assertionSurface.onDeveloperGrant = { [weak self] in
+                guard let self else { return }
+                if !self.menuBarLayoutFile.isGranted { self.menuBarLayoutFile.request() }
+                if !self.menuBarAppListFile.isGranted { self.menuBarAppListFile.request() }
+                MenuBarSystemFiles.dumpSchema([("layout", self.menuBarLayoutFile), ("appList", self.menuBarAppListFile)], to: "/tmp/portside-file-schema.json")
+            }
+            menuBarAssertionSurface = assertionSurface
+            surface = assertionSurface
+        }
+        let shelf = MenuBarShelf(surface: surface)
+        menuBarShelf = shelf
+        return shelf
+    }
+
+    /// After the engine exists, because the switcher is a client of its
+    /// window registry. Enabled the same way `enableSaved` enables the rest.
+    private func registerSwitcher(registry: WindowRegistry) {
+        MainActor.assumeIsolated {
+            var actions = SwitcherActions.live
+            actions.openSelf = { [weak self] in self?.runOpenSettingsCommand() }
+            let module = SwitcherModule(
+                switcher: AppSwitcher(registry: registry, actions: actions,
+                                      previews: WindowPreviewService(capturer: ScreenCaptureKitCapturer())),
+                chords: dockModel.$switcherHotkey.eraseToAnyPublisher(),
+                preferences: dockModel.switcherPreferences
+            )
+            do {
+                try modules.register(module)
+                if dockModel.modules.isEnabled(SwitcherModule.moduleID, required: false) {
+                    modules.enable(SwitcherModule.moduleID)
+                }
+            } catch {
+                NSLog("portside: switcher registration failed: \(error)")
+            }
+        }
+    }
+
+    func runOpenSettingsCommand() {
+        Task { @MainActor [commands] in
+            _ = await commands.execute(PortsideCoreModule.openSettingsCommand)
         }
     }
 
@@ -307,16 +547,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Clicking Portside's icon in the native Dock (it is there while
     /// Settings is open) brings Settings forward, like any app.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        openSettings()
+        runOpenSettingsCommand()
         return false
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         WindowFitter.releaseForExit(reason: "applicationWillTerminate")
         agentNotch?.stop()
+        MainActor.assumeIsolated { modules.stopAll() }
         UpdateMonitor.shared.stop()
         dockEngine?.stop()
         NativeDockController.restoreForExit(reason: "applicationWillTerminate")
+        CopyHandoff.relaunchIfNeeded()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -324,10 +566,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// A normal window, so Portside activates while it is open. The dock
-    /// panel itself stays non-activating.
-    func openSettings() {
+    /// panel itself stays non-activating. `tab` picks the pane first.
+    func openSettings(tab: SettingsTab? = nil) {
         guard let dockEngine else { return }
-        let controller = settings ?? SettingsWindowController(dockModel: dockModel, layout: dockEngine.layout, nativeDock: nativeDock, trash: dockEngine.trash, badges: dockEngine.badges, widgets: dockEngine.widgets)
+        let controller = settings ?? MainActor.assumeIsolated {
+            SettingsWindowController(
+                dockModel: dockModel, layout: dockEngine.layout, nativeDock: nativeDock, trash: dockEngine.trash,
+                badges: dockEngine.badges, widgets: dockEngine.widgets,
+                integrations: IntegrationSettings(registry: modules, permissions: permissions, model: dockModel, intelligence: intelligence, menuReorder: menuBarReorder, menuLayout: menuBarLayout, menuFiles: menuBarShelf?.hidesByMembership == true ? (menuBarLayoutFile, menuBarAppListFile) : nil, menuTriggers: menuBarTriggers)
+            )
+        }
         controller.onActivationPolicyChanged = { [weak dockEngine] in dockEngine?.activationPolicyChanged() }
         controller.onKeyFocusChanged = { [weak dockEngine] focused in
             dockEngine?.settingsKeyFocusChanged(focused)
@@ -336,7 +584,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             dockEngine?.reservation.usableFrame(of: screen) ?? screen.visibleFrame
         }
         settings = controller
-        controller.show()
+        if let tab { controller.show(tab: tab) } else { controller.show() }
     }
 
     /// The standard About panel with the brand icon, the version from

@@ -10,6 +10,7 @@ Portside becomes a native control center for launching, switching, development, 
 - [Architecture and permission boundaries](ARCHITECTURE_2_0.md): shared services, local inference, data lifecycle, feasibility decisions.
 - [Validation and release gates](TEST_MATRIX_2_0.md): automated checks, physical Mac checks, performance budgets.
 - [REA investigation playbook](REA_RESEARCH_2_0.md): study existing implementations and turn evidence into original Portside behavior.
+- [Baseline record](BASELINE_2_0.md): P2-CORE-01 test seam, probe inventory, hand-check procedures and run results.
 
 This extends [PLAN.md](PLAN.md), which retains the original A-F milestones, Dock parity, and historical decisions. [CHECKLIST.md](CHECKLIST.md) remains the source of truth for shipped work and outstanding hand checks. [FEATURES.md](FEATURES.md) describes only implemented features. New tickets use `P2-*` planning IDs, not GitHub issue numbers. Create tracker issues as implementation begins and link them beside those IDs.
 
@@ -35,13 +36,32 @@ These are dependency gates, not calendar promises. Optional research and adapter
 | 1C: everyday tools | Scoped file search, clipboard/snippets, calculator, emoji, Shortcuts | Command Center and explicit data scopes | Optional P2-CMD-03 through 07; delay any tool that threatens core quality |
 | 2: developer utilities | Find port owners, open local servers, safe stop, project grouping | Command Center and process service | P2-DEV-01 through 05; identity revalidation and refusal tests pass |
 | 2 + 0.5 integration | “What's using port 5173?” returns verified native results | P2-AI-02, P2-DEV-02, P2-CMD-02 | P2-AI-03; first end-to-end AI slice, read-only by default |
-| 3: menu bar | Searchable supported items; hiding/reordering only if proven recoverable | P2-REA-03 and menu bar feasibility spike | Conditional 2.1 scope; publish support matrix or ship discovery-only |
+| 3: menu bar | Searchable supported items; hiding/reordering only if proven recoverable (spike: hide/reveal and quit/SIGKILL recovery observed on one Mac, see the [report](research/P2-MENU-01-hide-recovery-spike.md)) | P2-REA-03 and menu bar feasibility spike | Conditional 2.1 scope; publish support matrix or ship discovery-only. After MENU-04, P2-MENU-05 to 14 extend the module toward the documented Thaw feature set (see below) |
 | 4: workspaces/windows | Develop, Studio, Everyday layouts; explicit restore and undo | Shared windows/commands/settings | Suggested 2.2; partial failures visible, no automatic layout surprises |
 | 5: studio companion | Audio switching, project/export shelves, optional Live bridge | Scoped files, workspaces, audio events | Suggested 2.3; bridge disconnect cannot disrupt Live; recording stays quiet |
 | 6: advanced supervision | Reliable agent attention inbox, checkpoints, approved bounded plans | Existing agent discovery, local AI, verified commands | Suggested 2.4+; unsupported provider actions remain jump-to-session |
 | 7: optional extensions | Capability-scoped command providers in isolated helpers | Stable native contracts and permission gate | Separate opt-in milestone after threat model and crash containment |
 
 **2.0 alpha:** Phase 0, Apple availability/typed intents, native launcher, title/icon switcher. **2.0 beta:** previews, safe developer manager, read-only AI port lookup; selected productivity tools. **2.0 stable:** those completed slices pass the signed-app matrix, recovery, accessibility, and work-Mac gates. Cmd+Tab replacement is conditional; the alternate-shortcut switcher is a valid release fallback. Optional LM Studio/Ollama, MLX, semantic indexing, full menu bar parity, studio control, and extensions are not blockers for 2.0.
+
+### Phase 3 extension: Thaw feature-set target
+
+Decision (2026-11-08): the documented feature set of Thaw is the minimum functionality target for the Menu Bar module. Portside implements it independently from public documentation and Apple APIs; no reuse of names or assets, and no Thaw code copied (it is GPL-3.0). Revised 2026-11-09 at the maintainer's direction: Thaw 3.0.0-alpha.13 was reverse engineered and its source read to match its menu bar hiding behavior; see thaw-simple-mode-analysis.md. Existing MENU-01 to MENU-04 scope, status, gates and release priority are unchanged. The tickets below come after MENU-04, are conditional 2.1 scope, and do not block Phases 4 to 7 or 2.0 stable. Details, dependencies, acceptance and feasibility gates are in the [implementation plan](IMPLEMENTATION_PLAN_2_0.md#phase-3-extension-thaw-feature-set-target-menu-05-to-menu-14).
+
+| Ticket | Capability (user-visible) | Main feasibility risk |
+| --- | --- | --- |
+| P2-MENU-05 | (prototype built, hand gate open) Visible, Hidden and Always Hidden sections; layout editor with a Move to menu and drag between sections, applied on demand | Per-item movement beyond MENU-04's validated set; items clipped under the notch |
+| P2-MENU-06 | (built, hand gate open; click, hotkey, empty-bar click, scroll and rehide on, hover optional) Reveal by click, hotkey, optional hover/scroll on empty bar; automatic rehide | Secure input; hover trigger near menus and notch |
+| P2-MENU-07 | (built, hand gate open) Portside Bar: hidden items in a panel below the menu bar | Clicking items that are hidden or covered; live previews need Screen Recording |
+| P2-MENU-08 | Global hotkeys, open-by-key and per-item open | Secure input; shortcut conflicts |
+| P2-MENU-09 | (built, hand gate open) Item groups and saved profiles | Applying a profile on a crowded bar |
+| P2-MENU-10 | Hide/show app menus and Zen Mode | No known public API for app menus; needs its own spike |
+| P2-MENU-11 | Menu bar appearance (tint, gradient, shadow, border, shape) | Overlay window level with notch, full screen and Spaces |
+| P2-MENU-12 | Item spacing | Requires writing a global defaults domain; needs a decision record |
+| P2-MENU-13 | `portside://` URLs, Shortcuts actions, Control Center control | Packaging of App Intents from a SwiftPM executable |
+| P2-MENU-14 | Settings page, reset, support matrix per OS/display, manager coexistence | macOS 27 menu bar order access and its permission |
+
+Every ticket keeps the shared recovery rules: fail-open at launch, an always-reachable kill switch, native bar restored on quit or `kill -9`, sleep/wake/display change reveal, no writes to other apps' preferences, off by default.
 
 ## Consistent UX across surfaces
 
@@ -76,7 +96,7 @@ Use one set of entities and actions across Dock, Command Center, switcher, and n
 | --- | --- | --- |
 | Raycast / Floe | Native launcher, command actions, quicklinks, files, selected productivity tools | Unmodified Raycast extensions, hosted AI, universal compatibility |
 | PortKiller | Inspect listeners, project grouping, safe terminate | Privileged processes, arbitrary process-tree kills, automatic cleanup |
-| Bartender | Feasibility report, supported-item search/activation | Hide/reorder/shelf only where proven; private-API parity is not assumed |
+| Bartender and Thaw | Feasibility report, supported-item search/activation; Thaw's documented feature set is the minimum target for the Menu Bar module (own implementation, no REA, no Thaw source) | Each feature only where proven and recoverable; private-API parity is not assumed; a failed gate removes that ticket, not the module |
 | Window utilities | Specific-window activation, basic snap/move/restore | Arbitrary Spaces assignment, invisible/minimized-window capture guarantees |
 | Studio utilities | System audio selection, local shelves, read-only Live state | Hardware-specific preamp/routing controls, editing unsaved Live sets |
 
@@ -85,3 +105,7 @@ Use [REA](REA_RESEARCH_2_0.md) to study specific behavior where source/docs do n
 ## Maintaining the roadmap
 
 Each implementation PR names ticket IDs, records evidence and test limitations, and updates the existing checklist. Mark tickets done only when their acceptance criteria and relevant test rows pass. Update the current architecture/data docs as code lands; these proposal documents must not imply new types or keys already exist. Keep failed spikes and support limitations linked so later contributors do not repeat them.
+
+### Menu bar parity audit, 2026-11-09
+
+[Interaction audit](research/P2-MENU-06-interaction-audit.md) lists the defects found and their follow-up. MENU-06 remains experimental. Thaw hide, reveal and rehide rules plus groups, saved order and profiles are built and most were run natively on one notched macOS 27 display; hover, scroll, real Command-drag drops, automatic profile switching, external displays and macOS 26 remain open.

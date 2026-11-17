@@ -60,14 +60,26 @@ These are proposed budgets to measure in CORE-01, not claims about current perfo
 
 ## Execution procedure
 
-Follow [BUILD.md](BUILD.md) and [AGENTS.md](../AGENTS.md). Run `source scripts/swift-env.sh`, then `swift build`. Never run SwiftPM commands concurrently against one `.build`. CORE-01 adds the test target; after that, `swift test` is required for changed contracts. Before then use existing debug probes where relevant; do not claim a nonexistent test suite passed.
+Follow [BUILD.md](BUILD.md) and [AGENTS.md](../AGENTS.md). Run `source scripts/swift-env.sh`, then `swift build`. Never run SwiftPM commands concurrently against one `.build`. CORE-01 added the test target ([baseline record](BASELINE_2_0.md)); `CFFIXED_USER_HOME=/tmp/<dir> swift test` is required for changed contracts. Where no test covers a contract, use the existing debug probes and do not claim a test passed.
 
 For launch smoke, use a fresh `CFFIXED_USER_HOME=/tmp/<unique-test-directory>` with a deliberately seeded `dock.json`: left/right edge, native Dock hiding off, window reservation off, widgets/usage/notch/automatic updates off. Verify the file's exact keys against current DockModel. Use `swift run --skip-build portside`, confirm survival, then terminate only that test process with SIGTERM. A temporary home is not a substitute for disabling network/permission-triggering modules and does not sandbox all OS state. Never change `/Applications`, other app preferences or daily-use Dock settings while testing.
 
-Existing focused debug probes include `--check-notch` and `--check-audio-levels` (without `--capture` unless an actual tap test is explicitly intended). UI probes and physical hover/click remain separate. Stable signing identity is necessary for realistic TCC tests; ad hoc permission resets are not proof of release behavior. Crash/kill and signed-update installation tests belong in a disposable account or separately agreed test setup.
+Existing focused debug probes include `--check-notch`, `--check-windows` and `--check-audio-levels` (without `--capture` unless an actual tap test is explicitly intended). UI probes and physical hover/click remain separate. Stable signing identity is necessary for realistic TCC tests; ad hoc permission resets are not proof of release behavior. Crash/kill and signed-update installation tests belong in a disposable account or separately agreed test setup.
 
 ## Release decision and result record
 
 Alpha requires T-01 through T-06 and T-11/T-13 for enabled slices. Beta adds T-07/T-09/T-10/T-12/T-14. Cmd+Tab interception additionally requires T-08; menu bar hiding requires T-15 regardless of milestone. Studio requires T-17 through T-19; advanced actions require T-20/T-21; extensions require T-22. Stable requires applicable rows on both supported OS versions, T-02/T-23, accessibility and restricted-work-Mac coverage, and no unresolved data-loss, consent-bypass or input-trapping defect.
 
 Record each run as: commit, planning IDs, exact environment, feature flags, test row, steps/fixture, expected, actual, pass/fail/not-run, evidence path, remaining limitation and owner. Synthetic pass does not close a physical test. Missing machines, permissions or reference artifacts are “not run”, never assumed pass. Rollback means disable the affected module and restore compatible saved settings; do not erase user data or remove their prior utility until replacement coverage is proven.
+
+## Menu bar compatibility before Top Shelf
+
+Use the same candidate commit on both OS versions. Record the OS build, app commit, signing identity type, installation path, display setup, Accessibility state and first failing action. Quit any other menu bar manager for the first pass.
+
+| Setup | Verify on hardware |
+| --- | --- |
+| macOS 26 work Mac, external display | Launch the signed app from Applications. In Settings > Menu Bar, enable the shelf and click the eye twice. Put a known third-party icon left of the divider and verify it disappears and returns. Confirm the shortcut works and the shelf controls remain available with Accessibility denied. With Accessibility granted, move an icon in Layout and test Always Hidden with Option-click. |
+| macOS 27, built-in notch and external display | Install the signed app in `/Applications`. Move the same type of app to Hidden and verify hide, reveal, Always Hidden, and opening from Portside Bar. Confirm layout access opens the correct file and Native hiding recovers after disable or quit. |
+| Both | Check that the eye stays reachable on a crowded bar, then verify reveal or recovery after sleep/wake, display connect/disconnect, disabling the shelf, quit and force quit. Record failures by feature and display. |
+
+Top Shelf follows the two hardware passes. The macOS 26 check covers the separator shelf and layout. Portside Bar and Groups now use the separator surface on macOS 26 and need hardware verification. Assertion-based hiding and system-file controls remain macOS 27 features.

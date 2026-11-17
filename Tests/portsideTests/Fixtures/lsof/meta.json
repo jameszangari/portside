@@ -1,0 +1,10 @@
+{
+  "no-listeners-exit1.f": {
+    "exit": 1,
+    "stderr": ""
+  },
+  "denied-stderr.f": {
+    "exit": 1,
+    "stderr": "lsof: WARNING: can't stat() file system /Volumes/Example\n      Output information may be incomplete.\n"
+  }
+}

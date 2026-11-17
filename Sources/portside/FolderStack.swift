@@ -50,6 +50,8 @@ struct FolderStack: Hashable, Identifiable {
     var showHidden = false
     /// Tile shows the folder's own icon instead of a mini grid of contents.
     var showAsFolder = false
+    /// Columns and rows of the open grid (Grid view only).
+    var grid = GridShape()
     /// Server URL (smb://, afp://, nfs://) of the network share the folder
     /// lives on. Nil for local folders. Clicking the tile while the share is
     /// not mounted mounts it again, like the native Dock.
@@ -110,7 +112,7 @@ struct FolderStack: Hashable, Identifiable {
 
 extension FolderStack: Codable {
     private enum CodingKeys: String, CodingKey {
-        case id, path, itemOrder, view, sort, foldersFirst, showHidden, showAsFolder, remountURL, linkURL
+        case id, path, itemOrder, view, sort, foldersFirst, showHidden, showAsFolder, grid, remountURL, linkURL
     }
 
     init(from decoder: Decoder) throws {
@@ -124,6 +126,7 @@ extension FolderStack: Codable {
         foldersFirst = (try? c.decodeIfPresent(Bool.self, forKey: .foldersFirst)) ?? false
         showHidden = (try? c.decodeIfPresent(Bool.self, forKey: .showHidden)) ?? false
         showAsFolder = (try? c.decodeIfPresent(Bool.self, forKey: .showAsFolder)) ?? false
+        grid = (try? c.decodeIfPresent(GridShape.self, forKey: .grid)) ?? GridShape()
         remountURL = try? c.decodeIfPresent(String.self, forKey: .remountURL)
         linkURL = try? c.decodeIfPresent(String.self, forKey: .linkURL)
     }
@@ -140,6 +143,7 @@ extension FolderStack: Codable {
         if foldersFirst { try c.encode(true, forKey: .foldersFirst) }
         if showHidden { try c.encode(true, forKey: .showHidden) }
         if showAsFolder { try c.encode(true, forKey: .showAsFolder) }
+        if !grid.isAutomatic { try c.encode(grid, forKey: .grid) }
         try c.encodeIfPresent(remountURL, forKey: .remountURL)
         try c.encodeIfPresent(linkURL, forKey: .linkURL)
     }

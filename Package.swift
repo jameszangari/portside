@@ -13,7 +13,28 @@ let package = Package(
         // String form: .v26 needs PackageDescription 6.2; tools-version stays 5.10.
         .macOS("26.0")
     ],
+    products: [
+        .executable(name: "portside", targets: ["portside"]),
+        // Loaded into /usr/bin/perl at run time, never linked; see
+        // Sources/MediaRemoteAdapter/README.md.
+        .library(name: "MediaRemoteAdapter", type: .dynamic, targets: ["MediaRemoteAdapter"])
+    ],
     targets: [
+        .target(
+            name: "MediaRemoteAdapter",
+            path: "Sources/MediaRemoteAdapter",
+            exclude: ["LICENSE", "README.md"],
+            sources: ["src"],
+            publicHeadersPath: "include",
+            cSettings: [
+                .headerSearchPath("src")
+            ],
+            linkerSettings: [
+                .linkedFramework("Foundation"),
+                .linkedFramework("AppKit"),
+                .linkedFramework("UniformTypeIdentifiers")
+            ]
+        ),
         .target(
             name: "AppLoginItemList",
             path: "Sources/AppLoginItemList",
@@ -32,6 +53,14 @@ let package = Package(
             linkerSettings: [
                 .unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", infoPlist])
             ]
+        ),
+        // Run with CFFIXED_USER_HOME set (see docs/BASELINE_2_0.md): model
+        // setters persist to dock.json under the home folder.
+        .testTarget(
+            name: "portsideTests",
+            dependencies: ["portside"],
+            path: "Tests/portsideTests",
+            exclude: ["Fixtures"]
         )
     ]
 )

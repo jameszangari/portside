@@ -1,0 +1,16 @@
+{
+  "savedByVersion" : "99.0.0",
+  "settingsSchema" : 99,
+  "edge" : "hologram",
+  "iconStyle" : "liquid",
+  "iconSize" : 52,
+  "hideNativeDock" : false,
+  "entries" : [
+    { "type" : "app", "app" : { "bundleIdentifier" : "com.apple.Safari", "path" : "/Applications/Safari.app" } }
+  ],
+  "modules" : {
+    "commandCenter" : { "enabled" : true, "rankingModel" : { "version" : 7, "weights" : [ 0.5, 0.25 ] } },
+    "studio" : { "enabled" : true, "shelves" : [ { "id" : "a", "items" : [ ] } ] }
+  },
+  "workspaces" : [ { "name" : "Develop", "apps" : [ "com.apple.Terminal" ] } ]
+}

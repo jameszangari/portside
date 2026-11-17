@@ -21,9 +21,15 @@ enum AgentSessionDiscovery {
             return []
         }
         var next: [AgentSession] = []
-        next.append(contentsOf: t3Sessions())
+        let t3 = runningApp(ofBundleIDs: ["com.t3tools.t3code"])
+        // The beta shares the bundle ID; its name ("T3 Code (Beta)") matches
+        // what the hook sessions in it report.
+        next.append(contentsOf: t3Sessions(database: t3Database, hostPID: t3?.processIdentifier, hostName: t3?.localizedName ?? "T3 Code"))
         let coveredProjects = Set((existing + next).compactMap(\.project))
-        next.append(contentsOf: openCodeSessions(excludingProjects: coveredProjects))
+        let openCodePID = openCodeServerPID() ?? t3?.processIdentifier
+        let openCodeHost = openCodePID.flatMap { AgentFocus.hostApp(of: $0)?.localizedName } ?? "OpenCode"
+        next.append(contentsOf: openCodeSessions(database: openCodeDatabase, excludingProjects: coveredProjects,
+                                                 hostPID: openCodePID, hostName: openCodeHost))
         return next
     }
 
@@ -38,9 +44,9 @@ enum AgentSessionDiscovery {
         "running", "waiting", "queued", "starting", "preparing"
     ]
 
-    private static func t3Sessions() -> [AgentSession] {
-        guard FileManager.default.fileExists(atPath: t3Database.path) else { return [] }
-        let hostPID = pid(ofBundleIDs: ["com.t3tools.t3code"])
+    /// Internal for tests, which pass a fixture database.
+    static func t3Sessions(database: URL, hostPID: pid_t?, hostName: String) -> [AgentSession] {
+        guard FileManager.default.fileExists(atPath: database.path) else { return [] }
         // Read through the WAL so a busy writer does not block us; ignore lock failures.
         // T3 stores ISO-8601 (`2026-11-04T04:40:51.869Z`). Normalize before
         // comparing to SQLite's `datetime('now')` (`2026-11-04 04:40:51`).
@@ -48,10 +54,12 @@ enum AgentSessionDiscovery {
         SELECT r.run_id, r.thread_id, r.provider, r.status, r.requested_at, r.completed_at,
                t.title,
                json_extract(t.payload_json, '$.worktreePath') AS worktree,
-               p.worktree_path
+               p.worktree_path,
+               pp.workspace_root
         FROM orchestration_v2_projection_runs r
         LEFT JOIN orchestration_v2_projection_threads t ON t.thread_id = r.thread_id
         LEFT JOIN projection_threads p ON p.thread_id = r.thread_id
+        LEFT JOIN projection_projects pp ON pp.project_id = coalesce(t.project_id, p.project_id)
         WHERE t.deleted_at IS NULL
           AND (
             r.status IN ('running','waiting','queued','starting','preparing')
@@ -70,7 +78,7 @@ enum AgentSessionDiscovery {
         LIMIT 40;
         """
         var rows: [[String: String]] = []
-        let status = query(sql, database: t3Database) { rows.append($0) }
+        let status = query(sql, database: database) { rows.append($0) }
         if status != SQLITE_OK {
             log.error("t3 agents: sqlite \(status)")
             return []
@@ -83,7 +91,10 @@ enum AgentSessionDiscovery {
             guard !thread.isEmpty, seenThreads.insert(thread).inserted else { continue }
             let providerID = row["provider"] ?? "unknown"
             let statusName = row["status"] ?? ""
-            let worktree = firstNonEmpty(row["worktree"], row["worktree_path"])
+            // A thread in the project's own folder has no worktree path; its
+            // project's root is the folder its hook session reports, so the
+            // two merge instead of showing twice.
+            let worktree = firstNonEmpty(row["worktree"], row["worktree_path"], row["workspace_root"])
             let project = worktree.map { URL(fileURLWithPath: $0).lastPathComponent }
                 .flatMap { $0.isEmpty ? nil : $0 }
             let updated = parseISO8601(row["completed_at"] ?? "")
@@ -100,7 +111,7 @@ enum AgentSessionDiscovery {
                 ended: false,
                 updated: updated,
                 project: project,
-                host: "T3 Code",
+                host: hostName,
                 focusBundleIDs: ["com.t3tools.t3code"]
             ))
         }
@@ -114,10 +125,9 @@ enum AgentSessionDiscovery {
             .appendingPathComponent(".local/share/opencode/opencode.db")
     }
 
-    private static func openCodeSessions(excludingProjects: Set<String>) -> [AgentSession] {
-        guard FileManager.default.fileExists(atPath: openCodeDatabase.path) else { return [] }
-        let hostPID = openCodeServerPID()
-            ?? pid(ofBundleIDs: ["com.t3tools.t3code"])
+    /// Internal for tests, which pass a fixture database.
+    static func openCodeSessions(database: URL, excludingProjects: Set<String>, hostPID: pid_t?, hostName: String) -> [AgentSession] {
+        guard FileManager.default.fileExists(atPath: database.path) else { return [] }
         // Busy when time_busy is set and newer than time_idle (or idle is null).
         // Also keep recently idled sessions so the notch can show "Finished".
         let sql = """
@@ -134,7 +144,7 @@ enum AgentSessionDiscovery {
         LIMIT 30;
         """
         var rows: [[String: String]] = []
-        let status = query(sql, database: openCodeDatabase) { rows.append($0) }
+        let status = query(sql, database: database) { rows.append($0) }
         if status != SQLITE_OK {
             log.error("opencode agents: sqlite \(status)")
             return []
@@ -153,12 +163,6 @@ enum AgentSessionDiscovery {
             let updatedMs = Int64(row["time_updated"] ?? "")
                 ?? idle ?? busy
             let updated = Date(timeIntervalSince1970: TimeInterval(updatedMs) / 1000)
-            let hostName: String = {
-                if let app = hostPID.flatMap({ AgentFocus.hostApp(of: $0) }) {
-                    return app.localizedName ?? "OpenCode"
-                }
-                return "OpenCode"
-            }()
             sessions.append(AgentSession(
                 id: "opencode:\(id)",
                 provider: AgentProvider.named("opencode"),
@@ -226,10 +230,8 @@ enum AgentSessionDiscovery {
         } ?? nil
     }
 
-    private static func pid(ofBundleIDs ids: [String]) -> pid_t? {
-        NSWorkspace.shared.runningApplications
-            .first { app in ids.contains(where: { app.bundleIdentifier == $0 }) }?
-            .processIdentifier
+    private static func runningApp(ofBundleIDs ids: [String]) -> NSRunningApplication? {
+        NSWorkspace.shared.runningApplications.first { app in ids.contains(where: { app.bundleIdentifier == $0 }) }
     }
 
     /// PID from T3's OpenCode server registry, else any live `opencode-servers` entry.

@@ -67,6 +67,15 @@ final class IconCache: ObservableObject {
         themeObserver = IconThemeObserver { [weak self] in self?.dropAll(reason: "system icon style changed") }
     }
 
+    /// Portside's own icon everywhere: its tile, Settings, alerts, the Dock tile.
+    func setAppIcon(_ choice: AppIconChoice) {
+        guard choice != AppIcon.choice else { return }
+        AppIcon.choice = choice
+        AppIcon.applyToDockTile()
+        itemLogger.info("app icon \(choice.rawValue, privacy: .public)")
+        generation += 1
+    }
+
     func setStyle(_ newStyle: IconStyle) {
         guard newStyle != style else { return }
         style = newStyle
@@ -76,7 +85,8 @@ final class IconCache: ObservableObject {
     private func dropAll(reason: String) {
         itemLogger.info("\(reason, privacy: .public), dropping \(self.cache.count) icons")
         cache.removeAll()
-        AppIcon.invalidateSystemIcon()
+        // System's icon follows light and dark mode.
+        AppIcon.applyToDockTile()
         generation += 1
     }
 
@@ -204,6 +214,7 @@ struct PortsideTileView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Portside")
             .accessibilityAddTraits(.isButton)
+            .accessibilityAction { onOpenSettings() }
             .dockHoverTarget(id: Self.hoverID, title: "Portside")
             // Same AppKit menu path as app tiles (whole magnified tile).
             .appKitContextMenu(edge: edge, hold: hold, magnifyID: Self.hoverID) {
@@ -232,7 +243,7 @@ struct PortsideTileView: View {
     }
 
     private var icon: some View {
-        Image(nsImage: AppIcon.image(points: size, matchSystem: icons.style == .matchSystem))
+        Image(nsImage: AppIcon.image(points: size))
             .resizable()
             .interpolation(.high)
             .frame(width: size, height: size)
@@ -267,7 +278,13 @@ struct DockItemView: View {
 
     var body: some View {
         tile
+            // One element per tile: VoiceOver reads the name, badge and
+            // state, and its default action opens the app like a click.
+            .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityTitle)
+            .accessibilityValue(accessibilityState)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { open(flags: []) }
         .dockHoverTarget(id: app.id, title: app.displayName)
         .appKitContextMenu(edge: edge, hold: hold, magnifyID: app.id) {
             AppTileMenu.build(.init(app: app, running: running, isPinned: isPinned, dockModel: dockModel))
@@ -279,6 +296,23 @@ struct DockItemView: View {
             return "\(app.displayName), \(badge)"
         }
         return app.displayName
+    }
+
+    private var accessibilityState: String {
+        guard running != nil else { return isPinned ? "" : "not running" }
+        return isHidden ? "running, hidden" : "running"
+    }
+
+    private func open(flags: NSEvent.ModifierFlags) {
+        TileClick.perform(app, running: running, flags: flags) { afterOpen in
+            if running == nil && isPinned {
+                bouncer.launch(app, size: size, afterOpen: afterOpen)
+            } else {
+                AppLauncher.open(app, running: running) { result, error in
+                    if error == nil { afterOpen?(result) }
+                }
+            }
+        }
     }
 
     /// Icon plus running dot. The dot sits between the icon and the screen
@@ -311,18 +345,8 @@ struct DockItemView: View {
             .dockBadge(dockModel.showBadges ? badges.badge(for: app) : nil, iconSize: size, style: dockModel.badgeStyle)
             .activityChip(running == nil ? nil : activity.activity(for: app), iconSize: size)
             .contentShape(Rectangle())
-            .menuHold(hold) {
-                // Modifier state at click time; a tap gesture has no event.
-                TileClick.perform(app, running: running, flags: NSEvent.modifierFlags) { afterOpen in
-                    if running == nil && isPinned {
-                        bouncer.launch(app, size: size, afterOpen: afterOpen)
-                    } else {
-                        AppLauncher.open(app, running: running) { result, error in
-                            if error == nil { afterOpen?(result) }
-                        }
-                    }
-                }
-            }
+            // Modifier state at click time; a tap gesture has no event.
+            .menuHold(hold) { open(flags: NSEvent.modifierFlags) }
             // Outside the gestures, so clicks follow the magnified icon.
             .magnifiedIcon(id: app.id)
     }

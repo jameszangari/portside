@@ -147,7 +147,8 @@ final class WidgetStore: ObservableObject {
     init(dockModel: DockModel) {
         self.dockModel = dockModel
         cancellable = dockModel.$widgetKinds.combineLatest(dockModel.$showAgentNotch, dockModel.$agentNotchSettings).sink { [weak self] kinds, notch, settings in
-            self?.sync(kinds, notch: notch, usage: settings.showUsage, media: settings.showMedia)
+            self?.sync(kinds, notch: notch, usage: settings.showUsage, media: settings.showMedia,
+                       shelf: Self.shelfKinds(settings))
         }
     }
 
@@ -155,14 +156,33 @@ final class WidgetStore: ObservableObject {
         activeHosts.first { $0.id == kind }?.widget
     }
 
-    private func sync(_ kinds: [String], notch: Bool, usage: Bool, media: Bool) {
+    /// What the Notch Shelf reads while it is on: its Widgets slots, and
+    /// the battery, weather and calendar behind its alerts (SHELF-07).
+    static func shelfKinds(_ settings: AgentNotchSettings) -> [String] {
+        var kinds = settings.shelfPages.isOn(.widgets)
+            ? [settings.shelfLeadingWidget, settings.shelfTrailingWidget].compactMap(\.widgetKind) : []
+        if settings.alertBattery { kinds.append(BatteryWidget.kind) }
+        if settings.alertWeather { kinds.append(WeatherWidget.kind) }
+        if settings.meetingMinutes > 0 { kinds.append(CalendarWidget.kind) }
+        return kinds
+    }
+
+    /// A running host, in the dock or not (the notch and its shelf).
+    func host(_ kind: String) -> WidgetHost? {
+        activeHosts.first { $0.id == kind }
+    }
+
+    /// `shelf`: what the Notch Shelf's Widgets page slots read, run while it is on.
+    private func sync(_ kinds: [String], notch: Bool, usage: Bool, media: Bool, shelf: [String]) {
         var extras: [String] = []
         if notch {
             extras.append(AgentStatusWidget.kind)
             if usage { extras.append(UsageWidget.kind) }
             if media { extras.append(NowPlayingWidget.kind) }
+            extras += shelf
         }
-        let extra = extras.filter { !kinds.contains($0) }
+        var seen = Set(kinds)
+        let extra = extras.filter { seen.insert($0).inserted }
         var next: [WidgetHost] = []
         for kind in kinds + extra {
             if let existing = activeHosts.first(where: { $0.id == kind }) {

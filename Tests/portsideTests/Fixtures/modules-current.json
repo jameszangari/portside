@@ -1,0 +1,20 @@
+{
+  "savedByVersion" : "1.8.0",
+  "settingsSchema" : 1,
+  "edge" : "right",
+  "iconSize" : 44,
+  "hideNativeDock" : false,
+  "entries" : [
+    { "type" : "app", "app" : { "bundleIdentifier" : "com.apple.finder", "path" : "/System/Library/CoreServices/Finder.app" } }
+  ],
+  "modules" : {
+    "portside" : { "enabled" : false },
+    "commandCenter" : {
+      "enabled" : true,
+      "hotkey" : "option-space",
+      "recent" : { "limit" : 20, "pinned" : [ "portside.openSettings" ] }
+    },
+    "windowSwitcher" : { "enabled" : false, "previews" : true }
+  },
+  "laterTopLevel" : { "kept" : true }
+}

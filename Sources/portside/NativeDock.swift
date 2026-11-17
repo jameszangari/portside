@@ -35,6 +35,28 @@ enum NativeDock {
 
     static let logger = Logger(subsystem: "com.james.portside", category: "NativeDock")
 
+    /// Everything that reaches outside the process. Tests swap in an
+    /// in-memory domain, a fake restart and a temporary backup folder, so
+    /// they never touch the real `com.apple.dock`.
+    struct System {
+        var read: (String) -> CFPropertyList?
+        /// nil deletes the key.
+        var write: (String, CFPropertyList?) -> Void
+        var synchronize: () -> Bool
+        var restartDock: () throws -> Void
+        var supportDirectory: () -> URL
+
+        static let live = System(
+            read: { CFPreferencesCopyAppValue($0 as CFString, NativeDock.domain) },
+            write: { CFPreferencesSetAppValue($0 as CFString, $1, NativeDock.domain) },
+            synchronize: { CFPreferencesAppSynchronize(NativeDock.domain) },
+            restartDock: NativeDock.killDock,
+            supportDirectory: { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first! }
+        )
+    }
+
+    nonisolated(unsafe) static var system = System.live
+
     // MARK: - Errors
 
     enum Failure: LocalizedError {
@@ -182,8 +204,7 @@ enum NativeDock {
     }
 
     static var backupURL: URL {
-        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return directory
+        system.supportDirectory()
             .appendingPathComponent("com.james.portside")
             .appendingPathComponent("native-dock-backup.json")
     }
@@ -221,7 +242,7 @@ enum NativeDock {
     // MARK: - Preferences
 
     static func read(_ key: String) throws -> Value? {
-        guard let object = CFPreferencesCopyAppValue(key as CFString, domain) else { return nil }
+        guard let object = system.read(key) else { return nil }
         do {
             return try Value(object)
         } catch {
@@ -231,19 +252,21 @@ enum NativeDock {
 
     /// nil deletes the key.
     private static func write(_ key: String, _ value: Value?) throws {
-        CFPreferencesSetAppValue(key as CFString, try value?.propertyList(), domain)
+        system.write(key, try value?.propertyList())
         logger.info("write \(key, privacy: .public) = \(value?.description ?? "(deleted)", privacy: .public)")
     }
 
     private static func synchronize() throws {
-        guard CFPreferencesAppSynchronize(domain) else {
+        guard system.synchronize() else {
             logger.error("CFPreferencesAppSynchronize failed")
             throw Failure.synchronize
         }
     }
 
+    private static func restartDock() throws { try system.restartDock() }
+
     /// The Dock only rereads these keys at launch. launchd restarts it.
-    private static func restartDock() throws {
+    fileprivate static func killDock() throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
         process.arguments = ["Dock"]

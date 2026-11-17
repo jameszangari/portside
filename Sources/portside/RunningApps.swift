@@ -15,6 +15,9 @@ final class RunningApps: ObservableObject {
     @Published private(set) var hiddenPIDs: Set<pid_t> = []
     /// A regular app quit. The engine feeds this to the recents list.
     var onQuit: ((NSRunningApplication) -> Void)?
+    /// Every workspace event this class observes, with its app, before the
+    /// list refreshes. `WindowRegistry` uses it instead of its own observers.
+    var onEvent: ((Notification.Name, NSRunningApplication) -> Void)?
 
     private var observers: [NSObjectProtocol] = []
     private let logger = Logger(subsystem: "com.james.portside", category: "RunningApps")
@@ -38,6 +41,7 @@ final class RunningApps: ObservableObject {
                 // notification arrives, so exclude it explicitly.
                 let terminated = name == NSWorkspace.didTerminateApplicationNotification ? app?.processIdentifier : nil
                 if terminated != nil, let app, app.activationPolicy == .regular { self?.onQuit?(app) }
+                if let app { self?.onEvent?(name, app) }
                 self?.refresh(reason: name.rawValue, app: app, excluding: terminated)
             })
         }

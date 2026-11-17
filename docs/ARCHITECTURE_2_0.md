@@ -25,11 +25,11 @@ New files may live under `Core/Commands`, `Core/Windows`, `Core/Modules`, `Core/
 | Service | Owns | Must not own |
 | --- | --- | --- |
 | `CommandRegistry` | Stable namespaced command IDs; typed input/output schema; availability; search metadata; risk/scope; cancellation; native handlers | UI, raw model prompts, unrestricted shell execution |
-| `WindowRegistry` | App/window snapshots, ephemeral identity, MRU and display association; bounded AX observation | Reveal timing, persistent claims that a CG window number identifies the same window forever |
+| `WindowRegistry` (built, P2-CORE-06) | App/window snapshots, ephemeral identity, MRU and display association; bounded AX observation | Reveal timing, persistent claims that a CG window number identifies the same window forever, moving or fitting windows |
 | `ModuleRegistry` | Capability declarations, enabled state, dependency readiness, start/stop, subscription lifetime | Another Dock coordinator or duplicate widget refresh loops |
 | `PermissionGate` | OS permission observations, module/data scopes, execution approval, denial reason | Granting TCC, overriding MDM, treating saved consent as current OS permission |
 | `IntelligenceEngine` | Deterministic-vs-model routing, context minimization, typed intent proposals | Executing model output directly |
-| `ModelRouter` / `LocalModelProvider` | Availability, inference, cancellation, provider-specific limits and lifecycle | Silent cloud fallback or automatic runtime installation |
+| `ModelRouter` / `LocalModelProvider` (built: P2-AI-01 foundation, P2-AI-02 Apple on-device provider, P2-AI-03 port lookup caller) | Availability, inference, cancellation, provider-specific limits and lifecycle | Silent cloud fallback or automatic runtime installation |
 | `LocalContextStore` | Explicitly opted-in metadata with provenance, scope, retention, deletion | Ambient clipboard/document/screenshot collection |
 | `AgentOrchestrator` | Bounded plan state and receipts through registry/gate | Separate powerful tools that bypass command approval |
 
@@ -87,7 +87,7 @@ Dangerous actions such as terminate, delete, settings changes and scripts need c
 
 ## Persistence and privacy
 
-Keep user-facing flags/configuration in `dock.json`; introduce an explicit schema version distinct from `savedByVersion`. Existing backups and unknown top-level key preservation remain. Test nested forward compatibility before adding nested module settings; current [DATA.md](DATA.md) explicitly warns unknown nested values can be lost. Permission status is queried from macOS, not restored as granted from JSON.
+Keep user-facing flags/configuration in `dock.json`; an explicit `settingsSchema` distinct from `savedByVersion` and a raw-preserving `modules` object exist since P2-CORE-05 (see [DATA.md](DATA.md)). Existing backups and unknown top-level key preservation remain. Test nested forward compatibility before adding nested module settings; current [DATA.md](DATA.md) explicitly warns unknown nested values can be lost. Permission status is queried from macOS, not restored as granted from JSON.
 
 Use separate versioned stores under Portside Application Support for optional search metadata, workspace definitions and minimal execution receipts. Set private directory/file permissions; cap size and retention. Clipboard history needs at-rest protection, pause/exclusion controls, expiry and deletion before shipping. No plaintext clipboard or raw prompts in logs/backups. Window previews stay memory-only with byte/age caps; discard on lock, revoke and module disable. Scoped-file bookmarks are refreshed when stale and access ends when no longer needed. Deleting a scope also purges derived metadata/embeddings and pending model context.
 

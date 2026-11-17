@@ -733,7 +733,9 @@ struct DockStrip: View {
     }
 
     /// Unpinned running apps: drag onto a group (or into its open grid) to
-    /// add them. Dragging elsewhere does nothing (they are not on the dock).
+    /// add them, or between pinned items to keep them in the dock there,
+    /// like the native Dock. Dropped back among the running apps or off the
+    /// dock, nothing changes.
     private func unpinnedGroupDropGesture(for app: PinnedApp, tile: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 4, coordinateSpace: .named(DockHover.space))
             .onChanged { value in
@@ -749,7 +751,8 @@ struct DockStrip: View {
                     }
                 }
                 guard let token = dragToken, !dragOut.isCanceled(token) else { return }
-                _ = dragOut.update(token)
+                let outside = dragOut.update(token)
+                if outside != dragOutside { dragOutside = outside }
                 let dropGroup = stripDropGroup(at: value.location)
                 interactions.onDragOverGroupTile?(dropGroup.tileID)
                 if dropGroup.overGrid {
@@ -757,20 +760,53 @@ struct DockStrip: View {
                 } else if dropGroup.tileID == nil {
                     groups.clearMemberInsert()
                 }
+                // The same dashed gap as a Finder drop shows where it would be kept.
+                let index = outside || dropGroup.targetsGroup ? nil : pinInsertIndex(at: value.location, vertical: dockModel.edge.isVertical, tile: tile)
+                if entryInsertIndex != index {
+                    withAnimation(.easeOut(duration: 0.12)) { entryInsertIndex = index }
+                }
             }
-            .onEnded { _ in
+            .onEnded { value in
                 guard let token = dragToken else { return }
                 dragToken = nil
                 interactions.onDragOverGroupTile?(nil)
                 dragging = nil
+                dragOutside = false
+                let index = entryInsertIndex
+                // Clear the gap and pin in one turn, so the tile replaces it.
+                var gapTx = Transaction()
+                gapTx.disablesAnimations = true
+                withTransaction(gapTx) { entryInsertIndex = nil }
                 if groups.finishStripAppDrop(app) {
                     _ = dragOut.end(token, deferResolution: false)
                     stripLogger.info("unpinned app added to group: \(app.displayName, privacy: .public)")
                     return
                 }
                 groups.clearMemberInsert()
+                let canceled = dragOut.isCanceled(token)
                 _ = dragOut.end(token, deferResolution: false)
+                guard !canceled, let index else { return }
+                withTransaction(gapTx) { dockModel.pin(app, at: index) }
+                stripLogger.info("unpinned app kept in dock by dragging: \(app.displayName, privacy: .public)")
             }
+    }
+
+    /// Where a running app dragged to `point` would join the pinned items
+    /// (0...count among the entries, as a Finder drop counts them). Nil past
+    /// the end slot, over the running apps. The end slot is one tile and gap
+    /// past the last pinned tile, where the open gap itself sits, so the gap
+    /// pushing the running apps along never flips it closed again.
+    private func pinInsertIndex(at point: CGPoint, vertical: Bool, tile: CGFloat) -> Int? {
+        let ids = Set(dockModel.entries.map(\.id))
+        let hits = tileFrames.filter { ids.contains($0.id) }
+            .sorted { vertical ? $0.frame.minY < $1.frame.minY : $0.frame.minX < $1.frame.minX }
+        let position = vertical ? point.y : point.x
+        guard let last = hits.last else {
+            let start = layoutFrames[DockModel.runningID].map { vertical ? $0.minY : $0.minX } ?? 0
+            return position < start + tile ? 0 : nil
+        }
+        if let i = hits.firstIndex(where: { position < (vertical ? $0.frame.midY : $0.frame.midX) }) { return i }
+        return position <= (vertical ? last.frame.maxY : last.frame.maxX) + spacing + tile ? hits.count : nil
     }
 
     /// Movement a press on a widget can have and still be a click.
@@ -1220,11 +1256,26 @@ private struct FileDropDelegate: DropDelegate {
             setEntryInsert(appInsertIndex(info))
             return DropProposal(operation: .copy)
         case .pinFolders, .pinLinks:
-            setTarget(nil)
             setEntryInsert(nil)
-            appSpringLoad.cancel()
-            interactions.onDragOverGroupTile?(nil)
             interactions.onDragOverStackTile?(nil)
+            // Folders on an app that can open them open there, as in the
+            // native Dock; on a group tile its grid opens so a member can
+            // take them. Elsewhere they pin.
+            if session.mode == .pinFolders, let id = folderAppTarget(info) {
+                setStackInsert(nil)
+                interactions.onDragOverGroupTile?(nil)
+                setTarget(id)
+                updateAppSpringLoad(id)
+                return DropProposal(operation: .copy)
+            }
+            setTarget(nil)
+            appSpringLoad.cancel()
+            if session.mode == .pinFolders, let groupID = groupUnderCursor(info) {
+                setStackInsert(nil)
+                interactions.onDragOverGroupTile?(groupID)
+                return DropProposal(operation: .copy)
+            }
+            interactions.onDragOverGroupTile?(nil)
             setStackInsert(folderInsertIndex(info))
             return DropProposal(operation: .copy)
         case .open:
@@ -1280,6 +1331,14 @@ private struct FileDropDelegate: DropDelegate {
                 pinApps(at: entryAt ?? dockModel.entries.count)
             }
         case .pinFolders:
+            if let id = folderAppTarget(info), let entry = apps[id] {
+                open(session.urls, with: entry.app, isPinned: entry.isPinned)
+                return true
+            }
+            if dropGroupID != nil {
+                stripLogger.info("folder drop on a group tile: drop on a member in its grid")
+                return false
+            }
             var pinTx = Transaction()
             pinTx.disablesAnimations = true
             return withTransaction(pinTx) {
@@ -1322,6 +1381,12 @@ private struct FileDropDelegate: DropDelegate {
     private func folderStackID(_ hoverID: String) -> String? {
         let id = String(hoverID.dropFirst("stack:".count))
         return dockModel.stacks.contains { $0.id == id && !$0.isLink } ? id : nil
+    }
+
+    /// The app tile under the cursor when it can open every dragged folder.
+    private func folderAppTarget(_ info: DropInfo) -> String? {
+        guard let id = tileUnderCursor(info), let entry = apps[id], session.canOpen(with: entry.app) else { return nil }
+        return id
     }
 
     private func groupUnderCursor(_ info: DropInfo) -> String? {

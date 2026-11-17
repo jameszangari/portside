@@ -117,7 +117,7 @@ private struct HexField: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        TextField("Hex", text: $draft)
+        TextField("Hex", text: $draft, prompt: Text(SettingsTextField.Kind.code.hint))
             .textFieldStyle(.roundedBorder)
             .font(.system(.body, design: .monospaced))
             .frame(width: 84)

@@ -393,7 +393,9 @@ struct TrashTileView: View {
         tile
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Trash")
+            .accessibilityValue(trash.state == .full ? "full" : trash.state == .empty ? "empty" : "")
             .accessibilityAddTraits(.isButton)
+            .accessibilityAction { trash.open() }
             .dockHoverTarget(id: TrashController.hoverID, title: trash.notice ?? "Trash")
             .appKitContextMenu(edge: edge, hold: hold, magnifyID: TrashController.hoverID) { trash.menu() }
     }

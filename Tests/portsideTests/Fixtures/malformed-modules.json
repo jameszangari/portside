@@ -1,0 +1,13 @@
+{
+  "savedByVersion" : "1.8.0",
+  "settingsSchema" : "two",
+  "edge" : "left",
+  "hideNativeDock" : false,
+  "entries" : [ ],
+  "modules" : {
+    "textFlag" : "on",
+    "stringBool" : { "enabled" : "yes", "keep" : 1 },
+    "numberBool" : { "enabled" : 1 },
+    "nullEntry" : null
+  }
+}

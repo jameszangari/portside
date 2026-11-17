@@ -1,6 +1,72 @@
 import SwiftUI
 import os.log
 
+/// The grid button in an open group or folder stack: shows the Columns and
+/// Rows controls under the title, so each change shows in the grid at once.
+struct GridShapeButton: View {
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Button { isOn.toggle() } label: {
+            Image(systemName: "square.grid.3x3")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(isOn ? Color.accentColor : .secondary)
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Columns and rows")
+        .accessibilityLabel("Columns and rows")
+        .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+/// Columns (Automatic, 2 to 8) and Rows (All, 2 to 8) with minus and plus
+/// buttons. Plain buttons, so the first click works in the non-key overlay.
+struct GridShapeControls: View {
+    let shape: GridShape
+    let set: (GridShape) -> Void
+
+    var body: some View {
+        HStack(spacing: 14) {
+            stepper("Columns", value: shape.columns, automatic: "Auto") { var next = shape; next.columns = $0; set(next) }
+            stepper("Rows", value: shape.rows, automatic: "All") { var next = shape; next.rows = $0; set(next) }
+        }
+        .font(.system(size: 11))
+    }
+
+    /// Automatic, then 2 to 8.
+    private static let steps: [Int?] = [nil] + GridShape.choices.map(Optional.some)
+
+    private func stepper(_ title: String, value: Int?, automatic: String, apply: @escaping (Int?) -> Void) -> some View {
+        let index = Self.steps.firstIndex(of: value) ?? 0
+        return HStack(spacing: 4) {
+            Text(title).foregroundStyle(.secondary)
+            step("minus", enabled: index > 0, label: "Fewer \(title.lowercased())") { apply(Self.steps[index - 1]) }
+            Text(value.map(String.init) ?? automatic)
+                .monospacedDigit()
+                .frame(minWidth: 28)
+            step("plus", enabled: index < Self.steps.count - 1, label: "More \(title.lowercased())") { apply(Self.steps[index + 1]) }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(title): \(value.map(String.init) ?? automatic)")
+    }
+
+    private func step(_ symbol: String, enabled: Bool, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .bold))
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(Color.primary.opacity(0.1)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.35)
+        .accessibilityLabel(label)
+    }
+}
+
 /// Present and dismiss motion for the group grid overlay (Dock-stack feel).
 enum GroupPopoverMotion {
     /// How long the close plays before the overlay is removed.
@@ -45,7 +111,9 @@ struct GroupTileView: View {
         tile
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityTitle)
+            .accessibilityValue(isExpanded ? "open" : "")
             .accessibilityAddTraits(.isButton)
+            .accessibilityAction { onToggle() }
             .dockHoverTarget(id: DockEntry.group(group).id, title: group.name)
             // AppKit menu like app tiles: right-click and press-and-hold
             // work on the whole magnified tile, and the menu opens above it.
@@ -238,7 +306,8 @@ struct GroupPopoverView: View {
             insertAt: effectiveInsertIndex,
             hiding: groups.draggingMemberID
         )
-        let columns = Self.columns(for: max(slots.count, 1))
+        let shape = group.grid ?? GridShape()
+        let columns = shape.columns(for: max(slots.count, 1))
         return VStack(spacing: 10) {
             if groups.editingID == group.id {
                 GroupNameField(
@@ -250,6 +319,9 @@ struct GroupPopoverView: View {
                 // a group too). Picks apply at once.
                 GroupIconPicker(icon: group.icon) { dockModel.setGroupIcon(groupID: group.id, to: $0, persist: $1) }
                     .onExitCommand { groups.endRename(commit: false) }
+                // Grid layout in the same editor: the grid below changes as
+                // you step, and editing keeps the grid open while it resizes.
+                GridShapeControls(shape: shape) { dockModel.setGroupGrid(groupID: group.id, to: $0) }
                 // Saves the name and returns to the title with the pencil.
                 Button("Done") { groups.endRename(commit: true) }
                     .buttonStyle(.borderedProminent)
@@ -281,15 +353,17 @@ struct GroupPopoverView: View {
                         }
                         .buttonStyle(.plain)
                         .offset(x: 24)
-                        .help("Edit name and icon")
-                        .accessibilityLabel("Edit name and icon")
+                        .help("Edit name, icon and grid")
+                        .accessibilityLabel("Edit name, icon and grid")
                     }
             }
             // One flat grid, so a cell keeps its identity (and its drag)
-            // when a reorder moves it to another row.
+            // when a reorder moves it to another row. Scrolls only past a
+            // chosen row count.
+            GroupGridScroll(maxHeight: shape.maxHeight(rowHeight: Self.iconSize + 28, spacing: 6)) {
             LazyVGrid(
                 columns: Array(repeating: GridItem(.fixed(Self.cellWidth), spacing: 4), count: columns),
-                alignment: .leading, spacing: 6
+                alignment: .center, spacing: 6
             ) {
                 ForEach(slots) { slot in
                     switch slot {
@@ -313,6 +387,7 @@ struct GroupPopoverView: View {
                     }
                 }
             }
+            }
         }
         .padding(12)
         .overlay {
@@ -321,6 +396,7 @@ struct GroupPopoverView: View {
                     .strokeBorder(Color.accentColor.opacity(0.8), lineWidth: 2)
             }
         }
+        .dockTextScrim(dockModel.look)
         .dockBackground(dockModel.look, shadow: true)
     }
 
@@ -365,6 +441,21 @@ struct GroupPopoverView: View {
     }
 }
 
+/// The group grid as is, or in a scroll view capped at `maxHeight` once a
+/// row count is chosen.
+private struct GroupGridScroll<Content: View>: View {
+    let maxHeight: CGFloat?
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        if let maxHeight {
+            ScrollView { content }.frame(maxHeight: maxHeight)
+        } else {
+            content
+        }
+    }
+}
+
 /// The grid's title while renaming. Focused as soon as it appears (the
 /// overlay panel is key by then); the field selects its text on focus, so
 /// typing replaces "Group N".
@@ -375,7 +466,7 @@ private struct GroupNameField: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        TextField("Group name", text: $text)
+        TextField("Group name", text: $text, prompt: Text(SettingsTextField.Kind.name.hint))
             .textFieldStyle(.roundedBorder)
             .font(.system(size: 13, weight: .semibold))
             .multilineTextAlignment(.center)
@@ -601,7 +692,8 @@ private struct GroupCellContentFramesKey: PreferenceKey {
 }
 
 /// File drops on an open group grid. `.app` drags show an insertion gap and
-/// add at that slot; other files open with a member that can handle them.
+/// add at that slot; other files and folders open with a member that can
+/// handle them.
 private struct GroupFileDropDelegate: DropDelegate {
     let session: FileDropSession
     @Binding var targetID: String?
@@ -696,7 +788,7 @@ private struct GroupFileDropDelegate: DropDelegate {
 
     @discardableResult
     private func updateTarget(_ info: DropInfo) -> String? {
-        guard session.mode == .open else {
+        guard session.mode == .open || session.mode == .pinFolders else {
             setTarget(nil)
             return nil
         }

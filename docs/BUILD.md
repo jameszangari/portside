@@ -13,11 +13,14 @@ Faster SPM builds on Xcode 26/27: turn off Explicitly Built Modules (large plann
 source scripts/swift-env.sh   # once per shell; sets SWIFT_ENABLE_EXPLICIT_MODULES=NO
 swift build
 swift run portside
+CFFIXED_USER_HOME=/tmp/portside-tests swift test   # keeps tests away from your dock.json
 ```
 
 Measured on an M4 Max with Xcode 27.2: clean debug ~27s default vs ~9s with that env; incremental stays ~1 to 3s either way. Release compile is ~19s either way. If `.build` grows past several hundred MB (SDK PCM cache), `swift package clean` resets it. Do not run two SwiftPM builds in this repo at once; they wait on one `.build` lock.
 
 Use `swift run` for launch smoke tests only. Quit it afterward and open the signed app with `open build/Portside.app` for Calendar testing and daily use. macOS can attribute a bare executable's Calendar request to its terminal instead of Portside.
+
+One copy at a time: a `swift run` or `.build` copy quits any other running Portside before it starts (the other copy restores the native Dock and saves its settings on the way out) and reopens the installed copy when it quits normally. A crash or `kill -9` skips the reopen. Opening the installed app while a development copy runs shows "A development copy of Portside is running" and quits. `PORTSIDE_ALLOW_SECOND_COPY=1 swift run portside` runs both, as before.
 
 Restore the native Dock from the backup without starting the app:
 
@@ -41,6 +44,20 @@ open build/Portside.app
 ```
 
 Ad hoc builds make macOS ask for permissions again whenever the binary changes. `swift build` and `swift run portside` need no signing at all. The release scripts below are for the maintainer.
+
+## Permissions while developing
+
+macOS allows no app or script to grant privacy permissions. Grant them once, and keep them, by testing one signed copy:
+
+```
+scripts/setup-signing.sh            # once
+scripts/build-app.sh --install      # ~/Applications/Portside.app, same signature every build
+scripts/dev-permissions.sh          # status, then each privacy pane in turn
+scripts/dev-permissions.sh --status # status only
+scripts/dev-permissions.sh --reset  # clears Portside's own grants after a y/N; never Full Disk Access
+```
+
+macOS keeps one grant per bundle ID and ties it to the signature, so switching between a Developer ID copy in `/Applications` and a locally signed one leaves the grant stale. The switch can look on while Portside is not trusted; `--reset` clears that. A bare `swift run` or `.build` executable is judged as the terminal that launched it, so grant the terminal for those runs. Inside the app, Settings > Integrations > Permissions has a Set Up Permissions row that asks for the next missing one.
 
 ## Build the app
 

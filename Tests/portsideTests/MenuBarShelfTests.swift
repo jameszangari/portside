@@ -1,0 +1,171 @@
+import XCTest
+@testable import portside
+
+@MainActor
+final class MenuBarShelfTests: XCTestCase {
+    final class FakeSurface: MenuBarShelfSurface {
+        var installed = false
+        var hidden = false
+        var controlHidden = false
+        func setControlHidden(_ hidden: Bool) { controlHidden = hidden }
+        var onScreen = true
+        var applied: [Bool] = []
+        func install() { installed = true }
+        func apply(hidden: Bool) { self.hidden = hidden; controlHidden = hidden; applied.append(hidden) }
+        func controlIsOnScreen() -> Bool { onScreen }
+        func remove() { installed = false }
+        var alwaysHiddenInstalled = false
+        var alwaysHiddenClipped = false
+        var frames: MenuBarBars?
+        func installAlwaysHidden() { alwaysHiddenInstalled = true }
+        func applyAlwaysHidden(hidden: Bool) { alwaysHiddenClipped = hidden }
+        func removeAlwaysHidden() { alwaysHiddenInstalled = false; alwaysHiddenClipped = false }
+        func barFrames() -> MenuBarBars? { frames }
+        var failureHandler: (@MainActor (String) -> Void)?
+    }
+
+    private func make(delay: Duration = .milliseconds(10)) -> (MenuBarShelf, FakeSurface) {
+        let surface = FakeSurface()
+        return (MenuBarShelf(surface: surface, verifyDelay: delay), surface)
+    }
+
+    private func makeModule(_ shelf: MenuBarShelf) -> MenuBarShelfModule {
+        let triggers = MenuBarTriggerService(
+            shelf: shelf,
+            environment: MenuBarTriggersTests.FakeEnvironment(),
+            probe: MenuBarTriggersTests.FakeProbe()
+        )
+        return MenuBarShelfModule(shelf: shelf, triggers: triggers)
+    }
+
+    func testStartsRevealedAndInstalls() {
+        let (shelf, surface) = make()
+        shelf.start()
+        XCTAssertTrue(surface.installed)
+        XCTAssertEqual(shelf.mode, .revealed)
+        XCTAssertFalse(surface.hidden)
+    }
+
+    func testToggleHidesThenReveals() {
+        let (shelf, surface) = make()
+        shelf.start()
+        shelf.toggle()
+        XCTAssertEqual(shelf.mode, .hidden)
+        XCTAssertTrue(surface.hidden)
+        shelf.toggle()
+        XCTAssertEqual(shelf.mode, .revealed)
+        XCTAssertFalse(surface.hidden)
+    }
+
+    func testStopRevealsAndRemoves() {
+        let (shelf, surface) = make()
+        shelf.start()
+        shelf.hide()
+        shelf.stop()
+        XCTAssertFalse(surface.hidden)
+        XCTAssertFalse(surface.installed)
+        XCTAssertEqual(shelf.mode, .revealed)
+    }
+
+    func testHideBeforeStartDoesNothing() {
+        let (shelf, surface) = make()
+        shelf.hide()
+        XCTAssertEqual(shelf.mode, .revealed)
+        XCTAssertTrue(surface.applied.isEmpty)
+    }
+
+    func testFailOpenRevealsAndRecordsReason() {
+        let (shelf, surface) = make()
+        shelf.start()
+        shelf.hide()
+        shelf.failOpen("the displays changed")
+        XCTAssertEqual(shelf.mode, .revealed)
+        XCTAssertFalse(surface.hidden)
+        XCTAssertEqual(shelf.lastFailOpen, "the displays changed")
+    }
+
+    func testFailOpenWhilePanelIsRevealedRestoresNativeItems() {
+        let (shelf, surface) = make()
+        shelf.start()
+        surface.hidden = true // A panel may be open while native items stay clipped.
+        shelf.failOpen("the Mac woke")
+        XCTAssertFalse(surface.hidden)
+        XCTAssertNil(shelf.lastFailOpen)
+    }
+
+    func testControlPushedOffScreenRevealsAfterVerify() async throws {
+        let (shelf, surface) = make()
+        shelf.start()
+        surface.onScreen = false
+        shelf.hide()
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(shelf.mode, .revealed)
+        XCTAssertFalse(surface.hidden)
+        XCTAssertNotNil(shelf.lastFailOpen)
+    }
+
+    func testControlOnScreenStaysHidden() async throws {
+        let (shelf, _) = make()
+        shelf.start()
+        shelf.hide()
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(shelf.mode, .hidden)
+    }
+
+    func testRevealCancelsPendingVerify() async throws {
+        let (shelf, surface) = make()
+        shelf.start()
+        surface.onScreen = false
+        shelf.hide()
+        shelf.reveal()
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertNil(shelf.lastFailOpen)
+    }
+
+    func testRepeatedToggleDoesNotDrift() {
+        let (shelf, surface) = make()
+        shelf.start()
+        for _ in 0..<20 { shelf.toggle() }
+        XCTAssertEqual(shelf.mode, .revealed)
+        XCTAssertFalse(surface.hidden)
+    }
+
+    func testModuleStopRevealsAndRemoves() throws {
+        let (shelf, surface) = make()
+        let gate = PermissionGate()
+        let registry = ModuleRegistry(commands: CommandRegistry(permissions: gate), permissions: gate)
+        try registry.register(makeModule(shelf))
+        registry.enable(MenuBarShelfModule.moduleID)
+        XCTAssertTrue(surface.installed)
+        shelf.hide()
+        XCTAssertTrue(surface.hidden)
+        registry.disable(MenuBarShelfModule.moduleID)
+        XCTAssertFalse(surface.installed)
+        XCTAssertFalse(surface.hidden)
+    }
+
+    func testModuleIsSensitiveOptionalAndNeedsNoPermission() {
+        let module = makeModule(MenuBarShelf(surface: FakeSurface()))
+        XCTAssertFalse(module.isRequired)
+        XCTAssertTrue(module.isSensitive)
+        XCTAssertTrue(module.dependencies.isEmpty)
+        XCTAssertEqual(module.commands().first?.id, MenuBarShelfModule.toggleCommand)
+    }
+
+    func testSeparatorLengthForEachHidingMechanism() {
+        XCTAssertEqual(StatusItemShelfSurface.separatorLength(collapsed: true, dividerMode: false), 10_000)
+        XCTAssertEqual(StatusItemShelfSurface.separatorLength(collapsed: true, dividerMode: true), 0)
+        for dividerMode in [false, true] {
+            XCTAssertEqual(StatusItemShelfSurface.separatorLength(collapsed: false, dividerMode: dividerMode), 14)
+        }
+    }
+
+    func testSeedPositionsDoesNotOverwriteUserChoice() {
+        let defaults = UserDefaults(suiteName: "portside.shelf.\(UUID().uuidString)")!
+        let key = "NSStatusItem Preferred Position \(StatusItemShelfSurface.controlName)"
+        defaults.set(333.0, forKey: key)
+        StatusItemShelfSurface.seedPositions(defaults)
+        XCTAssertEqual(defaults.double(forKey: key), 333.0)
+        XCTAssertNotNil(defaults.object(forKey: "NSStatusItem Preferred Position \(StatusItemShelfSurface.separatorName)"))
+    }
+}

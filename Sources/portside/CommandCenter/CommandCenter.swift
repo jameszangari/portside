@@ -1,0 +1,575 @@
+import AppKit
+import os.log
+import SwiftUI
+
+/// Command Center: a key-capable, non-activating search panel over apps,
+/// registry commands, Settings panes and quicklinks. The frontmost app stays active while it is open (like
+/// Spotlight), so cancel normally needs no focus hand-back; focus is restored
+/// only if Portside itself became active during the session.
+///
+/// `CommandCenterState` decides every transition; this class performs the
+/// effects (panel, focus, ranking off the main thread, running a command
+/// through the registry, history, VoiceOver). It installs a key monitor
+/// only while the panel is visible and never polls.
+@MainActor
+final class CommandCenter: ObservableObject {
+    @Published private(set) var state = CommandCenterState()
+
+    private let commands: CommandRegistry
+    private let moduleTitle: (String) -> String?
+    private let sources: CommandCenterSources
+    private let searcher = CommandCenterSearcher()
+    private let logger = Logger(subsystem: "com.james.portside", category: "CommandCenter")
+    private var hotkey: CommandCenterHotkey!
+    /// The `commandCenter` module runs. Off: no shortcut, and opening does nothing.
+    private(set) var isEnabled = false
+    private var panel: CommandCenterPanel?
+    private var hostingView: CommandCenterHostingView?
+    private var keyMonitor: Any?
+    private var observers: [NSObjectProtocol] = []
+    private var previousApp: NSRunningApplication?
+    private var runTask: Task<Void, Never>?
+    /// The running command updates the panel; closing it cancels the run.
+    private var runStaysOpen = false
+    private var stopAlert: NSAlert?
+    /// The listing a server query started. One per session, canceled on
+    /// close or when the query no longer wants servers.
+    private var serverTask: Task<Void, Never>?
+    private var serverListingRequested = false
+    /// Whether the last snapshot held calculator or emoji rows, so a query
+    /// that stops producing them refreshes the catalog once.
+    private var hadQuickAnswers = false
+    private var pendingAnnouncement: DispatchWorkItem?
+    /// Top center of the panel in screen coordinates, fixed while it is open
+    /// so a result count change grows the panel downward.
+    private var anchorTop: NSPoint?
+
+    weak var searchField: NSTextField?
+    weak var actionField: NSTextField?
+
+    /// `moduleTitle` maps a command namespace to its module's title.
+    /// `sources` adds apps, quicklinks and history. The registrar and report
+    /// are for tests; the default is Carbon.
+    init(
+        commands: CommandRegistry,
+        moduleTitle: @escaping (String) -> String?,
+        sources: CommandCenterSources = CommandCenterSources(),
+        registrar: @escaping CommandCenterHotkey.Registrar = CommandCenterHotkey.carbon,
+        report: @escaping (String?) -> Void = { CommandCenterStatus.shared.hotkeyFailure = $0 }
+    ) {
+        self.commands = commands
+        self.moduleTitle = moduleTitle
+        self.sources = sources
+        hotkey = CommandCenterHotkey(registrar: registrar, report: report) { [weak self] in
+            MainActor.assumeIsolated { self?.hotkeyPressed() }
+        }
+    }
+
+    var hotkeyStatus: CommandCenterHotkey.Status { hotkey.status }
+
+    /// Module start and stop. Turning off releases the shortcut and closes
+    /// the panel, canceling a running command.
+    func setEnabled(_ enabled: Bool) {
+        guard enabled != isEnabled else { return }
+        isEnabled = enabled
+        CommandCenterStatus.shared.isEnabled = enabled
+        if !enabled {
+            setHotkey(nil)
+            if state.isVisible { send(.key(.commandEscape)) }
+        }
+    }
+
+    func setHotkey(_ chord: HotkeyChord?) {
+        hotkey.update(isEnabled ? chord : nil)
+        if case .failed(let chord) = hotkey.status {
+            logger.error("command center hotkey \(chord.displayString, privacy: .public) not registered")
+        } else if let chord, let conflict = HotkeyConflicts.conflict(for: chord, system: HotkeyConflicts.systemHotkeys(), portside: []) {
+            logger.info("command center hotkey: \(conflict, privacy: .public)")
+        }
+    }
+
+    /// Menu bar entry.
+    func open() {
+        guard isEnabled else { return }
+        send(.open(snapshot()))
+    }
+
+    private func hotkeyPressed() {
+        guard isEnabled else { return }
+        send(.hotkey(snapshot(), panelIsKey: panel?.isKeyWindow ?? false))
+    }
+
+    /// Sends one event and performs its effects. Returns whether it was consumed.
+    @discardableResult
+    func send(_ event: CommandCenterEvent) -> Bool {
+        let query = state.query
+        let outcome = state.send(event)
+        for effect in outcome.effects { perform(effect) }
+        if state.query != query { queryChanged() }
+        if state.isVisible { syncFocus() }
+        return outcome.handled
+    }
+
+    func authorizeFile(_ path: String) -> Result<URL, CommandFailure> {
+        guard let files = sources.files else { return .failure(CommandFailure(reason: "There is nothing to preview.")) }
+        return files.authorize(path)
+    }
+
+    /// The file behind a preview screen, re-checked against the chosen
+    /// folders now (the index and the row are not trusted).
+    func previewURL(for id: CommandCenterResultID) -> Result<URL, CommandFailure> {
+        guard let item = state.item(id), item.kind == .file, let files = sources.files else {
+            return .failure(CommandFailure(reason: "There is nothing to preview."))
+        }
+        return files.authorize(item.copyValue)
+    }
+
+    /// Fresh read of every provider: titles and availability as of this
+    /// moment. In memory only; the app scan runs separately.
+    func snapshot() -> [CommandCenterItem] {
+        CommandCenterCatalog.items(registry: commands, moduleTitle: moduleTitle, sources: sources, query: state.query)
+    }
+
+    // MARK: Effects
+
+    private func perform(_ effect: CommandCenterEffect) {
+        switch effect {
+        case .present: present()
+        case .focusPanel: panel?.makeKey()
+        case .dismiss(let restoreFocus): dismiss(restoreFocus: restoreFocus)
+        case .run(let id): run(id)
+        case .runAction(let id, let index): run(id, action: index)
+        case .cancelRun: runTask?.cancel()
+        case .search(let request):
+            searcher.start(request, items: state.items) { [weak self] request, ids in
+                self?.send(.results(request, ids))
+            }
+        case .recordUsage(let id): sources.history?.record(id, at: sources.now())
+        case .copy(let text):
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        case .announce(let message): announce(message)
+        }
+    }
+
+    private func present() {
+        previousApp = NSWorkspace.shared.frontmostApplication
+        let panel = self.panel ?? makePanel()
+        self.panel = panel
+        // Build the SwiftUI tree now so the search field exists to take
+        // the first keystroke.
+        hostingView?.layoutSubtreeIfNeeded()
+        anchorTop = Self.anchor(on: Self.screenWithMouse())
+        place(size: hostingView?.fittingSize ?? panel.frame.size)
+        panel.orderFrontRegardless()
+        panel.makeKey()
+        if let searchField { panel.makeFirstResponder(searchField) }
+        installMonitors()
+        serverListingRequested = false
+        sources.servers?.confirmStop = { [weak self] server in
+            await self?.confirmStop(server) ?? false
+        }
+        sources.servers?.confirmForceStop = { [weak self] server in
+            await self?.confirmStop(server, force: true) ?? false
+        }
+        sources.servers?.onChange = { [weak self] in
+            guard let self, self.state.isVisible else { return }
+            self.send(.catalog(self.snapshot()))
+            // A listing canceled by an earlier query lists again if this one wants it.
+            self.listServersIfAsked()
+            self.syncServerViewing()
+        }
+        sources.portLookup?.onChange = { [weak self] in
+            guard let self, self.state.isVisible else { return }
+            self.send(.catalog(self.snapshot()))
+            self.listServersIfAsked()
+            self.syncServerViewing()
+        }
+        sources.clipboard?.onChange = { [weak self] in
+            guard let self, self.state.isVisible else { return }
+            self.send(.catalog(self.snapshot()))
+        }
+        sources.clipboard?.prune()
+        // Chosen folders rescan in the background only when they changed.
+        sources.files?.onChange = { [weak self] in
+            guard let self, self.state.isVisible else { return }
+            self.send(.catalog(self.snapshot()))
+        }
+        sources.files?.refresh()
+        // Shortcuts list in the background too; nothing runs.
+        sources.shortcuts?.refresh { [weak self] in
+            guard let self, self.state.isVisible else { return }
+            self.send(.catalog(self.snapshot()))
+        }
+        // Menu bar items sweep in the background too; nothing is pressed.
+        sources.menuBar?.refresh { [weak self] in
+            guard let self, self.state.isVisible else { return }
+            self.send(.catalog(self.snapshot()))
+        }
+        // The app list catches up in the background; the panel never waits.
+        sources.applications?.refresh { [weak self] in
+            guard let self, self.state.isVisible else { return }
+            self.send(.catalog(self.snapshot()))
+        }
+    }
+
+    private func dismiss(restoreFocus: Bool) {
+        hadQuickAnswers = false
+        cancelStopConfirmation()
+        removeMonitors()
+        searcher.cancel()
+        // Server listings exist only for this panel session.
+        serverTask?.cancel()
+        serverTask = nil
+        if runStaysOpen { runTask?.cancel() }
+        sources.files?.onChange = nil
+        sources.clipboard?.onChange = nil
+        sources.servers?.onChange = nil
+        sources.servers?.endSession()
+        // A port question still being read is canceled; its answer is dropped.
+        sources.portLookup?.onChange = nil
+        sources.portLookup?.end()
+        pendingAnnouncement?.cancel()
+        let previous = previousApp
+        previousApp = nil
+        anchorTop = nil
+        panel?.orderOut(nil)
+        if Self.shouldRestoreFocus(
+            requested: restoreFocus,
+            previousPID: previous?.isTerminated == false ? previous?.processIdentifier : nil,
+            frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            ownPID: ProcessInfo.processInfo.processIdentifier
+        ) {
+            previous?.activate(from: .current, options: [])
+        }
+    }
+
+    /// Restore only on cancel, only to an app that is still running, and
+    /// only when Portside took activation during the session. If another
+    /// app is frontmost the person moved on; if the previous app still is,
+    /// ordering out already hands focus back.
+    nonisolated static func shouldRestoreFocus(requested: Bool, previousPID: pid_t?, frontmostPID: pid_t?, ownPID: pid_t) -> Bool {
+        guard requested, let previousPID, previousPID != ownPID else { return false }
+        return frontmostPID == ownPID
+    }
+
+    private func run(_ id: CommandCenterResultID, action: Int? = nil) {
+        runTask?.cancel()
+        let item = state.item(id)
+        let more = item?.moreActions ?? []
+        let chosen = action.map { more.indices.contains($0) ? more[$0].invocation : nil } ?? item?.invocation
+        guard let invocation = chosen else {
+            send(.finished(id, .unknownCommand))
+            return
+        }
+        runStaysOpen = invocation.staysOpen
+        var input = invocation.input
+        if invocation.command == LocalServersModule.forceStopCommand {
+            guard case .string(let key) = input, let token = sources.servers?.beginForceStop(key) else {
+                send(.finished(id, .failed("Force stop requires a current graceful timeout receipt.")))
+                return
+            }
+            input = .string(token)
+        }
+        runTask = Task { @MainActor [weak self, commands] in
+            let previousReceipt = self?.sources.servers?.lastStopReceipt?.id
+            let result = await commands.execute(invocation.command, input: input)
+            let receipt = self?.sources.servers?.lastStopReceipt
+            self?.send(.finished(id, Self.stopResult(result, command: invocation.command, previousReceipt: previousReceipt, receipt: receipt)))
+        }
+    }
+
+    /// Registry cancellation remains generic; a stop that already signaled
+    /// must still show its new receipt, without implying that cancel undid it.
+    static func stopResult(_ result: CommandResult, command: CommandID, previousReceipt: UUID?, receipt: LocalServerStopReceipt?) -> CommandResult {
+        guard [LocalServersModule.stopCommand, LocalServersModule.forceStopCommand].contains(command), result == .canceled,
+              let receipt, receipt.id != previousReceipt else { return result }
+        switch receipt.outcome {
+        case .stopped, .alreadyExited: return .success(receipt.message)
+        default: return .failed(receipt.message)
+        }
+    }
+
+    private func confirmStop(_ server: LocalServer, force: Bool = false) async -> Bool {
+        guard !Task.isCancelled, state.isVisible, let panel, stopAlert == nil else { return false }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = force ? "Force stop this process (SIGKILL)?" : "Stop this server process?"
+        alert.informativeText = Self.stopConfirmationText(server, force: force)
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: force ? "Force Stop (SIGKILL)" : "Stop Server")
+        alert.buttons[0].keyEquivalent = "\r"
+        alert.buttons[1].keyEquivalent = ""
+        stopAlert = alert
+        defer { stopAlert = nil }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                alert.beginSheetModal(for: panel) { response in
+                    continuation.resume(returning: response == .alertSecondButtonReturn)
+                }
+                if Task.isCancelled { cancelStopConfirmation() }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.cancelStopConfirmation() }
+        }
+    }
+
+    static func stopConfirmationText(_ server: LocalServer, force: Bool = false) -> String {
+        let process = server.process
+        let ports = Set(process.sockets.map(\.port)).sorted().map(String.init).joined(separator: ", ")
+        let warning = force
+            ? "Graceful termination failed: this process was still running after SIGTERM. Send SIGKILL once to this exact PID. Unsaved data may be lost; cleanup will not run. All services in this process may stop, including other ports. No automatic retry follows."
+            : "Send SIGTERM to this process. All services in this process may stop, including other ports. No force stop follows."
+        return "Process: \(LocalServerText.name(process))\nPID: \(process.pid)\nSelected port: \(server.port)\nOwner UID: \(process.uid.value.map(String.init) ?? "Unknown")\nExecutable: \(process.executablePath.value ?? "Unknown")\nListed ports: \(ports)\n\n\(warning)"
+    }
+
+    private func cancelStopConfirmation() {
+        guard let alert = stopAlert, let parent = alert.window.sheetParent else { return }
+        parent.endSheet(alert.window, returnCode: .abort)
+    }
+
+    /// The port lookup follows the query (canceling a question in flight),
+    /// a listing the new query does not want stops, and one it wants starts.
+    private func queryChanged() {
+        guard state.isVisible else { return }
+        let hasQuickAnswers = (sources.quickAnswers.map {
+            !$0.items(query: state.query, copy: commands.descriptor(for: CommandCenterModule.copyTextCommand)).isEmpty
+        } ?? false) || !(sources.files?.results(for: state.query).isEmpty ?? true)
+            || !(sources.clipboard?.results(for: state.query).isEmpty ?? true)
+        if hasQuickAnswers || hadQuickAnswers { send(.catalog(snapshot())) }
+        hadQuickAnswers = hasQuickAnswers
+        if let lookup = sources.portLookup {
+            let before = lookup.current
+            let refresh = commands.descriptor(for: LocalServersModule.refreshCommand)
+            lookup.update(state.query, serversUnavailable: refresh.map { $0.unavailableReason() } ?? PortLookup.Message.noServers)
+            if lookup.current != before { send(.catalog(snapshot())) }
+        }
+        if let task = serverTask, !Self.wantsServers(state.query, lookup: sources.portLookup) {
+            task.cancel()
+            serverTask = nil
+            serverListingRequested = false
+        }
+        listServersIfAsked()
+        syncServerViewing()
+    }
+
+    /// Exit watching and the bounded refresh run only while the query shows
+    /// server results in an open panel.
+    private func syncServerViewing() {
+        sources.servers?.setViewing(state.isVisible && Self.wantsServers(state.query, lookup: sources.portLookup))
+    }
+
+    /// A query that asks for servers (a port, "port", "server") lists them
+    /// once per session through the registry, so a module that is off lists
+    /// nothing. Later listings need Refresh; nothing repeats on a timer.
+    private func listServersIfAsked() {
+        guard Self.shouldListServers(state.query, store: sources.servers, alreadyRequested: serverListingRequested,
+                                     lookup: sources.portLookup) else { return }
+        serverListingRequested = true
+        serverTask = Task { @MainActor [commands] in
+            _ = await commands.execute(LocalServersModule.refreshCommand)
+        }
+    }
+
+    /// Only for a query that wants servers, only while the module runs, and
+    /// only when this session has neither a list nor a listing in flight.
+    static func shouldListServers(_ query: String, store: LocalServerStore?, alreadyRequested: Bool, lookup: PortLookup? = nil) -> Bool {
+        guard !alreadyRequested, let store, store.isActive, store.snapshot == nil, store.loading == 0 else { return false }
+        return wantsServers(query, lookup: lookup)
+    }
+
+    /// A bare port or a server word wants the listing. A port question
+    /// wants it only once the model's proposal passed validation, and a
+    /// question that needs more detail never does.
+    static func wantsServers(_ query: String, lookup: PortLookup?) -> Bool {
+        let browse = LocalServerText.isServerQuery(CommandCenterRanker.terms(query))
+        guard let lookup else { return browse }
+        switch PortQuery.classify(query) {
+        case .none: return browse
+        case .port: return true
+        case .clarify: return false
+        case .interpret: return lookup.wantsListing(query)
+        }
+    }
+
+    /// Coalesced so fast arrow presses or typing speak only the last state.
+    private func announce(_ message: String) {
+        pendingAnnouncement?.cancel()
+        guard !message.isEmpty else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let panel = self?.panel, panel.isVisible else { return }
+            NSAccessibility.post(element: panel, notification: .announcementRequested, userInfo: [
+                .announcement: message,
+                .priority: NSAccessibilityPriorityLevel.high.rawValue,
+            ])
+        }
+        pendingAnnouncement = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
+    }
+
+    // MARK: Focus
+
+    /// Keeps the first responder on the field the mode types into. Deferred
+    /// one turn so SwiftUI has inserted a newly shown field.
+    private func syncFocus() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.stopAlert == nil, let panel = self.panel, panel.isVisible, panel.isKeyWindow else { return }
+            switch self.state.mode {
+            case .searching, .running:
+                Self.focus(self.searchField, in: panel)
+            case .actions:
+                Self.focus(self.actionField, in: panel)
+            case .screen:
+                if panel.firstResponder is NSTextView { panel.makeFirstResponder(nil) }
+            case .hidden:
+                break
+            }
+        }
+    }
+
+    private static func focus(_ field: NSTextField?, in panel: NSPanel) {
+        guard let field, field.window === panel, field.currentEditor() == nil else { return }
+        panel.makeFirstResponder(field)
+    }
+
+    // MARK: Events in
+
+    private func installMonitors() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let consumed = MainActor.assumeIsolated {
+                guard let self, let panel = self.panel, event.window === panel else { return false }
+                return self.handleKeyDown(event, in: panel)
+            }
+            return consumed ? nil : event
+        }
+        let workspace = NSWorkspace.shared.notificationCenter
+        observers.append(workspace.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            guard app?.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+            MainActor.assumeIsolated { _ = self?.send(.focusLost) }
+        })
+    }
+
+    private func removeMonitors() {
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
+        observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
+        observers.removeAll()
+    }
+
+    private func handleKeyDown(_ event: NSEvent, in panel: NSPanel) -> Bool {
+        let composing = (panel.firstResponder as? NSTextView)?.hasMarkedText() ?? false
+        guard let key = CommandCenterKey(
+            keyCode: event.keyCode,
+            modifiers: event.modifierFlags,
+            characters: event.charactersIgnoringModifiers,
+            isComposing: composing
+        ) else { return false }
+        return send(.key(key))
+    }
+
+    // MARK: Panel
+
+    private func makePanel() -> CommandCenterPanel {
+        let panel = CommandCenterPanel(
+            contentRect: NSRect(x: 0, y: 0, width: CommandCenterLayout.width, height: 200),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: true
+        )
+        panel.title = "Command Center"
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        // The window shadow is square around the rounded glass; the view draws its own.
+        panel.hasShadow = false
+        panel.level = CommandCenterPanel.windowLevel
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle, .transient]
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        // Instant in and out; no system zoom or fade.
+        panel.animationBehavior = .none
+        panel.becomesKeyOnlyIfNeeded = false
+        panel.setAccessibilityLabel("Command Center")
+        panel.onResignKey = { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.stopAlert == nil else { return }
+                self.send(.focusLost)
+            }
+        }
+
+        let root = CommandCenterView(center: self)
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { [weak self] size in
+                self?.place(size: size)
+            }
+        let hosting = CommandCenterHostingView(rootView: AnyView(root))
+        hosting.sizingOptions = [.intrinsicContentSize]
+        panel.contentView = hosting
+        hostingView = hosting
+        return panel
+    }
+
+    private func place(size: CGSize) {
+        guard let panel, let anchorTop, size.width > 0, size.height > 0 else { return }
+        let frame = NSRect(
+            x: (anchorTop.x - size.width / 2).rounded(),
+            y: (anchorTop.y + CommandCenterLayout.shadowMargin - size.height).rounded(),
+            width: size.width,
+            height: size.height
+        )
+        guard frame != panel.frame else { return }
+        panel.setFrame(frame, display: true)
+        panel.invalidateShadow()
+    }
+
+    private static func screenWithMouse() -> NSScreen? {
+        let mouse = NSEvent.mouseLocation
+        return NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+    }
+
+    /// Centered, a fifth of the way down the visible frame (below the menu
+    /// bar and the notch).
+    private static func anchor(on screen: NSScreen?) -> NSPoint {
+        let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        return NSPoint(x: visible.midX, y: visible.maxY - visible.height * 0.2)
+    }
+}
+
+enum CommandCenterLayout {
+    static let width: CGFloat = 640
+    static let cornerRadius: CGFloat = 18
+    static let rowHeight: CGFloat = 40
+    static let cardHeight: CGFloat = 96
+    /// Transparent border around the glass that holds its shadow.
+    static let shadowMargin: CGFloat = 36
+    static let visibleRows = 7
+}
+
+/// Key-capable but never main, so it takes typing without activating
+/// Portside and without changing the Dock or notch panels.
+final class CommandCenterPanel: NSPanel {
+    /// Above the Dock's overlays: it is the one thing being typed into.
+    static let windowLevel = NSWindow.Level(rawValue: OverlayPanel.windowLevel.rawValue + 1)
+
+    var onResignKey: (() -> Void)?
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+
+    override func resignKey() {
+        super.resignKey()
+        // Ordering out also resigns key; only a visible panel losing focus counts.
+        if isVisible { onResignKey?() }
+    }
+
+    /// Unhandled keys (typing on a details screen) stay silent.
+    override func noResponder(for eventSelector: Selector) {}
+}
+
+/// Takes the first click while another app is active, so a row click works
+/// without a wake-up click.
+final class CommandCenterHostingView: NSHostingView<AnyView> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}

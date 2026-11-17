@@ -327,6 +327,117 @@ final class DockModel: Codable, ObservableObject {
         persist()
     }
 
+    /// Global shortcut that opens Command Center. Nil means none is
+    /// registered. Default is Option-Space (`HotkeyChord.commandCenterDefault`).
+    @Published private(set) var commandCenterHotkey: HotkeyChord? = .commandCenterDefault
+
+    func setCommandCenterHotkey(_ chord: HotkeyChord?) {
+        let next: HotkeyChord?
+        if let chord {
+            next = chord.isRegisterable ? chord : commandCenterHotkey
+        } else {
+            next = nil
+        }
+        guard next != commandCenterHotkey else { return }
+        commandCenterHotkey = next
+        persist()
+    }
+
+    /// Global shortcut that opens the app switcher. Nil means none is
+    /// registered. Default is Option-Tab (`SwitcherShortcut.defaultChord`);
+    /// ⌘Tab is never accepted (`SwitcherShortcut.refusal`).
+    @Published private(set) var switcherHotkey: HotkeyChord? = SwitcherShortcut.defaultChord
+
+    func setSwitcherHotkey(_ chord: HotkeyChord?) {
+        let next: HotkeyChord?
+        if let chord {
+            next = SwitcherShortcut.isAllowed(chord) ? chord : switcherHotkey
+        } else {
+            next = nil
+        }
+        guard next != switcherHotkey else { return }
+        switcherHotkey = next
+        persist()
+    }
+
+    /// What the app switcher lists: apps (the default) or windows.
+    @Published private(set) var switcherMode: SwitcherMode = .apps
+
+    func setSwitcherMode(_ mode: SwitcherMode) {
+        guard mode != switcherMode else { return }
+        switcherMode = mode
+        persist()
+    }
+
+    /// Whether / starts title search while the switcher is open.
+    @Published private(set) var switcherTitleSearch = true
+
+    func setSwitcherTitleSearch(_ enabled: Bool) {
+        guard enabled != switcherTitleSearch else { return }
+        switcherTitleSearch = enabled
+        persist()
+    }
+
+    /// Whether the switcher's window rows show a picture of the window. Off
+    /// by default: it needs Screen Recording, so it is an explicit choice.
+    @Published private(set) var switcherPreviews = false
+
+    func setSwitcherPreviews(_ enabled: Bool) {
+        guard enabled != switcherPreviews else { return }
+        switcherPreviews = enabled
+        persist()
+    }
+
+    /// The switcher choices, current values first, for `SwitcherModule`.
+    var switcherPreferences: AnyPublisher<SwitcherPreferences, Never> {
+        $switcherMode.combineLatest($switcherTitleSearch, $switcherPreviews)
+            .map { SwitcherPreferences(mode: $0, titleSearch: $1, previews: $2) }
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
+
+    /// How the menu bar shelf is revealed and hidden again (P2-MENU-06).
+    @Published private(set) var menuBarTriggers = MenuBarTriggerSettings()
+
+    func setMenuBarTriggers(_ settings: MenuBarTriggerSettings, persist shouldPersist: Bool = true) {
+        let next = settings.sanitized
+        guard next != menuBarTriggers else {
+            if shouldPersist { persist() }
+            return
+        }
+        menuBarTriggers = next
+        if shouldPersist { persist() }
+    }
+
+    /// Command Center quicklinks, in Settings order. URLs are kept as typed;
+    /// `QuicklinkURL` decides at use whether one may open.
+    @Published private(set) var commandCenterQuicklinks: [Quicklink] = []
+
+    /// Appends an empty quicklink and returns its id. Nil at the limit.
+    @discardableResult
+    func addQuicklink(name: String = "", url: String = "") -> UUID? {
+        guard commandCenterQuicklinks.count < Quicklink.listLimit else { return nil }
+        let link = Quicklink(name: name, url: url)
+        commandCenterQuicklinks.append(link)
+        persist()
+        return link.id
+    }
+
+    func updateQuicklink(_ link: Quicklink) {
+        guard let index = commandCenterQuicklinks.firstIndex(where: { $0.id == link.id }) else { return }
+        let bounded = Quicklink(id: link.id, name: link.name, url: link.url)
+        guard commandCenterQuicklinks[index] != bounded else { return }
+        commandCenterQuicklinks[index] = bounded
+        persist()
+    }
+
+    func removeQuicklink(id: UUID) {
+        let before = commandCenterQuicklinks.count
+        commandCenterQuicklinks.removeAll { $0.id == id }
+        guard commandCenterQuicklinks.count != before else { return }
+        persist()
+    }
+
     // MARK: - Trash
 
     /// "Show Trash in dock": the Trash tile at the far end of the dock.
@@ -668,6 +779,20 @@ final class DockModel: Codable, ObservableObject {
     @Published private(set) var showAgentNotch = false
     @Published private(set) var automaticUpdateChecks = true
 
+    /// Clipboard History is running (its module and Command Center are on,
+    /// and restricted mode is not holding sensitive modules off).
+    @MainActor var clipboardHistoryOn: Bool {
+        let clipboard = modules.isEnabled(ClipboardModule.moduleID, required: false)
+        let commandCenter = modules.isEnabled(CommandCenterModule.moduleID, required: false)
+        return !restrictedMode && clipboard && commandCenter
+    }
+
+    /// The Top Notch (the Notch Shelf) is on and owns the notch (SHELF-02).
+    var notchShelfActive: Bool { showAgentNotch }
+
+    /// Where hidden menu bar items open, after the Notch Shelf's lock.
+    var menuBarPresentation: MenuBarPresentation { menuBarTriggers.presentation(notchShelf: notchShelfActive) }
+
     func setShowAgentNotch(_ enabled: Bool) {
         showAgentNotch = enabled
         persist()
@@ -680,11 +805,52 @@ final class DockModel: Codable, ObservableObject {
 
     @Published private(set) var openSettingsOnLaunch: Bool = false
 
+    /// Portside's own icon (Settings > General).
+    @Published private(set) var appIcon = AppIconChoice.system
+
+    func setAppIcon(_ choice: AppIconChoice) {
+        guard choice != appIcon else { return }
+        appIcon = choice
+        persist()
+    }
+
     func setOpenSettingsOnLaunch(_ enabled: Bool) {
         guard enabled != openSettingsOnLaunch else { return }
         openSettingsOnLaunch = enabled
         persist()
     }
+
+    // MARK: - Modules
+
+    /// Saved module choices (`modules` in dock.json). Optional modules stay
+    /// off until turned on here; unknown modules and keys are kept as read.
+    @Published private(set) var modules = ModuleSettings()
+
+    func setModuleEnabled(_ id: ModuleID, _ enabled: Bool) {
+        guard modules.savedEnabled(id) != enabled else { return }
+        modules.setEnabled(enabled, for: id)
+        persist()
+    }
+
+    /// Restricted work-Mac preset: sensitive optional modules stay off, at
+    /// launch and in Settings, while this is on. Turning it off enables
+    /// nothing. Import and Undo Import leave it alone.
+    @Published private(set) var restrictedMode = false
+
+    func setRestrictedMode(_ on: Bool) {
+        guard on != restrictedMode else { return }
+        restrictedMode = on
+        persist()
+    }
+
+    /// dock.json layout version, separate from `savedByVersion`. 0 is a file
+    /// from before the key existed. Bump it only with a migration step, a
+    /// fixture and a DATA.md note.
+    static let settingsSchema = 1
+
+    /// Schema of the file this model was read from. A newer one is written
+    /// back unchanged, so this build never claims to have migrated it down.
+    private var loadedSchema = DockModel.settingsSchema
 
     // MARK: - Groups on hover
 
@@ -956,6 +1122,19 @@ final class DockModel: Codable, ObservableObject {
 
     /// Set or clear (nil) a group's custom tile icon.
     /// Slider drags pass `persist: false` until release.
+    /// Columns and rows of a group's open grid; automatic is stored as nil.
+    func setGroupGrid(groupID: String, to shape: GridShape) {
+        guard let index = entries.firstIndex(where: { $0.group?.id == groupID }),
+              var group = entries[index].group else { return }
+        let stored = shape.isAutomatic ? nil : shape
+        guard group.grid != stored else { return }
+        group.grid = stored
+        var list = entries
+        list[index] = .group(group)
+        entries = list
+        persist()
+    }
+
     func setGroupIcon(groupID: String, to icon: GroupIcon?, persist shouldPersist: Bool = true) {
         guard let index = entries.firstIndex(where: { $0.group?.id == groupID }),
               var group = entries[index].group else { return }
@@ -1022,10 +1201,12 @@ final class DockModel: Codable, ObservableObject {
     private enum CodingKeys: String, CodingKey, CaseIterable {
         /// App version that last wrote the file. Lets a downgrade back the file up first.
         case savedByVersion
+        /// Layout version of the file, see `settingsSchema`.
+        case settingsSchema, modules, restrictedMode
         case revealDelay, hideDelay, animationDuration, iconSize, iconGap, magnificationEnabled, magnifiedSize, edge, entries, widgetKinds
         case autoHide, reserveSpace, openGroupsOnHover, groupHoverDelay, groupHoverCloseGrace
         case animateOpeningApplications
-        case hideNativeDock, nativeDockExplained, openSettingsOnLaunch, showAgentNotch, automaticUpdateChecks, agentNotchSettings
+        case hideNativeDock, nativeDockExplained, openSettingsOnLaunch, appIcon, showAgentNotch, automaticUpdateChecks, agentNotchSettings
         case showTrash, trashAccessHintDismissed
         case showBadges, badgeColor, badgeCustomColor
         case activityIcons
@@ -1034,13 +1215,18 @@ final class DockModel: Codable, ObservableObject {
         case showIndicators, dimHiddenApps, showRecents, recentApps
         /// Before per-style backgrounds. Read only, for migration.
         case backgroundStyle, backgroundFrost, backgroundTint
-        case settingsHotkey
+        case settingsHotkey, commandCenterHotkey, commandCenterQuicklinks, switcherHotkey
+        case switcherMode, switcherTitleSearch, switcherPreviews, menuBarTriggers
         /// Before Milestone D: a flat list of apps. Read only, for migration.
         case pinnedApps
     }
 
     required init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        loadedSchema = max(c.value(.settingsSchema, or: 0), 0)
+        // Any JSON reads, so a malformed value is kept and treated as no choices.
+        modules = c.value(.modules, or: ModuleSettings())
+        restrictedMode = c.value(.restrictedMode, or: false)
         revealDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .revealDelay) ?? Defaults.revealDelay, to: Self.revealDelayRange)
         hideDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .hideDelay) ?? Defaults.hideDelay, to: Self.hideDelayRange)
         animationDuration = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .animationDuration) ?? Defaults.animationDuration, to: Self.animationDurationRange)
@@ -1082,6 +1268,7 @@ final class DockModel: Codable, ObservableObject {
         showAgentNotch = c.value(.showAgentNotch, or: false)
         automaticUpdateChecks = c.value(.automaticUpdateChecks, or: true)
         openSettingsOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .openSettingsOnLaunch) ?? false
+        appIcon = (try? c.decodeIfPresent(AppIconChoice.self, forKey: .appIcon)) ?? .system
         groupHoverDelay = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverDelay) ?? Defaults.groupHoverDelay, to: Self.groupHoverDelayRange)
         groupHoverCloseGrace = Self.clamp(try c.decodeIfPresent(TimeInterval.self, forKey: .groupHoverCloseGrace) ?? Defaults.groupHoverCloseGrace, to: Self.groupHoverCloseGraceRange)
         // try? per key: an unknown enum value (from a newer build) falls back
@@ -1112,11 +1299,50 @@ final class DockModel: Codable, ObservableObject {
         } else {
             settingsHotkey = .settingsDefault
         }
+        // Same rules as `settingsHotkey`: null is cleared, missing is the default.
+        if c.contains(.commandCenterHotkey) {
+            // A malformed value keeps the default instead of failing the file.
+            do {
+                commandCenterHotkey = try c.decodeIfPresent(HotkeyChord.self, forKey: .commandCenterHotkey)
+            } catch {
+                commandCenterHotkey = .commandCenterDefault
+            }
+            if let chord = commandCenterHotkey, !chord.isRegisterable {
+                commandCenterHotkey = .commandCenterDefault
+            }
+        } else {
+            commandCenterHotkey = .commandCenterDefault
+        }
+        // Same rules again; a chord the switcher refuses (⌘Tab) is the default.
+        if c.contains(.switcherHotkey) {
+            do {
+                switcherHotkey = try c.decodeIfPresent(HotkeyChord.self, forKey: .switcherHotkey)
+            } catch {
+                switcherHotkey = SwitcherShortcut.defaultChord
+            }
+            if let chord = switcherHotkey, !SwitcherShortcut.isAllowed(chord) {
+                switcherHotkey = SwitcherShortcut.defaultChord
+            }
+        } else {
+            switcherHotkey = SwitcherShortcut.defaultChord
+        }
+        switcherMode = c.value(.switcherMode, or: SwitcherMode.apps)
+        switcherTitleSearch = c.value(.switcherTitleSearch, or: true)
+        switcherPreviews = c.value(.switcherPreviews, or: false)
+        menuBarTriggers = c.value(.menuBarTriggers, or: MenuBarTriggerSettings())
+        var seenQuicklinks = Set<UUID>()
+        commandCenterQuicklinks = Array(c.value(.commandCenterQuicklinks, or: [DecodedQuicklink]())
+            .compactMap(\.value)
+            .filter { seenQuicklinks.insert($0.id).inserted }
+            .prefix(Quicklink.listLimit))
     }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(AppInfo.version, forKey: .savedByVersion)
+        try c.encode(max(Self.settingsSchema, loadedSchema), forKey: .settingsSchema)
+        if !modules.isEmpty { try c.encode(modules, forKey: .modules) }
+        if restrictedMode { try c.encode(restrictedMode, forKey: .restrictedMode) }
         try c.encode(revealDelay, forKey: .revealDelay)
         try c.encode(hideDelay, forKey: .hideDelay)
         try c.encode(animationDuration, forKey: .animationDuration)
@@ -1150,6 +1376,7 @@ final class DockModel: Codable, ObservableObject {
         try c.encode(showAgentNotch, forKey: .showAgentNotch)
         try c.encode(automaticUpdateChecks, forKey: .automaticUpdateChecks)
         try c.encode(openSettingsOnLaunch, forKey: .openSettingsOnLaunch)
+        if appIcon != .system { try c.encode(appIcon, forKey: .appIcon) }
         try c.encode(groupHoverDelay, forKey: .groupHoverDelay)
         try c.encode(groupHoverCloseGrace, forKey: .groupHoverCloseGrace)
         try c.encode(iconStyle, forKey: .iconStyle)
@@ -1166,13 +1393,33 @@ final class DockModel: Codable, ObservableObject {
         } else {
             try c.encodeNil(forKey: .settingsHotkey)
         }
+        if let commandCenterHotkey {
+            try c.encode(commandCenterHotkey, forKey: .commandCenterHotkey)
+        } else {
+            try c.encodeNil(forKey: .commandCenterHotkey)
+        }
+        if let switcherHotkey {
+            try c.encode(switcherHotkey, forKey: .switcherHotkey)
+        } else {
+            try c.encodeNil(forKey: .switcherHotkey)
+        }
+        try c.encode(switcherMode, forKey: .switcherMode)
+        try c.encode(switcherTitleSearch, forKey: .switcherTitleSearch)
+        try c.encode(switcherPreviews, forKey: .switcherPreviews)
+        if menuBarTriggers != MenuBarTriggerSettings() { try c.encode(menuBarTriggers, forKey: .menuBarTriggers) }
+        if !commandCenterQuicklinks.isEmpty { try c.encode(commandCenterQuicklinks, forKey: .commandCenterQuicklinks) }
     }
 
     // MARK: - Persistence
 
+    /// The folder dock.json and its backups live in. Tests that read the
+    /// file back point it at their own folder, so parallel test processes
+    /// sharing one isolated home do not overwrite each other.
+    nonisolated(unsafe) static var storageDirectory = FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!.appendingPathComponent("com.james.portside")
+
     private static var storageURL: URL {
-        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let portsideDir = directory.appendingPathComponent("com.james.portside")
+        let portsideDir = storageDirectory
         try? FileManager.default.createDirectory(at: portsideDir, withIntermediateDirectories: true)
         return portsideDir.appendingPathComponent("dock.json")
     }
@@ -1190,7 +1437,13 @@ final class DockModel: Codable, ObservableObject {
     /// (written by a newer Portside) are kept, so running an older copy never
     /// drops newer settings. Keys this build knows are always its own values.
     private static func carryingForwardUnknownKeys(into encoded: Data) -> Data {
-        guard let existing = try? Data(contentsOf: storageURL),
+        mergingUnknownKeys(from: try? Data(contentsOf: storageURL), into: encoded)
+    }
+
+    /// The merge behind `carryingForwardUnknownKeys`, without file access, so
+    /// tests can feed it fixture data.
+    static func mergingUnknownKeys(from existing: Data?, into encoded: Data) -> Data {
+        guard let existing,
               let old = try? JSONSerialization.jsonObject(with: existing) as? [String: Any] else { return encoded }
         let unknown = old.filter { !knownKeys.contains($0.key) }
         guard !unknown.isEmpty,
@@ -1230,6 +1483,34 @@ final class DockModel: Codable, ObservableObject {
         }
     }
 
+    private struct SchemaProbe: Decodable { var settingsSchema: Int? }
+
+    /// Schema of a raw file: 0 when the key is missing or not an integer.
+    static func schema(of data: Data) -> Int {
+        max(((try? JSONDecoder().decode(SchemaProbe.self, from: data))?.settingsSchema) ?? 0, 0)
+    }
+
+    /// A readable file from another schema is copied aside once before this
+    /// build can save over it: `dock.json.schema-<n>` for an older one (the
+    /// rollback copy), `dock.json.from-schema-<n>` for a newer one. An
+    /// existing copy is never replaced, so the first original survives.
+    @discardableResult
+    static func backUpForSchemaChange(_ data: Data, in directory: URL) -> URL? {
+        let schema = schema(of: data)
+        guard schema != settingsSchema else { return nil }
+        let name = schema < settingsSchema ? "dock.json.schema-\(schema)" : "dock.json.from-schema-\(schema)"
+        let backup = directory.appendingPathComponent(name)
+        guard !FileManager.default.fileExists(atPath: backup.path) else { return nil }
+        do {
+            try data.write(to: backup, options: .withoutOverwriting)
+            logger.info("dock.json schema \(schema) differs from \(settingsSchema); copied to \(name, privacy: .public)")
+            return backup
+        } catch {
+            logger.error("could not back up dock.json before a schema change: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
+
     /// An existing file that fails to decode is moved aside, never overwritten.
     private static func setAsideUnreadable(_ error: Error) {
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
@@ -1258,6 +1539,7 @@ final class DockModel: Codable, ObservableObject {
             backUpIfDowngrading(data)
             do {
                 let model = try JSONDecoder().decode(DockModel.self, from: data)
+                backUpForSchemaChange(data, in: storageURL.deletingLastPathComponent())
                 logger.info("loaded \(model.entries.count) entries (\(model.allPinnedApps.count) apps, \(model.groups.count) groups) from dock.json")
                 return model
             } catch {
@@ -1378,6 +1660,13 @@ final class DockModel: Codable, ObservableObject {
         showBadges = old.showBadges
         activityIcons = old.activityIcons
         settingsHotkey = old.settingsHotkey
+        commandCenterHotkey = old.commandCenterHotkey
+        switcherHotkey = old.switcherHotkey
+        switcherMode = old.switcherMode
+        switcherTitleSearch = old.switcherTitleSearch
+        switcherPreviews = old.switcherPreviews
+        menuBarTriggers = old.menuBarTriggers
+        commandCenterQuicklinks = old.commandCenterQuicklinks
         openGroupsOnHover = old.openGroupsOnHover
         usageClaudeConsent = old.usageClaudeConsent
         usageCopilotConsent = old.usageCopilotConsent
@@ -1386,6 +1675,7 @@ final class DockModel: Codable, ObservableObject {
         showAgentNotch = old.showAgentNotch
         automaticUpdateChecks = old.automaticUpdateChecks
         openSettingsOnLaunch = old.openSettingsOnLaunch
+        appIcon = old.appIcon
         groupHoverDelay = old.groupHoverDelay
         groupHoverCloseGrace = old.groupHoverCloseGrace
         edge = old.edge

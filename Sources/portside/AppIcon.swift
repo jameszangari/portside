@@ -1,53 +1,52 @@
 import AppKit
 
-/// Portside's app icon.
+/// Which Portside icon to show everywhere Portside draws its own icon
+/// (`appIcon` in dock.json). System is Light in light mode and Dark in dark
+/// mode; the others pin one look. Portside.app's file in Finder keeps its
+/// own icon.
+enum AppIconChoice: String, Codable, CaseIterable, Identifiable {
+    case system, navy, dark, light
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: "System"
+        case .navy: "Navy"
+        case .dark: "Dark"
+        case .light: "Light"
+        }
+    }
+
+    /// The artwork drawn for this choice: System resolves to Dark or Light.
+    func artwork(dark: Bool) -> AppIconChoice {
+        self == .system ? (dark ? .dark : .light) : self
+    }
+}
+
+/// Portside's app icon, in three artworks.
 ///
-/// Portside.app built from design/icon-composer/AppIcon.icon has an
-/// Assets.car and `CFBundleIconName`. Then the icon comes from the system
-/// (`NSWorkspace.icon(forFile:)`), so it gets the same Liquid Glass
-/// rendering, icon style (light, dark, tinted), and size as every other app
-/// in Portside's dock, and the native Dock tile is left to macOS.
+/// Navy is `Support/AppIcon-<px>.png` (actool's flat render of
+/// design/icon-composer/AppIcon.icon). Each size is its own representation,
+/// so small renders are not a scaled-down large bitmap. Dark and Light are
+/// drawn from the sail artwork (`Support/AppIconSail*.svg`) on a graphite or
+/// cream body, at whatever size they are drawn. If the resources are
+/// missing, Navy and then the generic app icon stand in.
 ///
-/// `swift run` has no bundle icon. It borrows the system rendering from a
-/// built Portside.app if there is one, otherwise it uses
-/// `Support/AppIcon-<px>.png` (actool's flat render of the same .icon:
-/// light style only, with a lighter rim than the system rendering). Each
-/// size is its own representation, so small renders are not a scaled-down
-/// large bitmap. If the PNGs are missing, the generic app icon is used.
+/// Portside draws its own Dock tile for every choice, so the native Dock
+/// tile matches Portside's tile rather than the bundle's compiled icon.
 enum AppIcon {
+    /// Set from `DockModel.appIcon` through `IconCache.setAppIcon`.
+    static var choice = AppIconChoice.system
+
+    private static var drawn: [AppIconChoice: NSImage] = [:]
     private static let pixelSizes = [16, 32, 128, 256]
 
-    private static let isAppBundle = Bundle.main.bundleURL.pathExtension == "app"
-
-    /// The system-rendered icon (Liquid Glass, current icon style), or nil.
-    /// Portside.app: its own icon, when built with a compiled `.icon`.
-    /// `swift run`: borrowed from a Portside.app that LaunchServices knows
-    /// (for example build/Portside.app), when that one has a compiled icon.
-    /// Dropped when the system icon style changes, so the next read
-    /// renders the new style.
-    private static var systemIcon: NSImage? {
-        if let cachedSystemIcon { return cachedSystemIcon }
-        cachedSystemIcon = loadSystemIcon()
-        return cachedSystemIcon
-    }
-
-    private static var cachedSystemIcon: NSImage?
-
-    static func invalidateSystemIcon() {
-        cachedSystemIcon = nil
-    }
-
-    private static func loadSystemIcon() -> NSImage? {
-        func hasCompiledIcon(_ bundle: Bundle?) -> Bool {
-            bundle?.object(forInfoDictionaryKey: "CFBundleIconName") != nil
-        }
-        if isAppBundle {
-            return hasCompiledIcon(.main) ? NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath) : nil
-        }
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.james.portside"),
-              hasCompiledIcon(Bundle(url: url)) else { return nil }
-        BrandAssets.logger.info("unbundled: using the system icon of \(url.path, privacy: .public)")
-        return NSWorkspace.shared.icon(forFile: url.path)
+    /// The app's appearance right now. Read at each call; `IconCache` redraws
+    /// when it changes. Never creates the app (tests have none): light then.
+    private static var isDark: Bool {
+        guard let app = NSApp else { return false }
+        return app.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     }
 
     /// Brand PNGs keyed by pixel size. Empty when the resources are missing.
@@ -67,9 +66,23 @@ enum AppIcon {
 
     private static let fallback: NSImage = NSWorkspace.shared.icon(for: .applicationBundle)
 
-    /// The system-rendered icon when there is one, else the flat PNGs.
-    /// Used for the app and Dock tile icons.
-    static var image: NSImage { systemIcon ?? flatImage }
+    /// The chosen icon. Used for the app and Dock tile icons.
+    static var image: NSImage {
+        let artwork = choice.artwork(dark: isDark)
+        return artwork == .navy ? flatImage : variant(artwork) ?? flatImage
+    }
+
+    /// The chosen icon at a fixed point size.
+    static func image(points: CGFloat) -> NSImage {
+        image(for: choice, points: points)
+    }
+
+    static func image(for choice: AppIconChoice, points: CGFloat) -> NSImage {
+        let artwork = choice.artwork(dark: isDark)
+        guard artwork != .navy, let drawn = variant(artwork)?.copy() as? NSImage else { return navy(points: points) }
+        drawn.size = NSSize(width: points, height: points)
+        return drawn
+    }
 
     /// All PNG sizes in one 512pt image. NSImage picks the closest
     /// representation for each draw.
@@ -83,19 +96,16 @@ enum AppIcon {
         return image
     }()
 
-    /// The icon for a fixed point size: only the smallest PNGs that cover
-    /// 1x and 2x at that size, so SwiftUI's `Image(nsImage:)` and NSAlert
+    /// Navy for a fixed point size: only the smallest PNGs that cover 1x
+    /// and 2x at that size, so SwiftUI's `Image(nsImage:)` and NSAlert
     /// cannot pick an oversized bitmap and downsample it.
-    /// `matchSystem` false: the flat PNGs (Portside's tile with the
-    /// "Original" icon style), ignoring the system icon style.
-    static func image(points: CGFloat, matchSystem: Bool = true) -> NSImage {
+    private static func navy(points: CGFloat) -> NSImage {
         let size = NSSize(width: points, height: points)
-        if matchSystem, let systemIcon, let sized = systemIcon.copy() as? NSImage {
-            // IconServices renders this image fresh at each draw size.
+        guard !reps.isEmpty else {
+            let sized = (fallback.copy() as? NSImage) ?? fallback
             sized.size = size
             return sized
         }
-        guard !reps.isEmpty else { return fallback }
         let image = NSImage(size: size)
         var added = Set<Int>()
         for scale in [1.0, 2.0] {
@@ -108,18 +118,51 @@ enum AppIcon {
         return image
     }
 
+    /// Dark or Light, drawn fresh at each size. Nil when the artwork is missing.
+    private static func variant(_ artwork: AppIconChoice) -> NSImage? {
+        if let image = drawn[artwork] { return image }
+        let light = artwork == .light
+        guard let url = BrandAssets.bundle?.url(forResource: light ? "AppIconSail-Light" : "AppIconSail", withExtension: "svg"),
+              let sail = NSImage(contentsOf: url) else {
+            BrandAssets.logger.error("sail artwork missing, using the navy icon")
+            return nil
+        }
+        let top = light ? NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1) : NSColor(srgbRed: 0.204, green: 0.216, blue: 0.239, alpha: 1)
+        let bottom = light ? NSColor(srgbRed: 0.925, green: 0.898, blue: 0.847, alpha: 1) : NSColor(srgbRed: 0.086, green: 0.090, blue: 0.102, alpha: 1)
+        let rim = light ? NSColor.black.withAlphaComponent(0.1) : NSColor.white.withAlphaComponent(0.12)
+        let image = NSImage(size: NSSize(width: 1024, height: 1024), flipped: false) { rect in
+            // The macOS icon grid: an 824 body in a 1024 canvas. No drop
+            // shadow: drawn into a small image it showed as a square box.
+            let k = rect.width / 1024
+            let body = NSRect(x: rect.minX + 100 * k, y: rect.minY + 100 * k, width: 824 * k, height: 824 * k)
+            let shape = NSBezierPath(roundedRect: body, xRadius: 185 * k, yRadius: 185 * k)
+            NSGradient(starting: top, ending: bottom)?.draw(in: shape, angle: -90)
+            NSGraphicsContext.saveGraphicsState()
+            shape.addClip()
+            sail.draw(in: body)
+            NSGraphicsContext.restoreGraphicsState()
+            let edge = NSBezierPath(roundedRect: body.insetBy(dx: k, dy: k), xRadius: 184 * k, yRadius: 184 * k)
+            edge.lineWidth = 2 * k
+            rim.setStroke()
+            edge.stroke()
+            return true
+        }
+        drawn[artwork] = image
+        return image
+    }
+
     private static func rep(_ cg: CGImage, size: NSSize) -> NSBitmapImageRep {
         let rep = NSBitmapImageRep(cgImage: cg)
         rep.size = size
         return rep
     }
 
-    /// Unbundled only: the Dock keeps showing an executable's generic icon
-    /// even after `applicationIconImage` is set, so the tile also draws the
-    /// icon itself. Portside.app leaves its tile to macOS, which keeps the
-    /// live Liquid Glass rendering.
+    /// The Dock keeps showing an executable's generic icon, or a bundle's
+    /// compiled one, even after `applicationIconImage` is set, so the tile
+    /// also draws the icon itself. Called again when the choice or the
+    /// appearance changes.
     static func applyToDockTile() {
-        guard !isAppBundle else { return }
+        let image = self.image
         NSApp.applicationIconImage = image
         let tile = NSApp.dockTile
         tile.contentView = NSImageView(image: image)
@@ -146,7 +189,7 @@ enum AppIcon {
         rep.size = NSSize(width: size, height: size)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
-        image.draw(in: NSRect(x: 0, y: 0, width: size, height: size))
+        flatImage.draw(in: NSRect(x: 0, y: 0, width: size, height: size))
         NSGraphicsContext.restoreGraphicsState()
         guard let data = rep.representation(using: .png, properties: [:]) else {
             throw CocoaError(.fileWriteUnknown)

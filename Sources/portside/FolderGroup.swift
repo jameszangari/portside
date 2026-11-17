@@ -12,12 +12,52 @@ struct FolderGroup: Codable, Hashable, Identifiable {
     var apps: [PinnedApp]
     /// Custom tile artwork. Nil shows the mini grid of member icons.
     var icon: GroupIcon?
+    /// Columns and rows of the open grid. Nil is automatic.
+    var grid: GridShape?
 
-    init(id: String = UUID().uuidString, name: String, apps: [PinnedApp], icon: GroupIcon? = nil) {
+    init(id: String = UUID().uuidString, name: String, apps: [PinnedApp], icon: GroupIcon? = nil, grid: GridShape? = nil) {
         self.id = id
         self.name = name
         self.apps = apps
         self.icon = icon
+        self.grid = grid
+    }
+}
+
+/// The open grid's layout for one group or folder stack (Columns and Rows
+/// in its menu). Nil columns picks a roughly square grid; nil rows shows
+/// every row (a stack scrolls past its usual height). A set rows count is
+/// how many show before the grid scrolls.
+struct GridShape: Codable, Hashable {
+    var columns: Int?
+    var rows: Int?
+
+    static let choices = 2...8
+
+    init(columns: Int? = nil, rows: Int? = nil) {
+        self.columns = columns
+        self.rows = rows
+    }
+
+    /// Out of range values (a hand edit) read as automatic.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        columns = (try? c.decodeIfPresent(Int.self, forKey: .columns)).flatMap { $0 }.flatMap { Self.choices.contains($0) ? $0 : nil }
+        rows = (try? c.decodeIfPresent(Int.self, forKey: .rows)).flatMap { $0 }.flatMap { Self.choices.contains($0) ? $0 : nil }
+    }
+
+    var isAutomatic: Bool { columns == nil && rows == nil }
+
+    /// Columns for `count` cells: the chosen number, never wider than the
+    /// cells, else the automatic square.
+    func columns(for count: Int) -> Int {
+        guard let columns else { return GroupPopoverView.columns(for: count) }
+        return min(columns, max(count, 1))
+    }
+
+    /// The tallest the grid draws before it scrolls, nil for no limit.
+    func maxHeight(rowHeight: CGFloat, spacing: CGFloat) -> CGFloat? {
+        rows.map { CGFloat($0) * rowHeight + CGFloat($0 - 1) * spacing }
     }
 }
 
