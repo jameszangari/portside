@@ -65,6 +65,8 @@ Sources/portside/
   PortsideApp.swift         Entry point (--restore-dock, --export-icon, crash recovery, signals), menu bar, About panel, app delegate
   CopyHandoff.swift         One copy at a time: a development copy quits the running copy at launch and reopens the installed one on quit
   DockEngine.swift          Coordinator for tracker, panel, hide timer, and model
+  RevealLatency.swift       Edge event to slide start, minus the reveal delay: os_signpost interval and the last 200 for a median and p95
+  Diagnostics.swift         Copy Diagnostics: plain-text report of version, settings, modules, permissions and reveal latency
   EdgeTracker.swift         Per-screen edge windows with NSTrackingArea (event-driven reveal)
   DockPanel.swift           Non-activating NSPanel, slide animation, panel tracking, multi-display relocate
   DockModel.swift           Codable settings and entries, persistence to dock.json
@@ -243,6 +245,11 @@ Tests/portsideTests/        XCTest target (`@testable import portside`); run wit
   FixtureLoader.swift       Reads JSON fixtures from Fixtures/ by source path (no resource bundle)
   SettingsFixtureTests.swift dock.json legacy migration, unknown-key carry-forward and round trip, by value
   TestWait.swift            waitUntil: polls a condition with a timeout instead of a fixed sleep
+  NativeDockTests.swift     Hide and restore against an in-memory com.apple.dock: exact types, deleted keys, rollback, refusals, damaged backup
+  AgentHooksTests.swift     Hook install and removal in a temporary home: user hooks kept, backups, modes, codex_hooks, the script's session file
+  AgentSessionDiscoveryTests.swift  T3 Code and OpenCode rows from fixture SQLite databases, T3 merge with the hook session
+  RevealLatencyTests.swift  Percentiles, budget count, sample cap
+  DiagnosticsTests.swift    Report contents and home folder redaction
   ModuleSettingsTests.swift Module choices, schema stamp, backups, rollback, malformed and future-schema files, saved choices at launch
   Fixtures/                 dock.json fixtures (legacy-flat-pins, modules-current, malformed-modules, future-schema, truncated)
 scripts/

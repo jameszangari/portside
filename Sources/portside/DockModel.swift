@@ -1412,9 +1412,14 @@ final class DockModel: Codable, ObservableObject {
 
     // MARK: - Persistence
 
+    /// The folder dock.json and its backups live in. Tests that read the
+    /// file back point it at their own folder, so parallel test processes
+    /// sharing one isolated home do not overwrite each other.
+    nonisolated(unsafe) static var storageDirectory = FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!.appendingPathComponent("com.james.portside")
+
     private static var storageURL: URL {
-        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let portsideDir = directory.appendingPathComponent("com.james.portside")
+        let portsideDir = storageDirectory
         try? FileManager.default.createDirectory(at: portsideDir, withIntermediateDirectories: true)
         return portsideDir.appendingPathComponent("dock.json")
     }

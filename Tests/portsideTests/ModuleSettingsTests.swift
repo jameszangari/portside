@@ -146,13 +146,15 @@ final class ModuleSettingsTests: XCTestCase {
         guard let home = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"], home.hasPrefix("/tmp") || home.hasPrefix("/private/tmp") else {
             throw XCTSkip("needs CFFIXED_USER_HOME under /tmp")
         }
-        let support = try XCTUnwrap(FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first)
-        let directory = support.appendingPathComponent("com.james.portside")
-        guard directory.path.contains(home) || directory.path.contains("/tmp/") else {
-            throw XCTSkip("Application Support is not under the isolated home")
-        }
-        try? FileManager.default.removeItem(at: directory)
+        // A folder of its own: other test processes share the home.
+        let directory = URL(fileURLWithPath: home).appendingPathComponent("module-settings-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let saved = DockModel.storageDirectory
+        DockModel.storageDirectory = directory
+        addTeardownBlock {
+            DockModel.storageDirectory = saved
+            try? FileManager.default.removeItem(at: directory)
+        }
         return directory
     }
 

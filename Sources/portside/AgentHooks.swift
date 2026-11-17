@@ -25,12 +25,19 @@ enum AgentHooks {
 
     static let tag = "# portside-agent-hook"
     private static let logger = Logger(subsystem: "com.james.portside", category: "Widgets")
-    private static let home = FileManager.default.homeDirectoryForCurrentUser
+    /// Where the agent configs live. Tests point this and `scriptURL` at a
+    /// temporary folder so they never edit the real ones.
+    nonisolated(unsafe) static var home = FileManager.default.homeDirectoryForCurrentUser
 
-    static let scriptURL: URL = AgentStatusWidget.directory
+    nonisolated(unsafe) static var scriptURL: URL = AgentStatusWidget.directory
         .deletingLastPathComponent().appendingPathComponent("agent-hook.sh")
 
-    static let targets: [Target] = [
+    /// The session files the script writes, next to it.
+    static var sessionsDirectory: URL {
+        scriptURL.deletingLastPathComponent().appendingPathComponent(AgentStatusWidget.directory.lastPathComponent)
+    }
+
+    static var targets: [Target] { [
         // SessionEnd removes the session; the idle-prompt Notification and
         // an interrupted tool mark it done when Stop never fires.
         Target(id: "claude", name: "Claude Code",
@@ -42,7 +49,7 @@ enum AgentHooks {
                configDirectory: home.appendingPathComponent(".codex"),
                hooksFile: home.appendingPathComponent(".codex/hooks.json"),
                events: ["SessionStart", "UserPromptSubmit", "Stop"]),
-    ]
+    ] }
 
     static func status(_ target: Target) -> Status {
         guard FileManager.default.fileExists(atPath: target.configDirectory.path) else { return .notFound }
@@ -71,7 +78,7 @@ enum AgentHooks {
             try edit(target, install: false)
         }
         try? FileManager.default.removeItem(at: scriptURL)
-        try? FileManager.default.removeItem(at: AgentStatusWidget.directory)
+        try? FileManager.default.removeItem(at: sessionsDirectory)
         logger.info("agent hooks removed")
     }
 

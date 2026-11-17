@@ -54,6 +54,14 @@ final class IntegrationSettingsTests: XCTestCase {
               home.hasPrefix("/tmp") || home.hasPrefix("/private/tmp") else {
             throw XCTSkip("needs CFFIXED_USER_HOME under /tmp")
         }
+        // dock.json in a folder of its own: other test processes share the home.
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("integration-settings-\(UUID().uuidString)")
+        let saved = DockModel.storageDirectory
+        DockModel.storageDirectory = directory
+        addTeardownBlock {
+            DockModel.storageDirectory = saved
+            try? FileManager.default.removeItem(at: directory)
+        }
         gate = PermissionGate()
         registry = ModuleRegistry(commands: CommandRegistry(permissions: gate), permissions: gate)
         model = DockModel()
@@ -61,8 +69,7 @@ final class IntegrationSettingsTests: XCTestCase {
 
     /// dock.json under the isolated home (same path DockModel writes).
     private func savedFile() throws -> URL {
-        let support = try XCTUnwrap(FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first)
-        return support.appendingPathComponent("com.james.portside/dock.json")
+        DockModel.storageDirectory.appendingPathComponent("dock.json")
     }
 
     private func register(_ name: String, _ scope: Scope, requestable: Bool = true) {

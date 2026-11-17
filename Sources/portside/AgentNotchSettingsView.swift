@@ -111,6 +111,7 @@ struct AgentNotchSettingsView: View {
                         Text(minutes == 0 ? "Off" : "\(minutes) min before").tag(minutes)
                     }
                 }
+                .disabled(model.restrictedMode)
                 Toggle("Agent finished or needs you", isOn: binding(\.alertAgents))
                 Toggle("Battery low or charging", isOn: binding(\.alertBattery))
                 if preferences.alertBattery {
@@ -125,7 +126,10 @@ struct AgentNotchSettingsView: View {
                     }
                 }
                 Toggle("Live AirPods levels", isOn: binding(\.airPodsLive))
-                if preferences.airPodsLive, AirPodsLiveScanner.denied {
+                    .disabled(model.restrictedMode)
+                if model.restrictedMode {
+                    Text("Off in restricted mode: meetings read your calendar and live AirPods levels scan Bluetooth.").helperStyle()
+                } else if preferences.airPodsLive, AirPodsLiveScanner.denied {
                     Text("Bluetooth access is off for Portside. Turn it on in System Settings > Privacy & Security > Bluetooth.").helperStyle()
                 }
                 Toggle("Rain or snow soon", isOn: binding(\.alertWeather))
@@ -331,7 +335,7 @@ struct AgentNotchSettingsView: View {
     private var alertsSummary: String {
         let alerts = settingsList([("Agents", preferences.alertAgents), ("battery", preferences.alertBattery),
                                    ("AirPods", preferences.alertAirPods), ("weather", preferences.alertWeather)], none: "No alerts")
-        return preferences.meetingMinutes > 0 ? "\(alerts), meetings" : alerts
+        return preferences.meetingsOn(restricted: model.restrictedMode) ? "\(alerts), meetings" : alerts
     }
 
     private var musicSummary: String {
