@@ -30,7 +30,7 @@ Ad hoc builds make macOS ask for permissions again whenever the binary changes. 
 - **Public APIs by default.** A private API needs its own file, `dlopen`/`dlsym` with a graceful fallback so an OS update degrades instead of crashing, and a note in the Notes section of [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **Do not change `com.apple.dock` settings** except through the existing hide-the-Dock feature, which saves the prior values and restores them.
 - **Match the surrounding code:** naming, comment density, idiom. Keep comments short and plain.
-- **Verify, do not assume.** Run `swift build` and read the output, `CFFIXED_USER_HOME=/tmp/portside-tests swift test` for settings and other covered contracts, and `swift run` to catch launch crashes. Hover and click behavior needs a person; say in the PR what you tried by hand.
+- **Verify, do not assume.** Run `swift build` and read the output, `CFFIXED_USER_HOME=/tmp/portside-tests swift test` for settings and other covered contracts, and `swift run` to catch launch crashes (it quits a running Portside first and reopens it afterward; `PORTSIDE_ALLOW_SECOND_COPY=1` keeps both). Hover and click behavior needs a person; say in the PR what you tried by hand.
 
 ## Pull requests
 

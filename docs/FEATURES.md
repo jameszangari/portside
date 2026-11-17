@@ -189,6 +189,7 @@ Full feature list. The [README](../README.md) keeps a short summary.
 - `scripts/build-app.sh` builds a signed `build/Portside.app` with the brand icon, version from `VERSION`, and the Calendar / Finder / System Events Automation usage strings. `--install` copies it to `~/Applications`.
 - App builds reuse a local code signing certificate after one-time setup, keeping the signing identity stable across rebuilds for macOS permission matching. Setup preserves the saved certificate fingerprint even when another certificate has the same name.
 - "Open Portside at login" (Settings > General > Startup) through `SMAppService`. macOS is the source of truth; the toggle shows its real status, links to Login Items when approval is needed, and is disabled under `swift run`.
+- One copy at a time for development: a `swift run` copy quits a running Portside first and reopens the installed copy when it quits; the installed app steps aside while a development copy runs; `PORTSIDE_ALLOW_SECOND_COPY=1` runs both.
 - "Open Settings when Portside launches" (Settings > General > Startup, `openSettingsOnLaunch`, off by default).
 
 ## Notch and update notifications

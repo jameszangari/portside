@@ -20,6 +20,8 @@ Measured on an M4 Max with Xcode 27.2: clean debug ~27s default vs ~9s with that
 
 Use `swift run` for launch smoke tests only. Quit it afterward and open the signed app with `open build/Portside.app` for Calendar testing and daily use. macOS can attribute a bare executable's Calendar request to its terminal instead of Portside.
 
+One copy at a time: a `swift run` or `.build` copy quits any other running Portside before it starts (the other copy restores the native Dock and saves its settings on the way out) and reopens the installed copy when it quits normally. A crash or `kill -9` skips the reopen. Opening the installed app while a development copy runs shows "A development copy of Portside is running" and quits. `PORTSIDE_ALLOW_SECOND_COPY=1 swift run portside` runs both, as before.
+
 Restore the native Dock from the backup without starting the app:
 
 ```
