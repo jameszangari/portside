@@ -76,6 +76,7 @@ enum PortsideMain {
            let pid = pid_t(CommandLine.arguments[flag + 1]) {
             NativeDock.runWatchdog(watching: pid)
         }
+        CopyHandoff.runAtLaunch()
         NativeDock.recoverIfNeeded()
         installSignalHandlers()
         PortsideApp.main()
@@ -155,6 +156,7 @@ enum PortsideMain {
             source.setEventHandler {
                 WindowFitter.releaseForExit(reason: name)
                 NativeDockController.restoreForExit(reason: name)
+                CopyHandoff.relaunchIfNeeded()
                 exit(0)
             }
             source.resume()
@@ -556,6 +558,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UpdateMonitor.shared.stop()
         dockEngine?.stop()
         NativeDockController.restoreForExit(reason: "applicationWillTerminate")
+        CopyHandoff.relaunchIfNeeded()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

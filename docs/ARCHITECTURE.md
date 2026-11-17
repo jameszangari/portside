@@ -63,6 +63,7 @@ How Portside is put together. See also [PLAN.md](PLAN.md) for the original miles
 ```
 Sources/portside/
   PortsideApp.swift         Entry point (--restore-dock, --export-icon, crash recovery, signals), menu bar, About panel, app delegate
+  CopyHandoff.swift         One copy at a time: a development copy quits the running copy at launch and reopens the installed one on quit
   DockEngine.swift          Coordinator for tracker, panel, hide timer, and model
   EdgeTracker.swift         Per-screen edge windows with NSTrackingArea (event-driven reveal)
   DockPanel.swift           Non-activating NSPanel, slide animation, panel tracking, multi-display relocate
