@@ -1,0 +1,42 @@
+name: Build and test
+
+on:
+  pull_request:
+    branches: [nightly, main]
+  push:
+    branches: [nightly]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      SWIFT_ENABLE_EXPLICIT_MODULES: "NO"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          xcode="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          swift --version
+
+      # Release first: a debug-only symbol used by shipping code fails only here.
+      - name: Release build
+        run: swift build -c release
+
+      - name: Debug build
+        run: swift build
+
+      - name: Tests
+        env:
+          CFFIXED_USER_HOME: ${{ runner.temp }}/portside-tests
+        run: |
+          mkdir -p "$CFFIXED_USER_HOME"
+          swift test

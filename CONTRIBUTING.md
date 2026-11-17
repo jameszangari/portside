@@ -15,6 +15,8 @@ CFFIXED_USER_HOME=/tmp/portside-tests swift test
 
 You need macOS 26 or later on Apple Silicon and the Xcode command line tools. Do not run two SwiftPM commands in the repo at once; they share one `.build` lock.
 
+Every pull request to `nightly` or `main` runs `.github/workflows/build.yml` on a macOS 26 runner: release build, debug build, then `swift test` with an isolated home. A release build catches shipping code that calls a debug-only symbol.
+
 To build a `.app` without the maintainer's signing identity, sign ad hoc:
 
 ```
