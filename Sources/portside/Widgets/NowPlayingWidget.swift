@@ -174,10 +174,8 @@ final class NowPlayingWidget: DockWidget {
         }
     }
 
-    #if DEBUG
-    /// Render probe only: shows `track` without asking any player.
+    /// Settings preview and render probe: shows `track` without asking any player.
     func preview(_ track: Track) { set(track, for: track.player.bundleID) }
-    #endif
 
     /// Jumps to `seconds` into the current track.
     func seek(to seconds: TimeInterval) {
