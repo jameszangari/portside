@@ -13,17 +13,17 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-26
+    # Xcode 27 SDK needed (FoundationModels, ProcessStopper clock APIs); macos-26 ships 26.6.
+    runs-on: xcode-27
     timeout-minutes: 45
     env:
       SWIFT_ENABLE_EXPLICIT_MODULES: "NO"
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select newest Xcode
+      - name: Select Xcode 27.2
         run: |
-          xcode="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
-          sudo xcode-select -s "$xcode"
+          sudo xcode-select -s /Applications/Xcode_27.2.app
           xcodebuild -version
           swift --version
 
