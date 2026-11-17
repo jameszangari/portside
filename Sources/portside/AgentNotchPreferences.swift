@@ -87,6 +87,11 @@ struct AgentNotchSettings: Codable, Equatable {
     var airPodsLowPercent = 20
     /// Live AirPods levels from Bluetooth LE adverts (asks for Bluetooth).
     var airPodsLive = false
+
+    /// Restricted mode holds off the calendar read and the Bluetooth scan,
+    /// keeping the saved choices for when it ends.
+    func meetingsOn(restricted: Bool) -> Bool { meetingMinutes > 0 && !restricted }
+    func liveAirPodsOn(restricted: Bool) -> Bool { airPodsLive && !restricted }
     /// Shelf hotkeys (SHELF-11), none set by default: open or close the
     /// shelf, open it on Files, search the clipboard.
     var shelfToggleHotkey: HotkeyChord?

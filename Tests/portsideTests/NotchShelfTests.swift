@@ -850,3 +850,19 @@ final class ThinkingStyleTests: XCTestCase {
         XCTAssertEqual(ThinkingLoader.preferredStyle(.snakeBoxes, for: 14), .snakeBoxes)
     }
 }
+
+final class NotchRestrictedModeTests: XCTestCase {
+    func testRestrictedModeHoldsOffMeetingsAndLiveAirPodsButKeepsTheChoices() {
+        var settings = AgentNotchSettings()
+        settings.meetingMinutes = 10
+        settings.airPodsLive = true
+        XCTAssertTrue(settings.meetingsOn(restricted: false))
+        XCTAssertTrue(settings.liveAirPodsOn(restricted: false))
+        XCTAssertFalse(settings.meetingsOn(restricted: true))
+        XCTAssertFalse(settings.liveAirPodsOn(restricted: true))
+        XCTAssertEqual(settings.meetingMinutes, 10, "the saved choice comes back when restricted mode ends")
+        XCTAssertTrue(settings.airPodsLive)
+        settings.meetingMinutes = 0
+        XCTAssertFalse(settings.meetingsOn(restricted: false))
+    }
+}

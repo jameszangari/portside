@@ -270,8 +270,10 @@ final class AgentNotch {
     init(model: DockModel, widgets: WidgetStore) {
         self.widgets = widgets
         self.model = model
-        subscription = widgets.$hosts.combineLatest(model.$showAgentNotch, model.$agentNotchSettings)
-            .receive(on: DispatchQueue.main).sink { [weak self] _, enabled, preferences in
+        // Restricted mode is here too: it holds off the meeting countdown
+        // and live AirPods, and stops the key tap.
+        subscription = widgets.$hosts.combineLatest(model.$showAgentNotch, model.$agentNotchSettings, model.$restrictedMode)
+            .receive(on: DispatchQueue.main).sink { [weak self] _, enabled, preferences, _ in
                 guard let self else { return }
                 let nextAgents = widgets.widget(AgentStatusWidget.kind) as? AgentStatusWidget
                 let nextUsage = preferences.showUsage ? widgets.widget(UsageWidget.kind) as? UsageWidget : nil
@@ -295,10 +297,9 @@ final class AgentNotch {
                     self.layoutPanels()
                 }
             }
-        // The key tap starts once Accessibility is granted, and stops in
-        // restricted mode.
-        keyTapSubscription = AccessibilityTrust.shared.$isTrusted.combineLatest(model.$restrictedMode).dropFirst()
-            .receive(on: DispatchQueue.main).sink { [weak self] _, _ in self?.bindLevels() }
+        // The key tap starts once Accessibility is granted.
+        keyTapSubscription = AccessibilityTrust.shared.$isTrusted.dropFirst()
+            .receive(on: DispatchQueue.main).sink { [weak self] _ in self?.bindLevels() }
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in self?.rebuildPanels() }
@@ -433,10 +434,12 @@ final class AgentNotch {
 
     /// Battery, weather and calendar feed the strip while the shelf is on
     /// (the widget store runs them for it). Rebound when their hosts change.
+    /// Restricted mode keeps calendar events off the strip.
     private func bindAlertSources(_ widgets: WidgetStore) {
+        let restricted = MainActor.assumeIsolated { model?.restrictedMode ?? false }
         let nextBattery = preferences.alertBattery ? widgets.widget(BatteryWidget.kind) as? BatteryWidget : nil
         let nextWeather = preferences.alertWeather ? widgets.widget(WeatherWidget.kind) as? WeatherWidget : nil
-        let nextCalendar = preferences.meetingMinutes > 0 ? widgets.widget(CalendarWidget.kind) as? CalendarWidget : nil
+        let nextCalendar = preferences.meetingsOn(restricted: restricted) ? widgets.widget(CalendarWidget.kind) as? CalendarWidget : nil
         guard nextBattery !== battery || nextWeather !== weather || nextCalendar !== calendar else { return }
         battery = nextBattery
         weather = nextWeather
@@ -584,7 +587,9 @@ final class AgentNotch {
         if shelf && (preferences.alertAirPods || preferences.shelfPages.isOn(.airPods)) {
             airPods.onChange = { [weak self] readings in self?.checkAirPods(readings) }
             airPods.start()
-            airPods.live = preferences.airPodsLive
+            // Live levels scan Bluetooth LE; restricted mode keeps to the
+            // system's own battery report.
+            airPods.live = preferences.liveAirPodsOn(restricted: restricted)
         } else {
             airPods.stop()
             lastAirPods = nil
