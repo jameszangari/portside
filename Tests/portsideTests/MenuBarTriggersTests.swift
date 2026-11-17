@@ -51,6 +51,8 @@ final class MenuBarTriggersTests: XCTestCase {
         return Rig(shelf: shelf, service: service, env: env, probe: probe, surface: surface)
     }
 
+    /// Proves something did not happen within `ms`. A change that should
+    /// happen waits with `waitUntil` instead.
     private func settle(_ ms: Int = 250) async { try? await Task.sleep(for: .milliseconds(ms)) }
 
     // MARK: Settings
@@ -193,7 +195,7 @@ final class MenuBarTriggersTests: XCTestCase {
         rig.probe.empty = true
         rig.service.pointerEvent(.mouseMoved, at: .zero)
         rig.service.pointerEvent(.mouseMoved, at: .zero)
-        await settle(60)
+        await waitUntil { rig.shelf.mode == .revealed }
         XCTAssertEqual(rig.shelf.mode, .revealed)
     }
 
@@ -230,7 +232,7 @@ final class MenuBarTriggersTests: XCTestCase {
         rig.service.activate(.control)
         rig.service.activate(.control)
         XCTAssertEqual(rig.shelf.mode, .revealed)
-        await settle(250)
+        await waitUntil { rig.shelf.mode == .hidden }
         XCTAssertEqual(rig.shelf.mode, .hidden)
     }
 
@@ -275,7 +277,7 @@ final class MenuBarTriggersTests: XCTestCase {
         rig.env.menuOpen = false
         await settle(40)
         XCTAssertEqual(rig.shelf.mode, .revealed, "needs a full interval from when the menu closed")
-        await settle(120)
+        await waitUntil { rig.shelf.mode == .hidden }
         XCTAssertEqual(rig.shelf.mode, .hidden)
     }
 
@@ -290,7 +292,7 @@ final class MenuBarTriggersTests: XCTestCase {
         await settle(250)
         XCTAssertEqual(rig.shelf.mode, .revealed)
         rig.service.appActivated(bundleID: "com.example.other")
-        await settle(60)
+        await waitUntil { rig.shelf.mode == .hidden }
         XCTAssertEqual(rig.shelf.mode, .hidden)
     }
 
@@ -329,7 +331,7 @@ final class MenuBarTriggersTests: XCTestCase {
         rig.service.activate(.control)
         XCTAssertEqual(rig.shelf.mode, .revealed)
         XCTAssertTrue(rig.service.rehidePending)
-        await settle(250)
+        await waitUntil { rig.shelf.mode == .hidden }
         XCTAssertEqual(rig.shelf.mode, .hidden)
         XCTAssertFalse(rig.service.rehidePending)
         XCTAssertEqual(rig.surface.applied.filter { $0 }.count, 2, "one hide from the click, one from the rehide")
@@ -348,7 +350,7 @@ final class MenuBarTriggersTests: XCTestCase {
         rig.service.pointerEvent(.scrollWheel, scrollDelta: 1, at: .zero)
         await settle(120)
         XCTAssertEqual(rig.shelf.mode, .revealed, "the second reveal restarted the delay")
-        await settle(200)
+        await waitUntil { rig.shelf.mode == .hidden }
         XCTAssertEqual(rig.shelf.mode, .hidden)
     }
 
@@ -385,7 +387,7 @@ final class MenuBarTriggersTests: XCTestCase {
         await settle(150)
         XCTAssertEqual(rig.shelf.mode, .revealed)
         rig.env.mouseDown = false
-        await settle(150)
+        await waitUntil { rig.shelf.mode == .hidden }
         XCTAssertEqual(rig.shelf.mode, .hidden)
     }
 
@@ -401,7 +403,7 @@ final class MenuBarTriggersTests: XCTestCase {
         XCTAssertEqual(rig.shelf.mode, .revealed)
         XCTAssertNil(rig.service.refusal(for: .control), "the control still works while the editor is open")
         rig.env.editing = false
-        await settle(200)
+        await waitUntil { rig.shelf.mode == .hidden }
         XCTAssertEqual(rig.shelf.mode, .hidden)
     }
 
@@ -430,7 +432,7 @@ final class MenuBarTriggersTests: XCTestCase {
         await settle(60)
         XCTAssertEqual(rig.shelf.mode, .revealed, "Portside itself does not count")
         rig.service.appActivated(bundleID: "com.example.other")
-        await settle(60)
+        await waitUntil { rig.shelf.mode == .hidden }
         XCTAssertEqual(rig.shelf.mode, .hidden)
     }
 
@@ -472,7 +474,7 @@ final class MenuBarTriggersTests: XCTestCase {
         rig.service.activate(.control)
         XCTAssertEqual(rig.shelf.mode, .revealed)
         rig.service.clickedElsewhere()
-        await settle(150)
+        await waitUntil { rig.shelf.mode == .hidden }
         XCTAssertEqual(rig.shelf.mode, .hidden)
     }
 
@@ -500,7 +502,7 @@ final class MenuBarTriggersTests: XCTestCase {
         XCTAssertEqual(rig.shelf.mode, .revealed)
         rig.env.inBar = false
         rig.service.pointerMovedWhileOpen()
-        await settle(200)
+        await waitUntil { rig.shelf.mode == .hidden }
         XCTAssertEqual(rig.shelf.mode, .hidden)
     }
 

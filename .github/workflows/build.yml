@@ -21,9 +21,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode 27.2
+      # Newest Xcode 27 on the image, so a runner update needs no edit here.
+      - name: Select Xcode 27
         run: |
-          sudo xcode-select -s /Applications/Xcode_27.2.app
+          xcode="$(ls -d /Applications/Xcode_27*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$xcode"
           xcodebuild -version
           swift --version
 
@@ -41,3 +43,23 @@ jobs:
         run: |
           mkdir -p "$CFFIXED_USER_HOME"
           swift test
+
+      # Ad-hoc signed: CI has no signing identity. Catches bundle assembly,
+      # resource and icon problems that swift build does not.
+      - name: Build app bundle
+        env:
+          SIGN_IDENTITY: "-"
+        run: scripts/build-app.sh
+
+      - name: Launch smoke test
+        run: scripts/smoke-launch.sh build/Portside.app 10
+
+      # Zipped with ditto: upload-artifact drops the executable bit.
+      - name: Zip app bundle
+        run: ditto -c -k --keepParent build/Portside.app build/Portside-unsigned.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Portside-unsigned
+          path: build/Portside-unsigned.zip
+          retention-days: 7

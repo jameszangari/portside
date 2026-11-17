@@ -34,6 +34,8 @@ final class MenuBarItemsTests: XCTestCase {
         return service
     }
 
+    /// Proves something did not happen. A change that should happen waits
+    /// with `waitUntil` instead.
     private func settle() async { try? await Task.sleep(for: .milliseconds(80)) }
 
     private func listed(_ service: MenuBarItemsService) async {
@@ -90,11 +92,12 @@ final class MenuBarItemsTests: XCTestCase {
         var changes = 0
         let now = Date()
         service.refresh(now: now) { changes += 1 }
-        await settle()
+        await waitUntil { changes == 1 }
         service.refresh(now: now.addingTimeInterval(1)) { changes += 1 }
         await settle()
         XCTAssertEqual(source.sweeps, 1)
         service.refresh(now: now.addingTimeInterval(11)) { changes += 1 }
+        await waitUntil { source.sweeps == 2 }
         await settle()
         XCTAssertEqual(source.sweeps, 2)
         XCTAssertEqual(changes, 1, "same list reports no change")
@@ -119,7 +122,7 @@ final class MenuBarItemsTests: XCTestCase {
         let ok = await service.press(item.id)
         if case .failure = ok { XCTFail("expected success") }
         XCTAssertTrue(source.presses.isEmpty, "the panel must be gone before the press")
-        try? await Task.sleep(for: .milliseconds(300))
+        await waitUntil { !source.presses.isEmpty }
         XCTAssertEqual(source.presses, [item])
         let unknown = await service.press("com.other:#9")
         XCTAssertEqual(unknown, .failure(CommandFailure(reason: MenuBarItemsService.Message.gone)))
@@ -236,7 +239,7 @@ final class MenuBarItemsTests: XCTestCase {
         if case .success = result { XCTFail("expected a denial") }
         gate.register(FakeAccessibility(granted: true))
         _ = await registry.execute(MenuBarModule.pressCommand, input: .string(item.id))
-        await settle()
+        await waitUntil { !source.presses.isEmpty }
         XCTAssertEqual(source.presses, [item])
     }
 }
