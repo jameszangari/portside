@@ -28,7 +28,9 @@ struct StackTileView: View {
         tile
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(stack.displayName)
+            .accessibilityValue(isExpanded ? "open" : "")
             .accessibilityAddTraits(.isButton)
+            .accessibilityAction { onToggle() }
             .dockHoverTarget(id: stack.hoverID, title: stack.displayName)
             .appKitContextMenu(edge: edge, hold: hold, magnifyID: stack.hoverID) {
                 let menu = NSMenu()

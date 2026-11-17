@@ -214,6 +214,7 @@ struct PortsideTileView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Portside")
             .accessibilityAddTraits(.isButton)
+            .accessibilityAction { onOpenSettings() }
             .dockHoverTarget(id: Self.hoverID, title: "Portside")
             // Same AppKit menu path as app tiles (whole magnified tile).
             .appKitContextMenu(edge: edge, hold: hold, magnifyID: Self.hoverID) {
@@ -277,7 +278,13 @@ struct DockItemView: View {
 
     var body: some View {
         tile
+            // One element per tile: VoiceOver reads the name, badge and
+            // state, and its default action opens the app like a click.
+            .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityTitle)
+            .accessibilityValue(accessibilityState)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { open(flags: []) }
         .dockHoverTarget(id: app.id, title: app.displayName)
         .appKitContextMenu(edge: edge, hold: hold, magnifyID: app.id) {
             AppTileMenu.build(.init(app: app, running: running, isPinned: isPinned, dockModel: dockModel))
@@ -289,6 +296,23 @@ struct DockItemView: View {
             return "\(app.displayName), \(badge)"
         }
         return app.displayName
+    }
+
+    private var accessibilityState: String {
+        guard running != nil else { return isPinned ? "" : "not running" }
+        return isHidden ? "running, hidden" : "running"
+    }
+
+    private func open(flags: NSEvent.ModifierFlags) {
+        TileClick.perform(app, running: running, flags: flags) { afterOpen in
+            if running == nil && isPinned {
+                bouncer.launch(app, size: size, afterOpen: afterOpen)
+            } else {
+                AppLauncher.open(app, running: running) { result, error in
+                    if error == nil { afterOpen?(result) }
+                }
+            }
+        }
     }
 
     /// Icon plus running dot. The dot sits between the icon and the screen
@@ -321,18 +345,8 @@ struct DockItemView: View {
             .dockBadge(dockModel.showBadges ? badges.badge(for: app) : nil, iconSize: size, style: dockModel.badgeStyle)
             .activityChip(running == nil ? nil : activity.activity(for: app), iconSize: size)
             .contentShape(Rectangle())
-            .menuHold(hold) {
-                // Modifier state at click time; a tap gesture has no event.
-                TileClick.perform(app, running: running, flags: NSEvent.modifierFlags) { afterOpen in
-                    if running == nil && isPinned {
-                        bouncer.launch(app, size: size, afterOpen: afterOpen)
-                    } else {
-                        AppLauncher.open(app, running: running) { result, error in
-                            if error == nil { afterOpen?(result) }
-                        }
-                    }
-                }
-            }
+            // Modifier state at click time; a tap gesture has no event.
+            .menuHold(hold) { open(flags: NSEvent.modifierFlags) }
             // Outside the gestures, so clicks follow the magnified icon.
             .magnifiedIcon(id: app.id)
     }

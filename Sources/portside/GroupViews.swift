@@ -111,7 +111,9 @@ struct GroupTileView: View {
         tile
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityTitle)
+            .accessibilityValue(isExpanded ? "open" : "")
             .accessibilityAddTraits(.isButton)
+            .accessibilityAction { onToggle() }
             .dockHoverTarget(id: DockEntry.group(group).id, title: group.name)
             // AppKit menu like app tiles: right-click and press-and-hold
             // work on the whole magnified tile, and the menu opens above it.
