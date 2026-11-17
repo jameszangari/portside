@@ -1143,6 +1143,7 @@ private struct GeneralSettings: View {
     @State private var canUndoImport = DockModel.hasBeforeImport
     @State private var importStatus: String?
     @State private var otherCopies: [InstalledCopy] = []
+    @State private var diagnosticsCopied = false
 
     /// Import clamps the native icon size to what fits, like the slider.
     private var maxIconSize: CGFloat {
@@ -1209,6 +1210,15 @@ private struct GeneralSettings: View {
                         set: { dockModel.setOpenSettingsOnLaunch($0) }
                     ))
                     Text("⌥⌘D can interfere with hiding the macOS Dock. Turn it off in Keyboard Shortcuts > Launchpad & Dock.").helperStyle()
+                    HStack {
+                        Button("Copy Diagnostics") {
+                            Diagnostics.copy(model: dockModel, integrations: integrations)
+                            diagnosticsCopied = true
+                        }
+                        if diagnosticsCopied { Text("Copied").helperStyle() }
+                    }
+                    .settingsAnchor("Diagnostics")
+                    Text("Version, macOS, dock settings, module and permission states, and how fast the dock appears, for a bug report. No app names, files or personal data.").helperStyle()
                 }
             }
 

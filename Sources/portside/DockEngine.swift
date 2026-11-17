@@ -101,6 +101,9 @@ final class DockEngine {
     private var revealRequestedAt: CFTimeInterval = 0
     /// Event that started the current reveal (mouseEntered or draggingEntered).
     private var revealTrigger = "mouseEntered"
+    /// System uptime of the edge event that started the current reveal and
+    /// the reveal delay then in force, for `RevealLatency`. nil once recorded.
+    private var revealEvent: (at: TimeInterval, delay: TimeInterval, interval: OSSignpostIntervalState)?
 
     /// Drag destinations ("edge", "panel", "strip", "group", "stack") a file
     /// drag is over. While any is set and the button is held, exits do not
@@ -411,6 +414,7 @@ final class DockEngine {
         }
         dockPanel.onRevealAnimationStarted = { [weak self] in
             self?.logTiming(label: "animation start")
+            self?.recordRevealLatency()
             // After the timing log: the reveal path itself is unchanged.
             self?.flipKeys.start()
             // Next runloop turn, so nothing is added to the reveal path. The
@@ -920,6 +924,9 @@ final class DockEngine {
 
         revealRequestedAt = CACurrentMediaTime()
         revealTrigger = trigger
+        if let open = revealEvent { RevealLatency.signposter.endInterval("reveal", open.interval, "canceled") }
+        revealEvent = (event?.timestamp ?? ProcessInfo.processInfo.systemUptime, dockModel.revealDelay,
+                       RevealLatency.signposter.beginInterval("reveal", id: RevealLatency.signposter.makeSignpostID(), "\(trigger)"))
         if let event {
             // NSEvent.timestamp is system uptime; compare against the same clock
             // to see how long the event sat in the queue before we got it.
@@ -957,6 +964,10 @@ final class DockEngine {
         if let pendingReveal {
             pendingReveal.cancel()
             self.pendingReveal = nil
+            if let open = revealEvent {
+                revealEvent = nil
+                RevealLatency.signposter.endInterval("reveal", open.interval, "canceled")
+            }
             logger.info("\(source, privacy: .public) exit: pending reveal canceled")
         }
 
@@ -1021,6 +1032,14 @@ final class DockEngine {
     private func reveal() {
         guard !overviewOpen else { return }
         dockPanel.show(animated: true)
+    }
+
+    private func recordRevealLatency() {
+        guard let open = revealEvent else { return }
+        revealEvent = nil
+        let ms = (ProcessInfo.processInfo.systemUptime - open.at - open.delay) * 1000
+        RevealLatency.signposter.endInterval("reveal", open.interval, "\(ms, format: .fixed(precision: 2))ms")
+        RevealLatency.shared.add(ms)
     }
 
     private func logTiming(label: String) {
