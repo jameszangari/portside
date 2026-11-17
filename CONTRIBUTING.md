@@ -15,6 +15,10 @@ CFFIXED_USER_HOME=/tmp/portside-tests swift test
 
 You need macOS 26 or later on Apple Silicon and the Xcode command line tools. Do not run two SwiftPM commands in the repo at once; they share one `.build` lock.
 
+Every pull request to `nightly` or `main` runs `.github/workflows/build.yml` on GitHub's `xcode-27` runner (macOS 27, newest Xcode 27 on the image): release build, debug build, `swift test` with an isolated home, an ad hoc signed `build/Portside.app`, and `scripts/smoke-launch.sh`, which starts that app with a throwaway home on the left edge, checks it is still running after 10 s and quits cleanly, and checks `com.apple.dock` was not changed. The zipped app is kept as a run artifact for 7 days. A second job launches that same app on GitHub's `macos-26` runner, because Portside supports macOS 26 and 27 but builds only with the Xcode 27 SDK; it catches a macOS 27 API used without an `#available` check. A release build catches shipping code that calls a debug-only symbol. Run `scripts/smoke-launch.sh` yourself after `scripts/build-app.sh`; it shows a dock on the left edge for 10 s.
+
+In tests, wait for a change that should happen with `waitUntil` (`Tests/portsideTests/TestWait.swift`), not a fixed sleep: a fixed sleep races on a slower machine. A fixed sleep is fine only to show that something did not happen.
+
 To build a `.app` without the maintainer's signing identity, sign ad hoc:
 
 ```

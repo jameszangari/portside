@@ -1,0 +1,88 @@
+name: Build and test
+
+on:
+  pull_request:
+    branches: [nightly, main]
+  push:
+    branches: [nightly]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # Xcode 27 SDK needed (FoundationModels, ProcessStopper clock APIs); macos-26 ships 26.6.
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      SWIFT_ENABLE_EXPLICIT_MODULES: "NO"
+    steps:
+      - uses: actions/checkout@v4
+
+      # Newest Xcode 27 on the image, so a runner update needs no edit here.
+      - name: Select Xcode 27
+        run: |
+          xcode="$(ls -d /Applications/Xcode_27*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          swift --version
+
+      # Release first: a debug-only symbol used by shipping code fails only here.
+      - name: Release build
+        run: swift build -c release
+
+      - name: Debug build
+        run: swift build
+
+      - name: Tests
+        env:
+          # Some settings tests skip unless the home is under /tmp.
+          CFFIXED_USER_HOME: /tmp/portside-tests
+        run: |
+          mkdir -p "$CFFIXED_USER_HOME"
+          swift test
+
+      # Ad-hoc signed: CI has no signing identity. Catches bundle assembly,
+      # resource and icon problems that swift build does not.
+      - name: Build app bundle
+        env:
+          SIGN_IDENTITY: "-"
+        run: scripts/build-app.sh
+
+      - name: Launch smoke test
+        run: scripts/smoke-launch.sh build/Portside.app 10
+
+      # Zipped with ditto: upload-artifact drops the executable bit.
+      - name: Zip app bundle
+        run: ditto -c -k --keepParent build/Portside.app build/Portside-unsigned.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Portside-unsigned
+          path: build/Portside-unsigned.zip
+          retention-days: 7
+
+  # The app targets macOS 26 and 27 but builds only with the Xcode 27 SDK.
+  # Launch the bundle built above on macOS 26 to catch a 27-only symbol
+  # used without an availability check.
+  smoke-macos-26:
+    needs: build
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Portside-unsigned
+          path: build
+
+      - name: Unzip app bundle
+        run: |
+          sw_vers
+          ditto -x -k build/Portside-unsigned.zip build
+
+      - name: Launch smoke test on macOS 26
+        run: scripts/smoke-launch.sh build/Portside.app 10

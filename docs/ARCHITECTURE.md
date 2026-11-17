@@ -242,6 +242,7 @@ Tests/portsideTests/        XCTest target (`@testable import portside`); run wit
   Fixtures/process-stop/server.c  Disposable loopback listener; optional SIGTERM ignore, stdin EOF cleanup without escalation
   FixtureLoader.swift       Reads JSON fixtures from Fixtures/ by source path (no resource bundle)
   SettingsFixtureTests.swift dock.json legacy migration, unknown-key carry-forward and round trip, by value
+  TestWait.swift            waitUntil: polls a condition with a timeout instead of a fixed sleep
   ModuleSettingsTests.swift Module choices, schema stamp, backups, rollback, malformed and future-schema files, saved choices at launch
   Fixtures/                 dock.json fixtures (legacy-flat-pins, modules-current, malformed-modules, future-schema, truncated)
 scripts/
@@ -253,6 +254,7 @@ scripts/
   setup-notary.sh           Stores notarytool keychain profile (portside-notary)
   build-app.sh              Builds and signs build/Portside.app (--install, --package, --notarize)
   make-dmg.sh               Builds the drag-to-Applications DMG (layout, background, volume icon)
+  smoke-launch.sh           Launches a built Portside.app with a throwaway home, checks it runs and quits cleanly (CI)
   DMGBackground.swift       Renders the DMG background (arrow + drop zone) at 1x and 2x
   dev-permissions.sh        Shows which signed Portside copy macOS judges, walks the privacy panes, optional confirmed reset of Portside's own grants
   setup-signing.sh          Creates or reuses the stable local code signing identity

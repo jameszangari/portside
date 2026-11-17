@@ -252,11 +252,13 @@ final class MenuBarAssertionTests: XCTestCase {
             return nil
         })
         controller.request(config("old"))
-        await settle(80)
+        await waitUntil { continuation != nil }
         XCTAssertNotNil(continuation)
         controller.request(nil)
         controller.request(config("new"))
         continuation?.resume(returning: "stale missing control")
+        await waitUntil { controller.applied == config("new") && bridge.live == 1 }
+        // Room for the stale answer to (wrongly) release the newer hide.
         await settle()
         XCTAssertEqual(bridge.live, 1)
         XCTAssertEqual(controller.applied, config("new"))

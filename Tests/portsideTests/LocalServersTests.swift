@@ -196,7 +196,7 @@ final class LocalServerStoreTests: XCTestCase {
         let store = LocalServerStore(service: ListenerService(source: source))
         store.activate()
         let refresh = Task { await store.refresh() }
-        try? await Task.sleep(for: .milliseconds(20))
+        await waitUntil { store.loading == 1 }
         store.endSession()
         refresh.cancel()
         guard case .failure = await refresh.value else { return XCTFail("a closed session still delivered") }
@@ -211,7 +211,7 @@ final class LocalServerStoreTests: XCTestCase {
         _ = await store.refresh()
         source.set(lsof([]), delay: .milliseconds(500))
         let refresh = Task { await store.refresh() }
-        try? await Task.sleep(for: .milliseconds(20))
+        await waitUntil { store.loading == 1 }
         refresh.cancel()
         guard case .failure(let failure) = await refresh.value else { return XCTFail("canceled refresh delivered") }
         XCTAssertEqual(failure.reason, "Refresh was canceled.")
@@ -402,7 +402,7 @@ final class LocalServersModuleTests: XCTestCase {
         _ = await commands.execute(LocalServersModule.refreshCommand)
         source.set(delay: .milliseconds(500))
         let refresh = Task { await commands.execute(LocalServersModule.refreshCommand) }
-        try await Task.sleep(for: .milliseconds(20))
+        await waitUntil { store.loading == 1 }
         modules.disable(LocalServersModule.moduleID)
         let outcome = await refresh.value
         guard case .failed = outcome else { return XCTFail("a stopped module still delivered: \(outcome)") }
