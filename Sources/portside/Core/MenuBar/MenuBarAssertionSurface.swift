@@ -597,7 +597,7 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
         case .menuBar: return false
         case .portsideBar: return true
         case .portsideBarOnNotch:
-            let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
+            let screen = DockScreen.screen(containing: NSEvent.mouseLocation)
             return (screen?.safeAreaInsets.top ?? 0) > 0
         }
     }

@@ -841,7 +841,7 @@ final class MenuBarLayoutService: ObservableObject {
         dragRestore?.cancel()
         guard command, !isBusy, !reorder.isBusy else { return }
         let point = NSEvent.mouseLocation
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }), point.y >= screen.visibleFrame.maxY else { return }
+        guard let screen = DockScreen.screen(containing: point), point.y >= screen.visibleFrame.maxY else { return }
         guard let items = MenuBarDrawnOwners.ownedItems(), let owner = MenuBarDragRules.owner(atX: point.x, items: items),
               owner != getpid(),
               let bundle = NSRunningApplication(processIdentifier: owner)?.bundleIdentifier?.lowercased(),

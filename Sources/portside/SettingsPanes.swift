@@ -724,10 +724,15 @@ private struct MenuBarLookSection: View {
         }
         if supportsPortsideBar {
             Section {
-                SettingsChoiceCards(selection: binding(\.barStyle), choices: MenuBarBarStyle.allCases.map { ($0, $0.title) }, columns: 3) {
+                SettingsChoiceCards(selection: binding(\.barStyle), choices: MenuBarBarStyle.allCases.map { ($0, $0.title) }, columns: 4) {
                     MenuBarBarStylePicture(style: $0, look: look, dock: dockModel.look)
                 }
-                if look.barStyle == .system { cornerSlider(\.barCornerRadius) }
+                if look.barStyle == .system || (look.barStyle == .menuBar && look.shape == .none) { cornerSlider(\.barCornerRadius) }
+                if look.barStyle == .menuBar {
+                    Text(look.shape == .none
+                         ? "Uses the menu bar's background below. Pick a menu bar shape to give both one; until then the bar uses the system material."
+                         : "Uses the menu bar's background and corners below, so changing them changes both.").helperStyle()
+                }
                 SettingsSlider(title: "Icon size", value: look.barIconSize, range: MenuBarLook.iconSizeRange, snap: 1, format: { "\(Int($0)) pt" }, set: { set(\.barIconSize, $0, persist: $1) })
             } header: {
                 Text("Portside Bar style").settingsAnchor("Portside Bar style")

@@ -31,10 +31,13 @@ enum MenuBarControlIcon: String, Codable, CaseIterable, Identifiable {
 }
 
 enum MenuBarBarStyle: String, Codable, CaseIterable, Identifiable {
+    /// The menu bar's own background and corners, so one look styles both.
+    case menuBar
     case system, dock, custom
     var id: String { rawValue }
     var title: String {
         switch self {
+        case .menuBar: "Match Menu Bar"
         case .system: "System"
         case .dock: "Match Dock"
         case .custom: "Custom"
@@ -68,7 +71,7 @@ struct MenuBarLook: Codable, Equatable {
     var customImage: String?
     /// Drawn in the menu bar's own color, like a system icon.
     var customImageIsTemplate = true
-    var barStyle = MenuBarBarStyle.system
+    var barStyle = MenuBarBarStyle.menuBar
     var barBackground = DockBackground()
     var barCornerRadius = 10.0
     var barIconSize = 22.0
@@ -100,7 +103,7 @@ struct MenuBarLook: Codable, Equatable {
         customSymbol = try? c.decodeIfPresent(String.self, forKey: .customSymbol)
         customImage = try? c.decodeIfPresent(String.self, forKey: .customImage)
         customImageIsTemplate = c.value(.customImageIsTemplate, or: true)
-        barStyle = c.value(.barStyle, or: MenuBarBarStyle.system)
+        barStyle = c.value(.barStyle, or: MenuBarBarStyle.menuBar)
         let legacy = try decoder.container(keyedBy: LegacyKeys.self)
         let oldBar = (try? legacy.decodeIfPresent(SolidBackground.self, forKey: .barFill)).flatMap { $0 }
         barBackground = c.value(.barBackground, or: oldBar.map(Self.solid) ?? DockBackground())
@@ -144,6 +147,10 @@ struct MenuBarLook: Codable, Equatable {
     /// How the Portside Bar draws, given the Dock's current look.
     func panelLook(dock: DockLook) -> MenuBarOverflowPanel.Look {
         switch barStyle {
+        case .menuBar:
+            // With no menu bar shape there is no background to share.
+            guard shape != .none else { return .init(dock: nil, cornerRadius: barCornerRadius, iconSize: barIconSize) }
+            return .init(dock: DockLook(background: background, cornerRadius: cornerRadius), cornerRadius: cornerRadius, iconSize: barIconSize)
         case .system:
             return .init(dock: nil, cornerRadius: barCornerRadius, iconSize: barIconSize)
         case .dock:
