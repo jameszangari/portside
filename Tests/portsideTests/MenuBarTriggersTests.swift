@@ -57,6 +57,13 @@ final class MenuBarTriggersTests: XCTestCase {
 
     // MARK: Settings
 
+    func testDividerShelfStartsCollapsed() {
+        let rig = make()
+        XCTAssertFalse(rig.shelf.hidesByMembership, "the macOS 26 divider")
+        rig.service.startCollapsed()
+        XCTAssertEqual(rig.shelf.mode, .hidden, "the launch hides what sits left of the divider")
+    }
+
     func testSettingsDefaultsAndRoundTrip() throws {
         let defaults = MenuBarTriggerSettings()
         XCTAssertNil(defaults.hotkey)
