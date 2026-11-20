@@ -57,8 +57,28 @@ final class SettingsSearchTests: XCTestCase {
         }
         let dynamic: Set<String> = ["Visible", "Hidden", "Always Hidden"]
         for section in Set(SettingsSearch.entries.compactMap(\.section)).subtracting(dynamic) {
-            // Folded groups anchor their own header: `SettingsFold("Name", ...)` or `SettingsFoldRow`.
-            XCTAssertTrue(text.contains(".settingsAnchor(\"\(section)\")") || text.contains("SettingsFold(\"\(section)\",") || text.contains("SettingsFoldRow(\"\(section)\","), section)
+            // Folded groups anchor their own header: `SettingsFold("Name", ...)`, `SettingsFoldRow` or the Menu Bar pane's `fold`.
+            XCTAssertTrue(text.contains(".settingsAnchor(\"\(section)\")") || text.contains("SettingsFold(\"\(section)\",")
+                          || text.contains("SettingsFoldRow(\"\(section)\",") || text.contains("fold(\"\(section)\","), section)
+        }
+    }
+
+    /// A fold row anchors its title (`.id`). A section header inside it with
+    /// the same anchor gives the Form two rows with one id, and macOS then
+    /// draws the header alone: the fold row and the rows vanish.
+    func testNoFoldTitleIsAlsoASectionAnchor() throws {
+        let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/portside")
+        var text = ""
+        for case let url as URL in try XCTUnwrap(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)) where url.pathExtension == "swift" {
+            text += try String(contentsOf: url, encoding: .utf8)
+        }
+        let folds = try NSRegularExpression(pattern: #"(?:SettingsFold|SettingsFoldRow|\bfold)\("([^"]+)""#)
+        let titles = Set(folds.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap {
+            Range($0.range(at: 1), in: text).map { String(text[$0]) }
+        })
+        XCTAssertFalse(titles.isEmpty)
+        for title in titles {
+            XCTAssertFalse(text.contains(".settingsAnchor(\"\(title)\")"), title)
         }
     }
 }

@@ -811,6 +811,16 @@ struct NotchFilesPage: View {
 struct NotchMeetingCard: View {
     let event: CalendarWidget.NextEvent
 
+    /// The strip side's room for the meeting: the calendar mark, a gap and
+    /// the longest text ("in 59 min", "1:02:03"), plus the 12 pt margins.
+    /// An alert's symbol and "100%" fit in it too.
+    static let sideWidth: CGFloat = 12 + 16 + 6 + 64 + 12
+
+    /// The strip width that fits the meeting, laid out as the HUD's.
+    static func stripWidth(notch: CGFloat, flare: CGFloat) -> CGFloat {
+        notch > 0 ? notch + 2 * sideWidth + flare : 3 * sideWidth + flare
+    }
+
     /// "in 4 min", "in 1 min", "now".
     static func countdown(to start: Date, now: Date) -> String {
         let minutes = Int((start.timeIntervalSince(now) / 60).rounded(.up))

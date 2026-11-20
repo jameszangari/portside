@@ -441,7 +441,7 @@ struct MenuBarTriggersSection: View {
             if let alwaysHiddenWarning { Text(alwaysHiddenWarning).helperStyle().foregroundStyle(.orange) }
             if !service.isRunning { Text("Menu Bar Shelf is off. Turn it on from the Layout setup.").helperStyle() }
         } header: {
-            Text("Open with").settingsAnchor("Open with")
+            Text("Open with")
         } footer: {
             Text("Clicks on menus and status icons still go to them.").footerStyle()
         }
@@ -460,7 +460,7 @@ struct MenuBarTriggersSection: View {
             MenuBarRehideFlow(settings: settings)
             if let status = service.status { Text(status).helperStyle() }
         } header: {
-            Text("Hide again").settingsAnchor("Hide again")
+            Text("Hide again")
         } footer: {
             Text("An open menu, the pointer on the menu bar or this settings page waits it out.").footerStyle()
         }
@@ -517,7 +517,7 @@ private struct MenuBarLiveActivitiesSection: View {
             ) { setKeepsShowing($0) }
             }
         } header: {
-            Text("Live Activities").settingsAnchor("Live Activities")
+            Text("Live Activities")
         }
         .onAppear { model.refresh() }
     }
@@ -558,7 +558,7 @@ private struct MenuBarAdvancedSection: View {
                 if settings.hidingMethod == .native { MenuBarGrantRow(title: "Native hiding needs the app list", grant: files.appList) }
             }
         } header: {
-            Text("Advanced").settingsAnchor("Advanced")
+            Text("Advanced")
         } footer: {
             Text("Automatic puts your saved order back before each reveal; Manual leaves it alone. Standard hides any app and Apple's items while Portside runs. Native uses macOS's own per-app switch.").footerStyle()
         }
@@ -825,7 +825,7 @@ struct MenuBarProfilesSection: View {
                 if service.activeProfileID != nil { Button("Update Current") { service.updateActiveProfile() } }
             }
         } header: {
-            Text("Profiles").settingsAnchor("Profiles")
+            Text("Profiles")
         } footer: {
             Text("A profile saves sections, order and groups. Switch from the menu bar icon's right-click menu or a shortcut.").footerStyle()
         }

@@ -472,25 +472,27 @@ private struct AgentBadge: View {
     }
 }
 
-/// A short arc circling the icon. Core Animation drives it, so a working
-/// agent costs no timer. Static under Reduce Motion.
+/// A short arc circling the icon, one turn a second. A timeline capped at
+/// 30 fps, not a repeating animation: SwiftUI runs those on the main thread
+/// at the display's rate, redrawing the dock up to 120 times a second while
+/// an agent works. Static under Reduce Motion.
 private struct SpinningRing: View {
     let color: Color
     let lineWidth: CGFloat
-    @State private var turning = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack {
             Circle().stroke(color.opacity(0.2), lineWidth: lineWidth)
-            Circle()
-                .trim(from: 0, to: 0.28)
-                .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                .rotationEffect(.degrees(turning ? 360 : 0))
-                .animation(reduceMotion ? nil : .linear(duration: 1).repeatForever(autoreverses: false), value: turning)
+            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
+                let turn = reduceMotion ? 0 : context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1)
+                Circle()
+                    .trim(from: 0, to: 0.28)
+                    .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                    .rotationEffect(.degrees(360 * turn))
+            }
         }
         .padding(lineWidth / 2)
-        .onAppear { turning = true }
     }
 }
 

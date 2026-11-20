@@ -157,6 +157,7 @@ enum SettingsSearch {
         .init(.general, "Automatic updates", "Automatic updates", "upgrade version"),
         .init(.general, "Automatic updates", "Check for updates automatically", "upgrade version"),
         .init(.general, "Diagnostics", "Copy Diagnostics", "bug report support debug latency"),
+        .init(.general, "Debug Report", "Export Debug Report", "logs dump zip macOS version menu bar private api support"),
         .init(.general, "macOS Dock", "macOS Dock", ""),
         .init(.general, "Import", "Import", "migrate native"),
         .init(.general, "Import", "Import from macOS Dock...", "migrate native"),

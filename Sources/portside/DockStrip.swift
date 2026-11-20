@@ -106,8 +106,9 @@ struct DockStrip: View {
     @ObservedObject var runningApps: RunningApps
     @ObservedObject var widgets: WidgetStore
     @ObservedObject var layout: DockLayout
-    /// Which group is expanded, so its tile can show it.
-    @ObservedObject var groups: GroupController
+    /// Not observed: each group tile watches which group is open, so opening
+    /// one (and rename drafts, member drags) does not redraw the whole strip.
+    let groups: GroupController
     @ObservedObject var stacks: StackController
     /// Not observed here: only the tiles care which one is bouncing.
     let bouncer: LaunchBouncer
@@ -466,7 +467,7 @@ struct DockStrip: View {
             GroupTileView(
                 group: group,
                 size: tile,
-                isExpanded: groups.expandedID == group.id,
+                groups: groups,
                 anyRunning: group.apps.contains { runningApps.isRunning($0) },
                 onToggle: { interactions.onGroupTapped?(group.id) },
                 onRename: { interactions.onRenameGroup?(group.id) },
@@ -1105,7 +1106,7 @@ struct DockStrip: View {
                 .interpolation(.high)
                 .frame(width: tile, height: tile))
         case .group(let group):
-            return AnyView(GroupTileView(group: group, size: tile, isExpanded: false, anyRunning: false,
+            return AnyView(GroupTileView(group: group, size: tile, groups: nil, anyRunning: false,
                                          onToggle: {}, onRename: {}, onRemove: {}, dockModel: dockModel, badges: badges)
                 .environment(\.dockEdge, .left)
                 .frame(height: tile))

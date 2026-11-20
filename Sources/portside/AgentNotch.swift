@@ -398,7 +398,12 @@ final class AgentNotch {
             }
             state.onSearch = { [weak panel] on in panel?.takeKeys(on) }
             state.pointerInside = { [weak panel] in panel.map { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? false }
-            panel.contentView = NSHostingView(rootView: AgentNotchView(agents: agents, usage: usage, nowPlaying: nowPlaying, state: state))
+            let hosting = NSHostingView(rootView: AgentNotchView(agents: agents, usage: usage, nowPlaying: nowPlaying, state: state))
+            // `layoutPanels` sets the frame. Without this the hosting view
+            // rebuilt its size constraints on every frame of the strip's
+            // loader and bars.
+            hosting.sizingOptions = []
+            panel.contentView = hosting
             surfaces.append(Surface(panel: panel, state: state, screen: screen))
         }
         alerted = Set(preferences.sessions(from: agents.sessions).filter(Self.alerting).map(\.id))
@@ -803,6 +808,12 @@ final class AgentNotch {
             }
             let strip = NotchShelfStrip.layout(active: active, alert: state.alert?.activity)
             if state.strip != strip { state.strip = strip }
+            // A narrow strip wraps the meeting's timer, or an alert's "20%",
+            // under itself.
+            if strip.leading == .meeting || strip.trailing == .meeting || state.alert?.short.isEmpty == false {
+                state.compactWidth = min(screen.frame.width - 24, max(state.compactWidth, NotchMeetingCard.stripWidth(
+                    notch: state.notchWidth, flare: state.topAttached ? 2 * NotchShape.flare : 0)))
+            }
             // Without a notch, the shelf's capsule shrinks while nothing runs
             // (Bartender's smaller idle capsule), so the menu bar keeps its room.
             if !notched, strip == NotchShelfStrip(), state.hud == nil {

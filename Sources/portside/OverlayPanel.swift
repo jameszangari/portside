@@ -91,7 +91,9 @@ final class OverlayPanel {
                     self?.place(size: size)
                 }
         )
-        place(size: hostingView.fittingSize)
+        // SwiftUI's own size: `fittingSize` solved a whole constraint engine
+        // for the same answer on every label and grid.
+        place(size: hostingView.intrinsicContentSize)
         if !panel.isVisible {
             panel.orderFrontRegardless()
         }
