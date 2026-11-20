@@ -242,6 +242,16 @@ enum DebugDump {
             lines.append("  unreadable (Accessibility off, or MenuBarAgent not running)")
         }
 
+        // Menu bar appearance draws behind the real bar, so its background
+        // setting decides whether it shows.
+        lines += ["", "Global menu bar defaults"]
+        let global = UserDefaults.standard.persistentDomain(forName: UserDefaults.globalDomain) ?? [:]
+        let keys = global.keys.filter { $0.localizedCaseInsensitiveContains("menubar") || $0.hasPrefix("AppleReduce") || $0 == "AppleInterfaceStyle" }.sorted()
+        lines += keys.isEmpty ? ["  (none set)"] : keys.map { "  \($0) = \(String(describing: global[$0]!).prefix(200))" }
+        for window in windows where (window[kCGWindowName as String] as? String) == "Menubar" {
+            lines.append("  system Menubar window #\(window[kCGWindowNumber as String] ?? "?"): alpha \(window[kCGWindowAlpha as String] ?? "?"), sharing \(window[kCGWindowSharingState as String] ?? "?"), store \(window[kCGWindowStoreType as String] ?? "?")")
+        }
+
         lines += ["", "Menu extras over Accessibility (AXExtrasMenuBar of every app)"]
         let snapshot = AXMenuBarItemSource.live.snapshot()
         lines.append("  access \(snapshot.access), \(snapshot.items.count) items, \(snapshot.unsupportedCount) unsupported, \(snapshot.skippedApps) apps skipped")
