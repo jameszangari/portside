@@ -168,6 +168,7 @@ enum SettingsSearch {
         .init(.general, "Local Intelligence", "Local Intelligence", "ai model on-device"),
         .init(.general, "Permissions", "Accessibility permission", "privacy grant"),
         .init(.general, "Permissions", "Full Disk Access", "privacy grant"),
+        .init(.general, "Reset All Permissions", "Reset All Permissions", "privacy tcc tccutil clear stale grant"),
     ]
 }
 

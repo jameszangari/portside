@@ -116,6 +116,12 @@ struct PermissionsRows: View {
                 PermissionSettingsRow(row: row, request: { integrations.request(row.scope) })
             }
             fullDiskAccessRow
+            VStack(alignment: .leading, spacing: 3) {
+                Button("Reset All Permissions…") { AccessibilityTrust.shared.confirmResetAll() }
+                    .settingsAnchor("Reset All Permissions")
+                Text("Clears every macOS permission Portside has, so it can ask again. Use it when a switch in System Settings looks on but Portside still says Not allowed. Full Disk Access is not touched.")
+                    .helperStyle()
+            }
         }
     }
 

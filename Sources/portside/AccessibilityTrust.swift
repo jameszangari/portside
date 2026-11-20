@@ -153,13 +153,58 @@ final class AccessibilityTrust: ObservableObject {
         }
     }
 
-    /// `tccutil reset Accessibility <bundle-id>`. Returns the process exit status,
-    /// or -1 if the tool could not start.
+    /// Every macOS privacy service Portside can be granted. Full Disk Access
+    /// is left out: Portside never asks for it, so it stays yours to manage.
+    static let privacyServices = ["Accessibility", "ScreenCapture", "ListenEvent", "PostEvent",
+                                  "Calendar", "AppleEvents", "AudioCapture", "BluetoothAlways"]
+
+    /// Settings > General > Permissions > Reset All Permissions: after a
+    /// confirmation, clears Portside's grant for each service above, so the
+    /// next launch asks afresh (for rows left stale by a new signature, or a
+    /// Mac where grants came out wrong), then offers to quit.
+    func confirmResetAll() {
+        let bundleID = Bundle.main.bundleIdentifier ?? "com.james.portside"
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Reset all of Portside's permissions?"
+        alert.informativeText = """
+        This clears Portside's macOS privacy grants (Accessibility, Screen Recording, Input Monitoring, Calendars, Automation, Audio Recording and Bluetooth), only for Portside. Full Disk Access is not touched. Features that need them stop until you allow them again.
+
+        Afterwards, quit and reopen Portside, then use Set Up Permissions.
+        """
+        alert.addButton(withTitle: "Reset Permissions")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let failed = Self.privacyServices.filter { service in
+            let status = Self.resetPrivacy(service, bundleID: bundleID)
+            log.info("tccutil reset \(service, privacy: .public) \(bundleID, privacy: .public) exit \(status)")
+            return status != 0
+        }
+        refresh()
+        let followUp = NSAlert()
+        followUp.alertStyle = .informational
+        followUp.messageText = failed.isEmpty ? "Permissions cleared" : "Some permissions weren't cleared"
+        followUp.informativeText = failed.isEmpty
+            ? "Quit Portside completely, open it again from Applications, then use Settings > General > Permissions > Set Up Permissions."
+            : "macOS refused: \(failed.joined(separator: ", ")). Run this in Terminal for each, then quit and reopen Portside:\n\ntccutil reset <service> \(bundleID)"
+        followUp.addButton(withTitle: "Quit Portside")
+        followUp.addButton(withTitle: "Later")
+        if followUp.runModal() == .alertFirstButtonReturn { NSApp.terminate(nil) }
+    }
+
     @discardableResult
     private static func resetAccessibility(bundleID: String) -> Int32 {
+        resetPrivacy("Accessibility", bundleID: bundleID)
+    }
+
+    /// `tccutil reset <service> <bundle-id>`. Returns the process exit status,
+    /// or -1 if the tool could not start.
+    @discardableResult
+    private static func resetPrivacy(_ service: String, bundleID: String) -> Int32 {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
-        task.arguments = ["reset", "Accessibility", bundleID]
+        task.arguments = ["reset", service, bundleID]
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
         do {
