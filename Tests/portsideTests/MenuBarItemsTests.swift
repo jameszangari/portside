@@ -51,6 +51,14 @@ final class MenuBarItemsTests: XCTestCase {
         XCTAssertEqual(Self.item(0, bundle: nil, pid: 7).id, "pid7:#0")
     }
 
+    func testRepeatedIdentifierKeepsTheFirstItem() {
+        let items = [Self.item(16, title: "Zoom", identifier: "zoom"), Self.item(17, identifier: "cues"),
+                     Self.item(18, identifier: "cues"), Self.item(19, title: "Zoom again", identifier: "zoom"), Self.item(20)]
+        let kept = AXMenuBarItemSource.firstOfEachID(items)
+        XCTAssertEqual(kept.map(\.ordinal), [16, 17, 20])
+        XCTAssertEqual(kept.first?.title, "Zoom")
+    }
+
     func testEmptyTitleFallsBackToOwnerName() {
         XCTAssertEqual(Self.item(title: "").displayTitle, "Example")
         XCTAssertEqual(Self.item(title: "Battery").displayTitle, "Battery")

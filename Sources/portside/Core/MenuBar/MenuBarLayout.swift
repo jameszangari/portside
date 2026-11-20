@@ -842,7 +842,7 @@ final class MenuBarLayoutService: ObservableObject {
         guard command, !isBusy, !reorder.isBusy else { return }
         let point = NSEvent.mouseLocation
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }), point.y >= screen.visibleFrame.maxY else { return }
-        guard let items = MenuBarDrawnOwners.items(), let owner = MenuBarDragRules.owner(atX: point.x, items: items),
+        guard let items = MenuBarDrawnOwners.ownedItems(), let owner = MenuBarDragRules.owner(atX: point.x, items: items),
               owner != getpid(),
               let bundle = NSRunningApplication(processIdentifier: owner)?.bundleIdentifier?.lowercased(),
               !bundle.hasPrefix("com.apple.") else { return }
@@ -886,7 +886,7 @@ final class MenuBarLayoutService: ObservableObject {
         }
         guard let pid = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier?.lowercased() == bundle })?.processIdentifier,
               let bars = shelf.barFrames() else { return }
-        let items = await Task.detached(priority: .utility) { MenuBarDrawnOwners.items() }.value
+        let items = await Task.detached(priority: .utility) { MenuBarDrawnOwners.ownedItems() }.value
         let frames = items?.filter { $0.pid == pid }.map(\.frame) ?? []
         let saved = store.assignments.first { Self.bundle(of: $0.key) == bundle }?.value ?? .visible
         guard let section = MenuBarDragRules.landingSection(frames: frames, bars: bars, saved: saved), section != saved else {

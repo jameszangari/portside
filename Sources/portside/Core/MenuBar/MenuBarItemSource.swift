@@ -141,7 +141,16 @@ struct AXMenuBarItemSource: MenuBarItemSource {
                 snapshot.unsupportedCount += unsupported
             }
         }
+        snapshot.items = Self.firstOfEachID(snapshot.items)
         return snapshot
+    }
+
+    /// One item per id. Control Center on macOS 26 lists some items twice
+    /// with the same identifier (Zoom, Vehicle Motion Cues), and a repeated
+    /// id breaks every list keyed by it, the Portside Bar's among them.
+    static func firstOfEachID(_ items: [MenuBarItem]) -> [MenuBarItem] {
+        var seen = Set<String>()
+        return items.filter { seen.insert($0.id).inserted }
     }
 
     func press(_ item: MenuBarItem) -> MenuBarPressOutcome {

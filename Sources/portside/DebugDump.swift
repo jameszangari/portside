@@ -232,8 +232,8 @@ enum DebugDump {
         }
         lines.append("  (status level is \(Int(CGWindowLevelForKey(.statusWindow))), main menu \(menuLevel))")
 
-        lines += ["", "Drawn items as Portside reads them (macOS \(os): \(os < 27 ? "status windows" : "MenuBarAgent over Accessibility"))"]
-        if let items = MenuBarDrawnOwners.items() {
+        lines += ["", "Drawn items as Portside reads them (macOS \(os): \(os < 27 ? "status windows, owner by Accessibility hit test" : "MenuBarAgent over Accessibility"))"]
+        if let items = MenuBarDrawnOwners.ownedItems() {
             lines += items.sorted { $0.frame.minX < $1.frame.minX }.map {
                 "  x \(Int($0.frame.minX))...\(Int($0.frame.maxX)) y \(Int($0.frame.minY)) \(owner($0.pid))\($0.isOverflowControl ? " [overflow control]" : "")"
             }

@@ -131,6 +131,7 @@ final class MenuBarShelf {
         mode = .hidden
         lastFailOpen = nil
         surface.apply(hidden: true)
+        log.info("menu bar shelf hidden")
         scheduleVerify()
     }
 
@@ -213,6 +214,7 @@ final class MenuBarShelf {
         guard mode == .hidden else { return }
         mode = .revealed
         surface.apply(hidden: false)
+        log.info("menu bar shelf revealed")
     }
 
     /// Sleep, wake, display change: reveal without asking, so a notch or an
