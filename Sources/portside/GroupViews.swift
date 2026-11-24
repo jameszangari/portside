@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import os.log
 
@@ -94,7 +95,9 @@ enum GroupPopoverMotion {
 struct GroupTileView: View {
     let group: FolderGroup
     let size: CGFloat
-    let isExpanded: Bool
+    /// Which group is open. Watched here rather than in the strip, so opening
+    /// a group redraws its own tile and not every tile. Nil for a preview.
+    let groups: GroupController?
     let anyRunning: Bool
     let onToggle: () -> Void
     let onRename: () -> Void
@@ -105,10 +108,15 @@ struct GroupTileView: View {
     @ObservedObject private var icons = IconCache.shared
     @ObservedObject private var activity = AppActivity.shared
     @State private var hold = MenuHold()
+    @State private var isExpanded = false
     @Environment(\.dockEdge) private var edge
 
     var body: some View {
         tile
+            .onReceive(groups?.$expandedID.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { id in
+                let expanded = id == group.id
+                if isExpanded != expanded { isExpanded = expanded }
+            }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityTitle)
             .accessibilityValue(isExpanded ? "open" : "")
@@ -233,8 +241,10 @@ struct GroupPopoverView: View {
     @State private var dropTargetID: String?
     /// Slot where a pinApps drop would land (dashed gap).
     @State private var insertIndex: Int?
-    /// Member cell frames in the grid's space, for hit-testing drops.
-    @State private var cellFrames: [String: CGRect] = [:]
+    /// Member cell frames in the grid's space, for hit-testing drops. Not
+    /// view state: they change on every frame of the open animation, and
+    /// only a drop reads them.
+    @State private var cellFrames = GroupCellFrames()
 
     static let iconSize: CGFloat = 52
     private static let cellWidth: CGFloat = 76
@@ -266,11 +276,11 @@ struct GroupPopoverView: View {
                 .background(Color.black.opacity(0.01))
                 // Card plus bridge take file drags; the shadow does not.
                 .coordinateSpace(name: Self.dropSpace)
-                .onPreferenceChange(GroupCellFramesKey.self) { cellFrames = $0 }
+                .onPreferenceChange(GroupCellFramesKey.self) { cellFrames.frames = $0 }
                 .onPreferenceChange(GroupCellContentFramesKey.self) { groups.setMemberContentFrames($0) }
                 .onDrop(of: [.fileURL], delegate: GroupFileDropDelegate(
                     session: fileDrop, targetID: $dropTargetID, insertIndex: $insertIndex,
-                    cellFrames: cellFrames, itemCount: group.apps.count,
+                    cells: cellFrames, itemCount: group.apps.count,
                     apps: Dictionary(group.apps.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }),
                     onOpen: onOpenDocuments, onAddApps: onAddApps, onDragOverGrid: onDragOverGrid))
                 .padding(Edge.Set.all.subtracting(edge.nearSide), Self.shadowPadding)
@@ -691,6 +701,11 @@ private struct GroupCellContentFramesKey: PreferenceKey {
     }
 }
 
+/// The open grid's member cell frames, read when a drop arrives.
+private final class GroupCellFrames {
+    var frames: [String: CGRect] = [:]
+}
+
 /// File drops on an open group grid. `.app` drags show an insertion gap and
 /// add at that slot; other files and folders open with a member that can
 /// handle them.
@@ -698,7 +713,7 @@ private struct GroupFileDropDelegate: DropDelegate {
     let session: FileDropSession
     @Binding var targetID: String?
     @Binding var insertIndex: Int?
-    let cellFrames: [String: CGRect]
+    let cells: GroupCellFrames
     let itemCount: Int
     let apps: [String: PinnedApp]
     let onOpen: ([URL], PinnedApp) -> Void
@@ -769,7 +784,7 @@ private struct GroupFileDropDelegate: DropDelegate {
 
     /// Reading-order index 0...itemCount from cell midpoints.
     private func slotIndex(at point: CGPoint) -> Int {
-        let ordered = cellFrames
+        let ordered = cells.frames
             .filter { !$0.key.hasPrefix("group-insert") }
             .map(\.value)
             .sorted { a, b in
@@ -792,7 +807,7 @@ private struct GroupFileDropDelegate: DropDelegate {
             setTarget(nil)
             return nil
         }
-        let hit = cellFrames.first { $0.value.contains(info.location) }?.key
+        let hit = cells.frames.first { $0.value.contains(info.location) }?.key
         let id = hit.flatMap { id in apps[id].flatMap { session.canOpen(with: $0) ? id : nil } }
         setTarget(id)
         return id

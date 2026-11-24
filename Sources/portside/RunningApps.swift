@@ -7,7 +7,9 @@ import os.log
 /// React analogy: a store fed by an event subscription; the strip
 /// re-renders when `apps` changes.
 final class RunningApps: ObservableObject {
-    @Published private(set) var apps: [NSRunningApplication] = []
+    @Published private(set) var apps: [NSRunningApplication] = [] {
+        didSet { reindex() }
+    }
     /// Portside itself is a regular app right now (Settings is open), so its
     /// own dock shows it as running, like the native Dock does.
     @Published private(set) var includesSelf = false
@@ -20,6 +22,10 @@ final class RunningApps: ObservableObject {
     var onEvent: ((Notification.Name, NSRunningApplication) -> Void)?
 
     private var observers: [NSObjectProtocol] = []
+    /// `apps` by bundle id and by bundle path. Every tile looks itself up on
+    /// each render; a scan bridged two strings per running app each time.
+    private var byBundleID: [String: NSRunningApplication] = [:]
+    private var byPath: [String: NSRunningApplication] = [:]
     private let logger = Logger(subsystem: "com.james.portside", category: "RunningApps")
 
     init() {
@@ -75,6 +81,8 @@ final class RunningApps: ObservableObject {
         if hidden != hiddenPIDs { hiddenPIDs = hidden }
         // Activation fires constantly; only publish when membership changes.
         if next.map(\.processIdentifier) != apps.map(\.processIdentifier) {
+            // An app that launched or quit may have moved or been renamed.
+            PinnedApp.clearLookups()
             apps = next
             let name = app?.localizedName ?? "-"
             logger.info("running apps: \(next.count) (\(reason, privacy: .public): \(name, privacy: .public))")
@@ -83,10 +91,19 @@ final class RunningApps: ObservableObject {
 
     /// Running instance matching a pinned app, by bundle id or bundle path.
     func runningInstance(of pinned: PinnedApp) -> NSRunningApplication? {
-        apps.first { running in
-            if let id = pinned.bundleIdentifier, running.bundleIdentifier == id { return true }
-            return running.bundleURL?.path == pinned.path
+        if let id = pinned.bundleIdentifier, let running = byBundleID[id] { return running }
+        return byPath[pinned.path]
+    }
+
+    private func reindex() {
+        var ids: [String: NSRunningApplication] = [:]
+        var paths: [String: NSRunningApplication] = [:]
+        for app in apps {
+            if let id = app.bundleIdentifier, ids[id] == nil { ids[id] = app }
+            if let path = app.bundleURL?.path, paths[path] == nil { paths[path] = app }
         }
+        byBundleID = ids
+        byPath = paths
     }
 
     func isHidden(_ running: NSRunningApplication?) -> Bool {

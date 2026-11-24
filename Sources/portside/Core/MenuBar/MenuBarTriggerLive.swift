@@ -170,7 +170,10 @@ final class LiveMenuBarEmptyAreaProbe: MenuBarEmptyAreaProbe {
 
     /// Why `point` is not empty bar, or nil when it is.
     private func blocker(_ point: CGPoint, notchCounts: Bool) -> String? {
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }) else { return "no display" }
+        // Counts the top row: a pointer thrown at the bar stops on y == maxY,
+        // which `frame.contains` leaves out, so it is moved just inside.
+        guard let screen = DockScreen.screen(containing: point) else { return "no display" }
+        let point = CGPoint(x: point.x, y: min(point.y, screen.frame.maxY - 0.5))
         let thickness = max(NSStatusBar.system.thickness, screen.safeAreaInsets.top)
         let band = CGRect(x: screen.frame.minX, y: screen.frame.maxY - thickness, width: screen.frame.width, height: thickness)
         guard band.contains(point) else { return "below the bar" }

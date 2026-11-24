@@ -151,12 +151,10 @@ final class DockBadges: ObservableObject {
             let apps = NSWorkspace.shared.runningApplications
                 .filter { $0.activationPolicy == .regular }
                 .map { RunningApp(pid: $0.processIdentifier, bundleID: $0.bundleIdentifier, path: $0.bundleURL?.path) }
-            var byPath: [String: String] = [:]
-            var byBundleID: [String: String] = [:]
-            for app in apps {
-                guard let label = LaunchServicesBadges.label(forPID: app.pid) else { continue }
-                if let path = app.path { byPath[Self.standardPath(path)] = label }
-                if let id = app.bundleID { byBundleID[id] = label }
+            let running = apps.map { BadgeSource(path: $0.path.map(Self.standardPath), bundleID: $0.bundleID,
+                                                  label: LaunchServicesBadges.label(forPID: $0.pid)) }
+            let (byPath, byBundleID) = Self.merge(running: running, dock: DockAccessibilityBadges.labelsByPath()) {
+                Bundle(path: $0)?.bundleIdentifier
             }
             let ms = (CACurrentMediaTime() - started) * 1000
             DispatchQueue.main.async {
@@ -195,14 +193,81 @@ final class DockBadges: ObservableObject {
         }
     }
 
-    static func standardPath(_ path: String) -> String {
-        URL(fileURLWithPath: path).standardizedFileURL.path
+    struct BadgeSource {
+        let path: String?
+        let bundleID: String?
+        let label: String?
     }
+
+    /// Running apps' LaunchServices badges, then the Dock's own badges for
+    /// every other app it shows: those set through UserNotifications
+    /// (Messages) and those on apps that are not running (System Settings).
+    /// LaunchServices wins where both have one. `dock` is keyed by
+    /// standardized path; `bundleID` names a Dock-only app.
+    static func merge(running: [BadgeSource], dock: [String: String],
+                      bundleID: (String) -> String?) -> (byPath: [String: String], byBundleID: [String: String]) {
+        var byPath: [String: String] = [:]
+        var byBundleID: [String: String] = [:]
+        for app in running {
+            guard let label = app.label else { continue }
+            if let path = app.path { byPath[path] = label }
+            if let id = app.bundleID { byBundleID[id] = label }
+        }
+        let known = Dictionary(running.compactMap { app in app.path.map { ($0, app.bundleID) } }, uniquingKeysWith: { a, _ in a })
+        for (path, label) in dock where byPath[path] == nil {
+            byPath[path] = label
+            if let id = known[path].flatMap({ $0 }) ?? bundleID(path), byBundleID[id] == nil { byBundleID[id] = label }
+        }
+        return (byPath, byBundleID)
+    }
+
+    /// Memoized: every tile's badge lookup calls this on each render.
+    static func standardPath(_ path: String) -> String {
+        standardPaths.withLock { cache in
+            if let hit = cache[path] { return hit }
+            let standard = URL(fileURLWithPath: path).standardizedFileURL.path
+            if cache.count > 512 { cache.removeAll() }
+            cache[path] = standard
+            return standard
+        }
+    }
+
+    private static let standardPaths = OSAllocatedUnfairLock(initialState: [String: String]())
 
     /// Leading digits of a badge ("12", "99+"), or nil for dots / letters.
     static func numericPrefix(_ label: String) -> Int? {
         let digits = label.prefix(while: \.isNumber)
         return digits.isEmpty ? nil : Int(digits)
+    }
+}
+
+/// The native Dock's own badges, from its accessibility tree
+/// (`AXStatusLabel`). Only a fallback: it has the badges apps set through
+/// UserNotifications, which LaunchServices never sees (Messages), and badges
+/// on apps that are not running, but it forgets `NSDockTile` badges when the
+/// Dock restarts. Needs Accessibility;
+/// without it this returns nothing. About 1 ms per read once warm.
+enum DockAccessibilityBadges {
+    /// Badge text by standardized .app path.
+    static func labelsByPath() -> [String: String] {
+        guard AXIsProcessTrusted(),
+              let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else { return [:] }
+        var lists: CFTypeRef?
+        AXUIElementCopyAttributeValue(AXUIElementCreateApplication(dock.processIdentifier), kAXChildrenAttribute as CFString, &lists)
+        var labels: [String: String] = [:]
+        for list in lists as? [AXUIElement] ?? [] {
+            var items: CFTypeRef?
+            AXUIElementCopyAttributeValue(list, kAXChildrenAttribute as CFString, &items)
+            for item in items as? [AXUIElement] ?? [] {
+                var values: CFArray?
+                guard AXUIElementCopyMultipleAttributeValues(item, ["AXStatusLabel", kAXURLAttribute] as CFArray, [], &values) == .success,
+                      let pair = values as? [Any], pair.count == 2,
+                      let label = pair[0] as? String, !label.isEmpty,
+                      let url = pair[1] as? URL else { continue }
+                labels[DockBadges.standardPath(url.path)] = label
+            }
+        }
+        return labels
     }
 }
 

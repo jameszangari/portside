@@ -459,9 +459,12 @@ final class MenuBarTriggerService: ObservableObject {
 
     var alwaysHiddenAvailable: Bool { shelf.alwaysHiddenEnabled }
 
-    /// The launch state: every assigned app hidden, no rehide owed.
+    /// The launch state: every assigned app hidden, no rehide owed. With
+    /// membership (macOS 27) only when something is assigned to Hidden; with
+    /// the divider (macOS 26) always, since what sits left of it is hidden
+    /// and an empty left side hides nothing.
     func startCollapsed() {
-        guard isRunning, shelf.hidesByMembership, shelf.hasHiddenAssignments else { return }
+        guard isRunning, !shelf.hidesByMembership || shelf.hasHiddenAssignments else { return }
         shelf.hide()
     }
 

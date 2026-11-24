@@ -32,6 +32,9 @@ enum PortsideMain {
         if CommandLine.arguments.contains("--check-updates") {
             exit(checkUpdatesCommand())
         }
+        if let index = CommandLine.arguments.firstIndex(of: "--dump-debug") {
+            exit(dumpDebugCommand(argumentIndex: index))
+        }
         #if DEBUG
         if CommandLine.arguments.contains("--check-notch") {
             exit(MainActor.assumeIsolated { AgentNotchProbe.run() })
@@ -105,6 +108,32 @@ enum PortsideMain {
         do {
             try DockModel.load().save()
             print("Saved dock.json as \(AppInfo.version)")
+            return 0
+        } catch {
+            FileHandle.standardError.write(Data("portside: \(error.localizedDescription)\n".utf8))
+            return 1
+        }
+    }
+
+    /// `portside --dump-debug [folder]`: the debug report Settings exports,
+    /// without the running app's module states, zipped to the Desktop or
+    /// `folder`. Permissions read are Terminal's, not Portside's.
+    private static func dumpDebugCommand(argumentIndex: Int) -> Int32 {
+        _ = NSApplication.shared
+        let arguments = CommandLine.arguments
+        let folder = argumentIndex + 1 < arguments.count && !arguments[argumentIndex + 1].hasPrefix("--")
+            ? URL(fileURLWithPath: arguments[argumentIndex + 1])
+            : FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
+        let files = MainActor.assumeIsolated {
+            DebugDump.mainThreadFiles(report: Diagnostics.report(Diagnostics.Input(
+                settings: Diagnostics.settings(DockModel.load()), modules: [], permissions: [],
+                nativeDockBackup: NativeDock.backupExists, revealLatency: "Reveal latency: not measured outside the app"
+            )))
+        }
+        let zip = folder.appendingPathComponent(DebugDump.defaultName())
+        do {
+            try DebugDump.write(files, to: zip)
+            print(zip.path)
             return 0
         } catch {
             FileHandle.standardError.write(Data("portside: \(error.localizedDescription)\n".utf8))

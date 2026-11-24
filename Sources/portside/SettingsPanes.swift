@@ -441,7 +441,7 @@ struct MenuBarTriggersSection: View {
             if let alwaysHiddenWarning { Text(alwaysHiddenWarning).helperStyle().foregroundStyle(.orange) }
             if !service.isRunning { Text("Menu Bar Shelf is off. Turn it on from the Layout setup.").helperStyle() }
         } header: {
-            Text("Open with").settingsAnchor("Open with")
+            Text("Open with")
         } footer: {
             Text("Clicks on menus and status icons still go to them.").footerStyle()
         }
@@ -460,7 +460,7 @@ struct MenuBarTriggersSection: View {
             MenuBarRehideFlow(settings: settings)
             if let status = service.status { Text(status).helperStyle() }
         } header: {
-            Text("Hide again").settingsAnchor("Hide again")
+            Text("Hide again")
         } footer: {
             Text("An open menu, the pointer on the menu bar or this settings page waits it out.").footerStyle()
         }
@@ -517,7 +517,7 @@ private struct MenuBarLiveActivitiesSection: View {
             ) { setKeepsShowing($0) }
             }
         } header: {
-            Text("Live Activities").settingsAnchor("Live Activities")
+            Text("Live Activities")
         }
         .onAppear { model.refresh() }
     }
@@ -558,7 +558,7 @@ private struct MenuBarAdvancedSection: View {
                 if settings.hidingMethod == .native { MenuBarGrantRow(title: "Native hiding needs the app list", grant: files.appList) }
             }
         } header: {
-            Text("Advanced").settingsAnchor("Advanced")
+            Text("Advanced")
         } footer: {
             Text("Automatic puts your saved order back before each reveal; Manual leaves it alone. Standard hides any app and Apple's items while Portside runs. Native uses macOS's own per-app switch.").footerStyle()
         }
@@ -724,10 +724,15 @@ private struct MenuBarLookSection: View {
         }
         if supportsPortsideBar {
             Section {
-                SettingsChoiceCards(selection: binding(\.barStyle), choices: MenuBarBarStyle.allCases.map { ($0, $0.title) }, columns: 3) {
+                SettingsChoiceCards(selection: binding(\.barStyle), choices: MenuBarBarStyle.allCases.map { ($0, $0.title) }, columns: 4) {
                     MenuBarBarStylePicture(style: $0, look: look, dock: dockModel.look)
                 }
-                if look.barStyle == .system { cornerSlider(\.barCornerRadius) }
+                if look.barStyle == .system || (look.barStyle == .menuBar && look.shape == .none) { cornerSlider(\.barCornerRadius) }
+                if look.barStyle == .menuBar {
+                    Text(look.shape == .none
+                         ? "Uses the menu bar's background below. Pick a menu bar shape to give both one; until then the bar uses the system material."
+                         : "Uses the menu bar's background and corners below, so changing them changes both.").helperStyle()
+                }
                 SettingsSlider(title: "Icon size", value: look.barIconSize, range: MenuBarLook.iconSizeRange, snap: 1, format: { "\(Int($0)) pt" }, set: { set(\.barIconSize, $0, persist: $1) })
             } header: {
                 Text("Portside Bar style").settingsAnchor("Portside Bar style")
@@ -825,7 +830,7 @@ struct MenuBarProfilesSection: View {
                 if service.activeProfileID != nil { Button("Update Current") { service.updateActiveProfile() } }
             }
         } header: {
-            Text("Profiles").settingsAnchor("Profiles")
+            Text("Profiles")
         } footer: {
             Text("A profile saves sections, order and groups. Switch from the menu bar icon's right-click menu or a shortcut.").footerStyle()
         }

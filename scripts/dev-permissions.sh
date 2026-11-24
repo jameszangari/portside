@@ -22,6 +22,9 @@ panes=(
     "ScreenCapture|Privacy_ScreenCapture|Screen & System Audio Recording (window previews, audio levels)"
     "Calendar|Privacy_Calendars|Calendars (Calendar widget)"
     "AppleEvents|Privacy_Automation|Automation (Trash, login items, Now Playing, agent tabs)"
+    "ListenEvent|Privacy_ListenEvent|Input Monitoring (volume and brightness keys)"
+    "AudioCapture|Privacy_AudioCapture|System Audio Recording (audio levels)"
+    "BluetoothAlways|Privacy_Bluetooth|Bluetooth (AirPods)"
     "|Privacy_AllFiles|Full Disk Access (optional, protected files such as the Trash)"
 )
 
