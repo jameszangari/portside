@@ -206,8 +206,11 @@ final class Magnifier: ObservableObject {
     }
 
     /// Only the hovered icon reports its rendered spring position. This is
-    /// driven by SwiftUI animation frames, never a timer or mouse poll.
-    @Published var labelTargetID: String?
+    /// driven by SwiftUI animation frames, never a timer or mouse poll. Not
+    /// published: the report reads it on each frame, and publishing it
+    /// re-rendered every tile's effects on each hover change. The label's
+    /// first position comes from `displayFrame`.
+    var labelTargetID: String?
     var onIconPresented: ((String, CGFloat, CGFloat) -> Void)?
 
     // MARK: - Queries (panel and hover)

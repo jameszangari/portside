@@ -71,15 +71,19 @@ enum Diagnostics {
         ]
     }
 
-    @MainActor static func copy(model: DockModel, integrations: IntegrationSettings) {
+    @MainActor static func text(model: DockModel, integrations: IntegrationSettings) -> String {
         integrations.reload()
-        let text = report(Input(
+        return report(Input(
             settings: settings(model),
             modules: integrations.modules,
             permissions: integrations.permissions,
             nativeDockBackup: NativeDock.backupExists,
             revealLatency: RevealLatency.shared.summary
         ))
+    }
+
+    @MainActor static func copy(model: DockModel, integrations: IntegrationSettings) {
+        let text = text(model: model, integrations: integrations)
         let board = NSPasteboard.general
         board.clearContents()
         board.setString(text, forType: .string)

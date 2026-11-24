@@ -826,6 +826,14 @@ final class MenuBarAssertionTests: XCTestCase {
     func testPanelLookFollowsTheChosenStyle() {
         let dock = DockLook(cornerRadius: 20)
         var look = MenuBarLook()
+        XCTAssertEqual(look.barStyle, .menuBar)
+        XCTAssertNil(look.panelLook(dock: dock).dock, "no menu bar shape: system material")
+        look.shape = .full
+        look.background.style = .solid
+        look.cornerRadius = 8
+        XCTAssertEqual(look.panelLook(dock: dock).dock?.background, look.background, "follows the menu bar")
+        XCTAssertEqual(look.panelLook(dock: dock).cornerRadius, 8)
+        look.barStyle = .system
         XCTAssertNil(look.panelLook(dock: dock).dock, "system material")
         look.barStyle = .dock
         XCTAssertEqual(look.panelLook(dock: dock).dock, dock)

@@ -470,6 +470,8 @@ struct AgentNotchView: View {
             Color.clear.frame(width: state.notchWidth > 0 ? state.notchWidth : state.compactWidth / 3)
             stripSide(.trailing)
         }
+        // The strip is a menu bar's height: a little smaller than the shelf's text.
+        .font(.system(size: max(10, preferences.fontSize - 2)))
         // Compact, the strip hugs the notch; with a card or the shelf open
         // it spans the surface, so the side icons move out with it.
         .frame(maxWidth: state.expanded || state.card != nil ? .infinity : state.compactWidth)
@@ -558,9 +560,10 @@ struct AgentNotchView: View {
                     HStack(spacing: 4) {
                         Image(systemName: alert.symbol).symbolRenderingMode(alert.activity == .weather ? .multicolor : .palette)
                             .foregroundStyle(alert.isWarning ? Color.red : .white, alert.isWarning ? Color.red : .white)
-                        if !alert.short.isEmpty { Text(alert.short).monospacedDigit().fontWeight(.semibold) }
+                        if !alert.short.isEmpty { Text(alert.short).monospacedDigit().fontWeight(.semibold).lineLimit(1) }
                     }
                     .foregroundStyle(alert.isWarning ? .red : .white)
+                    .fixedSize()
                 }
             case nil:
                 Color.clear
@@ -624,6 +627,7 @@ struct AgentNotchView: View {
             // Each second, for the timer once the meeting starts.
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 Text(NotchMeetingCard.stripText(meeting, now: context.date)).monospacedDigit().fontWeight(.semibold)
+                    .lineLimit(1).fixedSize()
             }
         }
     }

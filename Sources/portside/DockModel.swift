@@ -11,17 +11,40 @@ struct PinnedApp: Codable, Hashable, Identifiable {
     var id: String { bundleIdentifier ?? path }
 
     /// Current location: Launch Services lookup by bundle id, falling back
-    /// to the saved path.
+    /// to the saved path. Cached (tiles read it on every render) until
+    /// `clearLookups`.
     var url: URL {
-        if let bundleIdentifier,
-           let found = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) {
-            return found
+        Self.lookups.withLock { cache in
+            if let hit = cache[id] { return hit.url }
+            let entry = Self.lookUp(self)
+            cache[id] = entry
+            return entry.url
         }
-        return URL(fileURLWithPath: path)
     }
 
     var displayName: String {
-        FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+        Self.lookups.withLock { cache in
+            if let hit = cache[id] { return hit.name }
+            let entry = Self.lookUp(self)
+            cache[id] = entry
+            return entry.name
+        }
+    }
+
+    private static let lookups = OSAllocatedUnfairLock(initialState: [String: (url: URL, name: String)]())
+
+    private static func lookUp(_ app: PinnedApp) -> (url: URL, name: String) {
+        var url = URL(fileURLWithPath: app.path)
+        if let id = app.bundleIdentifier, let found = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
+            url = found
+        }
+        return (url, FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: ""))
+    }
+
+    /// Forget cached locations and names: an app launched or quit, so one
+    /// may have moved or been renamed.
+    static func clearLookups() {
+        lookups.withLock { $0.removeAll() }
     }
 
     init(bundleIdentifier: String?, path: String) {

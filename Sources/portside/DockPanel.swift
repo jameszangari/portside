@@ -158,6 +158,7 @@ final class DockPanel {
         ) { [weak self] _ in
             guard let self, self.isRevealedOrRevealing else { return }
             self.panel.orderFrontRegardless()
+            self.rejoinActiveSpaceIfNeeded()
         })
     }
 
@@ -207,6 +208,7 @@ final class DockPanel {
             state = .revealed
             panel.setFrame(revealedFrame, display: true)
             panel.orderFrontRegardless()
+            rejoinActiveSpaceIfNeeded()
         }
         layout(display: state == .revealed)
         if wasHiding { onHidden?() }
@@ -579,6 +581,7 @@ final class DockPanel {
         panel.ignoresMouseEvents = false
         removeSettleReentryMonitor()
         panel.orderFrontRegardless()
+        rejoinActiveSpaceIfNeeded()
 
         let target = revealedFrame
         let duration = effectiveDuration(animated: animated)
@@ -600,6 +603,27 @@ final class DockPanel {
         })
         onRevealAnimationStarted?()
         onPanelInteractive?()
+    }
+
+    /// macOS can drop a long-lived window from all Spaces: after hours up
+    /// the panel stayed on one Space and every reveal slid in off screen.
+    /// Setting the behavior again (cleared first, so it is not a no-op)
+    /// should rejoin them; moving it to the current Space is the fallback.
+    private func rejoinActiveSpaceIfNeeded() {
+        let number = panel.windowNumber
+        guard panel.isVisible, WindowSpaces.isOffCurrentSpace(number) else { return }
+        let before = WindowSpaces.describe(number)
+        let behavior = panel.collectionBehavior
+        panel.collectionBehavior = []
+        panel.collectionBehavior = behavior
+        panel.orderFrontRegardless()
+        var fix = "behavior reset"
+        if WindowSpaces.isOffCurrentSpace(number) {
+            WindowSpaces.moveToCurrentSpace(number)
+            panel.orderFrontRegardless()
+            fix = "moved to current Space"
+        }
+        logger.notice("panel was off the current Space (\(before, privacy: .public)); \(fix, privacy: .public), now \(WindowSpaces.describe(number), privacy: .public)")
     }
 
     /// Slide the panel out past its screen edge, then order it out.

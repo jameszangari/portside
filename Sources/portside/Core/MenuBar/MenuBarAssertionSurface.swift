@@ -597,7 +597,7 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
         case .menuBar: return false
         case .portsideBar: return true
         case .portsideBarOnNotch:
-            let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
+            let screen = DockScreen.screen(containing: NSEvent.mouseLocation)
             return (screen?.safeAreaInsets.top ?? 0) > 0
         }
     }
@@ -894,14 +894,39 @@ enum MenuBarDrawnOwners {
         await Task.detached(priority: .utility) { items()?.contains(where: \.isOverflowControl) ?? false }.value
     }
 
+    /// `items()` with each item's real owner. On macOS 26 Control Center
+    /// hosts every status item window, third-party ones too (titled
+    /// "Item-0" and so on), so the window's owner is Control Center; an
+    /// Accessibility hit test at the item's middle names the app. One call
+    /// per hosted item, so only for paths that need the owner.
+    nonisolated static func ownedItems() -> [Item]? {
+        guard let items = items() else { return nil }
+        guard ProcessInfo.processInfo.operatingSystemVersion.majorVersion < 27,
+              let host = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.controlcenter").first?.processIdentifier,
+              AXIsProcessTrusted() else { return items }
+        let system = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(system, 0.2)
+        return items.map { item in
+            guard item.pid == host else { return item }
+            var element: AXUIElement?
+            var pid: pid_t = 0
+            guard AXUIElementCopyElementAtPosition(system, Float(item.frame.midX), Float(item.frame.midY), &element) == .success,
+                  let element, AXUIElementGetPid(element, &pid) == .success, pid > 0 else { return item }
+            return Item(pid: pid, frame: item.frame, isOverflowControl: item.isOverflowControl)
+        }
+    }
+
     /// Every drawn item with its frame (Accessibility coordinates: x as AppKit, y from the top).
     nonisolated static func items() -> [Item]? {
         if ProcessInfo.processInfo.operatingSystemVersion.majorVersion < 27 {
             guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
             let layer = Int(CGWindowLevelForKey(.statusWindow))
+            // Portside's own status items are Control Center's windows too;
+            // a window of its own at this level is the notch strip.
+            let own = getpid()
             return windows.compactMap { window in
                 guard let level = window[kCGWindowLayer as String] as? Int, level == layer,
-                      let pid = window[kCGWindowOwnerPID as String] as? pid_t,
+                      let pid = window[kCGWindowOwnerPID as String] as? pid_t, pid != own,
                       let bounds = window[kCGWindowBounds as String] as? NSDictionary,
                       let frame = CGRect(dictionaryRepresentation: bounds), frame.width > 0, frame.height > 0 else { return nil }
                 return Item(pid: pid, frame: frame, isOverflowControl: false)

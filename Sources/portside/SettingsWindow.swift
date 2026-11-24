@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Owns the Settings window. Unlike the dock panel this is a normal window.
 /// While it is open Portside is a regular app (in the native Dock, Cmd+Tab
@@ -1144,6 +1145,29 @@ private struct GeneralSettings: View {
     @State private var importStatus: String?
     @State private var otherCopies: [InstalledCopy] = []
     @State private var diagnosticsCopied = false
+    @State private var debugExporting = false
+    @State private var debugExportStatus: String?
+
+    /// Asks where to save, then builds the zip off the main thread and
+    /// shows it in Finder.
+    private func exportDebugReport() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.zip]
+        panel.directoryURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first
+        panel.nameFieldStringValue = DebugDump.defaultName()
+        guard panel.runModal() == .OK, let zip = panel.url else { return }
+        debugExporting = true
+        debugExportStatus = "Collecting, this can take a minute…"
+        let files = DebugDump.mainThreadFiles(report: Diagnostics.text(model: dockModel, integrations: integrations))
+        Task { @MainActor in
+            let error = await Task.detached { () -> String? in
+                do { try DebugDump.write(files, to: zip); return nil } catch { return error.localizedDescription }
+            }.value
+            debugExporting = false
+            debugExportStatus = error ?? "Saved"
+            if error == nil { NSWorkspace.shared.activateFileViewerSelecting([zip]) }
+        }
+    }
 
     /// Import clamps the native icon size to what fits, like the slider.
     private var maxIconSize: CGFloat {
@@ -1219,6 +1243,13 @@ private struct GeneralSettings: View {
                     }
                     .settingsAnchor("Diagnostics")
                     Text("Version, macOS, dock settings, module and permission states, and how fast the dock appears, for a bug report. No app names, files or personal data.").helperStyle()
+                    HStack {
+                        Button("Export Debug Report…") { exportDebugReport() }
+                            .disabled(debugExporting)
+                        if let debugExportStatus { Text(debugExportStatus).helperStyle() }
+                    }
+                    .settingsAnchor("Debug Report")
+                    Text("A zip for a problem on another Mac or macOS version: the diagnostics above plus macOS and display details, menu bar items as Portside reads them, private API checks, settings and Portside's logs. It includes app names and menu bar titles, so look it over before you send it.").helperStyle()
                 }
             }
 
