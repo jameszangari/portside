@@ -386,7 +386,7 @@ Out of scope: minimized windows in the Dock, the two-finger App Expose gesture, 
 
 ## Known gaps
 
-- Mission Control and App Exposé still show the native Dock; Portside's dock only steps aside. Covering the native Dock was explored on `research/mission-control-probe` and deferred (trackpad entry can expose a few points before detection). Detection depends on an observed WindowManager level-19 shield and private SkyLight events; if macOS changes them, Portside's dock stays up as before.
+- Mission Control and App Exposé still show the native Dock; Portside's dock only steps aside. Covering the native Dock was explored ([research](research/mission-control-dock-cover.md), probe under the tag `archive/mission-control-probe`) and deferred (trackpad entry can expose a few points before detection). Detection depends on an observed WindowManager level-19 shield and private SkyLight events; if macOS changes them, Portside's dock stays up as before.
 
 - Window previews: the first open after launch, a lock or a revoke still shows icons until each picture arrives; a kept picture can be up to one open old until it is retaken. Grid Rows use a fixed row height (icon plus 28 pt), so a long name could show a sliver of the next row.
 
