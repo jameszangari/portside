@@ -193,6 +193,9 @@ enum NotchShelfRegion: Equatable {
 enum NotchShelfTimer: Equatable {
     case card(NotchShelfActivity)
     case open
+    /// Open the full shelf on a page: hovering agents opens the Agents page
+    /// instead of the small agent card.
+    case page(NotchShelfPage)
     /// Pointer left the open shelf.
     case collapse
     /// Pointer left a card. Shorter than `collapse`, as a card is a glance.
@@ -205,8 +208,9 @@ enum NotchShelfTimer: Equatable {
 
 /// The shelf's open/close rules, free of AppKit so they can be tested.
 /// One rule everywhere (SHELF-04c): hovering a running activity on the
-/// strip shows its card; the notch itself, a side with nothing running,
-/// or a click opens the full shelf. Each input returns the timer to start
+/// strip shows its card, or opens the shelf on its page when it has one
+/// (agents); the notch itself, a side with nothing running, or a click
+/// opens the full shelf. Each input returns the timer to start
 /// (replacing any earlier one); nil means cancel whatever was pending.
 struct NotchShelfMachine: Equatable {
     private(set) var phase = NotchShelfPhase.compact
@@ -231,9 +235,12 @@ struct NotchShelfMachine: Equatable {
     }
 
     /// `activity` says what the strip shows on a side, nil for nothing.
+    /// `page` is the shelf page an activity opens instead of its card.
     @discardableResult
     mutating func pointer(_ region: NotchShelfRegion,
-                          activity: (NotchShelfSide) -> NotchShelfActivity? = { _ in nil }) -> NotchShelfTimer? {
+                          activity: (NotchShelfSide) -> NotchShelfActivity? = { _ in nil },
+                          page: (NotchShelfActivity) -> NotchShelfPage? = { _ in nil }) -> NotchShelfTimer? {
+        func hover(_ shown: NotchShelfActivity) -> NotchShelfTimer { page(shown).map { .page($0) } ?? .card(shown) }
         if region != .outside { banner = false }
         pointerInside = region != .outside
         // A hotkey's shelf keeps its own timer, whatever the pointer does;
@@ -247,9 +254,9 @@ struct NotchShelfMachine: Equatable {
         case (.body, _): next = nil
         case (_, .open): next = nil
         case (.notch, _): next = .open
-        case (.side(let side), .compact): next = activity(side).map { .card($0) } ?? .open
+        case (.side(let side), .compact): next = activity(side).map(hover) ?? .open
         case (.side(let side), .card(let current)):
-            if let shown = activity(side) { next = shown == current ? nil : .card(shown) } else { next = .open }
+            if let shown = activity(side) { next = shown == current ? nil : hover(shown) } else { next = .open }
         }
         pending = next
         return next
@@ -261,7 +268,7 @@ struct NotchShelfMachine: Equatable {
         pending = nil
         switch timer {
         case .card(let activity): if phase != .open { phase = .card(activity) }
-        case .open: phase = .open
+        case .open, .page: phase = .open
         case .collapse, .collapseCard: close()
         case .bannerEnd: if banner { close() }
         case .hotkeyEnd:
