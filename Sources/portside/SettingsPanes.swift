@@ -197,86 +197,99 @@ struct AppSwitcherSettings: View {
 
 // MARK: - Menu Bar
 
-/// The Menu Bar pane is the layout editor and nothing else. The shortcut and
-/// hide-again choices sit behind one collapsed row, so the editor is what
-/// the pane opens on. Module switches are not shown: Turn On enables the
-/// three modules together, and Turn Off is in the shelf control's menu.
+/// The Menu Bar pane's pages, picked from a bar at the top. Each page shows
+/// its sections open, so nothing hides behind a fold.
+enum MenuBarPage: String, CaseIterable, Identifiable {
+    case layout, behavior, look, music, more
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .layout: "Layout"
+        case .behavior: "Behavior"
+        case .look: "Look"
+        case .music: "Music"
+        case .more: "More"
+        }
+    }
+
+    /// The page a Settings search anchor is on, so a result opens it.
+    static func page(for anchor: String) -> MenuBarPage? {
+        switch anchor {
+        case "Visible", "Hidden", "Always Hidden", "Off screen", "Profiles", "Groups": .layout
+        case "Show hidden items", "Open with", "Hide again": .behavior
+        case "Icons", "Portside Bar style", "Portside Bar background", "Menu bar shape", "Menu bar background", "Glass", "Border": .look
+        case "While music plays", "Background while music plays", "Music visualizer": .music
+        case "Live Activities", "Advanced": .more
+        default: nil
+        }
+    }
+}
+
+/// The Menu Bar pane: the shelf switch, then pages for the layout editor,
+/// how hidden items open and hide (Behavior), the menu bar's Look, what
+/// changes while Music plays, and More. The last page is remembered;
+/// a Settings search result opens the page it is on.
 struct MenuBarSettings: View {
     @ObservedObject var dockModel: DockModel
     @ObservedObject var integrations: IntegrationSettings
+    @AppStorage("settings.menuBarPage") private var pageName = MenuBarPage.layout.rawValue
+    @Environment(\.settingsHighlight) private var highlight
 
     private var layoutRunning: Bool {
         integrations.modules.first { $0.id == MenuBarLayoutModule.moduleID }?.state == .running
     }
 
-    @State private var openWithOpen = false
-    @State private var hideAgainOpen = false
-    @State private var lookOpen = false
-    @State private var profilesOpen = false
-    @State private var liveOpen = false
-    @State private var advancedOpen = false
+    private var page: Binding<MenuBarPage> {
+        Binding(get: { MenuBarPage(rawValue: pageName) ?? .layout }, set: { pageName = $0.rawValue })
+    }
 
     var body: some View {
         Form {
             ModuleRowsSection(integrations: integrations, ids: [MenuBarShelfModule.moduleID])
-            if layoutRunning, let layout = integrations.menuLayout {
-                Section { MenuBarLivePreviewCard(settings: { var shown = dockModel.menuBarTriggers; shown.presentation = dockModel.menuBarPresentation; return shown }(), dock: dockModel.look) }
-                MenuBarLayoutSection(service: layout)
+            if let triggers = integrations.menuTriggers, triggers.isRunning || layoutRunning {
+                Section {
+                    Picker("Page", selection: page) {
+                        ForEach(MenuBarPage.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+                pageContent(page.wrappedValue, triggers: triggers)
             } else {
                 MenuBarLayoutSetup(integrations: integrations)
             }
-            if let triggers = integrations.menuTriggers, triggers.isRunning || layoutRunning {
-                let hidesByMembership = integrations.menuLayout?.hidesByMembership ?? false
-                MenuBarTriggersSection(dockModel: dockModel, service: triggers, hidesByMembership: hidesByMembership, parts: [.presentation])
-                fold("Open with", "cursorarrow.click", openWithSummary, open: $openWithOpen)
-                if openWithOpen {
-                    MenuBarTriggersSection(dockModel: dockModel, service: triggers, hidesByMembership: hidesByMembership, parts: [.openWith])
-                }
-                fold("Hide again", "eye.slash", hideAgainSummary, open: $hideAgainOpen)
-                if hideAgainOpen {
-                    MenuBarTriggersSection(dockModel: dockModel, service: triggers, hidesByMembership: hidesByMembership, parts: [.hideAgain])
-                }
-                fold("Look", "paintbrush", "Icon, Portside Bar style, menu bar shape and color", open: $lookOpen,
-                     anchors: ["Icons", "Portside Bar style", "Menu bar shape", "Menu bar background", "Glass", "Border"])
-                if lookOpen {
-                    MenuBarLookSection(dockModel: dockModel, supportsPortsideBar: true)
-                }
-                if layoutRunning, let layout = integrations.menuLayout {
-                    fold("Profiles", "rectangle.stack", "Save and switch layouts per display", open: $profilesOpen, anchors: ["Groups"])
-                    if profilesOpen {
-                        MenuBarProfilesSection(service: layout)
-                    }
-                }
-                fold("Live Activities", "iphone", "iPhone activities in the menu bar", open: $liveOpen)
-                if liveOpen {
-                    MenuBarLiveActivitiesSection(dockModel: dockModel, appList: integrations.menuFiles?.appList)
-                }
-                if hidesByMembership {
-                    fold("Advanced", "gearshape.2", "Hiding method and file access", open: $advancedOpen)
-                    if advancedOpen {
-                        MenuBarAdvancedSection(dockModel: dockModel, service: triggers, files: integrations.menuFiles)
-                    }
-                }
-            }
         }
         .keepsIntegrationsCurrent(integrations)
+        .onChange(of: highlight, initial: true) { _, anchor in
+            if let anchor, let found = MenuBarPage.page(for: anchor) { page.wrappedValue = found }
+        }
     }
 
-    /// A fold row on its own; its sections follow it while open.
-    private func fold(_ title: String, _ symbol: String, _ summary: String, open: Binding<Bool>, anchors: [String] = []) -> some View {
-        Section { SettingsFoldRow(title, symbol: symbol, summary: summary, anchors: anchors, open: open) }
-    }
-
-    private var openWithSummary: String {
-        let settings = dockModel.menuBarTriggers
-        return settingsList([("Click", settings.emptyClick), ("Scroll", settings.scroll), ("Hover", settings.hover),
-                             ("Shortcut", settings.hotkey != nil)], none: "Only the menu bar control")
-    }
-
-    private var hideAgainSummary: String {
-        let settings = dockModel.menuBarTriggers
-        let after = settings.rehideSeconds == 0 ? "never" : "after \(settings.rehideSeconds) s"
-        return "\(settings.strategy.title), \(after)"
+    @ViewBuilder
+    private func pageContent(_ page: MenuBarPage, triggers: MenuBarTriggerService) -> some View {
+        let hidesByMembership = integrations.menuLayout?.hidesByMembership ?? false
+        switch page {
+        case .layout:
+            if layoutRunning, let layout = integrations.menuLayout {
+                Section { MenuBarLivePreviewCard(settings: { var shown = dockModel.menuBarTriggers; shown.presentation = dockModel.menuBarPresentation; return shown }(), dock: dockModel.look) }
+                MenuBarLayoutSection(service: layout)
+                MenuBarProfilesSection(service: layout)
+            } else {
+                MenuBarLayoutSetup(integrations: integrations)
+            }
+        case .behavior:
+            MenuBarTriggersSection(dockModel: dockModel, service: triggers, hidesByMembership: hidesByMembership)
+        case .look:
+            MenuBarLookSection(dockModel: dockModel, supportsPortsideBar: true)
+        case .music:
+            MenuBarWhilePlayingSection(dockModel: dockModel)
+            MenuBarVisualizerSection(dockModel: dockModel)
+        case .more:
+            MenuBarLiveActivitiesSection(dockModel: dockModel, appList: integrations.menuFiles?.appList)
+            if hidesByMembership {
+                MenuBarAdvancedSection(dockModel: dockModel, service: triggers, files: integrations.menuFiles)
+            }
+        }
     }
 }
 
@@ -441,7 +454,7 @@ struct MenuBarTriggersSection: View {
             if let alwaysHiddenWarning { Text(alwaysHiddenWarning).helperStyle().foregroundStyle(.orange) }
             if !service.isRunning { Text("Menu Bar Shelf is off. Turn it on from the Layout setup.").helperStyle() }
         } header: {
-            Text("Open with")
+            Text("Open with").settingsAnchor("Open with")
         } footer: {
             Text("Clicks on menus and status icons still go to them.").footerStyle()
         }
@@ -460,7 +473,7 @@ struct MenuBarTriggersSection: View {
             MenuBarRehideFlow(settings: settings)
             if let status = service.status { Text(status).helperStyle() }
         } header: {
-            Text("Hide again")
+            Text("Hide again").settingsAnchor("Hide again")
         } footer: {
             Text("An open menu, the pointer on the menu bar or this settings page waits it out.").footerStyle()
         }
@@ -517,7 +530,7 @@ private struct MenuBarLiveActivitiesSection: View {
             ) { setKeepsShowing($0) }
             }
         } header: {
-            Text("Live Activities")
+            Text("Live Activities").settingsAnchor("Live Activities")
         }
         .onAppear { model.refresh() }
     }
@@ -558,7 +571,7 @@ private struct MenuBarAdvancedSection: View {
                 if settings.hidingMethod == .native { MenuBarGrantRow(title: "Native hiding needs the app list", grant: files.appList) }
             }
         } header: {
-            Text("Advanced")
+            Text("Advanced").settingsAnchor("Advanced")
         } footer: {
             Text("Automatic puts your saved order back before each reveal; Manual leaves it alone. Standard hides any app and Apple's items while Portside runs. Native uses macOS's own per-app switch.").footerStyle()
         }
@@ -753,7 +766,7 @@ private struct MenuBarLookSection: View {
                 Text("Reduce Transparency makes the macOS menu bar opaque, which can cover the shape and background. You can change it in System Settings > Accessibility > Display.").footerStyle()
             }
         }
-        if look.shape != .none {
+        if look.shape != .none || (look.visualizer.playingShape ?? .none) != .none {
             DockBackgroundEditor(
                 background: look.background,
                 update: update(\.background),
@@ -764,6 +777,120 @@ private struct MenuBarLookSection: View {
                 },
                 header: { Text("Menu bar background").settingsAnchor("Menu bar background") }
             )
+        }
+    }
+}
+
+/// The menu bar shape's shape and look while music plays
+/// (`look.visualizer.playingShape`, `playingLook`).
+private struct MenuBarWhilePlayingSection: View {
+    @ObservedObject var dockModel: DockModel
+
+    private var look: MenuBarLook { dockModel.menuBarTriggers.look }
+
+    private func set(_ change: (inout MenuBarLook) -> Void, persist: Bool = true) {
+        var next = dockModel.menuBarTriggers
+        change(&next.look)
+        dockModel.setMenuBarTriggers(next, persist: persist)
+    }
+
+    /// The shape drawn while music plays, after the override.
+    private var playingShape: MenuBarShape { look.visualizer.playingShape ?? look.shape }
+
+    var body: some View {
+        Section {
+            Picker(selection: Binding(get: { look.visualizer.playingShape }, set: { value in set { $0.visualizer.playingShape = value } })) {
+                Text("Don't change").tag(MenuBarShape?.none)
+                ForEach(MenuBarShape.allCases) { Text($0.title).tag(MenuBarShape?.some($0)) }
+            } label: {
+                Text("Shape")
+                Text("Switches to this shape while a song plays and back 1.5 s after it stops.").helperStyle()
+            }
+            Toggle(isOn: Binding(
+                get: { look.visualizer.playingLook != nil },
+                set: { on in set { $0.visualizer.playingLook = on ? MenuBarPlayingLook(from: $0) : nil } }
+            )) {
+                Text("Different look")
+                Text(playingShape == .none
+                     ? "Pick a shape above, or a menu bar shape, for the look to show on."
+                     : "Its own background, border, corners and shadow while a song plays. Starts as a copy of the usual look.").helperStyle()
+            }
+        } header: {
+            Text("While music plays").settingsAnchor("While music plays")
+        }
+        if let playing = look.visualizer.playingLook {
+            DockBackgroundEditor(
+                background: playing.background,
+                update: { persist, change in
+                    set({ look in
+                        guard var next = look.visualizer.playingLook else { return }
+                        change(&next.background)
+                        look.visualizer.playingLook = next
+                    }, persist: persist)
+                },
+                surface: "menu bar",
+                extra: {
+                    SettingsSlider(title: "Corner radius", value: playing.cornerRadius, range: MenuBarLook.cornerRange, snap: 1,
+                                   format: { "\(Int($0)) pt" },
+                                   set: { value, persist in set({ $0.visualizer.playingLook?.cornerRadius = value }, persist: persist) })
+                    Toggle("Shadow", isOn: Binding(get: { playing.shadow }, set: { value in set { $0.visualizer.playingLook?.shadow = value } }))
+                },
+                header: { Text("Background while music plays").settingsAnchor("Background while music plays") }
+            )
+        }
+    }
+}
+
+/// The music visualizer behind the menu bar (`look.visualizer`).
+private struct MenuBarVisualizerSection: View {
+    @ObservedObject var dockModel: DockModel
+
+    private var settings: MenuBarVisualizerSettings { dockModel.menuBarTriggers.look.visualizer }
+
+    private func set(_ change: (inout MenuBarVisualizerSettings) -> Void, persist: Bool = true) {
+        var next = dockModel.menuBarTriggers
+        change(&next.look.visualizer)
+        dockModel.setMenuBarTriggers(next, persist: persist)
+    }
+
+    private func binding<Value>(_ path: WritableKeyPath<MenuBarVisualizerSettings, Value>) -> Binding<Value> {
+        Binding(get: { settings[keyPath: path] }, set: { value in set { $0[keyPath: path] = value } })
+    }
+
+    var body: some View {
+        Section {
+            Picker("Style", selection: binding(\.style)) {
+                ForEach(MenuBarVisualizerStyle.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            if settings.style != .off {
+                Picker("Color", selection: binding(\.color)) {
+                    ForEach(MenuBarVisualizerColor.allCases) { Text($0.title).tag($0) }
+                }
+                Picker(selection: binding(\.area)) {
+                    ForEach(MenuBarVisualizerArea.allCases) { Text($0.title).tag($0) }
+                } label: {
+                    Text("Area")
+                    Text(dockModel.menuBarTriggers.look.shape == .none
+                         ? "No menu bar shape is drawn, so it fills the whole bar. Pick a shape above to match it."
+                         : "Match menu bar shape keeps it inside the \(dockModel.menuBarTriggers.look.shape.title.lowercased()) shape.").helperStyle()
+                }
+                SettingsSlider(title: "Intensity", value: settings.intensity, range: MenuBarVisualizerSettings.intensityRange, snap: 0.05,
+                               format: { "\(Int(($0 * 100).rounded()))%" }, set: { value, persist in set({ $0.intensity = value }, persist: persist) })
+                SettingsSlider(title: "Reactiveness", value: settings.reactivity, range: MenuBarVisualizerSettings.reactivityRange, snap: 0.05,
+                               format: { value in value < 0.6 ? "Calm" : value > 1.5 ? "Lively" : "\(Int((value * 100).rounded()))%" },
+                               set: { value, persist in set({ $0.reactivity = value }, persist: persist) })
+                Toggle(isOn: binding(\.followsSound)) {
+                    Text("React to the sound")
+                    Text(dockModel.restrictedMode
+                         ? "Off in restricted mode; the animation keeps a steady pulse."
+                         : "Listens to the playing app only, through a private audio tap; macOS asks once for System Audio Recording. Nothing is recorded or saved. Without it, the animation keeps a steady pulse.").helperStyle()
+                }
+            }
+        } header: {
+            Text("Music visualizer").settingsAnchor("Music visualizer")
+        } footer: {
+            Text("Animates the menu bar's background while music plays, under its items. Album uses the cover's color. When the sound stops it falls to rest: the wave goes flat, bars drop and the glow fades.").footerStyle()
         }
     }
 }
@@ -830,7 +957,7 @@ struct MenuBarProfilesSection: View {
                 if service.activeProfileID != nil { Button("Update Current") { service.updateActiveProfile() } }
             }
         } header: {
-            Text("Profiles")
+            Text("Profiles").settingsAnchor("Profiles")
         } footer: {
             Text("A profile saves sections, order and groups. Switch from the menu bar icon's right-click menu or a shortcut.").footerStyle()
         }

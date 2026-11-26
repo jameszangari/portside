@@ -146,10 +146,12 @@ final class WidgetStore: ObservableObject {
 
     init(dockModel: DockModel) {
         self.dockModel = dockModel
-        cancellable = dockModel.$widgetKinds.combineLatest(dockModel.$showAgentNotch, dockModel.$agentNotchSettings).sink { [weak self] kinds, notch, settings in
-            self?.sync(kinds, notch: notch, usage: settings.showUsage, media: settings.showMedia,
-                       shelf: Self.shelfKinds(settings))
-        }
+        let visualizer = dockModel.$menuBarTriggers.map { $0.look.visualizer.followsMusic }.removeDuplicates()
+        cancellable = dockModel.$widgetKinds.combineLatest(dockModel.$showAgentNotch, dockModel.$agentNotchSettings, visualizer)
+            .sink { [weak self] kinds, notch, settings, visualizer in
+                self?.sync(kinds, notch: notch, usage: settings.showUsage, media: settings.showMedia,
+                           shelf: Self.shelfKinds(settings), visualizer: visualizer)
+            }
     }
 
     func widget(_ kind: String) -> (any DockWidget)? {
@@ -173,8 +175,9 @@ final class WidgetStore: ObservableObject {
     }
 
     /// `shelf`: what the Notch Shelf's Widgets page slots read, run while it is on.
-    private func sync(_ kinds: [String], notch: Bool, usage: Bool, media: Bool, shelf: [String]) {
-        var extras: [String] = []
+    /// `visualizer`: the menu bar visualizer or its shape-while-playing follows Now Playing.
+    private func sync(_ kinds: [String], notch: Bool, usage: Bool, media: Bool, shelf: [String], visualizer: Bool) {
+        var extras: [String] = visualizer ? [NowPlayingWidget.kind] : []
         if notch {
             extras.append(AgentStatusWidget.kind)
             if usage { extras.append(UsageWidget.kind) }

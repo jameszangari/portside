@@ -45,6 +45,13 @@ enum PortsideMain {
         if CommandLine.arguments.contains("--check-windows") {
             exit(MainActor.assumeIsolated { WindowRegistryProbe.run() })
         }
+        if let index = CommandLine.arguments.firstIndex(of: "--render-visualizer"), index + 1 < CommandLine.arguments.count {
+            exit(MainActor.assumeIsolated { MenuBarVisualizerDrawing.render(to: CommandLine.arguments[index + 1]) })
+        }
+        if let index = CommandLine.arguments.firstIndex(of: "--check-visualizer") {
+            let bundle = index + 1 < CommandLine.arguments.count ? CommandLine.arguments[index + 1] : "com.spotify.client"
+            exit(MusicLevelMeter.probe(bundle))
+        }
         if CommandLine.arguments.contains("--check-chatgpt") {
             exit(MainActor.assumeIsolated { ChatGPTReplies.probe() })
         }
@@ -310,6 +317,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let dockModel = DockModel.load()
     lazy var nativeDock = NativeDockController(dockModel: dockModel)
     private var agentNotch: AgentNotch?
+    private var menuBarVisualizer: MenuBarVisualizer?
     private var dockEngine: DockEngine?
     private var settings: SettingsWindowController?
     private var hideHotKey: HotKey?
@@ -355,8 +363,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         engine.onOpenSettings = { [weak self] in self?.runOpenSettingsCommand() }
         engine.start()
         agentNotch = AgentNotch(model: dockModel, widgets: engine.widgets)
+        menuBarVisualizer = MenuBarVisualizer(model: dockModel, widgets: engine.widgets)
         UpdateMonitor.shared.start(model: dockModel)
         if dockModel.openSettingsOnLaunch { runOpenSettingsCommand() }
+        #if DEBUG
+        // `PORTSIDE_OPEN_SETTINGS_AFTER=5`: opens Settings that many seconds
+        // after launch, to profile opening it while another app is in front.
+        if let delay = ProcessInfo.processInfo.environment["PORTSIDE_OPEN_SETTINGS_AFTER"].flatMap(Double.init) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.runOpenSettingsCommand() }
+        }
+        #endif
         // The native Dock's own shortcut. If macOS's "Turn Dock hiding
         // on/off" shortcut is enabled it may take the keypress first.
         hideHotKey = HotKey(chord: .dockHiding, name: "Cmd+Option+D") { [weak self] in

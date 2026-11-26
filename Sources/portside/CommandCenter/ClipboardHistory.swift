@@ -359,6 +359,8 @@ final class ClipboardService: ObservableObject {
     private var previousFront: String?
     private var previousSecure = false
     private var timer: DispatchSourceTimer?
+    /// The background activation in flight; a newer one or a deactivate drops its result.
+    private var activation: UUID?
     private let logger = Logger(subsystem: "com.james.portside", category: "CommandCenter")
 
     init(
@@ -394,8 +396,36 @@ final class ClipboardService: ObservableObject {
     /// pasteboard now is never captured.
     func activate() throws {
         _ = try file.keys.key()
+        finishActivation(file.read())
+    }
+
+    /// As `activate`, with the key and the stored history read off the main
+    /// thread: the Keychain can take seconds (right after login, or waiting
+    /// on its own prompt), and on the main thread that froze all of Portside
+    /// at launch. `failed` gets the error when the key cannot be read.
+    func activateInBackground(failed: @escaping @MainActor (Error) -> Void) {
+        let token = UUID()
+        activation = token
+        let file = self.file
+        Task { @MainActor [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                Result { () throws -> [ClipboardEntry] in
+                    _ = try file.keys.key()
+                    return file.read()
+                }
+            }.value
+            // Turned off, or activated again, while reading.
+            guard let self, self.activation == token else { return }
+            self.activation = nil
+            switch result {
+            case .success(let stored): self.finishActivation(stored)
+            case .failure(let error): failed(error)
+            }
+        }
+    }
+
+    private func finishActivation(_ stored: [ClipboardEntry]) {
         isActive = true
-        let stored = file.read()
         entries = ClipboardPolicy.pruned(stored, now: now(), expiryHours: prefs.expiryHours)
         // Expired text is removed from disk now, not at the next capture.
         if entries != stored { persist() }
@@ -407,6 +437,7 @@ final class ClipboardService: ObservableObject {
     /// Stops watching and drops the entries from memory. The encrypted file
     /// stays until it expires or is cleared.
     func deactivate() {
+        activation = nil
         isActive = false
         stopTimer()
         entries = []
@@ -689,7 +720,7 @@ final class ClipboardModule: PortsideModule {
     }
 
     func start(_ context: ModuleContext) throws {
-        try service.activate()
+        service.activateInBackground { [weak context] error in context?.fail(error) }
         context.onStop { [service] in
             MainActor.assumeIsolated { service.deactivate() }
         }

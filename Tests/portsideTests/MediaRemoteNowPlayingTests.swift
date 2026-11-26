@@ -35,4 +35,29 @@ final class MediaRemoteNowPlayingTests: XCTestCase {
         XCTAssertEqual(web?.isPlaying, false)
         XCTAssertNotNil(web?.id, "no item id: falls back to title and artist")
     }
+
+    func testSpotifyWithoutAutomationTakesArtFromTheStream() {
+        let spotify = NowPlayingWidget.players[0]
+        let art = NSImage(size: NSSize(width: 4, height: 4))
+        let track = NowPlayingWidget.Track(id: "t", title: "Airbender", artist: "Anderson .Paak", artwork: nil,
+                                           artworkURL: nil, isPlaying: true, player: spotify)
+        let snapshot = MediaRemoteNowPlaying.Snapshot(bundleID: spotify.bundleID, id: "s", title: "Airbender", artist: nil,
+                                                      artwork: art, isPlaying: true, duration: 200, elapsed: 30)
+        let filled = NowPlayingWidget.filled(track, from: snapshot)
+        XCTAssertTrue(filled?.artwork === art)
+        XCTAssertEqual(filled?.duration, 200)
+        XCTAssertEqual(filled?.elapsed, 30)
+        XCTAssertEqual(filled?.title, "Airbender", "the notification's own fields stay")
+
+        let other = MediaRemoteNowPlaying.Snapshot(bundleID: spotify.bundleID, id: "s", title: "Next song", artist: nil,
+                                                   artwork: art, isPlaying: true)
+        XCTAssertNil(NowPlayingWidget.filled(track, from: other), "another song's art is not used")
+        var withURL = NowPlayingWidget.Track(id: "t", title: "Airbender", artist: nil, artwork: nil,
+                                             artworkURL: URL(string: "https://i.scdn.co/x"), isPlaying: true, player: spotify)
+        XCTAssertNil(NowPlayingWidget.filled(withURL, from: snapshot), "AppleScript's art wins")
+        withURL = track
+        XCTAssertNil(NowPlayingWidget.filled(withURL, from: MediaRemoteNowPlaying.Snapshot(
+            bundleID: "com.brave.Browser", id: "s", title: "Airbender", artist: nil, artwork: art, isPlaying: true)),
+            "only the same player")
+    }
 }

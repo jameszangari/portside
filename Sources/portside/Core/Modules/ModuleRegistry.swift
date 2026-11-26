@@ -75,6 +75,8 @@ final class ModuleContext {
     private var cleanups: [() -> Void] = []
     private var nextKey = 0
     private(set) var isActive = true
+    /// Set by the registry: marks the running module failed and stops it.
+    fileprivate var failure: ((Error) -> Void)?
 
     /// Open tasks plus pending cleanups; zero after close.
     var resourceCount: Int { tasks.count + cleanups.count }
@@ -96,6 +98,13 @@ final class ModuleContext {
         return task
     }
 
+    /// A module whose start finishes later (off the main thread) reports
+    /// that it could not, as a throwing `start` would. Ignored once stopped.
+    func fail(_ error: Error) {
+        guard isActive else { return }
+        failure?(error)
+    }
+
     /// Releases an observer, subscription or handle when the module stops.
     /// Runs immediately when the context is already closed.
     func onStop(_ cleanup: @escaping () -> Void) {
@@ -106,6 +115,7 @@ final class ModuleContext {
     fileprivate func close() {
         guard isActive else { return }
         isActive = false
+        failure = nil
         let open = tasks.values
         tasks.removeAll()
         open.forEach { $0() }
@@ -264,6 +274,8 @@ final class ModuleRegistry {
 
     private func start(_ entry: Entry) {
         let context = ModuleContext()
+        let id = entry.module.id
+        context.failure = { [weak self] error in self?.failRunning(id, error) }
         do {
             try entry.module.start(context)
             entry.context = context
@@ -273,6 +285,14 @@ final class ModuleRegistry {
             entry.state = .failed("\(entry.module.title) could not start: \(error.localizedDescription)")
             NSLog("portside: module \(entry.module.id) failed to start: \(error)")
         }
+    }
+
+    /// A running module reported, after its start, that it could not start.
+    private func failRunning(_ id: ModuleID, _ error: Error) {
+        guard let entry = entries[id], entry.state == .running else { return }
+        stop(id, then: .failed("\(entry.module.title) could not start: \(error.localizedDescription)"))
+        NSLog("portside: module \(id) failed after starting: \(error)")
+        reconcile()
     }
 
     /// Stops running dependents first, then the module, then releases its context.

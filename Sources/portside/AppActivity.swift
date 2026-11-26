@@ -31,10 +31,25 @@ struct ActivityIconSettings: Codable, Equatable {
     var microphone = true
     var audio = true
     var measureAudioPlayback = false
+    /// Apps whose playback is always measured, even with
+    /// `measureAudioPlayback` off: they keep their output stream open while
+    /// silent, so the stream alone would show them playing all the time.
+    var measuredApps: [String] = Self.defaultMeasuredApps
     var working = true
     /// Bundle ids watched for "Working" (CPU use of the app and its child
     /// processes). Opt-in per app from the right-click menu.
     var workingApps: [String] = Self.defaultWorkingApps
+
+    /// Audio workstations keep the output running for their engine.
+    static let defaultMeasuredApps = [
+        "com.ableton.live",
+        "com.apple.logic10",
+        "com.bitwig.BitwigStudio",
+        "com.image-line.flstudio",
+        "com.cockos.reaper",
+        "com.avid.ProTools",
+        "com.presonus.studioone6",
+    ]
 
     static let defaultWorkingApps = [
         "com.t3tools.t3code",
@@ -50,6 +65,7 @@ struct ActivityIconSettings: Codable, Equatable {
         microphone = c.value(.microphone, or: true)
         audio = c.value(.audio, or: true)
         measureAudioPlayback = c.value(.measureAudioPlayback, or: false)
+        measuredApps = c.value(.measuredApps, or: Self.defaultMeasuredApps)
         working = c.value(.working, or: true)
         workingApps = c.value(.workingApps, or: Self.defaultWorkingApps)
     }
@@ -114,10 +130,19 @@ final class AppActivity: ObservableObject {
     private var workingKeys: Set<String> = []
     private var watched: Set<String> = []
     private var measurePlayback = false
+    /// Queue copy of `settings.measuredApps`, and the apps tapped by the
+    /// last rebuild because of it.
+    private var alwaysMeasured: Set<String> = []
     private var measuredAudio: Set<String> = []
     private lazy var playback = AudioPlaybackMonitor(queue: queue, onChange: { [weak self] key, playing in
         guard let self else { return }
         if playing { self.measuredAudio.insert(key) } else { self.measuredAudio.remove(key) }
+        // Measured only because it keeps its stream open: the rebuild folds
+        // it in with the stream-based apps.
+        guard self.measurePlayback else {
+            self.scheduleRebuild()
+            return
+        }
         let keys = self.measuredAudio
         DispatchQueue.main.async { [weak self] in
             guard let self, self.started, self.settings.audio, self.settings.measureAudioPlayback else { return }
@@ -187,9 +212,11 @@ final class AppActivity: ObservableObject {
         installPlayerObservers()
         let watched = watchedKeys()
         let measure = settings.audio && settings.measureAudioPlayback
+        let always = settings.audio ? Set(settings.measuredApps) : []
         queue.async { [weak self] in
             guard let self else { return }
             self.measurePlayback = measure
+            self.alwaysMeasured = always
             self.installAudioListeners()
             self.installCameraListeners()
             self.watched = watched
@@ -213,6 +240,7 @@ final class AppActivity: ObservableObject {
     /// Settings changed live.
     func configure(_ next: ActivityIconSettings) {
         let changedMode = settings.measureAudioPlayback != next.measureAudioPlayback || settings.audio != next.audio
+            || settings.measuredApps != next.measuredApps
         settings = next
         if changedMode {
             audioMeasurementNotice = nil
@@ -221,11 +249,13 @@ final class AppActivity: ObservableObject {
             rawAudio = []
             shownAudio = []
             let measure = next.audio && next.measureAudioPlayback
+            let always = next.audio ? Set(next.measuredApps) : []
             queue.async { [weak self] in
                 guard let self else { return }
                 self.playback.stop()
                 self.measuredAudio = []
                 self.measurePlayback = measure
+                self.alwaysMeasured = always
                 self.scheduleRebuild()
             }
         }
@@ -273,7 +303,7 @@ final class AppActivity: ObservableObject {
             next[key] = kind
         }
         for (key, kind) in privacy { add(key, kind) }
-        for key in shownAudio { add(key, settings.measureAudioPlayback ? .audio : .audioOutput) }
+        for key in shownAudio { add(key, measured(key) ? .audio : .audioOutput) }
         // Agent hosts: the notch's session state wins over CPU.
         for key in working where agentWorking == nil || !Self.agentHosts.contains(key) { add(key, .working) }
         for key in agentWorking ?? [] where settings.workingApps.contains(key) { add(key, .working) }
@@ -309,9 +339,15 @@ final class AppActivity: ObservableObject {
             audioDebounce[key] = item
             // Pause notifications clear known players immediately; stream-only
             // apps still use the longer off delay so track gaps do not flicker.
-            let delay = settings.measureAudioPlayback ? (want ? 0.1 : 0.4) : (want ? audioOnDelay : audioOffDelay)
+            let delay = measured(key) ? (want ? 0.1 : 0.4) : (want ? audioOnDelay : audioOffDelay)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
         }
+    }
+
+    /// Playback for `key` is measured (sound), not read from its stream.
+    private func measured(_ key: String) -> Bool {
+        settings.measureAudioPlayback || settings.measuredApps.contains(key)
+            || aliases.first(where: { $0.value == key }).map { settings.measuredApps.contains($0.key) } == true
     }
 
     /// Drops Spotify / Music keys we know are paused, even if their output
@@ -447,9 +483,16 @@ final class AppActivity: ObservableObject {
                 audioOwners[key, default: []].insert(object)
             }
         }
-        if measurePlayback { playback.sync(audioOwners) }
+        // Everything with Measure actual playback on; otherwise only the apps
+        // that keep a silent stream open. One whose tap failed falls back to
+        // its stream, so it still shows rather than never.
+        let tapped = measurePlayback ? Set(audioOwners.keys) : Set(audioOwners.keys).intersection(alwaysMeasured)
+        playback.sync(audioOwners.filter { tapped.contains($0.key) })
+        let measuring = tapped.subtracting(playback.failedKeys)
         let measured = measurePlayback
-        let audioSnapshot = measured ? measuredAudio : audio
+        let audioSnapshot = measured
+            ? measuredAudio
+            : audio.subtracting(measuring).union(measuredAudio.intersection(measuring))
         let cameraOn = cameraDevices.keys.contains { Self.cameraIsRunning($0) }
 
         var privacy: [String: ActivityKind] = [:]
@@ -488,7 +531,7 @@ final class AppActivity: ObservableObject {
         AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
     }
 
-    private static func audioProcessObjects() -> [AudioObjectID] {
+    static func audioProcessObjects() -> [AudioObjectID] {
         var addr = address(kAudioHardwarePropertyProcessObjectList)
         let system = AudioObjectID(kAudioObjectSystemObject)
         var size: UInt32 = 0
@@ -506,7 +549,7 @@ final class AppActivity: ObservableObject {
         return value
     }
 
-    private static func audioBundleID(_ object: AudioObjectID) -> String? {
+    static func audioBundleID(_ object: AudioObjectID) -> String? {
         var addr = address(kAudioProcessPropertyBundleID)
         var value: Unmanaged<CFString>?
         var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
@@ -812,17 +855,25 @@ struct ActivityChip: View {
                 .font(.system(size: d * 0.5, weight: .semibold))
                 .foregroundStyle(.white)
         case .audio, .audioOutput:
-            Image(systemName: "speaker.wave.2.fill")
-                .font(.system(size: d * 0.5, weight: .semibold))
-                .foregroundStyle(.white)
-                .symbolEffect(.variableColor.iterative, options: .repeating,
-                              isActive: activity.dockVisible && !reduceMotion)
+            // Waves filling one by one, as `.variableColor.iterative` did, a
+            // step every 0.4 s. A timeline that redraws only on a step, not a
+            // repeating symbol effect: those run on the main thread at the
+            // display's rate (120 Hz on ProMotion) and redraw the dock and
+            // its glass every frame.
+            let animate = activity.dockVisible && !reduceMotion
+            TimelineView(.animation(minimumInterval: 0.4, paused: !animate)) { context in
+                let step = animate ? Int(context.date.timeIntervalSinceReferenceDate / 0.4) % 4 : 3
+                Image(systemName: "speaker.wave.3.fill", variableValue: Double(step) / 3)
+                    .font(.system(size: d * 0.5, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
         case .working:
             ThinkingLoader(
                 style: .dots,
                 paused: reduceMotion || !activity.dockVisible,
                 size: d * 0.72,
-                color: .white
+                color: .white,
+                frameRate: 12
             )
         }
     }

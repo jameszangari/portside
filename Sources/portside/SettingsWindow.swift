@@ -433,12 +433,15 @@ final class SettingsNavigation: ObservableObject {
 /// selected pane's form on the right. React analogy: a layout route with a
 /// nav column and an outlet.
 struct SettingsView: View {
-    @ObservedObject var dockModel: DockModel
-    @ObservedObject var layout: DockLayout
+    // Plain references: the root only hands these to the panes, which
+    // observe what they show. Observing them here rebuilt the sidebar and
+    // the open pane on every badge count or dock size change.
+    let dockModel: DockModel
+    let layout: DockLayout
     let nativeDock: NativeDockController
     let launchAtLogin: LaunchAtLogin
     let trash: TrashController
-    @ObservedObject var badges: DockBadges
+    let badges: DockBadges
     let widgets: WidgetStore
     let integrations: IntegrationSettings
 
@@ -985,7 +988,7 @@ private struct DockSettings: View {
                     activityToggle(\.microphone, "Microphone", "An orange dot while the microphone is on.")
                     activityToggle(\.audio, "Audio", "A speaker while an app plays sound.")
                     if dockModel.activityIcons.audio {
-                        activityToggle(\.measureAudioPlayback, "Measure actual playback", "Clears the speaker when an app goes silent but keeps its stream open. Needs System Audio Recording; audio is measured in memory, never recorded.")
+                        activityToggle(\.measureAudioPlayback, "Measure actual playback", "Clears the speaker when any app goes silent but keeps its stream open. Audio workstations (Ableton Live, Logic Pro, Bitwig, FL Studio, Reaper, Pro Tools, Studio One) are always measured. Needs System Audio Recording; audio is measured in memory, never recorded.")
                         if let notice = activity.audioMeasurementNotice {
                             Text(notice).helperStyle()
                         }

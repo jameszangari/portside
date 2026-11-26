@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import os
 
 /// One running Portside other than this process.
@@ -50,6 +51,7 @@ enum CopyHandoff {
     /// copy that is quitting has saved and restored everything first.
     static func runAtLaunch(arguments: [String] = CommandLine.arguments,
                             environment: [String: String] = ProcessInfo.processInfo.environment) {
+        let reopened = arguments.contains(afterDevCopyFlag)
         if let flag = arguments.firstIndex(of: afterDevCopyFlag), flag + 1 < arguments.count,
            let pid = pid_t(arguments[flag + 1]) {
             if !waitForExit(pid, timeout: quitTimeout) {
@@ -64,7 +66,8 @@ enum CopyHandoff {
         case let .takeOver(quit, relaunch):
             for copy in quit {
                 logger.notice("quitting the other Portside (pid \(copy.pid)) before starting")
-                NSRunningApplication(processIdentifier: copy.pid)?.terminate()
+                // A copy still starting is not an app yet; it has changed nothing, so a signal is safe.
+                if NSRunningApplication(processIdentifier: copy.pid)?.terminate() != true { kill(copy.pid, SIGTERM) }
             }
             for copy in quit where !waitForExit(copy.pid, timeout: quitTimeout) {
                 let message = "portside: the other Portside (pid \(copy.pid)) did not quit within \(Int(quitTimeout)) s. "
@@ -75,7 +78,8 @@ enum CopyHandoff {
             relaunchURL = relaunch
         case let .yield(to: dev):
             logger.notice("a development copy (pid \(dev.pid)) is running; not starting")
-            showYieldAlert()
+            // Reopened by a development copy that quit while another started: nothing to explain.
+            if !reopened { showYieldAlert() }
             exit(0)
         }
     }
@@ -96,18 +100,59 @@ enum CopyHandoff {
         }
     }
 
-    /// Other Portside processes. An installed copy has the bundle ID; a
-    /// development executable has none, so it is matched by name.
+    /// Other Portside processes, from the process table rather than
+    /// `NSWorkspace`: a copy that is still starting is not a registered app
+    /// yet, and two copies started together would each miss the other.
+    /// Matched by executable name; command-line runs (`--dump-debug`, probes,
+    /// a copy's `--watch-native-dock` helper) are skipped by their arguments.
     private static func runningCopies() -> [PortsideCopy] {
         let me = ProcessInfo.processInfo.processIdentifier
-        return NSWorkspace.shared.runningApplications.compactMap { app in
-            guard app.processIdentifier != me, !app.isTerminated, app.activationPolicy != .prohibited else { return nil }
-            let isApp = app.bundleURL?.pathExtension == "app"
-            let matches = app.bundleIdentifier == AppInfo.bundleIdentifier
-                || (app.bundleIdentifier == nil && app.executableURL?.lastPathComponent == "portside")
-            guard matches else { return nil }
-            return PortsideCopy(pid: app.processIdentifier, isInstalledApp: isApp, bundleURL: isApp ? app.bundleURL : nil)
+        let count = proc_listallpids(nil, 0)
+        guard count > 0 else { return [] }
+        var pids = [pid_t](repeating: 0, count: Int(count) + 32)
+        let found = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size)))
+        var paths: [pid_t: String] = [:]
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        for pid in pids.prefix(max(0, found)) where pid > 0 {
+            guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { continue }
+            let path = String(cString: buffer)
+            if (path as NSString).lastPathComponent == "portside" { paths[pid] = path }
         }
+        return paths.keys.sorted().compactMap { pid in
+            guard pid != me, let arguments = arguments(of: pid), isCopy(arguments: arguments) else { return nil }
+            let path = paths[pid] ?? ""
+            let bundle = path.range(of: ".app/Contents/MacOS/").map { URL(fileURLWithPath: String(path[..<$0.lowerBound]) + ".app") }
+            return PortsideCopy(pid: pid, isInstalledApp: bundle != nil, bundleURL: bundle)
+        }
+    }
+
+    /// A copy runs with no arguments, or as a reopened installed copy.
+    /// Internal for tests.
+    static func isCopy(arguments: [String]) -> Bool {
+        let rest = Array(arguments.dropFirst())
+        return rest.isEmpty || (rest.count == 2 && rest[0] == afterDevCopyFlag)
+    }
+
+    /// A process's arguments, the executable first (`KERN_PROCARGS2`).
+    private static func arguments(of pid: pid_t) -> [String]? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
+        var data = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &data, &size, nil, 0) == 0 else { return nil }
+        let argc = Int(data.withUnsafeBytes { $0.load(as: Int32.self) })
+        var index = MemoryLayout<Int32>.size
+        // The executable path, then padding NULs, then argv.
+        while index < size, data[index] != 0 { index += 1 }
+        while index < size, data[index] == 0 { index += 1 }
+        var arguments: [String] = []
+        while arguments.count < argc, index < size {
+            let start = index
+            while index < size, data[index] != 0 { index += 1 }
+            arguments.append(String(decoding: data[start..<index], as: UTF8.self))
+            index += 1
+        }
+        return arguments
     }
 
     /// Waits on the kernel's exit event, not a timer loop.
