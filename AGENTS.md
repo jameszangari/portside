@@ -1,6 +1,6 @@
 # Contributor guide (people and coding agents)
 
-Portside is a native macOS dock replacement in Swift (SwiftUI and AppKit), built with SwiftPM. Read [CONTRIBUTING.md](CONTRIBUTING.md) first; this file adds the working rules for agents and the end-of-task checklist.
+Portside is a native macOS app (dock, Top Notch, menu bar, Command Center, App Switcher) in Swift (SwiftUI and AppKit), built with SwiftPM. Read [CONTRIBUTING.md](CONTRIBUTING.md) first; this file adds the working rules for agents and the end-of-task checklist.
 
 ## Layout
 
@@ -28,7 +28,7 @@ Hover and click behavior needs a person. Build and launch, then say exactly what
 ## Definition of done
 
 1. Update `docs/CHECKLIST.md`: finished items, new findings, deferred items, known gaps.
-2. Update the short "Features" and "Planned" sections of `README.md` and the detail in `docs/FEATURES.md`. Move an item from Planned to Features only when it is built and working. Never list a feature that is not in the code.
+2. Update `README.md` and the detail in `docs/FEATURES.md` whenever you build, finish, or change the status of a feature, following [readme.md](docs/agents/readme.md): the Features table, the card grid (`scripts/readme-cards.py`), the surface's `<details>` list, Planned, and the Privacy tables (full text in `docs/PRIVACY.md`). Move an item from Planned to Features only when it is built and working. Never list a feature that is not in the code.
 3. If you added a Swift file, add it to the layout tree in `docs/ARCHITECTURE.md` with a one-line description, and `git add` it.
 4. If `dock.json` gained keys or settings changed, update `docs/DATA.md`.
 5. Final report, in order: what changed, what to hand test (short numbered list), new untracked files, known gaps.
@@ -42,6 +42,10 @@ Use GitHub Issues in `jameszangari/portside`. See [issue-tracker.md](docs/agents
 ### Triage labels
 
 Use the default triage labels. See [triage-labels.md](docs/agents/triage-labels.md).
+
+### README
+
+Keep the README visual and current. See [readme.md](docs/agents/readme.md).
 
 ### Domain docs
 

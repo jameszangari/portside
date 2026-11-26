@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 320" width="880" height="320" role="img" aria-labelledby="t d">
+  <title id="t">No telemetry, no account</title>
+  <desc id="d">Things that stay on the Mac on the left; dashed lines to the only four kinds of hosts Portside contacts on the right.</desc>
+  <style>
+    .card { fill: #EAF0F6; stroke: #10283F; stroke-opacity: .14; }
+    .bar { fill: #FFFFFF; fill-opacity: .9; }
+    .ink { fill: #10283F; }
+    .soft { fill: #10283F; fill-opacity: .16; }
+    .faint { fill: #10283F; fill-opacity: .07; }
+    .panel { fill: #FFFFFF; stroke: #10283F; stroke-opacity: .14; }
+    .notch { fill: #0B0F14; }
+    .accent { fill: #F06A42; }
+    .tint { fill: #F06A42; fill-opacity: .16; }
+    .green { fill: #34C759; }
+    .line { stroke: #10283F; stroke-opacity: .25; fill: none; }
+    .aline { stroke: #F06A42; fill: none; }
+    .dash { stroke: #10283F; stroke-opacity: .35; fill: none; stroke-dasharray: 4 4; }
+    .light { fill: #F4EEDF; }
+    text { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif; }
+    .label { font-size: 17px; font-weight: 700; fill: #10283F; }
+    .hint { font-size: 12.5px; font-weight: 500; fill: #10283F; fill-opacity: .6; }
+    .t { font-size: 12px; font-weight: 600; fill: #10283F; }
+    .tm { font-size: 11px; font-weight: 500; fill: #10283F; fill-opacity: .55; }
+    .tl { font-size: 11px; font-weight: 600; fill: #F4EEDF; }
+    .key { font: 600 11.5px ui-monospace, "SF Mono", Menlo, monospace; fill: #F06A42; }
+    .big { font-size: 22px; font-weight: 700; fill: #10283F; }
+    @media (prefers-color-scheme: dark) {
+      .card { fill: #13202E; stroke: #F4EEDF; stroke-opacity: .14; }
+      .bar { fill: #1C2B3B; fill-opacity: 1; }
+      .ink { fill: #F4EEDF; }
+      .soft { fill: #F4EEDF; fill-opacity: .22; }
+      .faint { fill: #F4EEDF; fill-opacity: .08; }
+      .panel { fill: #1F3044; stroke: #F4EEDF; stroke-opacity: .14; }
+      .line { stroke: #F4EEDF; stroke-opacity: .3; }
+      .dash { stroke: #F4EEDF; stroke-opacity: .4; }
+      .label, .t, .big { fill: #F4EEDF; }
+      .hint, .tm { fill: #F4EEDF; }
+    }
+  </style>
+  
+  <rect class="card" x="1" y="1" width="878" height="318" rx="20"/>
+  <rect class="panel" x="24" y="24" width="456" height="210" rx="16"/>
+  <text class="t" x="44" y="52">Stays on your Mac</text>
+  <rect class="faint" x="44" y="66" width="202" height="34" rx="9"/><circle class="green" cx="60" cy="83" r="4"/><text class="t" x="72" y="87">Settings (dock.json)</text>
+  <rect class="faint" x="258" y="66" width="202" height="34" rx="9"/><circle class="green" cx="274" cy="83" r="4"/><text class="t" x="286" y="87">Clipboard history, encrypted</text>
+  <rect class="faint" x="44" y="110" width="202" height="34" rx="9"/><circle class="green" cx="60" cy="127" r="4"/><text class="t" x="72" y="131">Audio levels, never saved</text>
+  <rect class="faint" x="258" y="110" width="202" height="34" rx="9"/><circle class="green" cx="274" cy="127" r="4"/><text class="t" x="286" y="131">Window previews, in memory</text>
+  <rect class="faint" x="44" y="154" width="202" height="34" rx="9"/><circle class="green" cx="60" cy="171" r="4"/><text class="t" x="72" y="175">On-device AI, no cloud</text>
+  <rect class="faint" x="258" y="154" width="202" height="34" rx="9"/><circle class="green" cx="274" cy="171" r="4"/><text class="t" x="286" y="175">Agent hook files</text>
+  <path class="dash" d="M480 129 C 540 129, 540 48, 596 48" stroke-width="1.5"/>
+  <rect class="panel" x="596" y="28" width="260" height="40" rx="10"/><text class="t" x="612" y="45">GitHub</text><text class="tm" x="612" y="60">update checks</text>
+  <path class="dash" d="M480 129 C 540 129, 540 100, 596 100" stroke-width="1.5"/>
+  <rect class="panel" x="596" y="80" width="260" height="40" rx="10"/><text class="t" x="612" y="97">Open-Meteo</text><text class="tm" x="612" y="112">Weather widget</text>
+  <path class="dash" d="M480 129 C 540 129, 540 152, 596 152" stroke-width="1.5"/>
+  <rect class="panel" x="596" y="132" width="260" height="40" rx="10"/><text class="t" x="612" y="149">Anthropic, GitHub</text><text class="tm" x="612" y="164">AI Usage, after you agree</text>
+  <path class="dash" d="M480 129 C 540 129, 540 204, 596 204" stroke-width="1.5"/>
+  <rect class="panel" x="596" y="184" width="260" height="40" rx="10"/><text class="t" x="612" y="201">Spotify</text><text class="tm" x="612" y="216">cover art</text>
+  <text class="label" x="24" y="282">No telemetry, no account</text>
+  <text class="hint" x="24" y="302">Only these hosts, only when you use the feature that needs them</text>
+</svg>

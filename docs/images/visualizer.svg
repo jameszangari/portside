@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 290" width="440" height="290" role="img" aria-labelledby="t d">
+  <title id="t">Music visualizer</title>
+  <desc id="d">Three menu bars: one with a glow, one with a mirrored spectrum, one with a wave, plus album color and a reactiveness slider.</desc>
+  <style>
+    .card { fill: #EAF0F6; stroke: #10283F; stroke-opacity: .14; }
+    .bar { fill: #FFFFFF; fill-opacity: .9; }
+    .ink { fill: #10283F; }
+    .soft { fill: #10283F; fill-opacity: .16; }
+    .faint { fill: #10283F; fill-opacity: .07; }
+    .panel { fill: #FFFFFF; stroke: #10283F; stroke-opacity: .14; }
+    .notch { fill: #0B0F14; }
+    .accent { fill: #F06A42; }
+    .tint { fill: #F06A42; fill-opacity: .16; }
+    .green { fill: #34C759; }
+    .line { stroke: #10283F; stroke-opacity: .25; fill: none; }
+    .aline { stroke: #F06A42; fill: none; }
+    .dash { stroke: #10283F; stroke-opacity: .35; fill: none; stroke-dasharray: 4 4; }
+    .light { fill: #F4EEDF; }
+    text { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif; }
+    .label { font-size: 17px; font-weight: 700; fill: #10283F; }
+    .hint { font-size: 12.5px; font-weight: 500; fill: #10283F; fill-opacity: .6; }
+    .t { font-size: 12px; font-weight: 600; fill: #10283F; }
+    .tm { font-size: 11px; font-weight: 500; fill: #10283F; fill-opacity: .55; }
+    .tl { font-size: 11px; font-weight: 600; fill: #F4EEDF; }
+    .key { font: 600 11.5px ui-monospace, "SF Mono", Menlo, monospace; fill: #F06A42; }
+    .big { font-size: 22px; font-weight: 700; fill: #10283F; }
+    @media (prefers-color-scheme: dark) {
+      .card { fill: #13202E; stroke: #F4EEDF; stroke-opacity: .14; }
+      .bar { fill: #1C2B3B; fill-opacity: 1; }
+      .ink { fill: #F4EEDF; }
+      .soft { fill: #F4EEDF; fill-opacity: .22; }
+      .faint { fill: #F4EEDF; fill-opacity: .08; }
+      .panel { fill: #1F3044; stroke: #F4EEDF; stroke-opacity: .14; }
+      .line { stroke: #F4EEDF; stroke-opacity: .3; }
+      .dash { stroke: #F4EEDF; stroke-opacity: .4; }
+      .label, .t, .big { fill: #F4EEDF; }
+      .hint, .tm { fill: #F4EEDF; }
+    }
+  </style>
+  <defs><radialGradient id="glow" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#F06A42" stop-opacity=".85"/><stop offset=".6" stop-color="#F06A42" stop-opacity=".25"/><stop offset="1" stop-color="#F06A42" stop-opacity="0"/></radialGradient><linearGradient id="wave" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3BB3C3" stop-opacity=".55"/><stop offset="1" stop-color="#3BB3C3" stop-opacity="0"/></linearGradient></defs>
+  <rect class="card" x="1" y="1" width="438" height="288" rx="20"/>
+  <rect class="bar" x="24" y="26" width="392" height="36" rx="10"/>
+  <rect class="ink" x="36" y="38" width="12" height="12" rx="3"/>
+  <text class="tm" x="56" y="48">Glow</text>
+  <rect class="ink" x="364" y="38" width="12" height="12" rx="3"/><rect class="ink" x="384" y="38" width="12" height="12" rx="3"/>
+  <ellipse cx="220" cy="44" rx="150" ry="22" fill="url(#glow)"/>
+  <rect class="bar" x="24" y="72" width="392" height="36" rx="10"/>
+  <rect class="ink" x="36" y="84" width="12" height="12" rx="3"/>
+  <text class="tm" x="56" y="94">Bars</text>
+  <rect class="ink" x="364" y="84" width="12" height="12" rx="3"/><rect class="ink" x="384" y="84" width="12" height="12" rx="3"/>
+  <rect x="81.0" y="99.0" width="5.5" height="5.0" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="89.5" y="98.8" width="5.5" height="5.2" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="98.0" y="98.2" width="5.5" height="5.8" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="106.5" y="97.1" width="5.5" height="6.9" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="115.0" y="97.6" width="5.5" height="6.4" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="123.5" y="94.6" width="5.5" height="9.4" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="132.0" y="94.8" width="5.5" height="9.2" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="140.5" y="92.1" width="5.5" height="11.9" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="149.0" y="90.0" width="5.5" height="14.0" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="157.5" y="90.9" width="5.5" height="13.1" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="166.0" y="84.6" width="5.5" height="19.4" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="174.5" y="88.6" width="5.5" height="15.4" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="183.0" y="81.3" width="5.5" height="22.7" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="191.5" y="81.5" width="5.5" height="22.5" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="200.0" y="82.1" width="5.5" height="21.9" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="208.5" y="76.7" width="5.5" height="27.3" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="217.0" y="86.8" width="5.5" height="17.2" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="225.5" y="76.7" width="5.5" height="27.3" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="234.0" y="82.1" width="5.5" height="21.9" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="242.5" y="81.5" width="5.5" height="22.5" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="251.0" y="81.3" width="5.5" height="22.7" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="259.5" y="88.6" width="5.5" height="15.4" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="268.0" y="84.6" width="5.5" height="19.4" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="276.5" y="90.9" width="5.5" height="13.1" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="285.0" y="90.0" width="5.5" height="14.0" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="293.5" y="92.1" width="5.5" height="11.9" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="302.0" y="94.8" width="5.5" height="9.2" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="310.5" y="94.6" width="5.5" height="9.4" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="319.0" y="97.6" width="5.5" height="6.4" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="327.5" y="97.1" width="5.5" height="6.9" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="336.0" y="98.2" width="5.5" height="5.8" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="344.5" y="98.8" width="5.5" height="5.2" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect x="353.0" y="99.0" width="5.5" height="5.0" rx="2" fill="#E0457B" fill-opacity=".8"/>
+  <rect class="bar" x="24" y="118" width="392" height="36" rx="10"/>
+  <rect class="ink" x="36" y="130" width="12" height="12" rx="3"/>
+  <text class="tm" x="56" y="140">Wave</text>
+  <rect class="ink" x="364" y="130" width="12" height="12" rx="3"/><rect class="ink" x="384" y="130" width="12" height="12" rx="3"/>
+  <path d="M100 150 L100,138.0 L104,137.7 L108,137.3 L112,136.7 L116,136.3 L120,136.0 L124,136.0 L128,136.1 L132,136.3 L136,136.5 L140,136.6 L144,136.4 L148,136.0 L152,135.4 L156,134.9 L160,134.5 L164,134.3 L168,134.4 L172,134.7 L176,135.0 L180,135.1 L184,134.9 L188,134.2 L192,133.2 L196,131.9 L200,130.8 L204,130.1 L208,130.0 L212,130.8 L216,132.3 L220,134.5 L224,136.9 L228,139.3 L232,141.4 L236,143.0 L240,144.0 L244,144.5 L248,144.7 L252,144.7 L256,144.8 L260,145.1 L264,145.4 L268,145.8 L272,145.9 L276,145.8 L280,145.2 L284,144.1 L288,142.8 L292,141.3 L296,139.9 L300,138.8 L304,138.0 L308,137.7 L312,137.7 L316,137.9 L320,138.1 L324,138.3 L328,138.3 L332,138.3 L336,138.1 L340,138.0 L340 150z" fill="url(#wave)"/>
+  <polyline points="100,138.0 104,137.7 108,137.3 112,136.7 116,136.3 120,136.0 124,136.0 128,136.1 132,136.3 136,136.5 140,136.6 144,136.4 148,136.0 152,135.4 156,134.9 160,134.5 164,134.3 168,134.4 172,134.7 176,135.0 180,135.1 184,134.9 188,134.2 192,133.2 196,131.9 200,130.8 204,130.1 208,130.0 212,130.8 216,132.3 220,134.5 224,136.9 228,139.3 232,141.4 236,143.0 240,144.0 244,144.5 248,144.7 252,144.7 256,144.8 260,145.1 264,145.4 268,145.8 272,145.9 276,145.8 280,145.2 284,144.1 288,142.8 292,141.3 296,139.9 300,138.8 304,138.0 308,137.7 312,137.7 316,137.9 320,138.1 324,138.3 328,138.3 332,138.3 336,138.1 340,138.0" fill="none" stroke="#3BB3C3" stroke-width="2" stroke-linejoin="round"/>
+  <rect class="accent" x="24" y="170" width="34" height="34" rx="7"/><circle cx="41" cy="187" r="9" fill="#10283F" fill-opacity=".35"/>
+  <text class="t" x="68" y="184">Color from the album</text><text class="tm" x="68" y="199">or Accent, or Rainbow</text>
+  <text class="tm" x="250" y="184">Reactiveness</text>
+  <rect class="soft" x="250" y="192" width="166" height="4" rx="2"/><rect class="accent" x="250" y="192" width="100" height="4" rx="2"/><circle class="accent" cx="350" cy="194" r="6"/>
+  <text class="label" x="24" y="252">Music visualizer</text>
+  <text class="hint" x="24" y="272">The menu bar moves with the song: Glow, Bars or Wave</text>
+</svg>

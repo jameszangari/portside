@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 290" width="440" height="290" role="img" aria-labelledby="t d">
+  <title id="t">Widgets</title>
+  <desc id="d">Widget tiles: a clock, weather, a CPU graph, AI usage meters for Claude, Codex and Copilot, and agent status.</desc>
+  <style>
+    .card { fill: #EAF0F6; stroke: #10283F; stroke-opacity: .14; }
+    .bar { fill: #FFFFFF; fill-opacity: .9; }
+    .ink { fill: #10283F; }
+    .soft { fill: #10283F; fill-opacity: .16; }
+    .faint { fill: #10283F; fill-opacity: .07; }
+    .panel { fill: #FFFFFF; stroke: #10283F; stroke-opacity: .14; }
+    .notch { fill: #0B0F14; }
+    .accent { fill: #F06A42; }
+    .tint { fill: #F06A42; fill-opacity: .16; }
+    .green { fill: #34C759; }
+    .line { stroke: #10283F; stroke-opacity: .25; fill: none; }
+    .aline { stroke: #F06A42; fill: none; }
+    .dash { stroke: #10283F; stroke-opacity: .35; fill: none; stroke-dasharray: 4 4; }
+    .light { fill: #F4EEDF; }
+    text { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif; }
+    .label { font-size: 17px; font-weight: 700; fill: #10283F; }
+    .hint { font-size: 12.5px; font-weight: 500; fill: #10283F; fill-opacity: .6; }
+    .t { font-size: 12px; font-weight: 600; fill: #10283F; }
+    .tm { font-size: 11px; font-weight: 500; fill: #10283F; fill-opacity: .55; }
+    .tl { font-size: 11px; font-weight: 600; fill: #F4EEDF; }
+    .key { font: 600 11.5px ui-monospace, "SF Mono", Menlo, monospace; fill: #F06A42; }
+    .big { font-size: 22px; font-weight: 700; fill: #10283F; }
+    @media (prefers-color-scheme: dark) {
+      .card { fill: #13202E; stroke: #F4EEDF; stroke-opacity: .14; }
+      .bar { fill: #1C2B3B; fill-opacity: 1; }
+      .ink { fill: #F4EEDF; }
+      .soft { fill: #F4EEDF; fill-opacity: .22; }
+      .faint { fill: #F4EEDF; fill-opacity: .08; }
+      .panel { fill: #1F3044; stroke: #F4EEDF; stroke-opacity: .14; }
+      .line { stroke: #F4EEDF; stroke-opacity: .3; }
+      .dash { stroke: #F4EEDF; stroke-opacity: .4; }
+      .label, .t, .big { fill: #F4EEDF; }
+      .hint, .tm { fill: #F4EEDF; }
+    }
+  </style>
+  
+  <rect class="card" x="1" y="1" width="438" height="288" rx="20"/>
+  <rect class="panel" x="24" y="24" width="120" height="84" rx="12"/>
+  <text class="big" x="38" y="66">9:41</text><text class="tm" x="38" y="86">Thursday 26</text>
+  <rect class="panel" x="152" y="24" width="120" height="84" rx="12"/>
+  <circle class="accent" cx="180" cy="54" r="12"/><text class="big" x="200" y="62">18°</text><text class="tm" x="166" y="92">Lisbon, sunny</text>
+  <rect class="panel" x="280" y="24" width="136" height="84" rx="12"/>
+  <text class="t" x="294" y="44">CPU</text>
+  <polyline class="aline" points="294,96.0 303,79.83643547888937 312,67.22329645258992 321,78.47074264419248 330,77.84166275007928 339,81.4598398549224 348,88.03463202069267 357,74.31163609655542 366,66.06903704095487 375,82.09023922399223 384,84.97052103241933 393,78.3922554567592 402,81.71397845071525 411,72.02621978325712" stroke-width="2" stroke-linejoin="round"/>
+  <rect class="panel" x="24" y="116" width="196" height="96" rx="12"/>
+  <text class="t" x="38" y="138">AI Usage</text>
+  <text class="tm" x="38" y="160">Claude</text><rect class="soft" x="96" y="152" width="108" height="8" rx="4"/><rect class="accent" x="96" y="152" width="67" height="8" rx="4"/>
+  <text class="tm" x="38" y="180">Codex</text><rect class="soft" x="96" y="172" width="108" height="8" rx="4"/><rect class="accent" x="96" y="172" width="38" height="8" rx="4"/>
+  <text class="tm" x="38" y="200">Copilot</text><rect class="soft" x="96" y="192" width="108" height="8" rx="4"/><rect class="accent" x="96" y="192" width="86" height="8" rx="4"/>
+  <rect class="panel" x="228" y="116" width="188" height="96" rx="12"/>
+  <text class="t" x="242" y="138">Agents</text>
+  <circle class="accent" cx="248" cy="156" r="5"/><text class="t" x="260" y="160">Claude Code</text><text class="tm" x="402" y="160" text-anchor="end">working</text>
+  <circle class="green" cx="248" cy="180" r="5"/><text class="t" x="260" y="184">Codex</text><text class="tm" x="402" y="184" text-anchor="end">done</text>
+  <text class="label" x="24" y="252">Widgets</text>
+  <text class="hint" x="24" y="272">Clock, Weather, system stats, Now Playing, Agents, AI Usage</text>
+</svg>

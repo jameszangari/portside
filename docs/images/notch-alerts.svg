@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 290" width="440" height="290" role="img" aria-labelledby="t d">
+  <title id="t">Notch indicators</title>
+  <desc id="d">Three notch strips: a volume level of 62, a meeting starting in 4 minutes, and AirPods at 82 percent.</desc>
+  <style>
+    .card { fill: #EAF0F6; stroke: #10283F; stroke-opacity: .14; }
+    .bar { fill: #FFFFFF; fill-opacity: .9; }
+    .ink { fill: #10283F; }
+    .soft { fill: #10283F; fill-opacity: .16; }
+    .faint { fill: #10283F; fill-opacity: .07; }
+    .panel { fill: #FFFFFF; stroke: #10283F; stroke-opacity: .14; }
+    .notch { fill: #0B0F14; }
+    .accent { fill: #F06A42; }
+    .tint { fill: #F06A42; fill-opacity: .16; }
+    .green { fill: #34C759; }
+    .line { stroke: #10283F; stroke-opacity: .25; fill: none; }
+    .aline { stroke: #F06A42; fill: none; }
+    .dash { stroke: #10283F; stroke-opacity: .35; fill: none; stroke-dasharray: 4 4; }
+    .light { fill: #F4EEDF; }
+    text { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif; }
+    .label { font-size: 17px; font-weight: 700; fill: #10283F; }
+    .hint { font-size: 12.5px; font-weight: 500; fill: #10283F; fill-opacity: .6; }
+    .t { font-size: 12px; font-weight: 600; fill: #10283F; }
+    .tm { font-size: 11px; font-weight: 500; fill: #10283F; fill-opacity: .55; }
+    .tl { font-size: 11px; font-weight: 600; fill: #F4EEDF; }
+    .key { font: 600 11.5px ui-monospace, "SF Mono", Menlo, monospace; fill: #F06A42; }
+    .big { font-size: 22px; font-weight: 700; fill: #10283F; }
+    @media (prefers-color-scheme: dark) {
+      .card { fill: #13202E; stroke: #F4EEDF; stroke-opacity: .14; }
+      .bar { fill: #1C2B3B; fill-opacity: 1; }
+      .ink { fill: #F4EEDF; }
+      .soft { fill: #F4EEDF; fill-opacity: .22; }
+      .faint { fill: #F4EEDF; fill-opacity: .08; }
+      .panel { fill: #1F3044; stroke: #F4EEDF; stroke-opacity: .14; }
+      .line { stroke: #F4EEDF; stroke-opacity: .3; }
+      .dash { stroke: #F4EEDF; stroke-opacity: .4; }
+      .label, .t, .big { fill: #F4EEDF; }
+      .hint, .tm { fill: #F4EEDF; }
+    }
+  </style>
+  
+  <rect class="card" x="1" y="1" width="438" height="288" rx="20"/>
+  <rect class="notch" x="70" y="26" width="300" height="36" rx="18"/>
+  <rect class="notch" x="170" y="26" width="100" height="36"/>
+  <path class="light" d="M88 39 h5 l6 -5 v16 l-6 -5 h-5z"/><path d="M103 38 q4 6 0 12 M107 35 q7 9 0 18" stroke="#F4EEDF" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+  <rect class="light" x="280" y="41" width="56" height="6" rx="3" fill-opacity=".25"/><rect class="light" x="280" y="41" width="35" height="6" rx="3"/>
+  <text class="tl" x="356" y="48" text-anchor="end">62</text>
+  <rect class="notch" x="70" y="76" width="300" height="36" rx="18"/>
+  <rect class="notch" x="170" y="76" width="100" height="36"/>
+  <rect class="light" x="86" y="86" width="16" height="16" rx="3" fill-opacity=".9"/><rect x="86" y="86" width="16" height="5" rx="2" fill="#FF453A"/>
+  <text class="tl" x="108" y="99">Standup</text><text class="key" x="356" y="98" text-anchor="end">in 4:12</text>
+  <rect class="notch" x="70" y="126" width="300" height="36" rx="18"/>
+  <rect class="notch" x="170" y="126" width="100" height="36"/>
+  <rect class="light" x="88" y="135" width="6" height="16" rx="3"/><rect class="light" x="98" y="135" width="6" height="16" rx="3"/>
+  <text class="tl" x="112" y="148">AirPods</text>
+  <rect class="green" x="290" y="139" width="40" height="8" rx="3"/><text class="tl" x="356" y="148" text-anchor="end">82</text>
+  <text class="tm" x="24" y="190">Also: charger and low battery, rain soon, an agent done,</text>
+  <text class="tm" x="24" y="205">the new song, files dropped on the notch</text>
+  <text class="label" x="24" y="252">Notch indicators</text>
+  <text class="hint" x="24" y="272">Volume and brightness, meetings, AirPods and short alerts</text>
+</svg>

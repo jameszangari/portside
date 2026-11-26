@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 500" width="880" height="500" role="img" aria-labelledby="t d">
+  <title id="t">Where Portside lives on your Mac</title>
+  <desc id="d">A Mac screen showing Portside's surfaces: the Menu Bar Shelf on the left of the menu bar, the Top Notch around the notch, Command Center and App Switcher panels in the middle, and the Dock sliding in from the bottom edge.</desc>
+  <style>
+    .screen { fill: #EAF0F6; stroke: #10283F; stroke-opacity: .18; }
+    .bar { fill: #FFFFFF; fill-opacity: .85; }
+    .ink { fill: #10283F; }
+    .soft { fill: #10283F; fill-opacity: .16; }
+    .faint { fill: #10283F; fill-opacity: .07; }
+    .panel { fill: #FFFFFF; stroke: #10283F; stroke-opacity: .14; }
+    .notch { fill: #0B0F14; }
+    .accent { fill: #F06A42; }
+    .accentLine { stroke: #F06A42; }
+    .label { font: 600 14px -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif; fill: #10283F; }
+    .hint { font: 500 12px -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif; fill: #10283F; fill-opacity: .6; }
+    .key { font: 600 12px ui-monospace, "SF Mono", Menlo, monospace; fill: #F06A42; }
+    .light { fill: #F4EEDF; }
+    @media (prefers-color-scheme: dark) {
+      .screen { fill: #13202E; stroke: #F4EEDF; stroke-opacity: .14; }
+      .bar { fill: #1C2B3B; fill-opacity: 1; }
+      .ink { fill: #F4EEDF; }
+      .soft { fill: #F4EEDF; fill-opacity: .22; }
+      .faint { fill: #F4EEDF; fill-opacity: .08; }
+      .panel { fill: #1F3044; stroke: #F4EEDF; stroke-opacity: .14; }
+      .label { fill: #F4EEDF; }
+      .hint { fill: #F4EEDF; fill-opacity: .6; }
+    }
+  </style>
+
+  <!-- screen -->
+  <rect class="screen" x="20" y="10" width="840" height="480" rx="20"/>
+
+  <!-- menu bar -->
+  <path class="bar" d="M40 10 h800 a20 20 0 0 1 20 20 v14 h-840 v-14 a20 20 0 0 1 20 -20z"/>
+  <rect class="ink" x="44" y="21" width="12" height="12" rx="3"/>
+  <rect class="soft" x="66" y="23" width="34" height="8" rx="4"/>
+  <rect class="soft" x="108" y="23" width="28" height="8" rx="4"/>
+  <rect class="soft" x="144" y="23" width="30" height="8" rx="4"/>
+
+  <!-- menu bar shelf: visible items, divider, hidden items -->
+  <rect class="soft" x="610" y="21" width="12" height="12" rx="3"/>
+  <rect class="soft" x="630" y="21" width="12" height="12" rx="3"/>
+  <rect class="accent" x="652" y="19" width="2" height="16" rx="1"/>
+  <rect class="ink" x="664" y="21" width="12" height="12" rx="3"/>
+  <rect class="ink" x="684" y="21" width="12" height="12" rx="3"/>
+  <rect class="ink" x="704" y="21" width="12" height="12" rx="3"/>
+  <rect class="soft" x="760" y="23" width="70" height="8" rx="4"/>
+  <!-- portside bar dropping below -->
+  <rect class="panel" x="596" y="54" width="72" height="26" rx="8"/>
+  <rect class="soft" x="606" y="61" width="12" height="12" rx="3"/>
+  <rect class="soft" x="626" y="61" width="12" height="12" rx="3"/>
+  <rect class="soft" x="646" y="61" width="12" height="12" rx="3"/>
+  <text class="label" x="596" y="102">Menu Bar Shelf</text>
+  <text class="hint" x="596" y="118">hide, group and restyle items</text>
+
+  <!-- top notch -->
+  <path class="notch" d="M352 10 h176 v18 a16 16 0 0 1 -16 16 h-144 a16 16 0 0 1 -16 -16z"/>
+  <rect class="accent" x="366" y="17" width="20" height="20" rx="5"/>
+  <rect class="light" x="392" y="24" width="3" height="10" rx="1.5"/>
+  <rect class="light" x="398" y="20" width="3" height="14" rx="1.5"/>
+  <rect class="light" x="404" y="26" width="3" height="8" rx="1.5"/>
+  <circle class="accent" cx="496" cy="27" r="4"/>
+  <circle class="light" cx="510" cy="27" r="4" fill-opacity=".5"/>
+  <text class="label" x="440" y="70" text-anchor="middle">Top Notch</text>
+  <text class="hint" x="440" y="86" text-anchor="middle">music, agents, files, clipboard</text>
+
+  <!-- command center -->
+  <rect class="panel" x="90" y="128" width="340" height="200" rx="16"/>
+  <rect class="faint" x="106" y="144" width="308" height="36" rx="10"/>
+  <circle class="ink" cx="124" cy="162" r="6" fill-opacity=".5"/>
+  <rect class="soft" x="138" y="157" width="120" height="10" rx="5"/>
+  <text class="key" x="402" y="166" text-anchor="end">⌥Space</text>
+  <rect class="accent" x="106" y="192" width="308" height="34" rx="9" fill-opacity=".16"/>
+  <rect class="ink" x="116" y="199" width="20" height="20" rx="5"/>
+  <rect class="ink" x="146" y="205" width="140" height="8" rx="4" fill-opacity=".7"/>
+  <rect class="soft" x="116" y="238" width="20" height="20" rx="5"/>
+  <rect class="soft" x="146" y="244" width="110" height="8" rx="4"/>
+  <rect class="soft" x="116" y="270" width="20" height="20" rx="5"/>
+  <rect class="soft" x="146" y="276" width="160" height="8" rx="4"/>
+  <text class="label" x="106" y="352">Command Center</text>
+  <text class="hint" x="106" y="368">apps, commands, files, snippets, servers</text>
+
+  <!-- app switcher -->
+  <rect class="panel" x="478" y="168" width="320" height="110" rx="18"/>
+  <rect class="accent" x="494" y="184" width="64" height="64" rx="14" fill-opacity=".18"/>
+  <rect class="ink" x="504" y="194" width="44" height="44" rx="10"/>
+  <rect class="soft" x="574" y="194" width="44" height="44" rx="10"/>
+  <rect class="soft" x="644" y="194" width="44" height="44" rx="10"/>
+  <rect class="soft" x="714" y="194" width="44" height="44" rx="10"/>
+  <rect class="soft" x="502" y="258" width="48" height="6" rx="3"/>
+  <text class="key" x="782" y="270" text-anchor="end">⌥Tab</text>
+  <text class="label" x="478" y="302">App Switcher</text>
+  <text class="hint" x="478" y="318">apps and windows, ⌘Tab untouched</text>
+
+  <!-- dock -->
+  <rect class="panel" x="220" y="414" width="440" height="60" rx="18"/>
+  <rect class="ink" x="236" y="424" width="40" height="40" rx="10"/>
+  <rect class="soft" x="284" y="424" width="40" height="40" rx="10"/>
+  <rect class="soft" x="332" y="424" width="40" height="40" rx="10"/>
+  <rect class="soft" x="380" y="424" width="40" height="40" rx="10"/>
+  <circle class="ink" cx="256" cy="470" r="2"/>
+  <circle class="ink" cx="304" cy="470" r="2"/>
+  <rect class="ink" x="432" y="422" width="1.5" height="44" fill-opacity=".25"/>
+  <rect class="faint" x="446" y="424" width="96" height="40" rx="10"/>
+  <rect class="soft" x="456" y="434" width="40" height="8" rx="4"/>
+  <rect class="soft" x="456" y="448" width="64" height="6" rx="3"/>
+  <rect class="soft" x="552" y="424" width="40" height="40" rx="10"/>
+  <rect class="soft" x="604" y="424" width="40" height="40" rx="10"/>
+  <circle class="accent" cx="318" cy="428" r="6"/>
+  <path class="accentLine" d="M680 470 v-34 m-8 8 l8 -8 l8 8" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text class="label" x="696" y="440">Dock</text>
+  <text class="hint" x="696" y="456">slides in from any edge</text>
+</svg>

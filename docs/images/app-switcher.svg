@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 290" width="440" height="290" role="img" aria-labelledby="t d">
+  <title id="t">App Switcher</title>
+  <desc id="d">A switcher row of app icons with Notes selected and a list of its windows below.</desc>
+  <style>
+    .card { fill: #EAF0F6; stroke: #10283F; stroke-opacity: .14; }
+    .bar { fill: #FFFFFF; fill-opacity: .9; }
+    .ink { fill: #10283F; }
+    .soft { fill: #10283F; fill-opacity: .16; }
+    .faint { fill: #10283F; fill-opacity: .07; }
+    .panel { fill: #FFFFFF; stroke: #10283F; stroke-opacity: .14; }
+    .notch { fill: #0B0F14; }
+    .accent { fill: #F06A42; }
+    .tint { fill: #F06A42; fill-opacity: .16; }
+    .green { fill: #34C759; }
+    .line { stroke: #10283F; stroke-opacity: .25; fill: none; }
+    .aline { stroke: #F06A42; fill: none; }
+    .dash { stroke: #10283F; stroke-opacity: .35; fill: none; stroke-dasharray: 4 4; }
+    .light { fill: #F4EEDF; }
+    text { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif; }
+    .label { font-size: 17px; font-weight: 700; fill: #10283F; }
+    .hint { font-size: 12.5px; font-weight: 500; fill: #10283F; fill-opacity: .6; }
+    .t { font-size: 12px; font-weight: 600; fill: #10283F; }
+    .tm { font-size: 11px; font-weight: 500; fill: #10283F; fill-opacity: .55; }
+    .tl { font-size: 11px; font-weight: 600; fill: #F4EEDF; }
+    .key { font: 600 11.5px ui-monospace, "SF Mono", Menlo, monospace; fill: #F06A42; }
+    .big { font-size: 22px; font-weight: 700; fill: #10283F; }
+    @media (prefers-color-scheme: dark) {
+      .card { fill: #13202E; stroke: #F4EEDF; stroke-opacity: .14; }
+      .bar { fill: #1C2B3B; fill-opacity: 1; }
+      .ink { fill: #F4EEDF; }
+      .soft { fill: #F4EEDF; fill-opacity: .22; }
+      .faint { fill: #F4EEDF; fill-opacity: .08; }
+      .panel { fill: #1F3044; stroke: #F4EEDF; stroke-opacity: .14; }
+      .line { stroke: #F4EEDF; stroke-opacity: .3; }
+      .dash { stroke: #F4EEDF; stroke-opacity: .4; }
+      .label, .t, .big { fill: #F4EEDF; }
+      .hint, .tm { fill: #F4EEDF; }
+    }
+  </style>
+  
+  <rect class="card" x="1" y="1" width="438" height="288" rx="20"/>
+  <rect class="panel" x="40" y="28" width="360" height="96" rx="20"/>
+  <rect class="soft" x="56" y="44" width="52" height="52" rx="12"/>
+  <rect class="tint" x="118" y="38" width="64" height="64" rx="14"/>
+  <rect class="ink" x="124" y="44" width="52" height="52" rx="12"/>
+  <rect class="soft" x="192" y="44" width="52" height="52" rx="12"/>
+  <rect class="soft" x="260" y="44" width="52" height="52" rx="12"/>
+  <rect class="soft" x="328" y="44" width="52" height="52" rx="12"/>
+  <text class="t" x="138" y="116" text-anchor="middle">Notes</text>
+  <text class="key" x="386" y="116" text-anchor="end">⌥Tab</text>
+  <rect class="panel" x="96" y="132" width="210" height="80" rx="12"/>
+  <rect class="tint" x="102" y="140" width="198" height="20" rx="5"/>
+  <rect class="soft" x="110" y="145" width="14" height="10" rx="2"/><text class="t" x="132" y="154">Groceries</text>
+  <rect class="soft" x="110" y="169" width="14" height="10" rx="2"/><text class="t" x="132" y="178">Trip ideas</text>
+  <rect class="soft" x="110" y="193" width="14" height="10" rx="2"/><text class="t" x="132" y="202">Meeting notes</text>
+  <text class="key" x="316" y="160">↓ windows</text><text class="key" x="316" y="178">/ search</text>
+  <text class="label" x="24" y="252">App Switcher</text>
+  <text class="hint" x="24" y="272">Apps or windows in recent order; ⌘Tab stays native</text>
+</svg>

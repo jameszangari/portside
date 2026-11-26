@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 290" width="440" height="290" role="img" aria-labelledby="t d">
+  <title id="t">Settings</title>
+  <desc id="d">The Settings window with a searchable sidebar, a Dock simulation preview and switches.</desc>
+  <style>
+    .card { fill: #EAF0F6; stroke: #10283F; stroke-opacity: .14; }
+    .bar { fill: #FFFFFF; fill-opacity: .9; }
+    .ink { fill: #10283F; }
+    .soft { fill: #10283F; fill-opacity: .16; }
+    .faint { fill: #10283F; fill-opacity: .07; }
+    .panel { fill: #FFFFFF; stroke: #10283F; stroke-opacity: .14; }
+    .notch { fill: #0B0F14; }
+    .accent { fill: #F06A42; }
+    .tint { fill: #F06A42; fill-opacity: .16; }
+    .green { fill: #34C759; }
+    .line { stroke: #10283F; stroke-opacity: .25; fill: none; }
+    .aline { stroke: #F06A42; fill: none; }
+    .dash { stroke: #10283F; stroke-opacity: .35; fill: none; stroke-dasharray: 4 4; }
+    .light { fill: #F4EEDF; }
+    text { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif; }
+    .label { font-size: 17px; font-weight: 700; fill: #10283F; }
+    .hint { font-size: 12.5px; font-weight: 500; fill: #10283F; fill-opacity: .6; }
+    .t { font-size: 12px; font-weight: 600; fill: #10283F; }
+    .tm { font-size: 11px; font-weight: 500; fill: #10283F; fill-opacity: .55; }
+    .tl { font-size: 11px; font-weight: 600; fill: #F4EEDF; }
+    .key { font: 600 11.5px ui-monospace, "SF Mono", Menlo, monospace; fill: #F06A42; }
+    .big { font-size: 22px; font-weight: 700; fill: #10283F; }
+    @media (prefers-color-scheme: dark) {
+      .card { fill: #13202E; stroke: #F4EEDF; stroke-opacity: .14; }
+      .bar { fill: #1C2B3B; fill-opacity: 1; }
+      .ink { fill: #F4EEDF; }
+      .soft { fill: #F4EEDF; fill-opacity: .22; }
+      .faint { fill: #F4EEDF; fill-opacity: .08; }
+      .panel { fill: #1F3044; stroke: #F4EEDF; stroke-opacity: .14; }
+      .line { stroke: #F4EEDF; stroke-opacity: .3; }
+      .dash { stroke: #F4EEDF; stroke-opacity: .4; }
+      .label, .t, .big { fill: #F4EEDF; }
+      .hint, .tm { fill: #F4EEDF; }
+    }
+  </style>
+  
+  <rect class="card" x="1" y="1" width="438" height="288" rx="20"/>
+  <rect class="panel" x="24" y="22" width="392" height="190" rx="12"/>
+  <rect class="faint" x="24" y="22" width="120" height="190" rx="12"/>
+  <rect class="panel" x="32" y="32" width="104" height="20" rx="6"/><text class="tm" x="40" y="46">Search</text><text class="key" x="130" y="46" text-anchor="end">⌘F</text>
+  <rect class="tint" x="30" y="59" width="108" height="16" rx="5"/>
+  <text class="tm" x="40" y="70">Dock</text>
+  <text class="tm" x="40" y="87">Appearance</text>
+  <text class="tm" x="40" y="104">Widgets</text>
+  <text class="tm" x="40" y="127">Command Center</text>
+  <text class="tm" x="40" y="144">Menu Bar</text>
+  <text class="tm" x="40" y="161">Top Notch</text>
+  <text class="tm" x="40" y="184">General</text>
+  <text class="t" x="158" y="44">Dock</text><text class="tm" x="402" y="44" text-anchor="end">Simulation</text>
+  <rect class="faint" x="158" y="54" width="244" height="94" rx="10"/>
+  <rect class="panel" x="214" y="118" width="132" height="22" rx="8"/>
+  <rect class="ink" x="222" y="122" width="14" height="14" rx="3"/>
+  <rect class="soft" x="246" y="122" width="14" height="14" rx="3"/>
+  <rect class="soft" x="270" y="122" width="14" height="14" rx="3"/>
+  <rect class="soft" x="294" y="122" width="14" height="14" rx="3"/>
+  <rect class="soft" x="318" y="122" width="14" height="14" rx="3"/>
+  <path class="aline" d="M380 140 v-22 m-6 6 l6 -6 l6 6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect class="panel" x="166" y="62" width="86" height="20" rx="10"/><text class="tm" x="178" y="76">Touch the edge</text>
+  <text class="t" x="158" y="170">Auto-hide</text>
+  <rect class="accent" x="372" y="159" width="30" height="16" rx="8"/><circle class="light" cx="394" cy="167" r="6"/>
+  <text class="t" x="158" y="194">Keep windows clear</text>
+  <rect class="accent" x="372" y="183" width="30" height="16" rx="8"/><circle class="light" cx="394" cy="191" r="6"/>
+  <text class="label" x="24" y="252">Settings</text>
+  <text class="hint" x="24" y="272">Live previews, search, permissions, restricted mode for work Macs</text>
+</svg>
