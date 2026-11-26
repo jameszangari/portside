@@ -79,13 +79,18 @@ private final class LeafModule: PortsideModule {
     let dependencies: [ModuleDependency]
     var log: (String) -> Void = { _ in }
     var starts = 0
+    /// The last start's context, for a test that fails it afterwards.
+    var context: ModuleContext?
 
     init(_ raw: String, dependencies: [ModuleDependency]) {
         id = ModuleID(raw)!
         self.dependencies = dependencies
     }
 
-    func start(_ context: ModuleContext) throws { starts += 1 }
+    func start(_ context: ModuleContext) throws {
+        starts += 1
+        self.context = context
+    }
     func stop() { log("stop \(id)") }
 }
 
@@ -321,5 +326,24 @@ final class ModuleRegistryTests: XCTestCase {
         let ok = await commands.execute(PortsideCoreModule.openSettingsCommand)
         XCTAssertEqual(ok, .success(nil))
         XCTAssertEqual(opened, 1)
+    }
+
+    func testAModuleCanFailAfterItStarted() throws {
+        let late = LeafModule("late", dependencies: [])
+        let child = LeafModule("child", dependencies: [.module(late.id)])
+        try registry.register(late)
+        try registry.register(child)
+        registry.enable(late.id)
+        registry.enable(child.id)
+        XCTAssertEqual(registry.state(of: late.id), .running, "start returned; the slow part goes on")
+        XCTAssertEqual(registry.state(of: child.id), .running)
+        let context = try XCTUnwrap(late.context)
+        struct NoKey: LocalizedError { var errorDescription: String? { "no key" } }
+        context.fail(NoKey())
+        XCTAssertEqual(registry.state(of: late.id), .failed("Leaf could not start: no key"), "as if start had thrown")
+        if case .waiting = registry.state(of: child.id) {} else { XCTFail("a dependent stops: \(String(describing: registry.state(of: child.id)))") }
+        XCTAssertFalse(context.isActive, "its resources are released")
+        context.fail(NoKey())
+        XCTAssertEqual(registry.state(of: late.id), .failed("Leaf could not start: no key"), "a late second report changes nothing")
     }
 }

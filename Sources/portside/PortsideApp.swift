@@ -366,6 +366,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarVisualizer = MenuBarVisualizer(model: dockModel, widgets: engine.widgets)
         UpdateMonitor.shared.start(model: dockModel)
         if dockModel.openSettingsOnLaunch { runOpenSettingsCommand() }
+        #if DEBUG
+        // `PORTSIDE_OPEN_SETTINGS_AFTER=5`: opens Settings that many seconds
+        // after launch, to profile opening it while another app is in front.
+        if let delay = ProcessInfo.processInfo.environment["PORTSIDE_OPEN_SETTINGS_AFTER"].flatMap(Double.init) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.runOpenSettingsCommand() }
+        }
+        #endif
         // The native Dock's own shortcut. If macOS's "Turn Dock hiding
         // on/off" shortcut is enabled it may take the keypress first.
         hideHotKey = HotKey(chord: .dockHiding, name: "Cmd+Option+D") { [weak self] in

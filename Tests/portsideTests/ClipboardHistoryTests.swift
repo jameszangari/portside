@@ -171,9 +171,41 @@ final class ClipboardHistoryTests: XCTestCase {
         XCTAssertEqual(service.unavailableReason, "Clipboard History is turned off.")
         XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("h.bin").path))
         let module = ClipboardModule(service: service)
-        XCTAssertThrowsError(try module.start(ModuleContext()))
+        XCTAssertNoThrow(try module.start(ModuleContext()), "the key is read off the main thread; a refusal arrives as context.fail")
         XCTAssertTrue(module.isSensitive)
         XCTAssertFalse(module.isRequired)
+    }
+
+    func testBackgroundActivationLoadsOffTheMainThreadAndReportsNoKey() async throws {
+        let stored = try rig()
+        stored.board.copy("kept")
+        stored.service.tick()
+        stored.service.deactivate()
+        let again = try rig()
+        again.service.deactivate()
+        let failure = expectation(description: "no failure")
+        failure.isInverted = true
+        again.service.activateInBackground { _ in failure.fulfill() }
+        XCTAssertFalse(again.service.isActive, "nothing yet: the key is still being read")
+        for _ in 0..<200 where !again.service.isActive { try await Task.sleep(nanoseconds: 5_000_000) }
+        XCTAssertTrue(again.service.isActive)
+        XCTAssertEqual(again.service.entries.map(\.text), ["kept"], "the stored history loads")
+        await fulfillment(of: [failure], timeout: 0.1)
+
+        let refused = ClipboardService(file: ClipboardFile(url: dir.appendingPathComponent("r.bin"), keys: NoKey()), prefsURL: nil,
+                                       pasteboard: FakeBoard(), startsTimer: false)
+        let reported = expectation(description: "no key reported")
+        refused.activateInBackground { _ in reported.fulfill() }
+        await fulfillment(of: [reported], timeout: 2)
+        XCTAssertFalse(refused.isActive)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("r.bin").path))
+
+        let dropped = try rig()
+        dropped.service.deactivate()
+        dropped.service.activateInBackground { _ in XCTFail("dropped activations report nothing") }
+        dropped.service.deactivate()
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertFalse(dropped.service.isActive, "turned off while reading stays off")
     }
 
     // MARK: Capture flow
