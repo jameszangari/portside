@@ -81,4 +81,12 @@ final class SettingsSearchTests: XCTestCase {
             XCTAssertFalse(text.contains(".settingsAnchor(\"\(title)\")"), title)
         }
     }
+
+    func testEveryMenuBarResultOpensItsPage() {
+        let menuBar = SettingsSearch.entries.filter { $0.tab == .menuBar }
+        XCTAssertFalse(menuBar.isEmpty)
+        for entry in menuBar {
+            XCTAssertNotNil(entry.section.flatMap(MenuBarPage.page(for:)), "\(entry.title) (\(entry.section ?? "no section")) has no Menu Bar page")
+        }
+    }
 }
