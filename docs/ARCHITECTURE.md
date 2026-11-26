@@ -261,6 +261,7 @@ Tests/portsideTests/        XCTest target (`@testable import portside`); run wit
 scripts/
   swift-env.sh              Shared SPM env (disables Explicitly Built Modules by default)
   gen-version.sh            Writes BuildInfo.swift from VERSION and git
+  readme-cards.py           Draws the README feature cards in docs/images/ (light and dark SVG)
   release.sh                Bumps VERSION on a release branch and opens a pull request
   publish-release.sh        After the PR merges: tags, notarizes, pushes the tag, GitHub release with the .dmg (runs check-repo-visibility)
   check-repo-visibility.sh  One gh call: docs/github-visibility vs live private/public

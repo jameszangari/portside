@@ -2,6 +2,15 @@
 
 Status of the milestones in `docs/PLAN.md`, what still needs a hand check, and the backlog. The long dated build log that used to live here was removed for the public release; it is in the git history.
 
+## README refresh (2026-11-26)
+
+- [x] README rewritten around all five surfaces (Dock, Top Notch, Menu Bar Shelf, Command Center, App Switcher) instead of the dock alone: a surfaces diagram (`docs/images/surfaces.svg`, light and dark), a feature table, a 2x3 grid of illustrated cards (`docs/images/{dock,top-notch,menu-bar,command-center,app-switcher,widgets}.svg`), collapsible detail per surface, and short tables for install, privacy and build commands.
+- [x] Full privacy text (network hosts, permissions, files written, what widgets read, Local Servers safety) moved to `docs/PRIVACY.md`; the README keeps summary tables.
+- [x] Agent guide `docs/agents/readme.md` (what to update per kind of change, style, cards) linked from AGENTS.md and CONTRIBUTING.md; cards now come from `scripts/readme-cards.py`.
+- [x] README gap pass: Music visualizer and Agent status get their own Features rows, cards and details; new cards for notch indicators and alerts, and Settings; a privacy diagram (`privacy.svg`); bullets for window fitting, Mission Control, VoiceOver, meeting countdown, notch files and AirDrop, app icon choice.
+- [ ] Check the README on GitHub: SVG dark mode, `<details>` blocks, emoji column and relative links.
+- [ ] No real screenshots yet; the diagram is a schematic. Add captures of each surface when the UI settles.
+
 ## Portside 2.0 planning (2026-11-06)
 
 - [x] Added a phased [roadmap and UX direction](ROADMAP_2_0.md), [incremental tickets and first PR sequence](IMPLEMENTATION_PLAN_2_0.md), [architecture proposal](ARCHITECTURE_2_0.md), [test matrix](TEST_MATRIX_2_0.md), and [REA research workflow](REA_RESEARCH_2_0.md).

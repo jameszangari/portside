@@ -5,134 +5,245 @@
   </picture>
 </p>
 
-<p align="center"><b>A dock that's already there when you reach for it.</b></p>
+<p align="center"><b>The edges of your Mac, rebuilt to be fast.</b></p>
+<p align="center">Dock, notch, menu bar, launcher and app switcher in one native app.</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-26%2B-10283F?logo=apple&logoColor=white" alt="macOS 26 or later">
+  <img src="https://img.shields.io/badge/Apple%20Silicon-only-10283F" alt="Apple Silicon only">
   <img src="https://img.shields.io/badge/Swift-5.10%2B-F06A42?logo=swift&logoColor=white" alt="Swift 5.10 or later">
+  <img src="https://img.shields.io/badge/license-MIT-F06A42" alt="MIT license">
+</p>
+
+<p align="center">
+  <img src="docs/images/surfaces.svg" alt="A Mac screen with Portside's surfaces: Menu Bar Shelf, Top Notch, Command Center, App Switcher and Dock" width="760">
 </p>
 
 # Portside
 
-A fast, event-driven dock replacement for macOS, written in Swift (SwiftUI and AppKit) and built with SwiftPM. Touch the edge and it starts sliding in within a frame. Move away and it gets out of the way. No polling, no focus stealing, no lag.
-
-Free and open source (MIT). Requires **macOS 26 or later on Apple Silicon**. Brand assets and the two-page [brand guide](design/presentation/portside-approved-identity-v2.pdf) live in [`design/`](design/README.md).
+Portside is a native macOS app (Swift, SwiftUI and AppKit) that replaces or extends the parts of macOS you touch all day. Every piece is event-driven: no polling, no focus stealing, no lag. Turn on only the parts you want.
 
 ## Install
 
-Download the latest `Portside-X.Y.Z.dmg` from [Releases](https://github.com/jameszangari/portside/releases/latest), open it, and drag Portside to Applications (or `~/Applications`). Releases are signed with a Developer ID and notarized. Later versions install from inside the app: Settings > Check for Updates.
+| 1. Download | 2. Drag | 3. Stay current |
+| --- | --- | --- |
+| `Portside-X.Y.Z.dmg` from [Releases](https://github.com/jameszangari/portside/releases/latest) | Portside to Applications | Settings > Check for Updates |
 
-macOS asks for permissions as features need them; see [Privacy and permissions](#privacy-and-permissions).
+Signed with a Developer ID and notarized. macOS asks for each permission only when a feature needs it ([what and why](#privacy)).
 
 ## Features
 
-- **Reveal:** event-driven edge tracking, non-activating panel, slide animation, multi-display, file-drag reveal, notification badges, windows fit clear of the pinned dock (Accessibility)
-- **Apps:** pin, reorder, drag-out remove, Finder drops, running apps, recent apps, indicator and hidden-app options, Open at Login, native modifier clicks, launch bounce, native-style tile menu (recents with icons, windows, Options, Show All Windows; Accessibility)
-- **Activity icons:** camera (green), microphone (orange), animated speaker while audio output is active (opt-in measurement hides silent streams), working dots (CPU-based, per app)
-- **Layout:** Bottom / Left / Right, live icon size and gap, magnification with shelf
-- **Widgets:** Clock, Battery, Calendar, Weather, System Stats, CPU, Memory, Now Playing, Agents, AI Usage with Claude, Codex and Copilot, your pick (Small / Wide / Extra Wide on the bottom dock)
-- **Groups and stacks:** app groups with grids and optional custom icons (SF Symbol + palette color); columns and rows per grid; folder stacks (grid / native-style fan / list) with FSEvents, drag items out to any app; network shares that mount again on click; Network server and web link tiles; Trash tile
-- **Appearance:** Portside's own icon in System, Navy, Dark or Light; match macOS icon style or Original; Liquid Glass (matches the native Dock in dark mode, or Custom with every part adjustable) or Solid (color or gradient, optional backdrop blur) background; one color picker everywhere (Brand, Neutrals, macOS and RGB presets, hex, hue, saturation, tint, shade, opacity)
-- **Native Dock:** hide via autohide-delay (save/restore, also right after a crash; Mission Control and App Exposé still show it, and Portside's dock steps aside while they are open), import apps and folders, open at login via `SMAppService`, optional Settings on launch
-- **Top Notch:** a Bartender-style shelf around the notch (inside the menu bar on displays without one): a strip with album art and playing animation, agents and alerts; hover cards for music, agents and alerts; and an open shelf with Widgets, Agents, Files, Clipboard and AirPods tabs, hotkeys and a volume and brightness indicator. Settings > Top Notch shows a live preview of the part each section changes.
-- **Menu Bar Shelf (experimental):** show and hide items from the menu bar. macOS 26 uses a divider with Portside Bar, Groups and appearance controls; recognized Control Center extras have individual icons and move support. Tint backgrounds follow each display's menu bar height. These integrations still need hardware validation. macOS 27 adds per-app hiding and Portside Bar.
-- **Music visualizer:** the menu bar's background can glow, show spectrum bars or a wave in the album's color while music plays, following the sound (Settings > Menu Bar > Music).
-- **Command Center:** optional (Settings > Command Center, off by default) ⌥Space search panel without leaving the current app: installed and running apps (launch or switch), Portside's commands, Settings panes, your own quicklinks (https, http, mailto and System Settings links only), snippets you save (copied as plain text), your Apple Shortcuts (optional Shortcuts module, run only when picked), other apps' menu bar items (optional Menu Bar Items module, needs Accessibility; search and open only, never moved or hidden), file names inside folders you choose (optional Files module), your copied text (optional, encrypted Clipboard History module), a calculator (`2+2`, copies the result) and emoji search (`emoji rocket`, `:rocket`, copies the character) and, with the optional Local Servers module, the TCP servers your account runs (search a port or process, copy the address or port, open on loopback as http or https only when you pick it, manual refresh, confirmed graceful stop of one validated owned process, separately confirmed Force Stop only after its SIGTERM timeout), and with Local Intelligence also on, port questions such as "What's using port 5173?" read by Apple's on-device model, with the answer always from the native listing and a numeric search offered when the model cannot run; fuzzy matching with deterministic ranking boosted by recent and frequent picks (clearable history); keyboard first (arrows, Return, Esc ladder, Cmd+K actions), unavailable reasons, IME safe, VoiceOver labels, configurable shortcut with conflict warnings
-- **App Switcher:** optional (Settings > App Switcher, off by default) ⌥Tab switcher over running apps, most recently used first, drawn like the macOS ⌘Tab switcher: tap for the previous app (repeated taps alternate the last two), hold ⌥ and press Tab or Shift-Tab or point at an entry to choose, ↓ for one of the app's windows, let go to switch, Esc to cancel even with ⌥ held; optional window-first mode (one row per window with title, icon, display, minimized and full screen) and / for title search that stays open after you let go; apps need no Accessibility (windows do), Portside never takes focus (it is listed itself while Settings is open), native ⌘Tab untouched; optional window previews (off by default, needs Screen Recording): one still picture of each visible window row, started as the shortcut is held and kept in memory between opens, icons for anything else
-- **Settings:** search across every pane (⌘F), mouse and keyboard sidebar navigation, app title aligned with the Layout heading, live apply, module switches inside each tool pane, General > Permissions (live permission status with reasons and fallbacks, Reset All Permissions for stale grants, restricted mode for work Macs, and a Local Intelligence switch with live availability of Apple's on-device model, on-device only with no cloud fallback; only Command Center's port questions use it), global hotkeys (Settings ⌘⇧D, Command Center ⌥Space, App Switcher ⌥Tab), automatic daily update checks and notifications, plus Check for Updates (a newer release opens a modal that downloads, verifies, and installs it in place from the GitHub release DMG, then reopens Portside), Copy Diagnostics for bug reports (version, macOS, dock settings, module and permission states, reveal latency; no app names or personal data), and Export Debug Report, a zip with macOS, display, private API, menu bar and log details for problems on another macOS version (`portside --dump-debug` from Terminal)
+| | Surface | Open with | What you get | Status |
+| --- | --- | --- | --- | --- |
+| ⚓ | **Dock** | Touch a screen edge | A faster dock with widgets, groups and stacks | On |
+| 🎵 | **Top Notch** | Hover the notch | Music, agents, meetings, files, clipboard, AirPods | Preview, off by default |
+| 🧭 | **Menu Bar Shelf** | Click the menu bar icon | Hide, group and restyle menu bar items | Experimental |
+| 🌈 | **Music visualizer** | Play a song | The menu bar glows, bounces or waves with the music | Off by default |
+| 🤖 | **Agent status** | Start a coding agent | Claude Code, Codex, OpenCode, T3 Code and ChatGPT progress | With Agents widget or Top Notch |
+| 🔎 | **Command Center** | ⌥Space | Search apps, commands, files, snippets and servers | Optional, off by default |
+| 🔀 | **App Switcher** | ⌥Tab | Switch apps or windows, ⌘Tab left alone | Optional, off by default |
 
-- **Menu bar hiding (experimental, macOS 27, install in `/Applications`):** Thaw-style hide, reveal and rehide with Visible, Hidden and Always Hidden sections, plus named groups, saved order and profiles. Reveal by clicking the menu bar icon (or any empty part of the bar), scrolling, optional hover or a shortcut. Hides again on Smart, a delay or an app switch. Hidden items can open in the Portside Bar, a separate panel under the menu bar: click an icon for that app's menu without revealing it or moving the pointer. Style the bar and the menu bar itself with the Dock's glass, frosted and color controls, including pills that stop at the notch and the Top Notch, and hide or change Portside's own icon. Turn iPhone Live Activities on or off. Hand checks are still open; see the [interaction audit](docs/research/P2-MENU-06-interaction-audit.md).
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/dock.svg" alt="Dock with a group grid, a folder stack, badges and widgets"></td>
+    <td width="50%"><img src="docs/images/widgets.svg" alt="Clock, weather, CPU, AI Usage and Agents widgets"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/top-notch.svg" alt="Top Notch opened into a shelf with tabs and a music card"></td>
+    <td><img src="docs/images/notch-alerts.svg" alt="Notch strips showing a volume level, a meeting countdown and AirPods battery"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/menu-bar.svg" alt="Menu bar with hidden items and the Portside Bar"></td>
+    <td><img src="docs/images/visualizer.svg" alt="Menu bar music visualizer in Glow, Bars and Wave styles"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/agents.svg" alt="Coding agent status in the notch, a dock widget and app icon dots"></td>
+    <td><img src="docs/images/command-center.svg" alt="Command Center searching port 5173"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/app-switcher.svg" alt="App Switcher with an app's window list"></td>
+    <td><img src="docs/images/settings.svg" alt="Settings with a searchable sidebar and a live Dock simulation"></td>
+  </tr>
+</table>
 
-Full detail: [docs/FEATURES.md](docs/FEATURES.md).
+Every detail: [docs/FEATURES.md](docs/FEATURES.md). Short lists per surface below.
+
+<details>
+<summary><b>⚓ Dock</b></summary>
+
+- Reveal starts within a frame of touching the edge. Bottom, Left or Right, on every display.
+- Pin, reorder, drag out to remove, drop files on apps. Running and recent apps, badges, native tile menus.
+- Activity icons: camera, microphone, playing audio, and "working" dots for busy apps and coding agents.
+- **Widgets:** Clock, Battery, Calendar, Weather, System Stats, CPU, Memory, Now Playing (with album art), Agents, AI Usage (Claude, Codex, Copilot). Small, Wide or Extra Wide.
+- **Groups and stacks:** app groups with grids and custom icons, folder stacks (grid, fan or list), network shares, web links, Trash.
+- **Appearance:** Liquid Glass or solid backgrounds, magnification, icon size and gap, one color picker everywhere.
+- **Plays well with macOS:** maximized windows stop at a pinned dock, Mission Control and App Exposé push it aside, VoiceOver reads every tile.
+- **Hide the macOS Dock:** saves your settings and puts them back on quit, even after a crash. Imports your native Dock apps and folders.
+
+</details>
+
+<details>
+<summary><b>🎵 Top Notch</b></summary>
+
+A shelf around the notch (inside the menu bar on displays without one).
+
+| Strip | Hover cards | Open shelf |
+| --- | --- | --- |
+| Album art and playing animation, agents, meeting countdown | Music with seeking (pin it to keep it open), agents, alerts | Widgets, Agents, Files, Clipboard, AirPods tabs |
+
+| Indicators | Alerts |
+| --- | --- |
+| Volume and brightness level, replacing the macOS one | Meeting soon (with Join), agent done, charger, low battery, rain soon, AirPods connected, new song |
+
+Also: drop files on the notch to hold them (with an AirDrop card), hotkeys to open the shelf or search the clipboard. Settings shows a live preview of each part.
+
+</details>
+
+<details>
+<summary><b>🧭 Menu Bar Shelf</b> (experimental)</summary>
+
+| | macOS 26 | macOS 27 (install in `/Applications`) |
+| --- | --- | --- |
+| Hide items | Everything left of a divider | Per app, with Visible, Hidden and Always Hidden |
+| Portside Bar | Yes | Yes: open hidden items without revealing them |
+| Groups, saved order, profiles | Groups | Yes |
+| Reveal | Click | Click, scroll, hover or shortcut |
+
+Also: style the menu bar and Portside Bar (full bar, split at the notch, or pills; glass, frosted or color) and an iPhone Live Activities switch. Hand checks are still open, see the [interaction audit](docs/research/P2-MENU-06-interaction-audit.md).
+
+</details>
+
+<details>
+<summary><b>🌈 Music visualizer</b></summary>
+
+The menu bar's background moves with the song (Settings > Menu Bar > Music).
+
+| Style | Looks like |
+| --- | --- |
+| Glow | A wash that breathes with the loudness |
+| Bars | A spectrum mirrored from the middle, bass in the center |
+| Wave | A smooth line that follows the bass, mids and treble |
+
+- Color from the album cover, your accent, or a rainbow. Intensity and Reactiveness (Calm to Lively) sliders.
+- Fits the menu bar's shape, or spans the whole bar. The bar can also change shape and look while music plays.
+- Listens only to the playing app, with System Audio Recording. Nothing is recorded. Without it, a steady pulse.
+- Up to 30 frames a second only while music plays; gone 1.5 s after it stops. Still under Reduce Motion.
+
+</details>
+
+<details>
+<summary><b>🤖 Agent status</b></summary>
+
+| Where | What you see |
+| --- | --- |
+| Top Notch | Portside's sailboat (or a wheel, boxes or dots) while agents work, a count, an alert when one is done or needs you |
+| Dock widget | Provider icon with a spinning ring, a count badge, a check when done |
+| App icons | Working dots on T3 Code, Claude and Codex while their agents run |
+
+- Works with Claude Code, Codex, OpenCode, T3 Code (including Cursor in T3) and ChatGPT chats.
+- Click an agent to jump to its exact Terminal or iTerm tab, or its window.
+- Claude Code and Codex CLI need Agent Hooks once (Settings > Widgets), which back up your files first.
+
+</details>
+
+<details>
+<summary><b>🔎 Command Center</b></summary>
+
+One keyboard-first panel that never leaves the current app.
+
+| Built in | Optional modules |
+| --- | --- |
+| Apps, Portside commands, Settings panes, quicklinks, snippets, calculator (`2+2`), emoji (`:rocket`) | Apple Shortcuts, other apps' menu bar items, file names in folders you pick, encrypted clipboard history, Local Servers |
+
+**Local Servers** lists the TCP servers your account runs: search by port, copy the address, open it, or stop it after you confirm. With Local Intelligence on, ask "What's using port 5173?" and Apple's on-device model reads the question. No cloud.
+
+</details>
+
+<details>
+<summary><b>🔀 App Switcher</b></summary>
+
+- Drawn like ⌘Tab, over running apps in recent order. Tap ⌥Tab to flip between the last two.
+- ↓ picks a window. Window-first mode shows one row per window. `/` searches titles.
+- Optional window previews (Screen Recording). Portside never takes focus.
+
+</details>
+
+<details>
+<summary><b>⚙️ Settings and support</b></summary>
+
+- Search every pane (⌘F). Changes apply live, with a simulation or live preview for the Dock, App Switcher, Command Center, menu bar and Top Notch.
+- General > Permissions: live status of each grant, Reset All Permissions, restricted mode for work Macs.
+- Portside's own icon in System, Navy, Dark or Light.
+- Daily update checks, in-place install from the signed release.
+- Copy Diagnostics and Export Debug Report for bug reports (no app names or personal data).
+- Global hotkeys: Settings ⌘⇧D, Command Center ⌥Space, App Switcher ⌥Tab.
+
+</details>
 
 ## Planned
 
-The proposed [Portside 2.0 roadmap](docs/ROADMAP_2_0.md) extends the Command Center with further optional tools, extends the App Switcher with an optional ⌘Tab replacement and Dock hover previews, and adds the rest of the developer server manager (project association, exit events and bounded visible refresh), smart workspaces, studio companion and agent supervisor, with optional local-only AI. Menu bar management still needs reliable hiding across launch locations, saved-order restore, arbitrary groups, profiles and per-item overflow access. The macOS 27 prototype uses a guarded private assertion; full parity is not shipped. See the [incremental tickets and first PRs](docs/IMPLEMENTATION_PLAN_2_0.md) for implementation order. These capabilities are planned, not shipped.
+- **Command Center and App Switcher:** more optional tools, an optional ⌘Tab replacement, Dock hover window previews.
+- **Developer tools:** project-aware server manager, smart workspaces, agent supervisor, optional local-only AI.
+- **Menu bar:** reliable hiding from any install location, saved-order restore, per-item overflow, full parity on macOS 27.
+- **Dock:** keyboard navigation, side-dock widget layout, profiles, Trash Option-click Empty, plain file tiles from the native Dock.
 
-Notch Shelf ([research and v1 scope](docs/research/P2-SHELF-01-top-shelf.md)): the planned phases are built, and since SHELF-12 the shelf is the Top Notch (the old agents-only island is retired). Hand tests are pending in [docs/NOTCH_SHELF_FOLLOWUPS.md](docs/NOTCH_SHELF_FOLLOWUPS.md). The compact strip (album art and playing animation in the album's color, agents, or both side by side), the volume and brightness level with its number when it changes (optionally replacing the macOS indicator), AirPods and Beats connect and low battery alerts, hotkeys (open or close, open on Files, search the clipboard), a song banner, hover cards (a large music card with seeking, Vinyl style and album tint; the agent card), the open shelf with page tabs (Widgets with two cards: Music, Weather, Calendar; Agents; Files, which holds files dropped on the notch with an AirDrop card; Clipboard; AirPods, while a pair is connected) and Menu Bar coordination (the notch never reveals hidden items, which open in the Portside Bar) are in the preview.
+Order and scope: [Portside 2.0 roadmap](docs/ROADMAP_2_0.md) and [implementation plan](docs/IMPLEMENTATION_PLAN_2_0.md). Open hand checks: [docs/CHECKLIST.md](docs/CHECKLIST.md).
 
-Existing [docs/CHECKLIST.md](docs/CHECKLIST.md) backlog remains:
+## Privacy
 
-- Hand-check signed-app update notifications and installation, notch positioning on built-in displays, and corporate-proxy Copilot access
-- Hand-check Calendar consent, Downloads permission retention, and Settings header spacing in the signed app
-- Import plain file tiles from `persistent-others` (folders already import)
-- Keyboard navigation of the dock (VoiceOver reads and opens tiles)
-- Side-dock widget layout; Dock hover window previews; profiles; Trash Option-click Empty
+<p align="center"><img src="docs/images/privacy.svg" alt="What stays on your Mac, and the only hosts Portside contacts" width="760"></p>
 
-## Privacy and permissions
+No telemetry, no account. Nothing leaves your Mac except the requests below, and only when you use the feature.
 
-Portside has no telemetry and no account. Everything stays on your Mac except the requests below.
-
-**Network** (only these hosts):
-
-| Host | When | What is sent |
+| Sends to | Only when | What |
 | --- | --- | --- |
-| `api.github.com`, `github.com`, `*.githubusercontent.com` | At launch and daily when automatic checks are on, Check for Updates, Install Update | A version check and the release DMG download. No identifiers. |
-| `api.open-meteo.com`, `geocoding-api.open-meteo.com` | Weather widget on | The city you type, then its coordinates |
-| `api.anthropic.com` | AI Usage widget with Claude, after you allow it | Claude Code's sign-in token, to ask for your usage |
-| `api.github.com` | AI Usage widget with Copilot, after you allow it | The GitHub CLI's token, to ask for your Copilot quota. The optional Copilot CLI source is off by default. |
-| Spotify's artwork host (`https` only) | Now Playing with Spotify | A cover art request for the current track |
+| GitHub | Update checks | Version check, release download |
+| Open-Meteo | Weather widget | Your city, then its coordinates |
+| Anthropic | AI Usage with Claude, after you agree | Claude Code's token, to read your usage |
+| GitHub | AI Usage with Copilot, after you agree | GitHub CLI's token, to read your quota |
+| Spotify | Now Playing with Spotify | A cover art request |
 
-**Permissions** (macOS asks when a feature first needs them):
+| Permission | Used for |
+| --- | --- |
+| Accessibility | Window fitting, native tile menus, App Switcher windows, menu bar items, volume keys |
+| Screen Recording | App Switcher window previews (off by default) |
+| System Audio Recording | Music visualizer and measuring real playback (levels only, never saved) |
+| Calendar | Calendar widget, meeting countdown |
+| Bluetooth | Live AirPods levels (off by default) |
+| Automation | Finder Trash, Open at Login, Now Playing, raising agent terminals |
+| Notifications, Full Disk Access, Keychain | Update alerts, protected folders, clipboard history key |
 
-- **Accessibility:** fit maximized windows clear of the dock; raise an agent's window; read and press items in the native Dock's tile menu; list and focus windows in the App Switcher; list, open and move menu bar items; take the volume and brightness keys for the Top Notch indicator. Restricted mode keeps the sensitive tools off.
-- **Notifications:** available update alerts. If declined, the menu bar still marks an available update.
-- **Full Disk Access:** optional, granted manually through General > Permissions for protected files such as Trash. It does not override corporate security policy.
-- **System Audio Recording:** optional actual-playback measurement. Audio buffers are reduced to levels locally and discarded, never saved or sent. Full Disk Access does not grant this permission.
-- **Screen Recording:** optional window previews in the App Switcher, captured with ScreenCaptureKit only while the switcher is open, kept in memory, never saved or sent.
-- **Bluetooth:** optional Live AirPods levels (Top Notch, off by default). Portside listens for the battery levels AirPods broadcast nearby, only while a pair is connected. Off in restricted mode.
-- **Calendar:** the Calendar widget's next event and the Top Notch meeting countdown (off in restricted mode).
-- **Automation:** Finder (empty Trash, Trash count), System Events (Open at Login), Spotify or Music (Now Playing; other players need no permission), Terminal or iTerm (bring an agent's tab forward). The Shortcuts tool runs `/usr/bin/shortcuts` only when you pick a shortcut.
-- **Keychain:** Clipboard History keeps its encryption key in your login keychain (`com.james.portside.clipboard-history`, this Mac only, available while unlocked).
-- **Files and folders:** only the folders you add to Command Center file search, and files you drop on the Top Notch.
-
-**Files Portside writes:**
-
-- `~/Library/Application Support/com.james.portside/`: `dock.json` and its backups, `native-dock-backup.json` while the macOS Dock is hidden, plus `agent-hook.sh` and `agents/` if you install the agent hooks. Optional tools add their own files there, each only once used: Command Center history, snippets and searchable folders (`command-center-*.json`), encrypted clipboard text (`command-center-clipboard.bin`, kept for the time you choose and cleared by Clear History), the Top Notch file list (`notch-shelf-files.json`, paths only, not copies), a chosen menu bar icon, and menu bar backups and a crash journal.
-- `~/Library/Logs/Portside/update.log`.
-- Only if you click Install Hooks: entries in `~/.claude/settings.json`, `~/.codex/hooks.json` and `~/.codex/config.toml`, each backed up once to `<file>.portside.bak`. Remove Hooks undoes it.
-- With "Hide the macOS Dock" on: `autohide` and `autohide-delay` in `com.apple.dock`, restored on quit.
-- Menu bar hiding on macOS 27 (experimental), only after you grant each file in Settings and with a backup first: the saved item order in `com.apple.MenuBar.plist` (then `MenuBarAgent` restarts to read it), and the per-app menu bar list in Control Center's settings (Native method). The Live Activities switch writes only `RemoteLiveActivitiesEnabled` in `com.apple.controlcenter`, when you flip it, backed up first.
-
-**What widgets read:** AI Usage reads Claude Code's keychain token only after you agree, Codex's local session logs in `~/.codex/sessions`, and, only after you agree, your Copilot quota using `gh auth token`, or the Copilot CLI if separately enabled. Agents reads the hook files above and, with Accessibility, whether a ChatGPT app window's composer shows Stop (a reply in progress) and its title. Battery, System Stats, CPU and Memory read local system counters. Now Playing asks Spotify or Music what is playing, and reads the system's Now Playing for other players through a bundled helper run by the system's `perl`. The Top Notch reads AirPods battery levels with `system_profiler`. The music visualizer, when React to the sound is on, taps only the playing app's audio for its levels and keeps nothing. Clipboard History (off by default) skips passwords and other sensitive pasteboard types and apps you exclude.
-
-**Local Servers** (optional, off by default): when you search a port or server in Command Center, or pick Refresh, Portside runs `/usr/sbin/lsof` once to list the TCP servers your account runs and reads each one's start time, owner and executable path from macOS. It also reads each one's working directory and names the project from the nearest Git repository above it (shown as inferred, or Unknown). It never reads their arguments or environment, never connects to them, and keeps the list only while the panel is open. While server results are showing, a listener that exits disappears right away (a macOS process-exit event, confirmed before removal) and a background re-list finds new ones every few seconds, backing off when nothing changes and stopping after a few quiet rounds; nothing runs when the panel is closed, the query shows no servers, or the module is off. Stop Server requires your confirmation of the process, PID and port, rechecks ownership and identity, and sends only SIGTERM; protected, unknown and changed targets are refused. Only its still-running receipt unlocks a separate Force Stop (SIGKILL) confirmation, defaulting to Cancel and warning about data loss. Force Stop revalidates the exact process and listener again, sends once, then refreshes all server results. No automatic escalation or retry exists. With Local Intelligence on, a port question you type is read by Apple's on-device model on this Mac (never a hosted service); the model only names the port, and nothing it writes is run or shown.
+Files written, what each widget reads, and how Local Servers stays safe: [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ## Build from source
 
-You need macOS 26+, Apple Silicon, and the Xcode command line tools. No Xcode project and no signing identity required:
+Needs macOS 26+, Apple Silicon and the Xcode command line tools. No Xcode project, no signing identity.
 
-```
+```sh
 source scripts/swift-env.sh
 swift build
 swift run portside
 ```
 
-For a `.app` bundle: `SIGN_IDENTITY=- scripts/build-app.sh` (ad hoc signed, so macOS re-asks for permissions after each rebuild), then `open build/Portside.app`. The maintainer's own signing setup is in [docs/BUILD.md](docs/BUILD.md).
+| Task | Command |
+| --- | --- |
+| `.app` bundle (ad hoc signed) | `SIGN_IDENTITY=- scripts/build-app.sh` then `open build/Portside.app` |
+| Stream logs | `log stream --level info --predicate 'subsystem == "com.james.portside"'` |
+| Restore the native Dock | `swift run portside --restore-dock` |
+| Debug report | `portside --dump-debug` |
 
-Logs: `log stream --level info --predicate 'subsystem == "com.james.portside"'`
-
-Restore the native Dock without UI: `swift run portside --restore-dock`
-
-Contributing: [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY.md). Build, signing, DMG, and release steps: [docs/BUILD.md](docs/BUILD.md).
+Signing, DMG and releases: [docs/BUILD.md](docs/BUILD.md). How it works inside: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Docs
 
-| Doc | What |
-| --- | --- |
-| [FEATURES.md](docs/FEATURES.md) | Full feature list |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | How it works, private-API notes, project layout |
-| [BUILD.md](docs/BUILD.md) | Requirements, SPM, `.app`, signing, versioning |
-| [DATA.md](docs/DATA.md) | `dock.json`, backups, signing identity paths |
-| [PLAN.md](docs/PLAN.md) | Original milestones A to F |
-| [ROADMAP_2_0.md](docs/ROADMAP_2_0.md) | Phases, UX journeys, release gates and replacement scope |
-| [IMPLEMENTATION_PLAN_2_0.md](docs/IMPLEMENTATION_PLAN_2_0.md) | Small tickets, dependencies, acceptance criteria and first PRs |
-| [ARCHITECTURE_2_0.md](docs/ARCHITECTURE_2_0.md) | Proposed registries, permissions and local-only intelligence |
-| [TEST_MATRIX_2_0.md](docs/TEST_MATRIX_2_0.md) | Validation matrix, performance budgets and rollout gates |
-| [REA_RESEARCH_2_0.md](docs/REA_RESEARCH_2_0.md) | Reference-app investigation and evidence workflow |
-| [CHECKLIST.md](docs/CHECKLIST.md) | Status and backlog |
-| [Brand](design/README.md) | Sail identity, wordmarks, tokens |
+| Using Portside | Contributing | Planning |
+| --- | --- | --- |
+| [Features](docs/FEATURES.md) | [CONTRIBUTING](CONTRIBUTING.md) | [Roadmap 2.0](docs/ROADMAP_2_0.md) |
+| [Privacy](docs/PRIVACY.md) | [Architecture](docs/ARCHITECTURE.md) | [Implementation plan](docs/IMPLEMENTATION_PLAN_2_0.md) |
+| [Security](SECURITY.md) | [Build and release](docs/BUILD.md) | [Architecture 2.0](docs/ARCHITECTURE_2_0.md) |
+| [Brand](design/README.md) | [Settings file](docs/DATA.md) | [Test matrix](docs/TEST_MATRIX_2_0.md) |
+| | [Checklist](docs/CHECKLIST.md) | [Original plan](docs/PLAN.md) |
 
 ## License
 
-[MIT](LICENSE). Provided as is, with no warranty. Portside moves and resizes windows, edits the macOS Dock's auto-hide settings when you ask it to, and can edit your agent hook files; read the permissions above before you enable those features.
+[MIT](LICENSE). Provided as is, with no warranty. Portside can move and resize windows, change the macOS Dock's auto-hide settings, edit menu bar preferences and edit your agent hook files when you turn those features on. Read [Privacy](docs/PRIVACY.md) first.
