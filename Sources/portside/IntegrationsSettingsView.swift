@@ -243,13 +243,6 @@ struct MenuBarLayoutSection: View {
                 }
             }
             Section {
-                ForEach(service.missing, id: \.self) { id in
-                    HStack {
-                        Text(id).helperStyle().lineLimit(1).truncationMode(.middle)
-                        Spacer()
-                        Button("Forget") { service.forget(id) }.disabled(service.isBusy)
-                    }
-                }
                 HStack {
                     Button("Reset to Native") { Task { await service.resetToNative() } }
                         .disabled(service.isBusy)
@@ -259,8 +252,25 @@ struct MenuBarLayoutSection: View {
                         NSPasteboard.general.setString(service.exportedLayout, forType: .string)
                     }
                 }
-            } header: {
-                if !service.missing.isEmpty { Text("Saved, not in the menu bar now") }
+            }
+            // Known only after the menu bar is read, so it comes last and
+            // folded: arriving late it adds one row, and moves nothing.
+            if !service.missing.isEmpty {
+                Section {
+                    DisclosureGroup("\(service.missing.count) saved layout\(service.missing.count == 1 ? "" : "s") for apps not in the menu bar") {
+                        ForEach(service.missing, id: \.self) { id in
+                            HStack {
+                                Text(MenuBarLayoutService.appName(forItem: id)).lineLimit(1)
+                                Text(id).helperStyle().lineLimit(1).truncationMode(.middle)
+                                Spacer()
+                                Button("Forget") { service.forget(id) }.disabled(service.isBusy)
+                            }
+                        }
+                        Button("Forget All") { service.forgetMissing() }.disabled(service.isBusy)
+                    }
+                } footer: {
+                    Text("Where you put these items, kept so they go back there when their app runs again. Forget drops the choice.").footerStyle()
+                }
             }
         }
     }

@@ -436,6 +436,20 @@ final class MenuBarLayoutService: ObservableObject {
         rebuild()
     }
 
+    /// Drops every saved choice for an item not in the menu bar now.
+    func forgetMissing() {
+        missing.forEach(store.forget)
+        rebuild()
+    }
+
+    /// The app behind a saved item ID (`bundle:#index`), by name when it is
+    /// installed, else the bundle ID.
+    nonisolated static func appName(forItem id: String) -> String {
+        let bundle = id.components(separatedBy: ":#").first ?? id
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) else { return bundle }
+        return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+    }
+
     /// A drop in the editor: one verified drag, right now. Lands just left of
     /// `beforeID`, or at the separator edge of `section` when there is none.
     /// The choice is saved only after the item is confirmed there, so a failed
