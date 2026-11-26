@@ -587,28 +587,40 @@ struct AgentNotchView: View {
                 Color.clear
             }
         }
+        // Always its full size: while the shelf animates its width (a song
+        // banner opening or closing) a side is offered less room for a few
+        // frames, and the agent count was truncated. Anything that does not
+        // fit spills toward the notch, never past the strip's end.
+        .fixedSize()
         .padding(.horizontal, stripSideInset)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: side == .leading ? .leading : .trailing)
+        // minWidth 0: the side keeps its share of the strip whatever its
+        // content asks, so a wide side never pushes the other one outward.
+        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: side == .leading ? .leading : .trailing)
     }
 
     /// Space between the strip's ends and what it shows, measured from the
     /// edge you see: attached, the flared top corners sit inside the frame.
-    /// 14 pt, the shelf's 16 pt card margin once open; with two activities
-    /// on a narrow strip it gives way so both marks still fit.
+    /// The album art's own gap above and below it (6 pt), so the art sits
+    /// evenly in the corner; the shelf's 16 pt card margin once open. Two
+    /// activities widen a narrow strip (`NotchShelfStrip.splitWidth`); if the
+    /// display cannot fit that, the margin gives way so both marks still fit.
     private var stripSideInset: CGFloat {
         if state.expanded || state.card != nil { return 16 }
         let edge = state.topAttached ? NotchShape.flare : 0
-        guard state.strip.isSplit else { return edge + 14 }
+        let margin = max(4, (state.headerHeight - stripArtSize) / 2)
+        guard state.strip.isSplit else { return edge + margin }
         let notch = state.notchWidth > 0 ? state.notchWidth : state.compactWidth / 3
         let side = (state.compactWidth - notch) / 2
         // About 46 pt: art or a mark, 6 pt, and the bars or a count.
-        return edge + min(14, max(4, side - edge - 46))
+        return edge + min(margin, max(4, side - edge - 46))
     }
+
+    private var stripArtSize: CGFloat { max(14, state.headerHeight - 12) }
 
     private var stripPaused: Bool { !preferences.animate || reduceMotion }
 
     private var stripArt: some View {
-        let size = max(14, state.headerHeight - 12)
+        let size = stripArtSize
         return Group {
             if let artwork = nowPlaying?.track?.artwork {
                 Image(nsImage: artwork).resizable().interpolation(.high).scaledToFill()

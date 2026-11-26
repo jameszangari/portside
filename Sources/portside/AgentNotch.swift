@@ -811,6 +811,11 @@ final class AgentNotch {
             }
             let strip = NotchShelfStrip.layout(active: active, alert: state.alert?.activity)
             if state.strip != strip { state.strip = strip }
+            // Two activities widen a narrow strip rather than crowd its ends.
+            if strip.isSplit {
+                state.compactWidth = min(screen.frame.width - 24, max(state.compactWidth, NotchShelfStrip.splitWidth(
+                    notch: state.notchWidth, flare: state.topAttached ? 2 * NotchShape.flare : 0)))
+            }
             // A narrow strip wraps the meeting's timer, or an alert's "20%",
             // under itself.
             if strip.leading == .meeting || strip.trailing == .meeting || state.alert?.short.isEmpty == false {
