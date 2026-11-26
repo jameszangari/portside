@@ -37,4 +37,12 @@ final class CopyHandoffTests: XCTestCase {
         XCTAssertEqual(CopyHandoff.decide(isDevCopy: true, others: [release], allowSecondCopy: true), .proceed)
         XCTAssertEqual(CopyHandoff.decide(isDevCopy: false, others: [otherDev], allowSecondCopy: true), .proceed)
     }
+
+    func testOnlyPlainLaunchesCountAsCopies() {
+        XCTAssertTrue(CopyHandoff.isCopy(arguments: ["portside"]))
+        XCTAssertTrue(CopyHandoff.isCopy(arguments: ["portside", "--after-dev-copy", "123"]), "a reopened installed copy")
+        XCTAssertFalse(CopyHandoff.isCopy(arguments: ["portside", "--watch-native-dock", "123"]), "a copy's helper")
+        XCTAssertFalse(CopyHandoff.isCopy(arguments: ["portside", "--dump-debug"]))
+        XCTAssertFalse(CopyHandoff.isCopy(arguments: ["portside", "--render-notch-previews", "/tmp/x"]))
+    }
 }
