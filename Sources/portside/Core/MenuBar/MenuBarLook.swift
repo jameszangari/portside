@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// What Portside's own menu bar control looks like. `off` removes it; the
@@ -80,11 +81,13 @@ struct MenuBarLook: Codable, Equatable {
     /// Past half the bar's height a shape is a full pill.
     var cornerRadius = 14.0
     var shadow = false
+    /// Animates the menu bar's background while music plays.
+    var visualizer = MenuBarVisualizerSettings()
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case controlIcon, customSymbol, customImage, customImageIsTemplate, barStyle, barBackground, barCornerRadius, barIconSize, shape, background, cornerRadius, shadow
+        case controlIcon, customSymbol, customImage, customImageIsTemplate, barStyle, barBackground, barCornerRadius, barIconSize, shape, background, cornerRadius, shadow, visualizer
     }
 
     /// Earlier builds saved a solid color only.
@@ -114,6 +117,7 @@ struct MenuBarLook: Codable, Equatable {
         background = c.value(.background, or: oldFill.map(Self.solid) ?? DockBackground())
         cornerRadius = c.value(.cornerRadius, or: 14.0)
         shadow = c.value(.shadow, or: false)
+        visualizer = c.value(.visualizer, or: MenuBarVisualizerSettings())
         self = sanitized
     }
 
@@ -122,6 +126,7 @@ struct MenuBarLook: Codable, Equatable {
         copy.barCornerRadius = min(max(barCornerRadius, Self.cornerRange.lowerBound), Self.cornerRange.upperBound)
         copy.cornerRadius = min(max(cornerRadius, Self.cornerRange.lowerBound), Self.cornerRange.upperBound)
         copy.barIconSize = min(max(barIconSize, Self.iconSizeRange.lowerBound), Self.iconSizeRange.upperBound)
+        copy.visualizer = visualizer.sanitized
         return copy
     }
 
@@ -289,6 +294,30 @@ enum MenuBarStylePlan {
     }
 }
 
+/// The outlines the menu bar shape draws on each display, for the music
+/// visualizer to match. Empty while no shape is drawn.
+@MainActor
+final class MenuBarShapeOutlines: ObservableObject {
+    struct Outline: Equatable {
+        /// The bar's frame on screen; `rects` are inside it, top left origin.
+        let frame: CGRect
+        let rects: [CGRect]
+        let cornerRadius: CGFloat
+    }
+
+    static let shared = MenuBarShapeOutlines()
+    @Published private(set) var outlines: [Outline] = []
+
+    func set(_ next: [Outline]) {
+        if next != outlines { outlines = next }
+    }
+
+    /// The outline on the bar at `frame`, nil when that bar has no shape.
+    func outline(for frame: CGRect) -> Outline? {
+        outlines.first { $0.frame == frame && !$0.rects.isEmpty }
+    }
+}
+
 /// Draws the chosen outline just under the real menu bar's items. A plain
 /// window below their level, so it needs no permission and takes no clicks.
 /// Geometry is read only for pills, and only while they are chosen.
@@ -301,7 +330,16 @@ final class MenuBarStyleOverlay {
     }
 
     private var look = MenuBarLook()
+    /// Music plays: the shape-while-playing override applies.
+    private var musicPlaying = false
+    private var playback: AnyCancellable?
+    /// The shape drawn now: the override while music plays, else the usual one.
+    private var shape: MenuBarShape {
+        musicPlaying ? look.visualizer.playingShape ?? look.shape : look.shape
+    }
     private var panels: [NSPanel] = []
+    private var models: [MenuBarStyleModel] = []
+    private var fadeWork: DispatchWorkItem?
     private var layouts: [Layout] = []
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var timer: Timer?
@@ -309,9 +347,24 @@ final class MenuBarStyleOverlay {
     private static let pillRefresh: TimeInterval = 1.5
 
     func apply(_ next: MenuBarLook) {
-        let changedShape = next.shape != look.shape
+        if playback == nil {
+            playback = MenuBarMusicPlayback.shared.$isPlaying.removeDuplicates().dropFirst().sink { [weak self] playing in
+                MainActor.assumeIsolated { self?.setMusicPlaying(playing) }
+            }
+            musicPlaying = MenuBarMusicPlayback.shared.isPlaying
+        }
+        let before = shape
         look = next
+        let changedShape = shape != before
         if changedShape || observers.isEmpty { rewatch() }
+        refresh()
+    }
+
+    private func setMusicPlaying(_ playing: Bool) {
+        let before = shape
+        musicPlaying = playing
+        guard shape != before else { return }
+        rewatch()
         refresh()
     }
 
@@ -326,7 +379,7 @@ final class MenuBarStyleOverlay {
         observers = []
         timer?.invalidate()
         timer = nil
-        guard look.shape != .none else { return }
+        guard shape != .none else { return }
         let workspace = NSWorkspace.shared.notificationCenter
         let watched: [(NotificationCenter, Notification.Name)] = [
             (workspace, NSWorkspace.didActivateApplicationNotification),
@@ -340,7 +393,7 @@ final class MenuBarStyleOverlay {
             }
             observers.append((center, token))
         }
-        guard look.shape == .pills else { return }
+        guard shape == .pills else { return }
         timer = Timer.scheduledTimer(withTimeInterval: Self.pillRefresh, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
         }
@@ -348,12 +401,12 @@ final class MenuBarStyleOverlay {
 
     private func refresh() {
         task?.cancel()
-        guard look.shape != .none else {
+        guard shape != .none else {
             task = nil
             layout([])
             return
         }
-        let needsItems = look.shape == .pills
+        let needsItems = shape == .pills
         // Read here: the frontmost app is only current on the main thread.
         let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
         // Portside's own menus only answer Accessibility on its main thread.
@@ -381,27 +434,72 @@ final class MenuBarStyleOverlay {
                 $0.frame.width > 0 && $0.frame.midX >= frame.minX && $0.frame.midX <= frame.maxX && $0.frame.midY >= top && $0.frame.midY <= top + frame.height + 8
             }.map(\.frame.minX)
             let end = menusEnd.flatMap { $0 > frame.minX && $0 <= frame.maxX ? $0 - frame.minX : nil }
-            let rects = MenuBarStylePlan.rects(shape: look.shape, size: frame.size, notch: notch, menusEnd: end, itemsStart: starts.min().map { $0 - frame.minX })
+            let rects = MenuBarStylePlan.rects(shape: shape, size: frame.size, notch: notch, menusEnd: end, itemsStart: starts.min().map { $0 - frame.minX })
             return (frame, Layout(rects: rects, look: fill, shadow: look.shadow))
         })
     }
 
+    /// A change of shape (by hand, or the shape while music plays) morphs
+    /// the outlines over this long; the shape coming or going fades.
+    private static var morph: Animation? {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .easeInOut(duration: 0.35)
+    }
+
     private func layout(_ wanted: [(CGRect, Layout)]) {
-        while panels.count > wanted.count { panels.removeLast().orderOut(nil) }
-        while panels.count < wanted.count { panels.append(Self.makePanel()) }
-        let previous = layouts
         layouts = wanted.map(\.1)
+        MenuBarShapeOutlines.shared.set(wanted.map { .init(frame: $0.0, rects: $0.1.rects, cornerRadius: $0.1.look.cornerRadius) })
+        guard !wanted.isEmpty else {
+            fadeOut()
+            return
+        }
+        fadeWork?.cancel()
+        fadeWork = nil
+        while panels.count > wanted.count {
+            panels.removeLast().orderOut(nil)
+            models.removeLast()
+        }
+        while panels.count < wanted.count {
+            let model = MenuBarStyleModel()
+            panels.append(Self.makePanel(model))
+            models.append(model)
+        }
         for (index, (frame, layout)) in wanted.enumerated() {
             let panel = panels[index]
+            let model = models[index]
             if panel.frame != frame { panel.setFrame(frame, display: true) }
-            if index >= previous.count || previous[index] != layout || panel.contentView == nil {
-                let content = NSHostingView(rootView: MenuBarStyleContent(rects: layout.rects, look: layout.look, shadow: layout.shadow))
-                // The panel is the menu bar itself, including the top safe area.
-                content.safeAreaRegions = []
-                panel.contentView = content
+            if !model.visible {
+                // Coming back: start from the new outline and fade in.
+                model.rects = layout.rects
+                model.look = layout.look
+                model.shadow = layout.shadow
+            }
+            if model.rects != layout.rects || model.look != layout.look || model.shadow != layout.shadow || !model.visible {
+                withAnimation(Self.morph) {
+                    model.rects = layout.rects
+                    model.look = layout.look
+                    model.shadow = layout.shadow
+                    model.visible = true
+                }
             }
             panel.orderFrontRegardless()
         }
+    }
+
+    /// No shape: fade the outlines out, then take the panels down.
+    private func fadeOut() {
+        guard !panels.isEmpty, fadeWork == nil else { return }
+        withAnimation(Self.morph) { models.forEach { $0.visible = false } }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.fadeWork = nil
+                self.panels.forEach { $0.orderOut(nil) }
+                self.panels = []
+                self.models = []
+            }
+        }
+        fadeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + (Self.morph == nil ? 0 : 0.4), execute: work)
     }
 
     private static func barFrame(on screen: NSScreen) -> CGRect {
@@ -411,7 +509,7 @@ final class MenuBarStyleOverlay {
         )
     }
 
-    private static func makePanel() -> NSPanel {
+    private static func makePanel(_ model: MenuBarStyleModel) -> NSPanel {
         let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)) - 1)
         panel.backgroundColor = .clear
@@ -422,25 +520,41 @@ final class MenuBarStyleOverlay {
         panel.ignoresMouseEvents = true
         panel.isExcludedFromWindowsMenu = true
         panel.collectionBehavior = [.fullScreenAuxiliary, .ignoresCycle, .stationary, .canJoinAllSpaces]
+        let content = NSHostingView(rootView: MenuBarStyleContent(model: model))
+        // The panel is the menu bar itself, including the top safe area.
+        content.safeAreaRegions = []
+        panel.contentView = content
         return panel
     }
 }
 
+/// One panel's outlines. Kept for the panel's life, so a new shape morphs
+/// from the old one instead of replacing the view.
+@MainActor
+final class MenuBarStyleModel: ObservableObject {
+    @Published var rects: [CGRect] = []
+    @Published var look = DockLook(background: DockBackground(), cornerRadius: 0)
+    @Published var shadow = false
+    @Published var visible = false
+}
+
+/// Outlines by position: the first of the old shape becomes the first of
+/// the new one (a full bar narrows into the first pill), extra ones fade.
 private struct MenuBarStyleContent: View {
-    let rects: [CGRect]
-    let look: DockLook
-    let shadow: Bool
+    @ObservedObject var model: MenuBarStyleModel
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             Color.clear
-            ForEach(rects.indices, id: \.self) { index in
-                let rect = rects[index]
+            ForEach(model.rects.indices, id: \.self) { index in
+                let rect = model.rects[index]
                 Color.clear
                     .frame(width: rect.width, height: rect.height)
-                    .dockBackground(look, in: RoundedRectangle(cornerRadius: min(look.cornerRadius, rect.height / 2), style: .continuous), shadow: shadow)
+                    .dockBackground(model.look, in: RoundedRectangle(cornerRadius: min(model.look.cornerRadius, rect.height / 2), style: .continuous), shadow: model.shadow)
                     .offset(x: rect.minX, y: rect.minY)
+                    .transition(.opacity)
             }
         }
+        .opacity(model.visible ? 1 : 0)
     }
 }

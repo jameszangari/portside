@@ -45,6 +45,13 @@ enum PortsideMain {
         if CommandLine.arguments.contains("--check-windows") {
             exit(MainActor.assumeIsolated { WindowRegistryProbe.run() })
         }
+        if let index = CommandLine.arguments.firstIndex(of: "--render-visualizer"), index + 1 < CommandLine.arguments.count {
+            exit(MainActor.assumeIsolated { MenuBarVisualizerDrawing.render(to: CommandLine.arguments[index + 1]) })
+        }
+        if let index = CommandLine.arguments.firstIndex(of: "--check-visualizer") {
+            let bundle = index + 1 < CommandLine.arguments.count ? CommandLine.arguments[index + 1] : "com.spotify.client"
+            exit(MusicLevelMeter.probe(bundle))
+        }
         if CommandLine.arguments.contains("--check-chatgpt") {
             exit(MainActor.assumeIsolated { ChatGPTReplies.probe() })
         }
@@ -310,6 +317,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let dockModel = DockModel.load()
     lazy var nativeDock = NativeDockController(dockModel: dockModel)
     private var agentNotch: AgentNotch?
+    private var menuBarVisualizer: MenuBarVisualizer?
     private var dockEngine: DockEngine?
     private var settings: SettingsWindowController?
     private var hideHotKey: HotKey?
@@ -355,6 +363,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         engine.onOpenSettings = { [weak self] in self?.runOpenSettingsCommand() }
         engine.start()
         agentNotch = AgentNotch(model: dockModel, widgets: engine.widgets)
+        menuBarVisualizer = MenuBarVisualizer(model: dockModel, widgets: engine.widgets)
         UpdateMonitor.shared.start(model: dockModel)
         if dockModel.openSettingsOnLaunch { runOpenSettingsCommand() }
         // The native Dock's own shortcut. If macOS's "Turn Dock hiding

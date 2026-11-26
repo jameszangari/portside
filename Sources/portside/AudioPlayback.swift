@@ -148,19 +148,25 @@ final class AudioPlaybackMonitor {
     }
 }
 
-private final class ProcessAudioMeter {
+/// A private tap on some processes' mixed output. `onChange` follows the
+/// playback gate; `onBuffer`, when set, sees every buffer on the audio queue
+/// (the menu bar visualizer reads levels from it).
+final class ProcessAudioMeter {
     private var tap = AudioObjectID(kAudioObjectUnknown)
     private var device = AudioObjectID(kAudioObjectUnknown)
     private var ioProc: AudioDeviceIOProcID?
     private let callbackQueue = DispatchQueue(label: "com.james.portside.audio-level", qos: .userInitiated)
     private var gate = PlaybackGate()
     private let onChange: (Bool) -> Void
+    private let onBuffer: ((UnsafePointer<AudioBufferList>) -> Void)?
 
-    init(processes: Set<AudioObjectID>, onChange: @escaping (Bool) -> Void) throws {
+    init(processes: Set<AudioObjectID>, onBuffer: ((UnsafePointer<AudioBufferList>) -> Void)? = nil,
+         onChange: @escaping (Bool) -> Void) throws {
         self.onChange = onChange
+        self.onBuffer = onBuffer
         do {
             let description = CATapDescription(stereoMixdownOfProcesses: Array(processes))
-            description.name = "Portside playback activity"
+            description.name = onBuffer == nil ? "Portside playback activity" : "Portside menu bar visualizer"
             description.isPrivate = true
             description.muteBehavior = .unmuted
             try check(AudioHardwareCreateProcessTap(description, &tap), "Create audio tap")
@@ -209,6 +215,7 @@ private final class ProcessAudioMeter {
     }
 
     private func consume(_ input: UnsafePointer<AudioBufferList>) {
+        onBuffer?(input)
         let rms = AudioSampleLevel.rms(input)
         let time = Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
         if let playing = gate.update(rms: rms, time: time) { onChange(playing) }

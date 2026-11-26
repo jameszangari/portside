@@ -488,7 +488,7 @@ final class AppActivity: ObservableObject {
         AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
     }
 
-    private static func audioProcessObjects() -> [AudioObjectID] {
+    static func audioProcessObjects() -> [AudioObjectID] {
         var addr = address(kAudioHardwarePropertyProcessObjectList)
         let system = AudioObjectID(kAudioObjectSystemObject)
         var size: UInt32 = 0
@@ -506,7 +506,7 @@ final class AppActivity: ObservableObject {
         return value
     }
 
-    private static func audioBundleID(_ object: AudioObjectID) -> String? {
+    static func audioBundleID(_ object: AudioObjectID) -> String? {
         var addr = address(kAudioProcessPropertyBundleID)
         var value: Unmanaged<CFString>?
         var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)

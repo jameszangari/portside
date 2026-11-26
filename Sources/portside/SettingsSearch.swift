@@ -129,6 +129,8 @@ enum SettingsSearch {
         .init(.menuBar, "Portside Bar style", "Portside Bar icon size", "bigger smaller"),
         .init(.menuBar, "Menu bar shape", "Pills around items", "shape full notch split rounded theme color"),
         .init(.menuBar, "Menu bar background", "Menu bar color", "tint gradient glass frosted border shadow corner radius opacity"),
+        .init(.menuBar, "Menu bar shape", "Menu bar shape while music plays", "override playing song audio switch pills full notch"),
+        .init(.menuBar, "Music visualizer", "Music visualizer", "music audio visualizer spectrum equalizer bars wave glow animate menu bar background now playing album color"),
         .init(.menuBar, "Live Activities", "Live Activities", "iphone mac dynamic island widgets continuity"),
         .init(.menuBar, "Live Activities", "Live Activities from iPhone", "continuity mirroring phone"),
         .init(.menuBar, "Live Activities", "Keep Live Activities showing", "native standard hiding method sports"),

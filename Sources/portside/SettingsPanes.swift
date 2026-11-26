@@ -236,8 +236,8 @@ struct MenuBarSettings: View {
                 if hideAgainOpen {
                     MenuBarTriggersSection(dockModel: dockModel, service: triggers, hidesByMembership: hidesByMembership, parts: [.hideAgain])
                 }
-                fold("Look", "paintbrush", "Icon, Portside Bar style, menu bar shape and color", open: $lookOpen,
-                     anchors: ["Icons", "Portside Bar style", "Menu bar shape", "Menu bar background", "Glass", "Border"])
+                fold("Look", "paintbrush", "Icon, Portside Bar style, menu bar shape, color and music visualizer", open: $lookOpen,
+                     anchors: ["Icons", "Portside Bar style", "Menu bar shape", "Menu bar background", "Glass", "Border", "Music visualizer"])
                 if lookOpen {
                     MenuBarLookSection(dockModel: dockModel, supportsPortsideBar: true)
                 }
@@ -745,6 +745,13 @@ private struct MenuBarLookSection: View {
             SettingsChoiceCards(selection: binding(\.shape), choices: MenuBarShape.allCases.map { ($0, $0.title) }, columns: 4) {
                 MenuBarShapePicture(shape: $0, look: look)
             }
+            Picker(selection: binding(\.visualizer.playingShape)) {
+                Text("Don't change").tag(MenuBarShape?.none)
+                ForEach(MenuBarShape.allCases) { Text($0.title).tag(MenuBarShape?.some($0)) }
+            } label: {
+                Text("While music plays")
+                Text("Switches to this shape while a song plays and back 1.5 s after it stops.").helperStyle()
+            }
         } header: {
             Text("Menu bar shape").settingsAnchor("Menu bar shape")
         } footer: {
@@ -753,7 +760,7 @@ private struct MenuBarLookSection: View {
                 Text("Reduce Transparency makes the macOS menu bar opaque, which can cover the shape and background. You can change it in System Settings > Accessibility > Display.").footerStyle()
             }
         }
-        if look.shape != .none {
+        if look.shape != .none || (look.visualizer.playingShape ?? .none) != .none {
             DockBackgroundEditor(
                 background: look.background,
                 update: update(\.background),
@@ -764,6 +771,58 @@ private struct MenuBarLookSection: View {
                 },
                 header: { Text("Menu bar background").settingsAnchor("Menu bar background") }
             )
+        }
+        MenuBarVisualizerSection(dockModel: dockModel)
+    }
+}
+
+/// The music visualizer behind the menu bar (`look.visualizer`).
+private struct MenuBarVisualizerSection: View {
+    @ObservedObject var dockModel: DockModel
+
+    private var settings: MenuBarVisualizerSettings { dockModel.menuBarTriggers.look.visualizer }
+
+    private func set(_ change: (inout MenuBarVisualizerSettings) -> Void, persist: Bool = true) {
+        var next = dockModel.menuBarTriggers
+        change(&next.look.visualizer)
+        dockModel.setMenuBarTriggers(next, persist: persist)
+    }
+
+    private func binding<Value>(_ path: WritableKeyPath<MenuBarVisualizerSettings, Value>) -> Binding<Value> {
+        Binding(get: { settings[keyPath: path] }, set: { value in set { $0[keyPath: path] = value } })
+    }
+
+    var body: some View {
+        Section {
+            Picker("Style", selection: binding(\.style)) {
+                ForEach(MenuBarVisualizerStyle.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            if settings.style != .off {
+                Picker("Color", selection: binding(\.color)) {
+                    ForEach(MenuBarVisualizerColor.allCases) { Text($0.title).tag($0) }
+                }
+                Picker(selection: binding(\.area)) {
+                    ForEach(MenuBarVisualizerArea.allCases) { Text($0.title).tag($0) }
+                } label: {
+                    Text("Area")
+                    Text(dockModel.menuBarTriggers.look.shape == .none
+                         ? "No menu bar shape is drawn, so it fills the whole bar. Pick a shape above to match it."
+                         : "Match menu bar shape keeps it inside the \(dockModel.menuBarTriggers.look.shape.title.lowercased()) shape.").helperStyle()
+                }
+                SettingsSlider(title: "Intensity", value: settings.intensity, range: MenuBarVisualizerSettings.intensityRange, snap: 0.05,
+                               format: { "\(Int(($0 * 100).rounded()))%" }, set: { value, persist in set({ $0.intensity = value }, persist: persist) })
+                Toggle(isOn: binding(\.followsSound)) {
+                    Text("React to the sound")
+                    Text(dockModel.restrictedMode
+                         ? "Off in restricted mode; the animation keeps a steady pulse."
+                         : "Listens to the playing app only, through a private audio tap; macOS asks once for System Audio Recording. Nothing is recorded or saved. Without it, the animation keeps a steady pulse.").helperStyle()
+                }
+            }
+        } header: {
+            Text("Music visualizer").settingsAnchor("Music visualizer")
+        } footer: {
+            Text("Animates the menu bar's background while music plays, under its items. Album uses the cover's color. When the sound stops it falls to rest: the wave goes flat, bars drop and the glow fades.").footerStyle()
         }
     }
 }
