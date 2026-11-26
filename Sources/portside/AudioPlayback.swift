@@ -93,6 +93,12 @@ final class AudioPlaybackMonitor {
         }
     }
 
+    /// Apps whose tap could not start (no System Audio Recording access,
+    /// or a device error). Read on the activity queue.
+    var failedKeys: Set<String> {
+        Set(entries.filter { $0.value.failed }.keys)
+    }
+
     func stop() {
         for key in Array(entries.keys) {
             cancel(key)
