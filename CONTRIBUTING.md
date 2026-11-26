@@ -41,7 +41,7 @@ Ad hoc builds make macOS ask for permissions again whenever the binary changes. 
 
 - Fork, branch from `main`, and open a PR. `main` is protected; nothing is pushed to it directly.
 - Keep a PR to one change. Describe what changed and how you tested it.
-- Update the docs your change touches: `README.md` Features and Planned, `docs/FEATURES.md`, `docs/ARCHITECTURE.md` (layout tree for new files), `docs/DATA.md` (new `dock.json` keys), `docs/CHECKLIST.md`. List a feature only when it is built and working.
+- Update the docs your change touches: `README.md` (Features table, cards, Planned and Privacy; see [docs/agents/readme.md](docs/agents/readme.md)), `docs/PRIVACY.md` (new hosts, permissions or files), `docs/FEATURES.md`, `docs/ARCHITECTURE.md` (layout tree for new files), `docs/DATA.md` (new `dock.json` keys), `docs/CHECKLIST.md`. List a feature only when it is built and working.
 - Report security problems privately, see [SECURITY.md](SECURITY.md).
 
 By contributing you agree your work is released under the [MIT License](LICENSE).

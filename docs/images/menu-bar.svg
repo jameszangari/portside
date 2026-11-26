@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 290" width="440" height="290" role="img" aria-labelledby="t d">
+  <title id="t">Menu Bar Shelf</title>
+  <desc id="d">A menu bar with a dashed hidden section, a divider, a music visualizer behind it, and the Portside Bar showing an app menu.</desc>
+  <style>
+    .card { fill: #EAF0F6; stroke: #10283F; stroke-opacity: .14; }
+    .bar { fill: #FFFFFF; fill-opacity: .9; }
+    .ink { fill: #10283F; }
+    .soft { fill: #10283F; fill-opacity: .16; }
+    .faint { fill: #10283F; fill-opacity: .07; }
+    .panel { fill: #FFFFFF; stroke: #10283F; stroke-opacity: .14; }
+    .notch { fill: #0B0F14; }
+    .accent { fill: #F06A42; }
+    .tint { fill: #F06A42; fill-opacity: .16; }
+    .green { fill: #34C759; }
+    .line { stroke: #10283F; stroke-opacity: .25; fill: none; }
+    .aline { stroke: #F06A42; fill: none; }
+    .dash { stroke: #10283F; stroke-opacity: .35; fill: none; stroke-dasharray: 4 4; }
+    .light { fill: #F4EEDF; }
+    text { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif; }
+    .label { font-size: 17px; font-weight: 700; fill: #10283F; }
+    .hint { font-size: 12.5px; font-weight: 500; fill: #10283F; fill-opacity: .6; }
+    .t { font-size: 12px; font-weight: 600; fill: #10283F; }
+    .tm { font-size: 11px; font-weight: 500; fill: #10283F; fill-opacity: .55; }
+    .tl { font-size: 11px; font-weight: 600; fill: #F4EEDF; }
+    .key { font: 600 11.5px ui-monospace, "SF Mono", Menlo, monospace; fill: #F06A42; }
+    .big { font-size: 22px; font-weight: 700; fill: #10283F; }
+    @media (prefers-color-scheme: dark) {
+      .card { fill: #13202E; stroke: #F4EEDF; stroke-opacity: .14; }
+      .bar { fill: #1C2B3B; fill-opacity: 1; }
+      .ink { fill: #F4EEDF; }
+      .soft { fill: #F4EEDF; fill-opacity: .22; }
+      .faint { fill: #F4EEDF; fill-opacity: .08; }
+      .panel { fill: #1F3044; stroke: #F4EEDF; stroke-opacity: .14; }
+      .line { stroke: #F4EEDF; stroke-opacity: .3; }
+      .dash { stroke: #F4EEDF; stroke-opacity: .4; }
+      .label, .t, .big { fill: #F4EEDF; }
+      .hint, .tm { fill: #F4EEDF; }
+    }
+  </style>
+  
+  <rect class="card" x="1" y="1" width="438" height="288" rx="20"/>
+  <rect class="faint" x="24" y="24" width="392" height="180" rx="12"/>
+  <rect class="bar" x="24" y="24" width="392" height="30" rx="12"/>
+  <rect class="accent" x="34.0" y="48.0" width="6" height="6.0" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="43.5" y="39.1" width="6" height="14.9" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="53.0" y="34.9" width="6" height="19.1" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="62.5" y="37.3" width="6" height="16.7" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="72.0" y="44.2" width="6" height="9.8" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="81.5" y="44.5" width="6" height="9.5" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="91.0" y="40.7" width="6" height="13.3" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="100.5" y="40.9" width="6" height="13.1" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="110.0" y="42.4" width="6" height="11.6" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="119.5" y="47.8" width="6" height="6.2" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="129.0" y="40.3" width="6" height="13.7" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="138.5" y="35.4" width="6" height="18.6" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="148.0" y="36.5" width="6" height="17.5" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="157.5" y="43.6" width="6" height="10.4" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="167.0" y="42.9" width="6" height="11.1" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="176.5" y="36.0" width="6" height="18.0" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="186.0" y="35.3" width="6" height="18.7" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="195.5" y="40.6" width="6" height="13.4" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="205.0" y="47.6" width="6" height="6.4" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="214.5" y="41.7" width="6" height="12.3" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="224.0" y="40.3" width="6" height="13.7" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="233.5" y="41.4" width="6" height="12.6" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="243.0" y="45.2" width="6" height="8.8" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="252.5" y="43.9" width="6" height="10.1" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="262.0" y="37.3" width="6" height="16.7" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="271.5" y="35.3" width="6" height="18.7" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="281.0" y="39.7" width="6" height="14.3" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="290.5" y="47.3" width="6" height="6.7" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="300.0" y="38.5" width="6" height="15.5" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="309.5" y="34.6" width="6" height="19.4" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="319.0" y="37.4" width="6" height="16.6" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="328.5" y="44.7" width="6" height="9.3" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="338.0" y="43.9" width="6" height="10.1" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="347.5" y="40.1" width="6" height="13.9" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="357.0" y="41.0" width="6" height="13.0" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="366.5" y="43.1" width="6" height="10.9" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="376.0" y="47.3" width="6" height="6.7" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="385.5" y="40.2" width="6" height="13.8" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="395.0" y="35.6" width="6" height="18.4" rx="2" fill-opacity=".22"/>
+  <rect class="accent" x="404.5" y="37.0" width="6" height="17.0" rx="2" fill-opacity=".22"/>
+  <rect class="ink" x="36" y="33" width="12" height="12" rx="3"/>
+  <text class="t" x="58" y="43">Finder   File   Edit</text>
+  <rect class="dash" x="222" y="29" width="84" height="20" rx="6"/>
+  <rect class="soft" x="232" y="33" width="12" height="12" rx="3"/>
+  <rect class="soft" x="256" y="33" width="12" height="12" rx="3"/>
+  <rect class="soft" x="280" y="33" width="12" height="12" rx="3"/>
+  <rect class="accent" x="314" y="30" width="2" height="18" rx="1"/>
+  <rect class="ink" x="326" y="33" width="12" height="12" rx="3"/>
+  <rect class="ink" x="348" y="33" width="12" height="12" rx="3"/>
+  <rect class="ink" x="370" y="33" width="12" height="12" rx="3"/>
+  <text class="tm" x="236" y="72">Hidden</text><text class="tm" x="330" y="72">Visible</text>
+  <rect class="panel" x="176" y="96" width="150" height="40" rx="12"/>
+  <rect class="soft" x="188" y="106" width="20" height="20" rx="5"/>
+  <rect class="ink" x="214" y="106" width="20" height="20" rx="5"/>
+  <rect class="soft" x="240" y="106" width="20" height="20" rx="5"/>
+  <rect class="soft" x="266" y="106" width="20" height="20" rx="5"/>
+  <rect class="soft" x="292" y="106" width="20" height="20" rx="5"/>
+  <text class="t" x="176" y="88">Portside Bar</text>
+  <path class="panel" d="M216 136 v0"/>
+  <rect class="panel" x="200" y="142" width="120" height="54" rx="8"/>
+  <rect class="tint" x="206" y="148" width="108" height="16" rx="4"/>
+  <rect class="soft" x="212" y="153" width="64" height="6" rx="3"/><rect class="soft" x="212" y="173" width="80" height="6" rx="3"/><rect class="soft" x="212" y="185" width="52" height="6" rx="3"/>
+  <text class="tm" x="40" y="120">Click the icon,</text><text class="tm" x="40" y="134">scroll, or hover</text><text class="tm" x="40" y="148">to reveal</text>
+  <text class="label" x="24" y="252">Menu Bar Shelf</text>
+  <text class="hint" x="24" y="272">Hide and group items, open them in the Portside Bar, music visualizer</text>
+</svg>
