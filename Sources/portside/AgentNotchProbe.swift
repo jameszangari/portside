@@ -22,7 +22,7 @@ enum AgentNotchProbe {
             custom.filter = .attention; custom.expandedWidth = 550; custom.fontSize = 15; custom.maxSessions = 9
             custom.showProject = false; custom.showHost = false; custom.showUpdated = false; custom.providerColors = false
             custom.claude = false; custom.codex = false; custom.copilot = false
-            custom.opencode = false; custom.cursor = false
+            custom.opencode = false; custom.cursor = false; custom.chatgpt = false
             custom.showBorder = true; custom.collapseAfterFocus = false
             custom.accent.hue = 0.25
             let restored = try decoder.decode(AgentNotchSettings.self, from: JSONEncoder().encode(custom))

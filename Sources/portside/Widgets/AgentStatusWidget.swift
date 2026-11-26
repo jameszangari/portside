@@ -45,11 +45,14 @@ final class AgentStatusWidget: DockWidget {
         source.setCancelHandler { close(fd) }
         source.resume()
         watcher = source
+        // A ChatGPT scan finishes after `refresh` returns; show it now.
+        ChatGPTReplies.shared.onChange = { [weak self] in self?.refresh() }
     }
 
     func stop() {
         watcher?.cancel()
         watcher = nil
+        ChatGPTReplies.shared.onChange = nil
         attentionCheck?.cancel()
         attentionCheck = nil
         AppActivity.shared.setAgentWorking(nil)
@@ -72,7 +75,7 @@ final class AgentStatusWidget: DockWidget {
             }
             next.append(located)
         }
-        // T3 Code / OpenCode do not fire Claude hooks; merge their local DBs.
+        // T3 Code / OpenCode / ChatGPT do not fire Claude hooks; merge their local DBs.
         next = Self.merged(hooks: next, discovered: AgentSessionDiscovery.discover(existing: next))
         next.sort { $0.updated > $1.updated }
         // An answered prompt writes no hook file; look again soon so "Needs
@@ -211,6 +214,10 @@ struct AgentProvider: Hashable, Identifiable {
             AgentProvider(id: "cursor", name: "Cursor", vendor: "Cursor",
                           bundleIDs: ["com.t3tools.t3code"],
                           color: Color(red: 0.45, green: 0.75, blue: 0.95))
+        case "chatgpt":
+            AgentProvider(id: "chatgpt", name: "ChatGPT", vendor: "OpenAI",
+                          bundleIDs: ["com.openai.codex", "com.openai.chat"],
+                          color: Color(red: 0.06, green: 0.64, blue: 0.50))
         default:
             AgentProvider(id: id, name: id.capitalized, vendor: id.capitalized,
                           bundleIDs: ["com.t3tools.t3code"], color: .gray)
@@ -230,7 +237,7 @@ struct AgentProvider: Hashable, Identifiable {
     private static var icons: [String: NSImage?] = [:]
 }
 
-/// One agent session: a Claude/Codex hook file, or a T3 / OpenCode discovery row.
+/// One agent session: a Claude/Codex hook file, or a T3 / OpenCode / ChatGPT discovery row.
 struct AgentSession: Equatable {
     let id: String
     let provider: AgentProvider

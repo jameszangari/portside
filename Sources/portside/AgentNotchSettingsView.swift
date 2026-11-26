@@ -157,6 +157,7 @@ struct AgentNotchSettingsView: View {
                 Toggle("OpenCode", isOn: binding(\.opencode))
                 Toggle("Cursor (in T3)", isOn: binding(\.cursor))
                 Toggle("Copilot", isOn: binding(\.copilot))
+                Toggle("ChatGPT", isOn: binding(\.chatgpt))
                 Picker("Show", selection: binding(\.filter)) {
                     ForEach(AgentNotchFilter.allCases) { Text($0.title).tag($0) }
                 }
@@ -349,7 +350,8 @@ struct AgentNotchSettingsView: View {
 
     private var agentsSummary: String {
         let names: [(String, Bool)] = [("Claude", preferences.claude), ("Codex", preferences.codex), ("OpenCode", preferences.opencode),
-                                       ("Cursor", preferences.cursor), ("Copilot", preferences.copilot)]
+                                       ("Cursor", preferences.cursor), ("Copilot", preferences.copilot),
+                                       ("ChatGPT", preferences.chatgpt)]
         let on = names.filter(\.1).map(\.0)
         let who = on.count == names.count ? "All agents" : on.isEmpty ? "No agents" : on.joined(separator: ", ")
         return "\(who), \(preferences.filter.title.lowercased())"

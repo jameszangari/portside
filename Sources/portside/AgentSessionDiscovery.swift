@@ -7,12 +7,14 @@ import os.log
 ///
 /// T3 Code stores run status in `~/.t3/userdata/statev2.sqlite`. OpenCode keeps
 /// busy/idle timestamps in `~/.local/share/opencode/opencode.db`. Both are
-/// read-only, local, and need no tokens. Hook-fed Claude/Codex files stay the
+/// read-only, local, and need no tokens. ChatGPT keeps no such record, so
+/// `ChatGPTReplies` reads its windows instead. Hook-fed Claude/Codex files stay the
 /// primary source for CLI agents.
 enum AgentSessionDiscovery {
     private static let log = Logger(subsystem: "com.james.portside", category: "Widgets")
 
-    /// Active and recently finished T3 runs, plus busy/recent OpenCode sessions.
+    /// Active and recently finished T3 runs, busy/recent OpenCode sessions,
+    /// and ChatGPT chats that are replying or just replied.
     /// `existing` are hook sessions already loaded; used to skip OpenCode rows
     /// that T3 already surfaces for the same project folder.
     static func discover(existing: [AgentSession] = []) -> [AgentSession] {
@@ -30,6 +32,7 @@ enum AgentSessionDiscovery {
         let openCodeHost = openCodePID.flatMap { AgentFocus.hostApp(of: $0)?.localizedName } ?? "OpenCode"
         next.append(contentsOf: openCodeSessions(database: openCodeDatabase, excludingProjects: coveredProjects,
                                                  hostPID: openCodePID, hostName: openCodeHost))
+        next.append(contentsOf: ChatGPTReplies.shared.sessions())
         return next
     }
 
