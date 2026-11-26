@@ -249,7 +249,10 @@ struct NotchShelfMachine: Equatable {
         let next: NotchShelfTimer?
         switch (region, phase) {
         case (.outside, .compact): next = nil
-        case (.outside, .card): next = .collapseCard
+        case (.outside, .card): next = pinned ? nil : .collapseCard
+        // A pinned card stays as it is: hovering the strip neither swaps
+        // nor opens it. A click opens the shelf.
+        case (_, .card) where pinned: next = nil
         case (.outside, .open): next = pinned ? nil : .collapse
         case (.body, _): next = nil
         case (_, .open): next = nil
@@ -319,10 +322,13 @@ struct NotchShelfMachine: Equatable {
         phase = .open
     }
 
+    /// The open shelf or a card (the music card's pin).
     mutating func setPinned(_ value: Bool) {
-        pinned = value && phase == .open
+        pinned = value && phase != .compact
         if pinned {
             viaHotkey = false
+            // A pinned song banner is just the card now.
+            banner = false
             pending = nil
         }
     }

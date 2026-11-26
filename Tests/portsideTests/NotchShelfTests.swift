@@ -94,6 +94,33 @@ final class NotchShelfTests: XCTestCase {
         XCTAssertEqual(off.pointer(.side(.trailing)) { both.activity($0) }, .card(.agents), "no page: the card as before")
     }
 
+    func testAPinnedCardStaysUntilUnpinnedOrClicked() {
+        let both = NotchShelfStrip.layout(music: true, agents: true, agentAlert: false)
+        var m = NotchShelfMachine()
+        m.setPinned(true)
+        XCTAssertFalse(m.pinned, "nothing to pin while compact")
+        m.pointer(.side(.leading)) { both.activity($0) }; m.fire(.card(.music))
+        m.setPinned(true)
+        XCTAssertTrue(m.pinned)
+        XCTAssertNil(m.pointer(.outside), "leaving does not close it")
+        XCTAssertNil(m.pointer(.side(.trailing)) { both.activity($0) }, "hovering the agents does not swap it")
+        XCTAssertNil(m.pointer(.notch), "nor does the notch open the shelf")
+        XCTAssertEqual(m.card, .music)
+        m.setPinned(false)
+        XCTAssertEqual(m.pointer(.outside), .collapseCard, "unpinned, it closes as before")
+        m.pointer(.side(.leading)) { both.activity($0) }
+        m.setPinned(true)
+        m.click()
+        XCTAssertTrue(m.isOpen)
+        XCTAssertFalse(m.pinned, "a click opens the shelf, unpinned")
+
+        var banner = NotchShelfMachine()
+        XCTAssertEqual(banner.showBanner(), .bannerEnd)
+        banner.setPinned(true)
+        banner.fire(.bannerEnd)
+        XCTAssertEqual(banner.card, .music, "a pinned banner does not time out")
+    }
+
     func testPassingOverAnActivityDoesNotShowItsCard() {
         var m = NotchShelfMachine()
         m.pointer(.side(.leading), activity: music)
