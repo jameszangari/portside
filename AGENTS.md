@@ -25,6 +25,8 @@ Hover and click behavior needs a person. Build and launch, then say exactly what
 
 `main` is protected. Work on a feature branch and open a pull request; do not push to `main`. Do not commit or push unless the maintainer asks.
 
+Delete branches once their PR is merged: the remote branch (GitHub's "delete branch on merge", or `git push origin --delete <branch>`), the local branch (`git branch -d <branch>`), and any worktree checked out on it (`git worktree remove <path>`). Run `git fetch --prune` afterward. Never delete `main` or `nightly`, and check a worktree is clean before removing it.
+
 ## Definition of done
 
 1. Update `docs/CHECKLIST.md`: finished items, new findings, deferred items, known gaps.
