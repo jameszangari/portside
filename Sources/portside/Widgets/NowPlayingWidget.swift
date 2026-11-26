@@ -94,6 +94,9 @@ final class NowPlayingWidget: DockWidget {
     private let system = MediaRemoteNowPlaying()
     /// The player the system stream last reported, if not Spotify or Music.
     private var systemBundle: String?
+    /// The stream's last report for Spotify or Music. Without Automation it
+    /// is the only source of their art.
+    private var playerSnapshots: [String: MediaRemoteNowPlaying.Snapshot] = [:]
     /// AppleScript runs here, off the main thread: an Apple event can wait
     /// on a busy player, and the first one waits on the permission prompt.
     private let scriptQueue = DispatchQueue(label: "com.james.portside.nowplaying")
@@ -231,13 +234,42 @@ final class NowPlayingWidget: DockWidget {
             let id = (note["Track ID"] ?? note["PersistentID"]).map { "\($0)" } ?? title
             set(Track(id: id, title: title, artist: note["Artist"] as? String, artwork: nil, artworkURL: nil,
                       isPlaying: state == "Playing", player: player), for: player.bundleID)
+            fillFromSystem(player.bundleID)
         }
+    }
+
+    private func fillFromSystem(_ bundleID: String) {
+        guard let track = tracks[bundleID], let snapshot = playerSnapshots[bundleID],
+              let filled = Self.filled(track, from: snapshot) else { return }
+        tracks[bundleID] = filled
+        logger.info("now playing (\(bundleID, privacy: .public)): art from the system stream")
+    }
+
+    /// A Spotify or Music track read without Automation has no art, length or
+    /// position; they come from the system stream when it reports the same
+    /// title. Nil when there is nothing to add. Internal for tests.
+    static func filled(_ track: Track, from snapshot: MediaRemoteNowPlaying.Snapshot) -> Track? {
+        guard track.artwork == nil, track.artworkURL == nil, let artwork = snapshot.artwork,
+              snapshot.bundleID == track.player.bundleID, snapshot.title == track.title else { return nil }
+        var next = track
+        next.artwork = artwork
+        if next.duration == nil {
+            next.duration = snapshot.duration
+            next.elapsed = snapshot.elapsed
+            next.elapsedAt = snapshot.elapsedAt
+        }
+        return next
     }
 
     /// Spotify and Music stay on AppleScript, which also gives their art
     /// and works without the stream; a report for one of them only clears
-    /// the other player the stream had.
+    /// the other player the stream had, and fills in art AppleScript could
+    /// not read.
     private func applySystem(_ snapshot: MediaRemoteNowPlaying.Snapshot?) {
+        if let snapshot, Self.players.contains(where: { $0.bundleID == snapshot.bundleID }) {
+            playerSnapshots[snapshot.bundleID] = snapshot
+            fillFromSystem(snapshot.bundleID)
+        }
         let next = snapshot.flatMap { snapshot in
             Self.players.contains { $0.bundleID == snapshot.bundleID } ? nil : snapshot
         }
