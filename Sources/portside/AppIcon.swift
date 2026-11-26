@@ -40,6 +40,10 @@ enum AppIcon {
     static var choice = AppIconChoice.system
 
     private static var drawn: [AppIconChoice: NSImage] = [:]
+    /// Dark and Light rendered to bitmaps, by artwork and point size. The
+    /// drawn variant redraws its SVG on every display, and a copy of it
+    /// starts with no cache, so views and the Dock tile use these instead.
+    private static var rendered: [String: NSImage] = [:]
     private static let pixelSizes = [16, 32, 128, 256]
 
     /// The app's appearance right now. Read at each call; `IconCache` redraws
@@ -72,6 +76,13 @@ enum AppIcon {
         return artwork == .navy ? flatImage : variant(artwork) ?? flatImage
     }
 
+    /// The chosen icon for the Dock tile: a bitmap at the tile's largest
+    /// size (128 pt, 2x), so showing it never redraws the artwork.
+    static var tileImage: NSImage {
+        let artwork = choice.artwork(dark: isDark)
+        return artwork == .navy ? flatImage : bitmap(artwork, points: 128) ?? flatImage
+    }
+
     /// The chosen icon at a fixed point size.
     static func image(points: CGFloat) -> NSImage {
         image(for: choice, points: points)
@@ -79,9 +90,34 @@ enum AppIcon {
 
     static func image(for choice: AppIconChoice, points: CGFloat) -> NSImage {
         let artwork = choice.artwork(dark: isDark)
-        guard artwork != .navy, let drawn = variant(artwork)?.copy() as? NSImage else { return navy(points: points) }
-        drawn.size = NSSize(width: points, height: points)
-        return drawn
+        guard artwork != .navy, let image = bitmap(artwork, points: points) else { return navy(points: points) }
+        return image
+    }
+
+    /// `artwork` rendered once at 1x and 2x for `points`, then reused.
+    private static func bitmap(_ artwork: AppIconChoice, points: CGFloat) -> NSImage? {
+        let key = "\(artwork)-\(points)"
+        if let image = rendered[key] { return image }
+        guard let drawn = variant(artwork) else { return nil }
+        let size = NSSize(width: points, height: points)
+        let image = NSImage(size: size)
+        for scale in [1.0, 2.0] {
+            let px = max(1, Int((points * scale).rounded(.up)))
+            guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px, bitsPerSample: 8,
+                                             samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+                  let context = NSGraphicsContext(bitmapImageRep: rep) else { continue }
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = context
+            context.imageInterpolation = .high
+            drawn.draw(in: NSRect(x: 0, y: 0, width: px, height: px))
+            NSGraphicsContext.restoreGraphicsState()
+            rep.size = size
+            image.addRepresentation(rep)
+        }
+        if rendered.count > 24 { rendered.removeAll() }
+        rendered[key] = image
+        return image
     }
 
     /// All PNG sizes in one 512pt image. NSImage picks the closest
@@ -162,7 +198,7 @@ enum AppIcon {
     /// also draws the icon itself. Called again when the choice or the
     /// appearance changes.
     static func applyToDockTile() {
-        let image = self.image
+        let image = tileImage
         NSApp.applicationIconImage = image
         let tile = NSApp.dockTile
         tile.contentView = NSImageView(image: image)

@@ -32,6 +32,9 @@ struct ThinkingLoader: View {
     /// Longest side. Snake uses a 2:3 frame; dots are roughly square.
     var size: CGFloat = 14
     var color: Color = .white
+    /// Frames a second. The dock chip asks for fewer: an 11 pt chip looks
+    /// the same at 12, and every frame redraws the dock.
+    var frameRate: Double = 24
 
     private var frameSize: CGSize {
         switch style {
@@ -43,14 +46,21 @@ struct ThinkingLoader: View {
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24, paused: paused)) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / frameRate, paused: paused)) { context in
             let t = paused ? nil : context.date.timeIntervalSinceReferenceDate
-            Canvas { gc, canvasSize in
+            if style == .dots {
+                // Plain shapes, not a Canvas: a Canvas draws into its own
+                // layer, which the main thread waits on the GPU to finish
+                // every frame. The dots are simple enough not to need it.
+                Self.dots(size: frameSize, t: t, color: color)
+            } else {
+                Canvas { gc, canvasSize in
                 switch style {
                 case .ship: Self.drawShip(gc, size: canvasSize, t: t, color: color)
                 case .wheel: Self.drawWheel(gc, size: canvasSize, t: t, color: color)
                 case .snakeBoxes: Self.drawSnake(gc, size: canvasSize, t: t, color: color)
                 case .dots: Self.drawDots(gc, size: canvasSize, t: t, color: color)
+                }
                 }
             }
         }
@@ -186,6 +196,23 @@ struct ThinkingLoader: View {
     }
 
     /// Three dots pulsing in turn, like a typing indicator.
+    /// The dots as views, laid out as `drawDots` draws them.
+    private static func dots(size: CGSize, t: Double?, color: Color) -> some View {
+        let dot = size.width / 4.2
+        let step = (size.width - dot) / 2
+        return ZStack(alignment: .topLeading) {
+            ForEach(0..<3, id: \.self) { i in
+                let pulse = t.map { 0.5 + 0.5 * sin($0 * 6 - Double(i) * 0.9) } ?? 1
+                let side = dot * (0.7 + 0.3 * pulse)
+                Circle()
+                    .fill(color.opacity(0.4 + 0.6 * pulse))
+                    .frame(width: side, height: side)
+                    .offset(x: CGFloat(i) * step + (dot - side) / 2, y: (size.height - side) / 2)
+            }
+        }
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+    }
+
     private static func drawDots(_ gc: GraphicsContext, size: CGSize, t: Double?, color: Color) {
         let dot = size.width / 4.2
         let step = (size.width - dot) / 2

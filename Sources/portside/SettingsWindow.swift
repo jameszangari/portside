@@ -433,12 +433,15 @@ final class SettingsNavigation: ObservableObject {
 /// selected pane's form on the right. React analogy: a layout route with a
 /// nav column and an outlet.
 struct SettingsView: View {
-    @ObservedObject var dockModel: DockModel
-    @ObservedObject var layout: DockLayout
+    // Plain references: the root only hands these to the panes, which
+    // observe what they show. Observing them here rebuilt the sidebar and
+    // the open pane on every badge count or dock size change.
+    let dockModel: DockModel
+    let layout: DockLayout
     let nativeDock: NativeDockController
     let launchAtLogin: LaunchAtLogin
     let trash: TrashController
-    @ObservedObject var badges: DockBadges
+    let badges: DockBadges
     let widgets: WidgetStore
     let integrations: IntegrationSettings
 

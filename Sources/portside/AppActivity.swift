@@ -812,17 +812,25 @@ struct ActivityChip: View {
                 .font(.system(size: d * 0.5, weight: .semibold))
                 .foregroundStyle(.white)
         case .audio, .audioOutput:
-            Image(systemName: "speaker.wave.2.fill")
-                .font(.system(size: d * 0.5, weight: .semibold))
-                .foregroundStyle(.white)
-                .symbolEffect(.variableColor.iterative, options: .repeating,
-                              isActive: activity.dockVisible && !reduceMotion)
+            // Waves filling one by one, as `.variableColor.iterative` did, a
+            // step every 0.4 s. A timeline that redraws only on a step, not a
+            // repeating symbol effect: those run on the main thread at the
+            // display's rate (120 Hz on ProMotion) and redraw the dock and
+            // its glass every frame.
+            let animate = activity.dockVisible && !reduceMotion
+            TimelineView(.animation(minimumInterval: 0.4, paused: !animate)) { context in
+                let step = animate ? Int(context.date.timeIntervalSinceReferenceDate / 0.4) % 4 : 3
+                Image(systemName: "speaker.wave.3.fill", variableValue: Double(step) / 3)
+                    .font(.system(size: d * 0.5, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
         case .working:
             ThinkingLoader(
                 style: .dots,
                 paused: reduceMotion || !activity.dockVisible,
                 size: d * 0.72,
-                color: .white
+                color: .white,
+                frameRate: 12
             )
         }
     }
