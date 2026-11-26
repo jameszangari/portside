@@ -292,9 +292,15 @@ private struct CommandCenterRow: View {
         .focusable(false)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(item.title)
-        .accessibilityValue(item.unavailableReason.map { "Unavailable. \($0)" } ?? [item.detail, item.subtitle].compactMap { $0 }.joined(separator: ". "))
+        .accessibilityValue(spokenValue)
         .accessibilityHint(item.unavailableReason == nil ? item.primaryTitle : "")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    // Typed on its own: inline in `body` it slowed type checking.
+    private var spokenValue: String {
+        if let reason = item.unavailableReason { return "Unavailable. \(reason)" }
+        return [item.detail, item.subtitle].compactMap { $0 }.joined(separator: ". ")
     }
 }
 
