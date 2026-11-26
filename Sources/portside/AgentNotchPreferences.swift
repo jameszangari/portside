@@ -115,6 +115,7 @@ struct AgentNotchSettings: Codable, Equatable {
     var copilot = true
     var opencode = true
     var cursor = true
+    var chatgpt = true
     /// The panel's shadow, which rims the notch with a faint edge. Off by
     /// default (maintainer request): the notch blends into the housing.
     var showBorder = false
@@ -140,7 +141,7 @@ struct AgentNotchSettings: Codable, Equatable {
         case shelfPages, shelfLeadingWidget, shelfTrailingWidget, shelfHoverDelay, shelfCollapseDelay
         case shelfHaptics, musicStyle, musicSeeking, musicTint, musicHideWhenPaused, musicBanner, agentCard, thinking, filesKeep, filesRemoveAfterDrag, hudVolume, hudBrightness, hudReplaceSystem, finishedDismissMinutes, stripOrder, meetingMinutes
         case alertAgents, alertBattery, batteryLowPercent, alertAirPods, airPodsLowPercent, airPodsLive, shelfToggleHotkey, shelfFilesHotkey, shelfClipboardHotkey, hotkeyOpenSeconds, alertWeather, showInFullScreen, collapseAfterFocus, showProject, showHost, showUpdated, showProviderNames, providerColors
-        case showFinished, claude, codex, copilot, opencode, cursor, showBorder, compactWidth, compactHeight, expandedWidth, cornerRadius, opacity, fontSize
+        case showFinished, claude, codex, copilot, opencode, cursor, chatgpt, showBorder, compactWidth, compactHeight, expandedWidth, cornerRadius, opacity, fontSize
         case rowSpacing, maxSessions, animationDuration, accent
     }
 
@@ -202,6 +203,7 @@ struct AgentNotchSettings: Codable, Equatable {
         copilot = values.value(.copilot, or: true)
         opencode = values.value(.opencode, or: true)
         cursor = values.value(.cursor, or: true)
+        chatgpt = values.value(.chatgpt, or: true)
         showBorder = values.value(.showBorder, or: false)
         compactWidth = values.value(.compactWidth, or: 184)
         compactHeight = values.value(.compactHeight, or: 30)
@@ -275,6 +277,7 @@ struct AgentNotchSettings: Codable, Equatable {
         case "copilot": copilot
         case "opencode": opencode
         case "cursor": cursor
+        case "chatgpt": chatgpt
         default: true
         }
     }

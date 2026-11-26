@@ -78,6 +78,22 @@ final class NotchShelfTests: XCTestCase {
         XCTAssertEqual(m.card, .agents)
     }
 
+    func testHoveringAgentsOpensTheAgentsPage() {
+        let both = NotchShelfStrip.layout(music: true, agents: true, agentAlert: false)
+        let agentsPage: (NotchShelfActivity) -> NotchShelfPage? = { $0 == .agents ? .agents : nil }
+        var m = NotchShelfMachine()
+        XCTAssertEqual(m.pointer(.side(.trailing), activity: { both.activity($0) }, page: agentsPage), .page(.agents))
+        m.fire(.page(.agents))
+        XCTAssertTrue(m.isOpen, "the full shelf, not the agent card")
+        var fromCard = NotchShelfMachine()
+        fromCard.pointer(.side(.leading), activity: { both.activity($0) }, page: agentsPage); fromCard.fire(.card(.music))
+        XCTAssertEqual(fromCard.card, .music)
+        XCTAssertEqual(fromCard.pointer(.side(.trailing), activity: { both.activity($0) }, page: agentsPage), .page(.agents),
+                       "music card to agents opens the page")
+        var off = NotchShelfMachine()
+        XCTAssertEqual(off.pointer(.side(.trailing)) { both.activity($0) }, .card(.agents), "no page: the card as before")
+    }
+
     func testPassingOverAnActivityDoesNotShowItsCard() {
         var m = NotchShelfMachine()
         m.pointer(.side(.leading), activity: music)

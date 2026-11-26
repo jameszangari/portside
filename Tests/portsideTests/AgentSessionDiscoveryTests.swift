@@ -170,6 +170,37 @@ final class AgentSessionDiscoveryTests: XCTestCase {
         XCTAssertNil(sessions.first?.project, "the root folder has no project name")
     }
 
+    // MARK: ChatGPT
+
+    func testChatGPTReplyingThenDone() {
+        var tracker = ChatGPTReplies.Tracker()
+        let start = Date()
+        tracker.update(replying: ["Vocal Suggestions", "Trip plan"], now: start)
+        let replying = Dictionary(uniqueKeysWithValues: tracker.sessions(hostPID: 7, hostName: "ChatGPT").map { ($0.id, $0) })
+        XCTAssertEqual(Set(replying.keys), ["chatgpt:Vocal Suggestions", "chatgpt:Trip plan"])
+        let chat = replying["chatgpt:Vocal Suggestions"]
+        XCTAssertEqual(chat?.state, .running)
+        XCTAssertEqual(chat?.project, "Vocal Suggestions", "the window title finds the window on click")
+        XCTAssertEqual(chat?.provider.id, "chatgpt")
+        XCTAssertEqual(chat?.pid, 7)
+        XCTAssertEqual(chat?.focusBundleIDs, ["com.openai.codex"])
+
+        let later = start.addingTimeInterval(60)
+        tracker.update(replying: ["Trip plan"], now: later)
+        let done = Dictionary(uniqueKeysWithValues: tracker.sessions(hostPID: 7, hostName: "ChatGPT").map { ($0.id, $0) })
+        XCTAssertEqual(done["chatgpt:Vocal Suggestions"]?.state, .done)
+        XCTAssertEqual(done["chatgpt:Vocal Suggestions"]?.updated, later)
+        XCTAssertEqual(done["chatgpt:Trip plan"]?.updated, start, "a reply keeps the time it started")
+
+        tracker.update(replying: ["Vocal Suggestions"], now: later.addingTimeInterval(5))
+        XCTAssertEqual(tracker.sessions(hostPID: 7, hostName: "ChatGPT").first { $0.id == "chatgpt:Vocal Suggestions" }?.state,
+                       .running, "a new reply in a finished chat is working again")
+
+        tracker.update(replying: [], now: later.addingTimeInterval(2000))
+        XCTAssertEqual(tracker.sessions(hostPID: 7, hostName: "ChatGPT").map(\.id), ["chatgpt:Vocal Suggestions"],
+                       "finished chats drop after 30 minutes")
+    }
+
     func testIsolatedHomeNeverReadsRealDatabases() {
         guard ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"]?.hasPrefix("/tmp/") == true else {
             return

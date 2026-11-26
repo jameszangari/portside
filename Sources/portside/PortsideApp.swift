@@ -45,6 +45,9 @@ enum PortsideMain {
         if CommandLine.arguments.contains("--check-windows") {
             exit(MainActor.assumeIsolated { WindowRegistryProbe.run() })
         }
+        if CommandLine.arguments.contains("--check-chatgpt") {
+            exit(MainActor.assumeIsolated { ChatGPTReplies.probe() })
+        }
         if CommandLine.arguments.contains("--check-listeners") {
             exit(ListenerProbe.run())
         }

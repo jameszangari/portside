@@ -105,7 +105,9 @@ final class AgentNotchPresentation: ObservableObject {
         let strip = strip
         // A hotkey's shelf runs its own timer; the pointer only notes where it is.
         let hotkey = machine.viaHotkey && machine.isOpen
-        let timer = machine.pointer(region) { strip.activity($0) }
+        let agentsPage = preferences.shelfPages.visible(available: pageAvailable).contains(.agents)
+        let timer = machine.pointer(region, activity: { strip.activity($0) },
+                                    page: { $0 == .agents && agentsPage && !force ? .agents : nil })
         if !hotkey { schedule(timer) }
         if banner != machine.banner { syncShelf() }
     }
@@ -129,7 +131,7 @@ final class AgentNotchPresentation: ObservableObject {
         hoverTask = nil
         guard let timer else { return }
         let delay: Double = switch timer {
-        case .card, .open: preferences.shelfHoverDelay
+        case .card, .open, .page: preferences.shelfHoverDelay
         case .collapse: preferences.shelfCollapseDelay
         case .collapseCard: 0.2
         case .bannerEnd: 3
@@ -139,8 +141,9 @@ final class AgentNotchPresentation: ObservableObject {
             guard let self else { return }
             let before = self.machine.phase
             self.machine.fire(timer)
-            if self.machine.phase != before, timer == .open || timer == .card(.music) || timer == .card(.agents) { self.haptic() }
+            if self.machine.phase != before, timer == .open || timer == .page(.agents) || timer == .card(.music) { self.haptic() }
             self.syncShelf()
+            if case .page(let page) = timer, self.machine.isOpen { self.showPage(page) }
         }
         hoverTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
