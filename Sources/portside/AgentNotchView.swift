@@ -537,7 +537,7 @@ struct AgentNotchView: View {
                 }
             }
         }
-        .padding(.horizontal, state.expanded || state.card != nil ? 16 : 12)
+        .padding(.horizontal, stripSideInset)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: side == .leading ? .leading : .trailing)
     }
 
@@ -569,9 +569,22 @@ struct AgentNotchView: View {
                 Color.clear
             }
         }
-        // Open, line up with the cards' 16 pt margin; split, leave room for both marks.
-        .padding(.horizontal, state.expanded || state.card != nil ? 16 : split ? 8 : 12)
+        .padding(.horizontal, stripSideInset)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: side == .leading ? .leading : .trailing)
+    }
+
+    /// Space between the strip's ends and what it shows, measured from the
+    /// edge you see: attached, the flared top corners sit inside the frame.
+    /// 14 pt, the shelf's 16 pt card margin once open; with two activities
+    /// on a narrow strip it gives way so both marks still fit.
+    private var stripSideInset: CGFloat {
+        if state.expanded || state.card != nil { return 16 }
+        let edge = state.topAttached ? NotchShape.flare : 0
+        guard state.strip.isSplit else { return edge + 14 }
+        let notch = state.notchWidth > 0 ? state.notchWidth : state.compactWidth / 3
+        let side = (state.compactWidth - notch) / 2
+        // About 46 pt: art or a mark, 6 pt, and the bars or a count.
+        return edge + min(14, max(4, side - edge - 46))
     }
 
     private var stripPaused: Bool { !preferences.animate || reduceMotion }
