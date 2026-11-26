@@ -530,6 +530,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 },
                 emptyClickToggles: { [weak self] in MainActor.assumeIsolated { self?.dockModel.menuBarTriggers.emptyClick ?? false } },
                 dismissBar: { [weak self] in MainActor.assumeIsolated { _ = self?.menuBarTriggers?.activate(.control, action: .hide) } },
+                warmItems: { MenuBarSnapshotCache.live.warm() },
+                itemsChanged: { MenuBarSnapshotCache.live.changed() },
                 // From the trigger service, not the model: a setting's change
                 // is published before the model's own value updates.
                 method: { [weak self] in MainActor.assumeIsolated { self?.menuBarTriggers?.settings.hidingMethod ?? .standard } },

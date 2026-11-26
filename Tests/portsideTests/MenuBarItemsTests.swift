@@ -250,4 +250,65 @@ final class MenuBarItemsTests: XCTestCase {
         await waitUntil { !source.presses.isEmpty }
         XCTAssertEqual(source.presses, [item])
     }
+
+    // MARK: Snapshot cache
+
+    private final class Sweeps: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        var value: Int { lock.withLock { count } }
+        func next() -> Int { lock.withLock { count += 1; return count } }
+    }
+
+    private static func swept(_ sweeps: Sweeps, delay: UInt32 = 0) -> @Sendable () -> MenuBarSnapshot {
+        { [sweeps] in
+            let n = sweeps.next()
+            if delay > 0 { usleep(delay) }
+            return MenuBarSnapshot(access: .ready, items: [item(n)])
+        }
+    }
+
+    func testSnapshotCacheReturnsAFreshSweepAtOnceAndRefreshesBehindIt() async throws {
+        let sweeps = Sweeps()
+        let cache = MenuBarSnapshotCache(sweep: Self.swept(sweeps))
+        let first = await cache.snapshot()
+        XCTAssertEqual(first.items.map(\.ordinal), [1])
+        try await Task.sleep(for: .milliseconds(50))
+        let second = await cache.snapshot()
+        XCTAssertEqual(second.items.map(\.ordinal), [1], "a fresh sweep is returned without waiting")
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(sweeps.value, 2, "and a new one runs behind it")
+        let third = await cache.snapshot()
+        XCTAssertEqual(third.items.map(\.ordinal), [2])
+    }
+
+    func testSnapshotCacheWaitsWhenStaleOrInvalidated() async throws {
+        let sweeps = Sweeps()
+        let stale = MenuBarSnapshotCache(freshFor: 0, sweep: Self.swept(sweeps))
+        _ = await stale.snapshot()
+        let again = await stale.snapshot()
+        XCTAssertEqual(again.items.map(\.ordinal), [2])
+
+        let other = Sweeps()
+        let cache = MenuBarSnapshotCache(sweep: Self.swept(other))
+        _ = await cache.snapshot()
+        await cache.invalidate()
+        let after = await cache.snapshot()
+        XCTAssertEqual(after.items.map(\.ordinal), [2], "an invalidated sweep is not reused")
+    }
+
+    func testSnapshotCacheNeverKeepsADeniedSweepAndRunsOneAtATime() async {
+        let sweeps = Sweeps()
+        let denied = MenuBarSnapshotCache { _ = sweeps.next(); return .denied }
+        _ = await denied.snapshot()
+        _ = await denied.snapshot()
+        XCTAssertEqual(sweeps.value, 2, "denied may change once access is granted")
+
+        let slow = Sweeps()
+        let cache = MenuBarSnapshotCache(sweep: Self.swept(slow, delay: 50_000))
+        async let a = cache.snapshot()
+        async let b = cache.snapshot()
+        _ = await (a, b)
+        XCTAssertEqual(slow.value, 1)
+    }
 }

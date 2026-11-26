@@ -57,6 +57,14 @@ enum MenuBarMenuReader {
     private static let depthLimit = 6
     private static let rowLimit = 400
 
+    private static let queue = DispatchQueue(label: "portside.menubar.menus", qos: .userInitiated, attributes: .concurrent)
+
+    /// `rows(of:)` on its own queue, so several reads at once never hold
+    /// Swift's shared threads while an owner is slow to answer.
+    nonisolated static func read(_ item: MenuBarItem) async -> [MenuBarMirrorRow] {
+        await withCheckedContinuation { done in queue.async { done.resume(returning: rows(of: item)) } }
+    }
+
     nonisolated static func rows(of item: MenuBarItem) -> [MenuBarMirrorRow] {
         guard AXIsProcessTrusted(), case .found(let elements) = AXMenuBarItemSource.elements(pid: item.pid), elements.indices.contains(item.ordinal),
               let menu = children(elements[item.ordinal]).first(where: { role($0) == "AXMenu" }) else { return [] }
@@ -64,28 +72,39 @@ enum MenuBarMenuReader {
         return MenuBarMirrorPlan.tidy(read(menu, depth: 0, budget: &budget))
     }
 
+    /// Everything a row needs, asked in one round trip per row.
+    private static let rowAttributes = [
+        kAXRoleAttribute, kAXTitleAttribute, kAXDescriptionAttribute, kAXEnabledAttribute,
+        "AXMenuItemMarkChar", "AXMenuItemCmdChar", "AXMenuItemCmdModifiers", kAXChildrenAttribute
+    ]
+
     private nonisolated static func read(_ menu: AXUIElement, depth: Int, budget: inout Int) -> [MenuBarMirrorRow] {
         var rows: [MenuBarMirrorRow] = []
-        for element in children(menu) where role(element) == "AXMenuItem" && budget > 0 {
+        for element in children(menu) where budget > 0 {
+            let values = attributes(element, rowAttributes)
+            guard values[kAXRoleAttribute] as? String == "AXMenuItem" else { continue }
             budget -= 1
-            let inside = children(element)
-            let submenu = depth < depthLimit ? inside.first { role($0) == "AXMenu" } : nil
-            let button = inside.first { role($0) == "AXButton" && !label($0).isEmpty }
-            let target = (MenuBarMirrorPlan.title(label(element)).isEmpty ? button : nil) ?? element
-            let title = MenuBarMirrorPlan.title(label(target))
+            let inside = values[kAXChildrenAttribute] as? [AXUIElement] ?? []
+            let roles = inside.map(role)
+            let submenu = depth < depthLimit ? zip(inside, roles).first { $0.1 == "AXMenu" }?.0 : nil
+            let own = MenuBarMirrorPlan.title(label(values))
+            // Some apps leave the item untitled and title a button inside it.
+            let button = own.isEmpty ? zip(inside, roles).first { $0.1 == "AXButton" && !label($0.0).isEmpty }?.0 : nil
+            let title = button.map { MenuBarMirrorPlan.title(label($0)) } ?? own
             guard !title.isEmpty else {
                 rows.append(.separator)
                 continue
             }
+            let target = button ?? element
             var row = MenuBarMirrorRow(title: title)
-            row.enabled = (attribute(element, kAXEnabledAttribute) as? Bool ?? true) && (submenu != nil || canPress(target))
-            switch attribute(element, "AXMenuItemMarkChar") as? String {
+            row.enabled = (values[kAXEnabledAttribute] as? Bool ?? true) && (submenu != nil || canPress(target))
+            switch values["AXMenuItemMarkChar"] as? String {
             case "✓", "✔": row.mark = .on
             case "-", "–", "•": row.mark = .mixed
             default: break
             }
-            row.key = (attribute(element, "AXMenuItemCmdChar") as? String ?? "").lowercased()
-            row.axModifiers = attribute(element, "AXMenuItemCmdModifiers") as? Int ?? 0
+            row.key = (values["AXMenuItemCmdChar"] as? String ?? "").lowercased()
+            row.axModifiers = values["AXMenuItemCmdModifiers"] as? Int ?? 0
             row.handle = MenuBarAXHandle(element: target)
             if let submenu { row.children = MenuBarMirrorPlan.tidy(read(submenu, depth: depth + 1, budget: &budget)) }
             rows.append(row)
@@ -107,6 +126,11 @@ enum MenuBarMenuReader {
         return title.isEmpty ? attribute(element, kAXDescriptionAttribute) as? String ?? "" : title
     }
 
+    private nonisolated static func label(_ values: [String: CFTypeRef]) -> String {
+        let title = values[kAXTitleAttribute] as? String ?? ""
+        return title.isEmpty ? values[kAXDescriptionAttribute] as? String ?? "" : title
+    }
+
     private nonisolated static func canPress(_ element: AXUIElement) -> Bool {
         var names: CFArray?
         AXUIElementCopyActionNames(element, &names)
@@ -119,6 +143,21 @@ enum MenuBarMenuReader {
 
     private nonisolated static func children(_ element: AXUIElement) -> [AXUIElement] {
         attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
+    }
+
+    /// The attributes the element has; a missing one is left out.
+    private nonisolated static func attributes(_ element: AXUIElement, _ names: [String]) -> [String: CFTypeRef] {
+        AXUIElementSetMessagingTimeout(element, 0.5)
+        var values: CFArray?
+        guard AXUIElementCopyMultipleAttributeValues(element, names as CFArray, [], &values) == .success,
+              let list = values as? [CFTypeRef], list.count == names.count else { return [:] }
+        var result: [String: CFTypeRef] = [:]
+        for (name, value) in zip(names, list) {
+            // A missing attribute comes back as an AXValue holding its error.
+            if CFGetTypeID(value) == AXValueGetTypeID(), AXValueGetType(value as! AXValue) == .axError { continue }
+            result[name] = value
+        }
+        return result
     }
 
     private nonisolated static func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {

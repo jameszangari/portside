@@ -247,6 +247,17 @@ struct KeychainKeyStore: ClipboardKeyStore {
     }
 }
 
+/// A key that lives only in memory for one run, for `swift run` copies. A
+/// bare executable gets a new signature on every build, and the keychain
+/// asks for the login password each time it reads an item a previous build
+/// made, even after Always Allow. The history it seals is unreadable after
+/// the run ends, so it is kept in its own file, away from the app's.
+struct SessionKeyStore: ClipboardKeyStore {
+    private let value = SymmetricKey(size: .bits256)
+
+    func key() throws -> SymmetricKey { value }
+}
+
 /// Reads the key once and keeps it for as long as history runs, so capturing
 /// a copy never waits on the keychain (which can show a dialog). `reset`
 /// drops it when the module stops.
@@ -284,6 +295,11 @@ struct ClipboardFile {
     static var defaultURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return base.appendingPathComponent("com.james.portside").appendingPathComponent("command-center-clipboard.bin")
+    }
+
+    /// A `swift run` copy's history, sealed with a key that ends with the run.
+    static var devCopyURL: URL {
+        defaultURL.deletingLastPathComponent().appendingPathComponent("command-center-clipboard-dev.bin")
     }
 
     /// Empty for a missing, truncated, tampered or foreign file.
@@ -335,8 +351,12 @@ struct ClipboardFile {
 /// (when secure input ends, or the frontmost app changes).
 @MainActor
 final class ClipboardService: ObservableObject {
-    static let shared = ClipboardService(file: ClipboardFile(url: ClipboardFile.defaultURL, keys: CachedKeyStore(KeychainKeyStore())),
-                                         prefsURL: ClipboardService.defaultPrefsURL)
+    static let shared = ClipboardService(
+        file: CopyHandoff.isDevCopy
+            ? ClipboardFile(url: ClipboardFile.devCopyURL, keys: SessionKeyStore())
+            : ClipboardFile(url: ClipboardFile.defaultURL, keys: CachedKeyStore(KeychainKeyStore())),
+        prefsURL: ClipboardService.defaultPrefsURL
+    )
 
     static let interval: TimeInterval = 0.75
 

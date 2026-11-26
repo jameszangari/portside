@@ -111,6 +111,7 @@ final class NotchPreviewSample: ObservableObject {
         }
         state.alert = alert
         state.strip = NotchShelfStrip.layout(active: active, alert: alert?.activity)
+        if state.strip.isSplit { state.compactWidth = max(state.compactWidth, NotchShelfStrip.splitWidth(notch: Self.notchWidth, flare: flare)) }
         state.setExpanded(false)
         let header = state.headerHeight
         let sessions = preferences.sessions(from: agents.sessions)

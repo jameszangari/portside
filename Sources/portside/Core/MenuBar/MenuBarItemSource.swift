@@ -127,16 +127,26 @@ struct AXMenuBarItemSource: MenuBarItemSource {
         }
     )
 
+    /// Apps are asked in parallel, so one slow owner holds up only its own
+    /// answer instead of every app after it. Results keep the running order.
     func snapshot() -> MenuBarSnapshot {
         guard isTrusted() else { return .denied }
         let deadline = Date().addingTimeInterval(Self.sweepDeadline)
+        let apps = running()
+        var found = [Extras?](repeating: nil, count: apps.count)
+        let lock = NSLock()
+        DispatchQueue.concurrentPerform(iterations: apps.count) { index in
+            guard Date() < deadline else { return }
+            let app = apps[index]
+            let extras = Self.extras(pid: app.pid, bundleID: app.bundleID, name: app.name)
+            lock.withLock { found[index] = extras }
+        }
         var snapshot = MenuBarSnapshot(access: .ready, items: [])
-        for app in running() {
-            if Date() >= deadline { snapshot.skippedApps += 1; continue }
-            switch Self.extras(pid: app.pid, bundleID: app.bundleID, name: app.name) {
-            case .none: break
-            case .unresponsive: snapshot.skippedApps += 1
-            case .found(let items, let unsupported):
+        for extras in found {
+            switch extras {
+            case nil, .some(.unresponsive): snapshot.skippedApps += 1
+            case .some(.none): break
+            case .some(.found(let items, let unsupported)):
                 snapshot.items += items
                 snapshot.unsupportedCount += unsupported
             }
@@ -278,4 +288,52 @@ struct AXMenuBarItemSource: MenuBarItemSource {
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success, let text = value as? String else { return nil }
         return String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(MenuBarItem.textLimit))
     }
+}
+
+/// The last sweep, so the Portside Bar opens without first asking every
+/// running app. A fresh one is returned at once and replaced behind it; an
+/// old or missing one is waited for. One sweep runs at a time.
+actor MenuBarSnapshotCache {
+    static let live = MenuBarSnapshotCache { AXMenuBarItemSource.live.snapshot() }
+
+    private let sweep: @Sendable () -> MenuBarSnapshot
+    private let freshFor: TimeInterval
+    private var last: (snapshot: MenuBarSnapshot, at: Date)?
+    private var running: Task<MenuBarSnapshot, Never>?
+
+    init(freshFor: TimeInterval = 30, sweep: @escaping @Sendable () -> MenuBarSnapshot) {
+        self.freshFor = freshFor
+        self.sweep = sweep
+    }
+
+    func snapshot() async -> MenuBarSnapshot {
+        if let last, last.snapshot.access == .ready, Date().timeIntervalSince(last.at) < freshFor {
+            refresh()
+            return last.snapshot
+        }
+        return await refresh().value
+    }
+
+    /// Items appeared or went away, so the next read waits for a new sweep.
+    func invalidate() { last = nil }
+
+    @discardableResult
+    func refresh() -> Task<MenuBarSnapshot, Never> {
+        if let running { return running }
+        let task = Task.detached(priority: .userInitiated) { [sweep] in sweep() }
+        running = task
+        Task {
+            let value = await task.value
+            self.finish(value)
+        }
+        return task
+    }
+
+    private func finish(_ value: MenuBarSnapshot) {
+        last = (value, Date())
+        running = nil
+    }
+
+    nonisolated func warm() { Task { await refresh() } }
+    nonisolated func changed() { Task { await invalidate() } }
 }

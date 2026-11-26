@@ -150,6 +150,16 @@ struct NotchShelfStrip: Equatable {
     /// Each side shows a different activity, so each draws whole on its side.
     var isSplit: Bool { leading != nil && trailing != nil && leading != trailing }
 
+    /// Split, each side holds a mark, 6 pt and its detail (about 46 pt) with
+    /// the strip's 6 pt margin to spare.
+    static let splitSideWidth: CGFloat = 6 + 46
+
+    /// The strip width that fits two activities without squeezing the
+    /// margins. Without a notch the middle third stands in for it.
+    static func splitWidth(notch: CGFloat, flare: CGFloat) -> CGFloat {
+        notch > 0 ? notch + 2 * splitSideWidth + flare : 3 * splitSideWidth + flare
+    }
+
     /// SHELF-04c's fixed order: music over agents, an agent alert on the right.
     static func layout(music: Bool, agents: Bool, agentAlert: Bool) -> NotchShelfStrip {
         layout(active: [music ? .music : nil, agents ? .agents : nil].compactMap { $0 },
