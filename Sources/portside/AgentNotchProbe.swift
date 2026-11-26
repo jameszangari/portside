@@ -115,6 +115,10 @@ enum AgentNotchProbe {
                         state.strip = NotchShelfStrip.layout(active: [.meeting, .music], alert: nil)
                     }
                     if name == "strip-solo" { state.strip = NotchShelfStrip.layout(active: [.music], alert: nil) }
+                    if name == "strip-narrow" {
+                        // As layoutPanels widens a narrow strip for two activities.
+                        state.compactWidth = max(state.compactWidth, NotchShelfStrip.splitWidth(notch: 180, flare: 2 * NotchShape.flare))
+                    }
                     if name == "card-banner" { state.showBanner() }
                     if name == "strip-hud" {
                         // A 140 pt strip, as layoutPanels widens it for the HUD.

@@ -240,6 +240,10 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
     private let emptyClickToggles: () -> Bool
     private let dismissBar: () -> Void
     private let itemSnapshot: () async -> MenuBarSnapshot
+    private let warmItems: () -> Void
+    private let itemsChanged: () -> Void
+    /// Menus of the open bar's items, read as it opens so a click shows at once.
+    private var menuReads: [String: Task<[MenuBarMirrorRow], Never>] = [:]
     private let portsideBundle: String
     private let bundlePath: String
     private let launchDebounce: Duration
@@ -303,7 +307,9 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
         barLook: @escaping () -> MenuBarOverflowPanel.Look = { MenuBarOverflowPanel.Look() },
         emptyClickToggles: @escaping () -> Bool = { false },
         dismissBar: @escaping () -> Void = {},
-        itemSnapshot: @escaping () async -> MenuBarSnapshot = { await Task.detached(priority: .userInitiated) { AXMenuBarItemSource.live.snapshot() }.value },
+        itemSnapshot: @escaping () async -> MenuBarSnapshot = { await MenuBarSnapshotCache.live.snapshot() },
+        warmItems: @escaping () -> Void = {},
+        itemsChanged: @escaping () -> Void = {},
         store: MenuBarArrangementStore = MenuBarArrangementStore(defaults: .standard),
         method: @escaping () -> MenuBarHidingMethod = { .standard },
         nativeHider: MenuBarNativeHider? = nil,
@@ -330,6 +336,8 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
         self.emptyClickToggles = emptyClickToggles
         self.dismissBar = dismissBar
         self.itemSnapshot = itemSnapshot
+        self.warmItems = warmItems
+        self.itemsChanged = itemsChanged
         self.store = store
         self.method = method
         self.nativeHider = nativeHider
@@ -377,8 +385,15 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             let bundle = app?.bundleIdentifier
             let pid = app?.processIdentifier
-            MainActor.assumeIsolated { self?.appLaunched(bundle: bundle, pid: pid) }
+            MainActor.assumeIsolated {
+                self?.itemsChanged()
+                self?.appLaunched(bundle: bundle, pid: pid)
+            }
         })
+        observers.append(center.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.itemsChanged() }
+        })
+        warmItems()
         if developerHooks {
             installHooks()
             noteDiagnostic(lastFailure: nil)
@@ -432,6 +447,7 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
         refresh()
         if hidden {
             closePanel()
+            if bar { warmItems() }
         } else if wasHidden {
             offerPanelIfCrowded()
         }
@@ -648,9 +664,11 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
         let groups = store.groups
         let snapshot = await itemSnapshot()
         guard !Task.isCancelled else { return false }
+        cancelMenuReads()
         var byBundle: [String: [MenuBarOverflowPanel.Entry]] = [:]
         for item in snapshot.items {
-            guard let bundle = item.ownerBundleID?.lowercased() else { continue }
+            // The sweep can be a few seconds old.
+            guard let bundle = item.ownerBundleID?.lowercased(), NSRunningApplication(processIdentifier: item.pid) != nil else { continue }
             if !hidesByMembership, !sections.contains(selected[item.id] ?? .visible) { continue }
             let entry = MenuBarOverflowPanel.Entry(
                 item: item, bundle: bundle, icon: item.menuBarIcon,
@@ -668,6 +686,7 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
             onSecondary: { [weak self] entry, view in self?.showItemOptions(entry, from: view) },
             onOpen: { [weak self] entry, view in self?.open(entry, from: view) }
         )
+        for entry in rows.flatMap(\.entries) where !entry.menuBarOnly { _ = menuRead(entry.item) }
         return true
     }
 
@@ -675,6 +694,19 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
         panelTask?.cancel()
         panelTask = nil
         panel.close()
+        cancelMenuReads()
+    }
+
+    private func menuRead(_ item: MenuBarItem) -> Task<[MenuBarMirrorRow], Never> {
+        if let read = menuReads[item.id] { return read }
+        let read = Task { await MenuBarMenuReader.read(item) }
+        menuReads[item.id] = read
+        return read
+    }
+
+    private func cancelMenuReads() {
+        for read in menuReads.values { read.cancel() }
+        menuReads = [:]
     }
 
     /// Opens an item from the bar without touching the real menu bar: its menu
@@ -683,13 +715,18 @@ final class AssertionShelfSurface: MenuBarShelfSurface {
     private func open(_ entry: MenuBarOverflowPanel.Entry, from view: NSView) {
         guard !store.opensOnlyFromMenuBar(entry.bundle) else { return }
         let item = entry.item
+        let read = menuRead(item)
         Task { [weak self] in
-            let rows = await Task.detached(priority: .userInitiated) { MenuBarMenuReader.rows(of: item) }.value
+            let rows = await read.value
             guard let self, self.panel.isShown else { return }
             if rows.isEmpty {
                 await self.openWindow(entry, from: view)
             } else {
                 self.panel.popUp(MenuBarMirrorMenu.make(rows), from: view)
+                // A row may have changed the menu, so read it again for the next click.
+                guard self.panel.isShown, self.menuReads[item.id] == read else { return }
+                self.menuReads[item.id] = nil
+                _ = self.menuRead(item)
             }
         }
     }
