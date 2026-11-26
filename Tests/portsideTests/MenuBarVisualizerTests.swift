@@ -1,4 +1,5 @@
 import CoreAudio
+import SwiftUI
 import XCTest
 @testable import portside
 
@@ -58,7 +59,7 @@ final class MenuBarVisualizerTests: XCTestCase {
         let smoother = VisualizerSmoother()
         let loud = VisualizerSmoother.Target.levels(level: 0.9, bands: [Float](repeating: 0.8, count: MusicLevels.bandCount))
         for _ in 0..<30 { smoother.step(loud, time: 0, playing: true) }
-        XCTAssertGreaterThan(smoother.level, 0.8)
+        XCTAssertEqual(smoother.level, 0.9 * VisualizerSmoother.baseGain, accuracy: 0.01, "the middle Reactiveness answers at the base gain")
         XCTAssertGreaterThan(smoother.presence, 0.95)
 
         // Silence while still playing: flat, but still there.
@@ -119,5 +120,74 @@ final class MenuBarVisualizerTests: XCTestCase {
         XCTAssertEqual(last.map(\.rect), pills.map(\.rect), "settled")
         for _ in 0..<40 { last = easer.step(toward: bar) }
         XCTAssertEqual(last.map(\.rect), bar.map(\.rect), "the extra pill shrank away")
+    }
+
+    func testLookWhilePlaying() throws {
+        let plain = try JSONDecoder().decode(MenuBarVisualizerSettings.self, from: Data("{}".utf8))
+        XCTAssertNil(plain.playingLook, "same look as usual by default")
+        XCTAssertFalse(plain.followsMusic)
+        var look = MenuBarLook()
+        look.cornerRadius = 6
+        look.shadow = true
+        look.background.style = .solid
+        let copy = MenuBarPlayingLook(from: look)
+        XCTAssertEqual(copy.cornerRadius, 6, "starts as a copy of the usual look")
+        XCTAssertTrue(copy.shadow)
+        XCTAssertEqual(copy.background, look.background)
+        look.visualizer.playingLook = copy
+        XCTAssertTrue(look.visualizer.followsMusic, "a look alone follows Now Playing")
+        let restored = try JSONDecoder().decode(MenuBarLook.self, from: JSONEncoder().encode(look))
+        XCTAssertEqual(restored.visualizer.playingLook, copy)
+        let wild = try JSONDecoder().decode(MenuBarPlayingLook.self, from: Data(#"{"cornerRadius":400}"#.utf8))
+        XCTAssertEqual(wild.cornerRadius, MenuBarLook.cornerRange.upperBound)
+    }
+
+    @MainActor
+    func testDarkColorsAreLiftedToShowOverABlackShape() {
+        func hsb(_ color: Color) -> (CGFloat, CGFloat, CGFloat) {
+            var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            NSColor(color).usingColorSpace(.deviceRGB)!.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+            return (h, s, b)
+        }
+        let dark = hsb(MenuBarVisualizerLayerView.visible(Color(hue: 0.6, saturation: 0.8, brightness: 0.2)))
+        XCTAssertEqual(dark.2, 0.7, accuracy: 0.01, "a dark album color is brightened")
+        XCTAssertEqual(dark.0, 0.6, accuracy: 0.01, "its hue stays")
+        XCTAssertEqual(dark.1, 0.8, accuracy: 0.02)
+        XCTAssertEqual(hsb(MenuBarVisualizerLayerView.visible(Color(hue: 0.1, saturation: 0.5, brightness: 0.9))).2, 0.9, accuracy: 0.01, "bright colors are left alone")
+    }
+
+    func testWaveIsSmoothAndReactivenessScalesTheResponse() {
+        let target = VisualizerSmoother.Target.levels(level: 0.8, bands: [Float](repeating: 0.7, count: MusicLevels.bandCount))
+        let calm = VisualizerSmoother(), middle = VisualizerSmoother(), lively = VisualizerSmoother()
+        for _ in 0..<60 {
+            calm.step(target, time: 0, playing: true, reactivity: 0.25)
+            middle.step(target, time: 0, playing: true, reactivity: 1)
+            lively.step(target, time: 0, playing: true, reactivity: 2)
+        }
+        XCTAssertEqual(middle.level, 0.8 * VisualizerSmoother.baseGain, accuracy: 0.01, "the middle leaves headroom")
+        XCTAssertLessThan(middle.level, 0.6, "typical music no longer pins it near the top")
+        XCTAssertLessThan(calm.level, middle.level)
+        XCTAssertGreaterThan(lively.level, middle.level)
+        XCTAssertGreaterThan(lively.waveHeights.low, calm.waveHeights.low)
+
+        // Smooth at any setting: neighbouring points along the line differ little.
+        let size = CGSize(width: 600, height: 24)
+        let path = MenuBarVisualizerDrawing.wave(size: size, smoother: lively, time: 1.3).cgPath
+        var ys: [CGFloat] = []
+        path.applyWithBlock { element in
+            let kind = element.pointee.type
+            if kind == .moveToPoint || kind == .addLineToPoint { ys.append(element.pointee.points[0].y) }
+        }
+        // Jagged means the direction changes abruptly: the second difference.
+        let bends = (1..<(ys.count - 1)).map { abs(ys[$0 + 1] - 2 * ys[$0] + ys[$0 - 1]) }
+        XCTAssertLessThan(bends.max()!, 0.5, "no sudden turns between points 2 pt apart")
+
+        for _ in 0..<60 { lively.step(.silence, time: 0, playing: true, reactivity: 2) }
+        XCTAssertLessThan(max(lively.waveHeights.low, lively.waveHeights.mid, lively.waveHeights.high), 0.01, "silence lays it flat")
+    }
+
+    func testReactivenessDefaultsAndClamps() throws {
+        XCTAssertEqual(try JSONDecoder().decode(MenuBarVisualizerSettings.self, from: Data("{}".utf8)).reactivity, 1)
+        XCTAssertEqual(try JSONDecoder().decode(MenuBarVisualizerSettings.self, from: Data(#"{"reactivity":9}"#.utf8)).reactivity, 2)
     }
 }

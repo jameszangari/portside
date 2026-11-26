@@ -146,7 +146,7 @@ final class WidgetStore: ObservableObject {
 
     init(dockModel: DockModel) {
         self.dockModel = dockModel
-        let visualizer = dockModel.$menuBarTriggers.map { $0.look.visualizer.style != .off || $0.look.visualizer.playingShape != nil }.removeDuplicates()
+        let visualizer = dockModel.$menuBarTriggers.map { $0.look.visualizer.followsMusic }.removeDuplicates()
         cancellable = dockModel.$widgetKinds.combineLatest(dockModel.$showAgentNotch, dockModel.$agentNotchSettings, visualizer)
             .sink { [weak self] kinds, notch, settings, visualizer in
                 self?.sync(kinds, notch: notch, usage: settings.showUsage, media: settings.showMedia,

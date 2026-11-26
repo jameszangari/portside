@@ -237,7 +237,7 @@ struct MenuBarSettings: View {
                     MenuBarTriggersSection(dockModel: dockModel, service: triggers, hidesByMembership: hidesByMembership, parts: [.hideAgain])
                 }
                 fold("Look", "paintbrush", "Icon, Portside Bar style, menu bar shape, color and music visualizer", open: $lookOpen,
-                     anchors: ["Icons", "Portside Bar style", "Menu bar shape", "Menu bar background", "Glass", "Border", "Music visualizer"])
+                     anchors: ["Icons", "Portside Bar style", "Menu bar shape", "Menu bar background", "Glass", "Border", "While music plays", "Background while music plays", "Music visualizer"])
                 if lookOpen {
                     MenuBarLookSection(dockModel: dockModel, supportsPortsideBar: true)
                 }
@@ -745,13 +745,6 @@ private struct MenuBarLookSection: View {
             SettingsChoiceCards(selection: binding(\.shape), choices: MenuBarShape.allCases.map { ($0, $0.title) }, columns: 4) {
                 MenuBarShapePicture(shape: $0, look: look)
             }
-            Picker(selection: binding(\.visualizer.playingShape)) {
-                Text("Don't change").tag(MenuBarShape?.none)
-                ForEach(MenuBarShape.allCases) { Text($0.title).tag(MenuBarShape?.some($0)) }
-            } label: {
-                Text("While music plays")
-                Text("Switches to this shape while a song plays and back 1.5 s after it stops.").helperStyle()
-            }
         } header: {
             Text("Menu bar shape").settingsAnchor("Menu bar shape")
         } footer: {
@@ -772,7 +765,68 @@ private struct MenuBarLookSection: View {
                 header: { Text("Menu bar background").settingsAnchor("Menu bar background") }
             )
         }
+        MenuBarWhilePlayingSection(dockModel: dockModel)
         MenuBarVisualizerSection(dockModel: dockModel)
+    }
+}
+
+/// The menu bar shape's shape and look while music plays
+/// (`look.visualizer.playingShape`, `playingLook`).
+private struct MenuBarWhilePlayingSection: View {
+    @ObservedObject var dockModel: DockModel
+
+    private var look: MenuBarLook { dockModel.menuBarTriggers.look }
+
+    private func set(_ change: (inout MenuBarLook) -> Void, persist: Bool = true) {
+        var next = dockModel.menuBarTriggers
+        change(&next.look)
+        dockModel.setMenuBarTriggers(next, persist: persist)
+    }
+
+    /// The shape drawn while music plays, after the override.
+    private var playingShape: MenuBarShape { look.visualizer.playingShape ?? look.shape }
+
+    var body: some View {
+        Section {
+            Picker(selection: Binding(get: { look.visualizer.playingShape }, set: { value in set { $0.visualizer.playingShape = value } })) {
+                Text("Don't change").tag(MenuBarShape?.none)
+                ForEach(MenuBarShape.allCases) { Text($0.title).tag(MenuBarShape?.some($0)) }
+            } label: {
+                Text("Shape")
+                Text("Switches to this shape while a song plays and back 1.5 s after it stops.").helperStyle()
+            }
+            Toggle(isOn: Binding(
+                get: { look.visualizer.playingLook != nil },
+                set: { on in set { $0.visualizer.playingLook = on ? MenuBarPlayingLook(from: $0) : nil } }
+            )) {
+                Text("Different look")
+                Text(playingShape == .none
+                     ? "Pick a shape above, or a menu bar shape, for the look to show on."
+                     : "Its own background, border, corners and shadow while a song plays. Starts as a copy of the usual look.").helperStyle()
+            }
+        } header: {
+            Text("While music plays").settingsAnchor("While music plays")
+        }
+        if let playing = look.visualizer.playingLook {
+            DockBackgroundEditor(
+                background: playing.background,
+                update: { persist, change in
+                    set({ look in
+                        guard var next = look.visualizer.playingLook else { return }
+                        change(&next.background)
+                        look.visualizer.playingLook = next
+                    }, persist: persist)
+                },
+                surface: "menu bar",
+                extra: {
+                    SettingsSlider(title: "Corner radius", value: playing.cornerRadius, range: MenuBarLook.cornerRange, snap: 1,
+                                   format: { "\(Int($0)) pt" },
+                                   set: { value, persist in set({ $0.visualizer.playingLook?.cornerRadius = value }, persist: persist) })
+                    Toggle("Shadow", isOn: Binding(get: { playing.shadow }, set: { value in set { $0.visualizer.playingLook?.shadow = value } }))
+                },
+                header: { Text("Background while music plays").settingsAnchor("Background while music plays") }
+            )
+        }
     }
 }
 
@@ -812,6 +866,9 @@ private struct MenuBarVisualizerSection: View {
                 }
                 SettingsSlider(title: "Intensity", value: settings.intensity, range: MenuBarVisualizerSettings.intensityRange, snap: 0.05,
                                format: { "\(Int(($0 * 100).rounded()))%" }, set: { value, persist in set({ $0.intensity = value }, persist: persist) })
+                SettingsSlider(title: "Reactiveness", value: settings.reactivity, range: MenuBarVisualizerSettings.reactivityRange, snap: 0.05,
+                               format: { value in value < 0.6 ? "Calm" : value > 1.5 ? "Lively" : "\(Int((value * 100).rounded()))%" },
+                               set: { value, persist in set({ $0.reactivity = value }, persist: persist) })
                 Toggle(isOn: binding(\.followsSound)) {
                     Text("React to the sound")
                     Text(dockModel.restrictedMode

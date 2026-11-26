@@ -45,9 +45,44 @@ enum MenuBarVisualizerArea: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// The menu bar shape's look while music plays, when it differs from the
+/// usual one. Saved in `menuBarTriggers.look.visualizer.playingLook`.
+struct MenuBarPlayingLook: Codable, Equatable {
+    var background = DockBackground()
+    var cornerRadius = 14.0
+    var shadow = false
+
+    init() {}
+
+    /// Starts from the usual look, so turning it on changes nothing yet.
+    init(from look: MenuBarLook) {
+        background = look.background
+        cornerRadius = look.cornerRadius
+        shadow = look.shadow
+    }
+
+    private enum CodingKeys: String, CodingKey { case background, cornerRadius, shadow }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        background = c.value(.background, or: DockBackground())
+        cornerRadius = c.value(.cornerRadius, or: 14.0)
+        shadow = c.value(.shadow, or: false)
+        self = sanitized
+    }
+
+    var sanitized: MenuBarPlayingLook {
+        var copy = self
+        copy.cornerRadius = cornerRadius.isFinite
+            ? min(max(cornerRadius, MenuBarLook.cornerRange.lowerBound), MenuBarLook.cornerRange.upperBound) : 14
+        return copy
+    }
+}
+
 /// Saved in `menuBarTriggers.look.visualizer`. Every key is optional.
 struct MenuBarVisualizerSettings: Codable, Equatable {
     static let intensityRange: ClosedRange<Double> = 0.2...1
+    static let reactivityRange: ClosedRange<Double> = 0.25...2
 
     var style = MenuBarVisualizerStyle.off
     var color = MenuBarVisualizerColor.album
@@ -56,14 +91,24 @@ struct MenuBarVisualizerSettings: Codable, Equatable {
     /// System Audio Recording once). Off, or without that permission, the
     /// animation keeps a steady pulse instead.
     var followsSound = true
+    /// How strongly and how fast every style answers the music: 0.25 calm
+    /// to 2 lively, 1 as designed.
+    var reactivity = 1.0
     var area = MenuBarVisualizerArea.shape
     /// The menu bar shape to use while music plays; nil keeps the usual one.
     /// Works with the visualizer off too.
     var playingShape: MenuBarShape?
+    /// The shape's look while music plays (background, border, corners,
+    /// shadow); nil keeps the usual one.
+    var playingLook: MenuBarPlayingLook?
+
+    /// Something here follows Now Playing: the visualizer, or a shape or
+    /// look for while music plays.
+    var followsMusic: Bool { style != .off || playingShape != nil || playingLook != nil }
 
     init() {}
 
-    private enum CodingKeys: String, CodingKey { case style, color, intensity, followsSound, area, playingShape }
+    private enum CodingKeys: String, CodingKey { case style, color, intensity, followsSound, reactivity, area, playingShape, playingLook }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -71,14 +116,18 @@ struct MenuBarVisualizerSettings: Codable, Equatable {
         color = c.value(.color, or: MenuBarVisualizerColor.album)
         intensity = c.value(.intensity, or: 0.6)
         followsSound = c.value(.followsSound, or: true)
+        reactivity = c.value(.reactivity, or: 1.0)
         area = c.value(.area, or: MenuBarVisualizerArea.shape)
         playingShape = (try? c.decodeIfPresent(MenuBarShape.self, forKey: .playingShape)) ?? nil
+        playingLook = (try? c.decodeIfPresent(MenuBarPlayingLook.self, forKey: .playingLook)) ?? nil
         self = sanitized
     }
 
     var sanitized: MenuBarVisualizerSettings {
         var copy = self
         copy.intensity = intensity.isFinite ? min(max(intensity, Self.intensityRange.lowerBound), Self.intensityRange.upperBound) : 0.6
+        copy.playingLook = playingLook?.sanitized
+        copy.reactivity = reactivity.isFinite ? min(max(reactivity, Self.reactivityRange.lowerBound), Self.reactivityRange.upperBound) : 1
         return copy
     }
 }
@@ -288,6 +337,8 @@ final class MenuBarVisualizer {
     init(model: DockModel, widgets: WidgetStore) {
         self.model = model
         self.widgets = widgets
+        // Stay over the menu bar shape, which shares the level.
+        MenuBarShapeOutlines.shared.above = { [weak self] in self?.panels ?? [] }
         model.$menuBarTriggers.map(\.look.visualizer).removeDuplicates()
             .combineLatest(model.$restrictedMode.removeDuplicates(), widgets.$hosts)
             .receive(on: DispatchQueue.main)
@@ -303,7 +354,7 @@ final class MenuBarVisualizer {
     private func apply(_ next: MenuBarVisualizerSettings, restricted: Bool) {
         settings = next
         self.restricted = restricted
-        let media = next.style == .off && next.playingShape == nil ? nil : widgets.widget(NowPlayingWidget.kind) as? NowPlayingWidget
+        let media = next.followsMusic ? widgets.widget(NowPlayingWidget.kind) as? NowPlayingWidget : nil
         if media !== nowPlaying {
             nowPlaying = media
             mediaSubscription = media?.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in
@@ -316,7 +367,7 @@ final class MenuBarVisualizer {
 
     private func update() {
         let track = nowPlaying?.track
-        let musicPlaying = track?.isPlaying == true && (settings.style != .off || settings.playingShape != nil)
+        let musicPlaying = track?.isPlaying == true && settings.followsMusic
         let drawing = musicPlaying && settings.style != .off
         state.settings = settings
         state.track = track
@@ -419,8 +470,16 @@ final class VisualizerSmoother {
         case pulse
     }
 
+    /// Reactiveness 1 (the middle of the slider) answers at this strength:
+    /// mastered music sits high on the loudness and band scales, and at
+    /// full strength Bars and Glow pinned near the top all song long.
+    static let baseGain = 0.55
+
     private(set) var level: Double = 0
     private(set) var bands = [Double](repeating: 0, count: MusicLevels.bandCount)
+    /// The wave's three sines (long, medium, short), each 0...1: how much
+    /// the bass, mids and treble move it, times how hard the music hits.
+    private(set) var waveHeights = (low: 0.0, mid: 0.0, high: 0.0)
     /// 1 while music plays, easing to 0 after it stops: the drawing sinks
     /// and fades with it.
     private(set) var presence: Double = 0
@@ -431,7 +490,10 @@ final class VisualizerSmoother {
     /// one loudness, so this is what makes the wave follow the song.
     private(set) var punch: Double = 0
 
-    func step(_ target: Target, time: Double, playing: Bool) {
+    /// `reactivity` (Reactiveness, 0.25...2, 1 in the middle) scales how
+    /// strongly everything answers the music and how fast it rises and falls.
+    func step(_ target: Target, time: Double, playing: Bool, reactivity: Double = 1) {
+        let gain = Self.baseGain * reactivity
         var goal: (Double, [Double]) = (0, [Double](repeating: 0, count: bands.count))
         if playing {
             switch target {
@@ -445,16 +507,23 @@ final class VisualizerSmoother {
                 })
             }
         }
+        let raw = goal.0
+        goal = (min(1, goal.0 * gain), goal.1.map { min(1, $0 * gain) })
+        let rise = min(0.9, 0.2 + 0.25 * reactivity), fall = min(0.5, 0.05 + 0.1 * reactivity)
+        func ease(_ current: Double, _ target: Double) -> Double {
+            current + (target - current) * (target > current ? rise : fall)
+        }
         level = ease(level, goal.0)
         for index in bands.indices { bands[index] = ease(bands[index], goal.1[index]) }
-        average += (goal.0 - average) * 0.035
-        let lift = min(1, max(0, (goal.0 - average) * 4 + goal.0 * 0.35))
+        // Punch compares the music to itself, before the gain.
+        average += (raw - average) * 0.035
+        let lift = min(1, max(0, ((raw - average) * 4 + raw * 0.35) * reactivity))
         punch += (lift - punch) * (lift > punch ? 0.6 : 0.12)
         presence += ((playing ? 1 : 0) - presence) * (playing ? 0.25 : 0.08)
-    }
-
-    private func ease(_ current: Double, _ goal: Double) -> Double {
-        current + (goal - current) * (goal > current ? 0.55 : 0.18)
+        func mean(_ range: Range<Int>) -> Double { bands[range].reduce(0, +) / Double(range.count) }
+        let swing = 0.4 * level + 0.6 * punch
+        let third = bands.count / 3
+        waveHeights = (mean(0..<third) * swing, mean(third..<2 * third) * swing, mean(2 * third..<bands.count) * swing)
     }
 }
 
@@ -473,7 +542,16 @@ final class MenuBarVisualizerLayerView: NSView {
     private var link: CADisplayLink?
     private var subscriptions: Set<AnyCancellable> = []
     private var areaLayers: [AreaLayers] = []
-    private var colorKey: (String?, MenuBarVisualizerColor)?
+    private var colorKey: ColorKey?
+
+    /// What the color depends on. The artwork is part of it: a new track
+    /// often arrives before its art (Spotify's is downloaded), and keyed on
+    /// the track alone the color stayed the fallback for the whole song.
+    private struct ColorKey: Equatable {
+        let track: String?
+        let artwork: ObjectIdentifier?
+        let mode: MenuBarVisualizerColor
+    }
     private var baseColor = Color.accentColor
 
     /// One outline: clipped to its corners, holding the color layers.
@@ -557,7 +635,7 @@ final class MenuBarVisualizerLayerView: NSView {
             let read = state.levels.read()
             let target: VisualizerSmoother.Target = read.map { .levels(level: $0.level, bands: $0.bands) }
                 ?? (state.levels.isTapping ? .silence : .pulse)
-            smoother.step(target, time: time, playing: state.playing)
+            smoother.step(target, time: time, playing: state.playing, reactivity: state.settings.reactivity)
         }
         let target = targetAreas ?? [.init(rect: bounds, cornerRadius: 0)]
         let areas = easer.step(toward: target, jump: still)
@@ -645,18 +723,27 @@ final class MenuBarVisualizerLayerView: NSView {
         return outline.rects.map { .init(rect: $0, cornerRadius: min(outline.cornerRadius, $0.height / 2)) }
     }
 
-    /// The album color is read once per track, not every frame.
+    /// The album color is read once per track and artwork, not every frame.
     private var color: Color {
-        let key = (state.track?.id, state.settings.color)
-        if colorKey?.0 != key.0 || colorKey?.1 != key.1 {
+        let key = ColorKey(track: state.track?.id, artwork: state.track?.artwork.map(ObjectIdentifier.init), mode: state.settings.color)
+        if colorKey != key {
             colorKey = key
             baseColor = switch state.settings.color {
-            case .album: ArtworkTint.musicColor(state.track, fallback: .accentColor)
-            case .accent: .accentColor
+            case .album: Self.visible(ArtworkTint.musicColor(state.track, fallback: .accentColor))
+            case .accent: Self.visible(.accentColor)
             case .rainbow: .white
             }
         }
         return baseColor
+    }
+
+    /// The color with a floor on its brightness, so it shows over a dark or
+    /// black menu bar shape; hue and saturation still follow the song.
+    static func visible(_ color: Color) -> Color {
+        guard let rgb = NSColor(color).usingColorSpace(.deviceRGB) else { return color }
+        var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
+        rgb.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
+        return Color(hue: hue, saturation: saturation, brightness: max(brightness, 0.7))
     }
 }
 
@@ -760,23 +847,26 @@ enum MenuBarVisualizerDrawing {
         }
     }
 
-    /// The wave's line. Its height follows the punch and its shape the
-    /// spectrum, mirrored from the middle, with tapered ends. Silent, it
-    /// lies flat; stopped, it sinks to the bottom edge as it fades.
+    /// The wave's line: three smooth sines, long, medium and short, whose
+    /// heights follow the bass, mids and treble and how hard the music hits,
+    /// with tapered ends. Silent, it lies flat; stopped, it sinks to the
+    /// bottom edge as it fades.
     static func wave(size: CGSize, smoother: VisualizerSmoother, time: Double) -> Path {
         let mid = size.height / 2 + size.height / 2 * CGFloat(1 - smoother.presence)
-        let amplitude = size.height * 0.48 * CGFloat(smoother.punch)
-        let bands = smoother.bands
+        let amplitude = size.height * 0.46
+        let heights = smoother.waveHeights
         var path = Path()
-        let steps = max(2, Int(size.width / 3))
+        let steps = max(2, Int(size.width / 2))
         for step in 0...steps {
             let x = Double(step) / Double(steps)
-            let position = abs(x - 0.5) * 2 * Double(bands.count - 1)
-            let low = Int(position), high = min(bands.count - 1, low + 1)
-            let spectrum = bands[low] + (bands[high] - bands[low]) * (position - Double(low))
+            let sum = heights.low * sin(x * 2 * .pi * 1.5 + time * 2.2)
+                + heights.mid * 0.6 * sin(x * 2 * .pi * 3.5 - time * 3.1)
+                + heights.high * 0.35 * sin(x * 2 * .pi * 7 + time * 4.4)
+            // Typical music at the middle Reactiveness fills about half the
+            // height; a soft limit rounds loud peaks instead of flattening them.
+            let value = tanh(sum * 3)
             let taper = sin(.pi * x)
-            let wave = sin(x * 12 + time * 3) * 0.65 + sin(x * 27 - time * 4.6) * 0.35
-            let y = mid + amplitude * CGFloat(wave * (0.3 + 0.7 * spectrum) * (0.25 + 0.75 * taper))
+            let y = mid + amplitude * CGFloat(value * (0.25 + 0.75 * taper))
             if step == 0 { path.move(to: CGPoint(x: 0, y: y)) } else { path.addLine(to: CGPoint(x: CGFloat(x) * size.width, y: y)) }
         }
         return path
@@ -830,7 +920,8 @@ extension MusicLevelMeter {
             smoother.step(read.map { .levels(level: $0.level, bands: $0.bands) } ?? .silence, time: Double(tick) / 30, playing: true)
             guard tick % 15 == 14 else { continue }
             if let read {
-                print(String(format: "level %.2f  punch %.2f  bands %@", read.level, smoother.punch, read.bands.map { String(format: "%.1f", $0) }.joined(separator: " ")))
+                print(String(format: "level %.2f  punch %.2f  shown level %.2f  wave %.2f/%.2f/%.2f", read.level, smoother.punch, smoother.level,
+                             smoother.waveHeights.low, smoother.waveHeights.mid, smoother.waveHeights.high))
             } else {
                 print("no levels")
             }

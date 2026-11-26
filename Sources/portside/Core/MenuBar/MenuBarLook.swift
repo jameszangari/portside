@@ -306,6 +306,9 @@ final class MenuBarShapeOutlines: ObservableObject {
     }
 
     static let shared = MenuBarShapeOutlines()
+    /// Windows that must stay above the shape (the music visualizer's), at
+    /// the same level. Raised each time the shape orders its own windows.
+    var above: () -> [NSWindow] = { [] }
     @Published private(set) var outlines: [Outline] = []
 
     func set(_ next: [Outline]) {
@@ -337,6 +340,14 @@ final class MenuBarStyleOverlay {
     private var shape: MenuBarShape {
         musicPlaying ? look.visualizer.playingShape ?? look.shape : look.shape
     }
+    /// The fill, corners and shadow drawn now: the music look while music
+    /// plays, when one is set.
+    private var style: (fill: DockLook, shadow: Bool) {
+        if musicPlaying, let playing = look.visualizer.playingLook {
+            return (DockLook(background: playing.background, cornerRadius: playing.cornerRadius), playing.shadow)
+        }
+        return (DockLook(background: look.background, cornerRadius: look.cornerRadius), look.shadow)
+    }
     private var panels: [NSPanel] = []
     private var models: [MenuBarStyleModel] = []
     private var fadeWork: DispatchWorkItem?
@@ -362,10 +373,14 @@ final class MenuBarStyleOverlay {
 
     private func setMusicPlaying(_ playing: Bool) {
         let before = shape
+        let styleBefore = style
         musicPlaying = playing
-        guard shape != before else { return }
-        rewatch()
-        refresh()
+        if shape != before {
+            rewatch()
+            refresh()
+        } else if style.fill != styleBefore.fill || style.shadow != styleBefore.shadow {
+            refresh()
+        }
     }
 
     func stop() {
@@ -421,7 +436,7 @@ final class MenuBarStyleOverlay {
 
     private func layout(_ menusEnd: CGFloat?, _ items: [MenuBarDrawnOwners.Item]?) {
         let primaryMaxY = NSScreen.screens.first?.frame.maxY ?? 0
-        let fill = DockLook(background: look.background, cornerRadius: look.cornerRadius)
+        let (fill, shadow) = style
         layout(NSScreen.screens.map { screen in
             let frame = Self.barFrame(on: screen)
             var notch: ClosedRange<CGFloat>?
@@ -435,7 +450,7 @@ final class MenuBarStyleOverlay {
             }.map(\.frame.minX)
             let end = menusEnd.flatMap { $0 > frame.minX && $0 <= frame.maxX ? $0 - frame.minX : nil }
             let rects = MenuBarStylePlan.rects(shape: shape, size: frame.size, notch: notch, menusEnd: end, itemsStart: starts.min().map { $0 - frame.minX })
-            return (frame, Layout(rects: rects, look: fill, shadow: look.shadow))
+            return (frame, Layout(rects: rects, look: fill, shadow: shadow))
         })
     }
 
@@ -483,6 +498,8 @@ final class MenuBarStyleOverlay {
             }
             panel.orderFrontRegardless()
         }
+        // The visualizer draws over the shape: an opaque fill must not hide it.
+        for window in MenuBarShapeOutlines.shared.above() { window.orderFrontRegardless() }
     }
 
     /// No shape: fade the outlines out, then take the panels down.
