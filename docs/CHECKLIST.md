@@ -284,6 +284,17 @@ Status of the milestones in `docs/PLAN.md`, what still needs a hand check, and t
 - [ ] Complete version-specific REA behavior investigations and public API feasibility gates for the reference utilities. The initial Bartender plist check establishes identity only.
 - [ ] Retain and complete the existing signed-app, physical display, consent, updater and managed-Mac hand checks below before expanding release claims.
 
+## Faster builds (2026-11-26)
+
+Measured on an M4 Max, Xcode 27.2, `SWIFT_ENABLE_EXPLICIT_MODULES=NO`, a separate `--scratch-path` per measurement. CI numbers are from runs 45757812755, 45739840512 and 45478598656 (`xcode-27` runner).
+
+- [x] Found: with Swift Build (SwiftPM's default backend) a debug build in the same `.build` throws away the release build. Release, debug, release again: the second release rebuilt everything (74 to 78 s locally, 0.3 s with no debug build in between). That is why CI's "Build app bundle" step (108 to 179 s) redid all of "Release build" (133 to 268 s).
+- [x] CI split into two jobs on their own runners, side by side: `build` runs `scripts/build-app.sh` (its `swift build -c release` is the one release build, so the debug-only-symbol check stays), the smoke test and the artifact; `test` runs `swift build --build-tests` and `swift test --skip-build --parallel`. `smoke-macos-26` still follows `build`. Before: one job of 6.5 to 11 min (release 133 to 268 s, debug 44 to 98 s, tests 89 to 136 s, app bundle 108 to 179 s). After: expected wall time is the longer of the two jobs, about the old release step plus 30 s; first measured on this change's own PR run.
+- [x] `swift test --parallel`: 940 tests in 17 to 18 s against 40 s serially, four clean runs with no failures.
+- [x] Slowest type checks (`-warn-long-function-bodies=100`, debug): `NotchFilesPage.tile` 1217 ms, `CommandCenterRow.body` 950 ms, `CommandCenterView.list` 316 ms, `ThinkingLoader.drawShip` 309 ms, `AgentNotchSettingsView.details` 309 ms, `ThinkingLoader.drawDots` 296 ms, then 17 more between 100 and 250 ms. Split `tile` (now 169 ms), `CommandCenterRow.body` and the `ThinkingLoader` math. Release type checking 16.1 s to 14.4 s of a 78 to 80 s frontend run; 49 s of it is SIL optimization, which source splits do not reach.
+- Tried, not kept: caching `.build` in CI. After a checkout-style touch of every source the cached debug build took 33 s against 42 s clean and release 76 s against 75 s; seeding only the module caches gave 42.6 s. Restoring and saving about 1 GB would eat the 9 s. There are no package dependencies, so no `Package.resolved` to cache. `swift build --build-tests` against `swift build` then `swift test`: 42 s against 44 s, kept in CI only to have one step.
+- Known gaps: the CI after-numbers are not measured until the PR runs; two jobs use two runners, so total runner minutes go up by one job's setup; `--parallel` output groups by test process, so a failure reads differently from a serial run; the cross-configuration rebuild is a Swift Build behavior, not worked around locally (`scripts/build-app.sh` after `swift build` still pays the full release build, which any source change needs anyway).
+
 ## Roadmap
 
 - [x] **A:** Edge tracker, non-activating panel, slide animation

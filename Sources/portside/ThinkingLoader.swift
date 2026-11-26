@@ -90,7 +90,7 @@ struct ThinkingLoader: View {
         drawWaves(gc, size: size, t: t, color: color)
 
         let tilt = t.map { -3 * cos(2 * .pi * $0 / 6) } ?? 0
-        let dip = t.map { 0.016 * (1 - cos(2 * .pi * $0 / 3)) / 2 } ?? 0
+        let dip: CGFloat = t.map { 0.016 * (1 - cos(2 * .pi * $0 / 3)) / 2 } ?? 0
         let u = h
         // Pivot: the boat's middle, about halfway up the sails.
         let pivot = CGPoint(x: 0.5 * w, y: (0.82 + dip) * h - 0.36 * u)
@@ -217,8 +217,8 @@ struct ThinkingLoader: View {
         let dot = size.width / 4.2
         let step = (size.width - dot) / 2
         for i in 0..<3 {
-            let pulse = t.map { 0.5 + 0.5 * sin($0 * 6 - Double(i) * 0.9) } ?? 1
-            let scale = 0.7 + 0.3 * pulse
+            let pulse: Double = t.map { 0.5 + 0.5 * sin($0 * 6 - Double(i) * 0.9) } ?? 1
+            let scale = CGFloat(0.7 + 0.3 * pulse)
             let side = dot * scale
             let rect = CGRect(
                 x: CGFloat(i) * step + (dot - side) / 2,

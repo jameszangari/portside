@@ -588,7 +588,7 @@ struct NotchClipboardPage: View {
             }
             .padding(9)
             .frame(height: Self.cardHeight)
-            .background(.white.opacity(hovered == entry.id ? 0.1 : 0.055), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(Color.white.opacity(hovered == entry.id ? 0.1 : 0.055), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -602,7 +602,7 @@ struct NotchClipboardPage: View {
                 .accessibilityLabel("Delete")
             }
         }
-        .onHover { hovered = $0 ? entry.id : (hovered == entry.id ? nil : hovered) }
+        .onHover { hovered = notchHover($0, entry.id, hovered) }
         .onDrag { NSItemProvider(object: entry.text as NSString) }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(entry.title)
@@ -703,7 +703,32 @@ struct NotchFilesPage: View {
         .accessibilityElement(children: .combine)
     }
 
+    // Split in two: as one modifier chain this took over a second to type-check.
     private func tile(_ item: NotchFileTray.Item) -> some View {
+        tileFace(item)
+            .overlay { dragSource(item) }
+            .overlay(alignment: .topTrailing) {
+                if hovered == item.id {
+                    Button { shelf.remove(item.id) } label: {
+                        Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                            .frame(width: 16, height: 16).background(.black.opacity(0.7), in: Circle())
+                    }
+                    .buttonStyle(.plain).padding(4)
+                    .accessibilityLabel("Remove")
+                }
+            }
+            .onHover { hovered = notchHover($0, item.id, hovered) }
+            .help(item.path)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(item.name)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityHint("Opens it. Drag to copy it somewhere.")
+            .accessibilityAction { open(item) }
+            .accessibilityAction(named: "Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
+            .accessibilityAction(named: "Remove") { shelf.remove(item.id) }
+    }
+
+    private func tileFace(_ item: NotchFileTray.Item) -> some View {
         VStack(spacing: 4) {
             Image(nsImage: NSWorkspace.shared.icon(forFile: item.path))
                 .resizable().interpolation(.high).frame(width: 30, height: 30)
@@ -713,31 +738,13 @@ struct NotchFilesPage: View {
         .padding(.horizontal, 6).padding(.vertical, 6)
         .frame(height: Self.tileHeight)
         .frame(maxWidth: .infinity)
-        .background(.white.opacity(hovered == item.id ? 0.1 : 0.055), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay {
-            NotchFileDragSource(url: item.url, onOpen: { open(item) }, onDragEnded: { delivered in
-                if delivered, preferences.filesRemoveAfterDrag { shelf.remove(item.id) }
-            }, menu: { menu(item) })
-        }
-        .overlay(alignment: .topTrailing) {
-            if hovered == item.id {
-                Button { shelf.remove(item.id) } label: {
-                    Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
-                        .frame(width: 16, height: 16).background(.black.opacity(0.7), in: Circle())
-                }
-                .buttonStyle(.plain).padding(4)
-                .accessibilityLabel("Remove")
-            }
-        }
-        .onHover { hovered = $0 ? item.id : (hovered == item.id ? nil : hovered) }
-        .help(item.path)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(item.name)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityHint("Opens it. Drag to copy it somewhere.")
-        .accessibilityAction { open(item) }
-        .accessibilityAction(named: "Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
-        .accessibilityAction(named: "Remove") { shelf.remove(item.id) }
+        .background(Color.white.opacity(hovered == item.id ? 0.1 : 0.055), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func dragSource(_ item: NotchFileTray.Item) -> NotchFileDragSource {
+        NotchFileDragSource(url: item.url, onOpen: { open(item) }, onDragEnded: { delivered in
+            if delivered, preferences.filesRemoveAfterDrag { shelf.remove(item.id) }
+        }, menu: { menu(item) })
     }
 
     private func airDropCard(_ urls: [URL]) -> some View {
@@ -874,4 +881,13 @@ struct NotchMeetingCard: View {
         .frame(height: 52)
         .accessibilityElement(children: .combine)
     }
+}
+
+/// The hovered card after the pointer enters (`inside`) or leaves the card
+/// `id`. Leaving keeps a card the pointer has already moved on to. A plain
+/// function: inline in `.onHover` this one ternary cost about a second of
+/// type checking.
+private func notchHover(_ inside: Bool, _ id: UUID, _ hovered: UUID?) -> UUID? {
+    if inside { return id }
+    return hovered == id ? nil : hovered
 }
