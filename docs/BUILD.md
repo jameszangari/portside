@@ -16,7 +16,9 @@ swift run portside
 CFFIXED_USER_HOME=/tmp/portside-tests swift test   # keeps tests away from your dock.json
 ```
 
-Measured on an M4 Max with Xcode 27.2: clean debug ~27s default vs ~9s with that env; incremental stays ~1 to 3s either way. Release compile is ~19s either way. If `.build` grows past several hundred MB (SDK PCM cache), `swift package clean` resets it. Do not run two SwiftPM builds in this repo at once; they wait on one `.build` lock.
+Measured on an M4 Max with Xcode 27.2 (2026-11-26, with that env): clean debug about 24 s, clean release about 75 s, incremental debug about 5 s. A release build is whole-module, so any source change rebuilds all of it. Tests take about 40 s serially and 17 s with `swift test --parallel`.
+
+Switching configurations in one `.build` costs a full rebuild: with Swift Build (SwiftPM's default backend), a `swift build` between two release builds throws the release build away, so `scripts/build-app.sh` after `swift build` always takes the full 75 s even when nothing changed. `swift build` then `swift test` is fine; `swift build --build-tests` does both in one go. If `.build` grows past several hundred MB (SDK PCM cache), `swift package clean` resets it. Do not run two SwiftPM builds in this repo at once; they wait on one `.build` lock.
 
 Use `swift run` for launch smoke tests only. Quit it afterward and open the signed app with `open build/Portside.app` for Calendar testing and daily use. macOS can attribute a bare executable's Calendar request to its terminal instead of Portside.
 
